@@ -1,0 +1,606 @@
+/**
+ * Global type declaration for window.electronAPI
+ *
+ * This is a superset of all preload variants (main, POS, customer-display).
+ * Each BrowserWindow only exposes a subset via contextBridge, but we declare
+ * the full shape so renderer code can use any property without type errors.
+ */
+
+// Asset module declarations
+declare module '*.png' {
+  const src: string;
+  export default src;
+}
+declare module '*.jpg' {
+  const src: string;
+  export default src;
+}
+declare module '*.svg' {
+  const src: string;
+  export default src;
+}
+
+import type {
+  AgentConfig,
+  RemoteControlState,
+  TelegramBotStatus,
+  ZiraAIStatus,
+  ZiraAIChatResponse,
+  AuthUser,
+  TelegramLoginTokenResponse,
+  TelegramLoginTokenStatus,
+  DeviceStatus,
+  ConnectionStatus,
+  BooksySyncStatus,
+  BooksySyncConfig,
+  BooksySyncReport,
+  BooksyBookingSummary,
+  BooksyCustomer,
+  BooksyCustomerSyncReport,
+  BooksyStaff,
+  BooksyStaffSyncReport,
+  BooksyEquipment,
+  BooksyResourceSyncReport,
+  BooksySyncAllReport,
+  BooksyServiceCategory,
+  BooksyServiceSyncReport,
+  BooksyAddon,
+  BooksyAddonSyncReport,
+  FeatureKey,
+  SalonEntitlements,
+  DeleteConfirmConfig,
+  SshTunnelStatus,
+  UpdateStatus,
+  InvoiceRow,
+  InvoiceItemRow,
+  InvoiceCreateDTO,
+  InvoiceListFilter,
+  InvoiceType,
+  InvoiceCustomerRow,
+  InvoiceCustomerCreateDTO,
+  AccountingProductCreateDTO,
+  SellerSettingsUpdateDTO,
+  SecurityConfig,
+  SecurityStatus,
+  SecurityAlert,
+  SecurityAnalytics,
+  CheckinRecord,
+  CheckinStats,
+  CheckinStatus,
+  SalonCustomer,
+  ServiceRecommendation,
+  CustomerServiceHistory,
+} from './types';
+
+// ── POS DB row types (mirrors repos) ──
+
+interface PosProduct {
+  id: string;
+  template_id: string | null;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  retail_price: number;
+  category_id: string | null;
+  image_url: string | null;
+  in_stock: number;
+  vat_rate: number;
+  is_active: number;
+  updated_at: string | null;
+}
+
+interface PosCategory {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  sort_order: number;
+  updated_at: string | null;
+}
+
+interface PosDailyStats {
+  order_count: number;
+  total_sales: number;
+  cash_total: number;
+  card_total: number;
+}
+
+interface PosTable {
+  id: string;
+  name: string;
+  zone: string | null;
+  capacity: number;
+  sort_order: number;
+  is_active: number;
+  status: string;
+  current_order_id: string | null;
+  covers: number;
+  opened_at: string | null;
+}
+
+interface PosCustomer {
+  id: string;
+  name: string;
+  nip: string | null;
+  email: string | null;
+  phone: string | null;
+  credit_limit: number;
+  current_debt: number;
+  payment_terms: number;
+}
+
+interface PosStaff {
+  id: string;
+  name: string;
+  commission_rate: number;
+  is_active: number;
+}
+
+// ── ElectronAPI interface ──
+
+interface ElectronAPI {
+  // Config
+  getConfig: () => Promise<AgentConfig>;
+  setConfig: (config: Partial<AgentConfig>) => Promise<AgentConfig>;
+
+  // Connection
+  connect: () => Promise<{ success: boolean }>;
+  connectWithApiKey: (apiKey: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  disconnect: () => Promise<{ success: boolean }>;
+  getStatus: () => Promise<{ connected: boolean; deviceStatus: DeviceStatus | null }>;
+
+  // Printer
+  listPorts: () => Promise<string[]>;
+  listWindowsPrinters: () => Promise<string[]>;
+  testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
+  testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
+
+  // Event listeners
+  onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void;
+  onDeviceStatus: (callback: (status: DeviceStatus) => void) => () => void;
+  onPrintJob: (callback: (job: any) => void) => () => void;
+  onBarcodeScanned: (callback: (barcode: string) => void) => () => void;
+  sendKeyboardInput: (char: string) => void;
+
+  // Debug
+  debug: {
+    openDevTools: () => Promise<{ success: boolean }>;
+    openLogs: () => Promise<{ success: boolean }>;
+    getDiagnostics: () => Promise<{
+      appVersion: string;
+      electron: string;
+      node: string;
+      platform: string;
+      userData: string;
+      debugMode: boolean;
+      connected: boolean;
+      printerConnected: boolean;
+      printerProtocol: string;
+      scannerActive: boolean;
+    }>;
+  };
+
+  // Auto-start
+  setAutoStart: (enabled: boolean) => Promise<{ success: boolean }>;
+  getAutoStart: () => Promise<{ openAtLogin: boolean }>;
+
+  // Remote control
+  remote: {
+    getState: () => Promise<RemoteControlState>;
+    acceptSession: () => Promise<{ success: boolean; error?: string }>;
+    rejectSession: (reason?: string) => Promise<{ success: boolean }>;
+    endSession: (reason?: string) => Promise<{ success: boolean }>;
+    onStateChanged: (callback: (state: RemoteControlState) => void) => () => void;
+  };
+
+  // Telegram
+  telegram: {
+    getStatus: () => Promise<TelegramBotStatus>;
+    restart: () => Promise<{ success: boolean; error?: string }>;
+  };
+
+  // Zira AI
+  ai: {
+    getStatus: () => Promise<ZiraAIStatus>;
+    chat: (message: string, userId?: string, attachments?: { type: 'image' | 'video'; name: string; data: string; path?: string }[]) => Promise<{ success: boolean; data?: ZiraAIChatResponse; error?: string }>;
+    clearHistory: (userId?: string) => Promise<{ success: boolean }>;
+  };
+
+  // Booksy Sync
+  booksy: {
+    getStatus: () => Promise<BooksySyncStatus>;
+    getConfig: () => Promise<BooksySyncConfig>;
+    setConfig: (config: Partial<BooksySyncConfig>) => Promise<BooksySyncConfig>;
+    syncNow: () => Promise<BooksySyncReport | null>;
+    start: () => Promise<void>;
+    stop: () => Promise<void>;
+    getBookings: () => Promise<BooksyBookingSummary[]>;
+    syncCustomers: () => Promise<BooksyCustomerSyncReport | null>;
+    getCustomers: () => Promise<BooksyCustomer[]>;
+    syncStaff: () => Promise<BooksyStaffSyncReport | null>;
+    getStaff: () => Promise<BooksyStaff[]>;
+    syncResources: () => Promise<BooksyResourceSyncReport | null>;
+    getResources: () => Promise<BooksyEquipment[]>;
+    syncServices: () => Promise<BooksyServiceSyncReport | null>;
+    getServices: () => Promise<BooksyServiceCategory[]>;
+    syncAddons: () => Promise<BooksyAddonSyncReport | null>;
+    getAddons: () => Promise<BooksyAddon[]>;
+    syncAll: () => Promise<BooksySyncAllReport | null>;
+    onStatusChanged: (callback: (status: BooksySyncStatus) => void) => () => void;
+  };
+
+  // Auth
+  auth: {
+    generateLoginToken: () => Promise<{ success: boolean; data?: TelegramLoginTokenResponse; error?: string }>;
+    checkToken: (token: string) => Promise<{ success: boolean; data?: TelegramLoginTokenStatus; error?: string }>;
+    generateRegisterToken: () => Promise<{ success: boolean; data?: TelegramLoginTokenResponse; error?: string }>;
+    getUser: () => Promise<{ success: boolean; data?: { isAuthenticated: boolean; user?: AuthUser }; error?: string }>;
+    logout: () => Promise<{ success: boolean }>;
+    loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; data?: { user: AuthUser }; error?: string }>;
+  };
+
+  // Window management
+  window: {
+    open: (id: string) => Promise<{ success: boolean; error?: string }>;
+    close: (id: string) => Promise<{ success: boolean }>;
+    list: () => Promise<string[]>;
+    setFullScreen: (value: boolean) => Promise<{ success: boolean }>;
+  };
+
+  // Display info (list from main preload, touch from customer-display preload)
+  display: {
+    list: () => Promise<Array<{
+      index: number;
+      id: number;
+      label: string;
+      width: number;
+      height: number;
+      x: number;
+      y: number;
+      isPrimary: boolean;
+    }>>;
+    touch: () => Promise<{ success: boolean }>;
+    requestService: (serviceId: string) => Promise<{ success: boolean }>;
+    getBookings: () => Promise<BooksyBookingSummary[]>;
+    checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
+      Promise<{ success: boolean }>;
+    browseServices: () => Promise<{ success: boolean }>;
+    backToIdle: () => Promise<{ success: boolean }>;
+    ping: () => Promise<{ success: boolean }>;
+    searchByPhone: (phone: string) => Promise<{ customers: any[]; bookings: any[] }>;
+    /** Staff intentional exit — bypasses kiosk lock */
+    close: () => Promise<{ success: boolean }>;
+  };
+
+  // Checkin
+  checkin: {
+    getToday: () => Promise<CheckinRecord[]>;
+    getByDate: (date: string) => Promise<CheckinRecord[]>;
+    create: (data: any) => Promise<{ success: boolean }>;
+    createWithCustomer: (data: any) => Promise<{ success: boolean }>;
+    updateStatus: (id: string, status: CheckinStatus) => Promise<{ success: boolean }>;
+    startService: (id: string) => Promise<{ success: boolean }>;
+    complete: (id: string) => Promise<{ success: boolean }>;
+    markNoShow: (id: string) => Promise<{ success: boolean }>;
+    searchPhone: (phone: string) => Promise<CheckinRecord[]>;
+    addUpsells: (id: string, upsells: string[]) => Promise<{ success: boolean }>;
+    updateNotes: (id: string, notes: string) => Promise<{ success: boolean }>;
+    getStats: (date?: string) => Promise<CheckinStats>;
+  };
+
+  // Salon Customers (check-in wizard)
+  salonCustomer: {
+    search: (query: string) => Promise<any[]>;
+    getByPhone: (phone: string) => Promise<any | null>;
+    create: (data: any) => Promise<{ success: boolean; data?: any }>;
+    update: (id: string, data: any) => Promise<{ success: boolean }>;
+    getHistory: (customerId: string) => Promise<any[]>;
+    getRecommendations: (customerId: string) => Promise<any[]>;
+  };
+
+  // Service Popularity
+  servicePopularity: {
+    get: () => Promise<any[]>;
+    refresh: () => Promise<{ success: boolean }>;
+  };
+
+  // Dialog
+  selectFolder: () => Promise<string | null>;
+
+  // Shell/URL operations
+  shell: {
+    openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+    launchChromeDebug: (port?: number) => Promise<{ success: boolean; chromePath?: string; error?: string }>;
+  };
+
+  // Chrome checker (for browser automation)
+  chrome: {
+    isRunning: () => Promise<{ success: boolean; isRunning: boolean; processCount: number; error?: string }>;
+    checkAndPrompt: () => Promise<{
+      success: boolean;
+      isRunning: boolean;
+      processCount?: number;
+      userClosed?: boolean;
+      forceClosed?: boolean;
+      error?: string;
+    }>;
+    forceClose: () => Promise<{
+      success: boolean;
+      killed?: boolean;
+      stillRunning?: boolean;
+      cancelled?: boolean;
+      error?: string;
+    }>;
+  };
+
+  // Billiard Local Sync (cache-first reads + queue-aware writes)
+  billiard: {
+    getFloorOverview: () => Promise<any>;
+    getSession: (id: string) => Promise<any>;
+    getCombos: (activeOnly?: boolean) => Promise<any[]>;
+    getFloorPlans: () => Promise<any[]>;
+    getFnbProducts: (search?: string, categoryId?: string) => Promise<any[]>;
+    getFnbCategories: () => Promise<any[]>;
+    getResourceType: (code: string) => Promise<any>;
+    getRestaurantCombos: () => Promise<any[]>;
+    mutate: (op: string, method: string, path: string, body?: any) => Promise<any>;
+    getSyncStatus: () => Promise<{ pending: number; lastSync: string | null; online: boolean }>;
+    onDataUpdated: (callback: (data: { type: string }) => void) => () => void;
+    printReceipt: (sessionId: string, payment: { method: string; amount: number }) => Promise<{ success: boolean; receiptPrinted: boolean }>;
+    openCashDrawer: () => Promise<{ success: boolean }>;
+  };
+
+  // Generic REST API proxy (for billiard, etc.)
+  apiCall: (method: string, path: string, body?: any) => Promise<any>;
+
+  // Config save (used by App.tsx for language)
+  saveConfig: (config: Partial<AgentConfig>) => Promise<AgentConfig>;
+
+  // Invoicing
+  invoice: {
+    list: (filter?: InvoiceListFilter) => Promise<InvoiceRow[]>;
+    get: (id: string) => Promise<InvoiceRow | null>;
+    create: (data: InvoiceCreateDTO) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
+    update: (id: string, data: Partial<InvoiceCreateDTO>) => Promise<{ success: boolean; error?: string }>;
+    delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    issue: (id: string) => Promise<{ success: boolean; error?: string }>;
+    cancel: (id: string, reason: string) => Promise<{ success: boolean; error?: string }>;
+    duplicate: (id: string) => Promise<{ success: boolean; error?: string }>;
+    print: (id: string, options?: any) => Promise<{ success: boolean; error?: string }>;
+    printA4: (id: string) => Promise<{ success: boolean; error?: string }>;
+    markPaid: (id: string) => Promise<{ success: boolean; error?: string }>;
+    addPayment: (invoiceId: string, amount: number, method?: string, reference?: string) => Promise<{ success: boolean; error?: string }>;
+    getNextNumber: (type: InvoiceType) => Promise<{ success: boolean; number?: string; error?: string }>;
+    createCorrection: (originalId: string, reason: string, newItems: any[]) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
+    convertProforma: (proformaId: string) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
+    customer: {
+      list: () => Promise<InvoiceCustomerRow[]>;
+      search: (query: string) => Promise<InvoiceCustomerRow[]>;
+      get: (id: string) => Promise<InvoiceCustomerRow | null>;
+      create: (data: InvoiceCustomerCreateDTO) => Promise<{ success: boolean; data?: InvoiceCustomerRow; error?: string }>;
+      update: (id: string, data: Partial<InvoiceCustomerCreateDTO>) => Promise<{ success: boolean; error?: string }>;
+      delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    };
+    product: {
+      list: () => Promise<any[]>;
+      search: (query: string) => Promise<any[]>;
+      get: (id: string) => Promise<any>;
+      create: (data: AccountingProductCreateDTO) => Promise<{ success: boolean; error?: string }>;
+      update: (id: string, data: Partial<AccountingProductCreateDTO>) => Promise<{ success: boolean; error?: string }>;
+      delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    };
+    seller: {
+      get: () => Promise<any>;
+      update: (data: SellerSettingsUpdateDTO) => Promise<{ success: boolean; error?: string }>;
+    };
+    vatRates: {
+      get: () => Promise<any>;
+    };
+    lookup: {
+      nip: (nip: string) => Promise<any>;
+      euVat: (vatId: string) => Promise<any>;
+      auto: (identifier: string) => Promise<any>;
+    };
+    ksef: {
+      send: (invoiceId: string) => Promise<{ success: boolean; error?: string }>;
+      sendBatch: (invoiceIds: string[]) => Promise<{ success: boolean; error?: string }>;
+      getStatus: () => Promise<any>;
+      retry: (invoiceId: string) => Promise<{ success: boolean; error?: string }>;
+    };
+  };
+
+  // Security Camera AI
+  security: {
+    getStatus: () => Promise<SecurityStatus>;
+    getConfig: () => Promise<SecurityConfig | null>;
+    setConfig: (config: SecurityConfig) => Promise<{ success: boolean }>;
+    start: () => Promise<{ success: boolean; error?: string }>;
+    stop: () => Promise<{ success: boolean; error?: string }>;
+    restartCamera: (id: string) => Promise<{ success: boolean; error?: string }>;
+    getAlerts: (limit?: number, cameraId?: string) => Promise<SecurityAlert[]>;
+    clearAlerts: () => Promise<{ success: boolean }>;
+    getAnalytics: (cameraId: string, date: string) => Promise<SecurityAnalytics | null>;
+    onStatusChanged: (callback: (status: SecurityStatus) => void) => () => void;
+    onAlert: (callback: (alert: SecurityAlert) => void) => () => void;
+  };
+
+  // POS
+  pos: {
+    getState: () => Promise<any>;
+    dispatch: (action: any) => Promise<void>;
+    onStateChanged: (callback: (state: any) => void) => () => void;
+
+    products: {
+      getAll: () => Promise<PosProduct[]>;
+      getByCategory: (catId: string) => Promise<PosProduct[]>;
+      search: (query: string) => Promise<PosProduct[]>;
+      getByBarcode: (barcode: string) => Promise<PosProduct | null>;
+    };
+    categories: {
+      getAll: () => Promise<PosCategory[]>;
+    };
+    orders: {
+      create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
+      getDailyStats: (date: string) => Promise<PosDailyStats>;
+    };
+    payment: {
+      printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
+      openCashDrawer: () => Promise<{ success: boolean }>;
+      cardPayment: (data: { amount: number; orderId: string }) => Promise<{ success: boolean; error?: string }>;
+      onElavonStatus: (callback: (data: any) => void) => () => void;
+    };
+    shift: {
+      open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string }>;
+      close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any }>;
+    };
+    sync: {
+      products: () => Promise<void>;
+      orders: () => Promise<void>;
+      onProductsSynced: (callback: () => void) => () => void;
+      onCatalogUpdated: (callback: (data: any) => void) => () => void;
+      onStockUpdated: (callback: (data: any) => void) => () => void;
+    };
+    tables: {
+      getAll: () => Promise<PosTable[]>;
+      getActive: () => Promise<PosTable[]>;
+      updateStatus: (id: string, status: string, orderId?: string) => Promise<void>;
+      clearTable: (id: string) => Promise<void>;
+      setCovers: (id: string, covers: number) => Promise<void>;
+    };
+    customers: {
+      getAll: () => Promise<PosCustomer[]>;
+      search: (query: string) => Promise<PosCustomer[]>;
+      getById: (id: string) => Promise<PosCustomer | null>;
+      increaseDebt: (id: string, amount: number) => Promise<void>;
+    };
+    staff: {
+      getAll: () => Promise<PosStaff[]>;
+    };
+    hold: {
+      create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;
+      list: () => Promise<Array<{ id: string; title: string; createdAt: string; items: number; total: number; staffName?: string | null }>>;
+      get: (id: string) => Promise<{ id: string; title: string; payload: any; createdAt: string } | null>;
+      remove: (id: string) => Promise<{ success: boolean }>;
+    };
+    quickKeys: {
+      list: (mode?: string) => Promise<any[]>;
+      get: (id: string) => Promise<any>;
+      create: (id: string, data: any) => Promise<{ success: boolean }>;
+      update: (id: string, data: any) => Promise<{ success: boolean }>;
+      remove: (id: string) => Promise<{ success: boolean }>;
+      assign: (registerId: string, mode: string, layoutId: string) => Promise<{ success: boolean }>;
+      getAssigned: (registerId: string, mode: string) => Promise<string | null>;
+    };
+    onCustomerDisplayStatus: (callback: (data: { responsive: boolean }) => void) => () => void;
+    onCustomerRequest: (callback: (data: { id: string; serviceName: string }) => void) => () => void;
+    onCustomerCheckIn: (callback: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) => void) => () => void;
+    onDbSaveError: (callback: (data: { consecutiveFailures: number; dbPath: string }) => void) => () => void;
+  };
+
+  // Feature Entitlements (SuperAdmin controlled)
+  entitlements: {
+    fetch: () => Promise<SalonEntitlements | null>;
+    get: () => Promise<SalonEntitlements | null>;
+    isEnabled: (feature: FeatureKey) => Promise<boolean>;
+    onChanged: (callback: (entitlements: SalonEntitlements) => void) => () => void;
+  };
+
+  // Delete Confirmation
+  deleteConfirm: {
+    getConfig: () => Promise<DeleteConfirmConfig>;
+    verify: (code: string) => Promise<{ valid: boolean }>;
+  };
+
+  // Auto-Update
+  update: {
+    check: () => Promise<any>;
+    install: () => Promise<void>;
+    onStatus: (callback: (data: UpdateStatus) => void) => () => void;
+  };
+
+  // SSH Tunnel
+  sshTunnel: {
+    getStatus: () => Promise<SshTunnelStatus>;
+    disconnect: () => Promise<{ success: boolean }>;
+    generateKey: () => Promise<{ success: boolean; publicKey?: string; error?: string }>;
+    start: () => Promise<{ success: boolean; error?: string }>;
+    onStatusChanged: (callback: (status: SshTunnelStatus) => void) => () => void;
+  };
+
+  // Daily Report (billiard)
+  dailyReport: {
+    get: (dateFrom: string, dateTo: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  };
+
+  // Happy Hour discount rules (billiard)
+  happyHour: {
+    getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    upsert: (rule: {
+      id: string;
+      name: string;
+      dayOfWeek: number;
+      startTime: string;
+      endTime: string;
+      discountType: 'percent' | 'fixed';
+      discountValue: number;
+      scope: 'time' | 'fnb' | 'all';
+      isActive: boolean;
+    }) => Promise<any>;
+    delete: (id: string) => Promise<any>;
+  };
+
+  // Kitchen Display System (billiard)
+  kds: {
+    getActive: () => Promise<any[]>;
+    updateStatus: (orderId: string, status: string) => Promise<any>;
+    onDataUpdated: (callback: (data: { type: string }) => void) => () => void;
+  };
+
+  // Reservations (billiard)
+  reservation: {
+    getUpcoming: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    upsert: (data: any) => Promise<any>;
+    generate: (id: string) => Promise<any>;
+    delete: (id: string) => Promise<any>;
+  };
+
+  // Billiard Guests
+  billiardGuest: {
+    search: (query: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    upsert: (data: { id: string; name: string; phone: string; notes: string }) => Promise<any>;
+  };
+
+  // Session History (billiard)
+  sessionHistory: {
+    getTables: () => Promise<{ success: boolean; data?: any[] }>;
+    get: (params: {
+      dateFrom: string;
+      dateTo: string;
+      status?: string;
+      resourceId?: string;
+      search?: string;
+      limit: number;
+      offset: number;
+    }) => Promise<{ success: boolean; data?: any; error?: string }>;
+  };
+
+  // Stock Management (billiard)
+  stock: {
+    getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    update: (data: {
+      variantId: string;
+      variantName: string;
+      quantity: number;
+      lowThreshold: number;
+      unit?: string;
+    }) => Promise<any>;
+  };
+}
+
+declare global {
+  interface Window {
+    electronAPI: ElectronAPI;
+  }
+}
+
+export {};

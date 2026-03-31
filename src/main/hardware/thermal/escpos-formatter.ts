@@ -1,0 +1,569 @@
+import { ReceiptData, ReceiptItem } from '../../../shared/types';
+
+/**
+ * ESC/POS Commands for thermal printers
+ * Standard commands supported by most thermal receipt printers
+ */
+const ESC = 0x1B;  // Escape
+const GS = 0x1D;   // Group Separator
+const LF = 0x0A;   // Line Feed
+const CR = 0x0D;   // Carriage Return
+
+const ESCPOS = {
+  // Initialize printer
+  INIT: Buffer.from([ESC, 0x40]),
+
+  // Text alignment
+  ALIGN_LEFT: Buffer.from([ESC, 0x61, 0x00]),
+  ALIGN_CENTER: Buffer.from([ESC, 0x61, 0x01]),
+  ALIGN_RIGHT: Buffer.from([ESC, 0x61, 0x02]),
+
+  // Text style
+  BOLD_ON: Buffer.from([ESC, 0x45, 0x01]),
+  BOLD_OFF: Buffer.from([ESC, 0x45, 0x00]),
+  UNDERLINE_ON: Buffer.from([ESC, 0x2D, 0x01]),
+  UNDERLINE_OFF: Buffer.from([ESC, 0x2D, 0x00]),
+  DOUBLE_HEIGHT_ON: Buffer.from([ESC, 0x21, 0x10]),
+  DOUBLE_WIDTH_ON: Buffer.from([ESC, 0x21, 0x20]),
+  DOUBLE_SIZE_ON: Buffer.from([ESC, 0x21, 0x30]),
+  NORMAL_SIZE: Buffer.from([ESC, 0x21, 0x00]),
+
+  // Font
+  FONT_A: Buffer.from([ESC, 0x4D, 0x00]),  // Standard font
+  FONT_B: Buffer.from([ESC, 0x4D, 0x01]),  // Smaller font
+
+  // Line spacing
+  LINE_SPACING_DEFAULT: Buffer.from([ESC, 0x32]),
+  LINE_SPACING_SET: (n: number) => Buffer.from([ESC, 0x33, n]),
+
+  // Paper
+  FEED_LINES: (n: number) => Buffer.from([ESC, 0x64, n]),
+  FEED_PAPER: (n: number) => Buffer.from([ESC, 0x4A, n]),
+
+  // Cut paper
+  CUT_PARTIAL: Buffer.from([GS, 0x56, 0x01]),
+  CUT_FULL: Buffer.from([GS, 0x56, 0x00]),
+
+  // Cash drawer
+  DRAWER_KICK_PIN2: Buffer.from([ESC, 0x70, 0x00, 0x19, 0xFA]),
+  DRAWER_KICK_PIN5: Buffer.from([ESC, 0x70, 0x01, 0x19, 0xFA]),
+
+  // Barcode
+  BARCODE_HEIGHT: (n: number) => Buffer.from([GS, 0x68, n]),
+  BARCODE_WIDTH: (n: number) => Buffer.from([GS, 0x77, n]),
+  BARCODE_TEXT_BELOW: Buffer.from([GS, 0x48, 0x02]),
+  BARCODE_CODE128: (data: string) => Buffer.concat([
+    Buffer.from([GS, 0x6B, 0x49, data.length + 2, 0x7B, 0x42]),
+    Buffer.from(data, 'ascii'),
+  ]),
+
+  // QR Code
+  QR_MODEL: Buffer.from([GS, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]),
+  QR_SIZE: (n: number) => Buffer.from([GS, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, n]),
+  QR_ERROR: Buffer.from([GS, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31]),
+  QR_STORE: (data: string) => {
+    const len = data.length + 3;
+    return Buffer.concat([
+      Buffer.from([GS, 0x28, 0x6B, len & 0xFF, (len >> 8) & 0xFF, 0x31, 0x50, 0x30]),
+      Buffer.from(data, 'utf8'),
+    ]);
+  },
+  QR_PRINT: Buffer.from([GS, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30]),
+};
+
+/**
+ * ESC/POS Formatter for thermal receipt printers
+ */
+export class EscPosFormatter {
+  private charsPerLine: number;
+
+  constructor(
+    private paperWidth: number = 80,
+    charsPerLine?: number
+  ) {
+    // Default chars per line based on paper width
+    this.charsPerLine = charsPerLine || (paperWidth === 80 ? 48 : 32);
+  }
+
+  /**
+   * Format a complete receipt
+   */
+  formatReceipt(data: ReceiptData): Buffer {
+    const parts: Buffer[] = [];
+
+    // Initialize printer
+    parts.push(ESCPOS.INIT);
+
+    // Header
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.DOUBLE_SIZE_ON);
+    parts.push(this.text(data.salonName || 'Zira AI POS'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(this.text(''));
+
+    // Order number
+    if (data.orderNumber) {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text(`Order #${data.orderNumber}`));
+      parts.push(ESCPOS.BOLD_OFF);
+    }
+
+    // Date/Time
+    parts.push(this.text(new Date().toLocaleString()));
+    parts.push(this.text(''));
+
+    // Separator
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    // Items
+    for (const item of data.items) {
+      parts.push(this.formatItem(item));
+    }
+
+    // Separator
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    // Subtotal
+    if (data.subtotal) {
+      parts.push(this.formatLine('Subtotal:', this.formatMoney(data.subtotal)));
+    }
+
+    // Discount
+    if (data.discount && data.discount > 0) {
+      parts.push(this.formatLine('Discount:', `-${this.formatMoney(data.discount)}`));
+    }
+
+    // Total
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+    parts.push(this.formatLine('TOTAL:', this.formatMoney(data.total)));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(ESCPOS.BOLD_OFF);
+
+    // Separator
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+
+    // Payment
+    parts.push(this.formatLine('Payment:', data.payment.method));
+    parts.push(this.formatLine('Amount:', this.formatMoney(data.payment.amount)));
+
+    // Change (if cash)
+    if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
+      const change = data.payment.amount - data.total;
+      parts.push(this.formatLine('Change:', this.formatMoney(change)));
+    }
+
+    // Footer
+    parts.push(this.text(''));
+    parts.push(ESCPOS.ALIGN_CENTER);
+
+    // Customer info (if invoice)
+    if (data.customerNip) {
+      parts.push(this.text(`NIP: ${data.customerNip}`));
+      if (data.customerName) {
+        parts.push(this.text(data.customerName));
+      }
+    }
+
+    // Cashier
+    if (data.cashierName) {
+      parts.push(this.text(`Served by: ${data.cashierName}`));
+    }
+
+    // Thank you message
+    parts.push(this.text(''));
+    parts.push(this.text('Thank you for your visit!'));
+    parts.push(this.text('See you again!'));
+
+    // Feed and cut
+    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.CUT_PARTIAL);
+
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format a single item line
+   */
+  private formatItem(item: ReceiptItem): Buffer {
+    const parts: Buffer[] = [];
+
+    // Item name
+    const name = this.truncate(item.name, this.charsPerLine - 15);
+    parts.push(this.text(name));
+
+    // Quantity x Price = Total
+    const qty = item.quantity.toString();
+    const price = this.formatMoney(item.unitPrice);
+    const total = this.formatMoney(item.totalPrice);
+    const detail = `  ${qty} x ${price} = ${total}`;
+    parts.push(this.text(detail));
+
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format a line with left and right aligned text
+   */
+  private formatLine(left: string, right: string): Buffer {
+    const spaces = this.charsPerLine - left.length - right.length;
+    const line = left + this.repeatChar(' ', Math.max(1, spaces)) + right;
+    return this.text(line);
+  }
+
+  /**
+   * Format test page
+   */
+  formatTestPage(): Buffer {
+    const parts: Buffer[] = [];
+
+    // Initialize
+    parts.push(ESCPOS.INIT);
+
+    // Header
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.DOUBLE_SIZE_ON);
+    parts.push(this.text('PRINTER TEST'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(this.text(''));
+
+    // Info
+    parts.push(this.text('Zira AI v1.0.1'));
+    parts.push(this.text(`Paper: ${this.paperWidth}mm`));
+    parts.push(this.text(`Chars/line: ${this.charsPerLine}`));
+    parts.push(this.text(''));
+
+    // Separator
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    // Text styles
+    parts.push(this.text('Normal text'));
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(this.text('Bold text'));
+    parts.push(ESCPOS.BOLD_OFF);
+    parts.push(ESCPOS.UNDERLINE_ON);
+    parts.push(this.text('Underlined text'));
+    parts.push(ESCPOS.UNDERLINE_OFF);
+    parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+    parts.push(this.text('Double height'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(ESCPOS.DOUBLE_WIDTH_ON);
+    parts.push(this.text('Double width'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+
+    // Separator
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    // Alignment test
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text('Left aligned'));
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text('Center aligned'));
+    parts.push(ESCPOS.ALIGN_RIGHT);
+    parts.push(this.text('Right aligned'));
+    parts.push(ESCPOS.ALIGN_LEFT);
+
+    // Separator
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    // Special characters
+    parts.push(this.text('Special: $ % & @ # !'));
+    parts.push(this.text('Polish: ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ'));
+    parts.push(this.text('Vietnamese: ăâđêôơư ĂÂĐÊÔƠƯ'));
+
+    // Separator
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+
+    // Timestamp
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text(new Date().toLocaleString()));
+    parts.push(this.text(''));
+    parts.push(this.text('Test completed successfully!'));
+
+    // Feed and cut
+    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.CUT_PARTIAL);
+
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Get cash drawer kick command
+   */
+  getCashDrawerCommand(): Buffer {
+    return ESCPOS.DRAWER_KICK_PIN2;
+  }
+
+  /**
+   * Get paper cut command
+   */
+  getCutCommand(fullCut: boolean = false): Buffer {
+    return fullCut ? ESCPOS.CUT_FULL : ESCPOS.CUT_PARTIAL;
+  }
+
+  /**
+   * Convert text to buffer with line feed
+   */
+  private text(str: string): Buffer {
+    // Use Windows-1250 encoding for Polish characters, or UTF-8
+    return Buffer.concat([
+      Buffer.from(str, 'utf8'),
+      Buffer.from([LF]),
+    ]);
+  }
+
+  /**
+   * Format money value (grosze to zł)
+   */
+  private formatMoney(grosze: number): string {
+    const zl = grosze / 100;
+    return zl.toFixed(2) + ' zl';
+  }
+
+  /**
+   * Repeat a character n times
+   */
+  private repeatChar(char: string, count: number): string {
+    return char.repeat(Math.max(0, count));
+  }
+
+  /**
+   * Truncate string to max length
+   */
+  private truncate(str: string, maxLen: number): string {
+    if (str.length <= maxLen) return str;
+    return str.substring(0, maxLen - 1) + '.';
+  }
+
+  /**
+   * Format barcode
+   */
+  formatBarcode(data: string, height: number = 80): Buffer {
+    const parts: Buffer[] = [];
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.BARCODE_HEIGHT(height));
+    parts.push(ESCPOS.BARCODE_WIDTH(2));
+    parts.push(ESCPOS.BARCODE_TEXT_BELOW);
+    parts.push(ESCPOS.BARCODE_CODE128(data));
+    parts.push(Buffer.from([LF, LF]));
+    parts.push(ESCPOS.ALIGN_LEFT);
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format QR code
+   */
+  formatQRCode(data: string, size: number = 6): Buffer {
+    const parts: Buffer[] = [];
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.QR_MODEL);
+    parts.push(ESCPOS.QR_SIZE(size));
+    parts.push(ESCPOS.QR_ERROR);
+    parts.push(ESCPOS.QR_STORE(data));
+    parts.push(ESCPOS.QR_PRINT);
+    parts.push(Buffer.from([LF, LF]));
+    parts.push(ESCPOS.ALIGN_LEFT);
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format daily report (Raport Dobowy)
+   * For non-fiscal printers, this generates a summary report
+   */
+  formatDailyReport(reportData: DailyReportData): Buffer {
+    const parts: Buffer[] = [];
+
+    // Initialize
+    parts.push(ESCPOS.INIT);
+
+    // Header
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.DOUBLE_SIZE_ON);
+    parts.push(this.text('RAPORT DOBOWY'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(this.text(''));
+
+    // Date range
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(this.text(`Data: ${reportData.date}`));
+    parts.push(ESCPOS.BOLD_OFF);
+    parts.push(this.text(''));
+
+    // Separator
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+
+    // Sales summary
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(this.text('PODSUMOWANIE SPRZEDAZY'));
+    parts.push(ESCPOS.BOLD_OFF);
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    parts.push(this.formatLine('Liczba transakcji:', reportData.transactionCount.toString()));
+    parts.push(this.formatLine('Sprzedaz brutto:', this.formatMoney(reportData.grossSales)));
+
+    if (reportData.discounts > 0) {
+      parts.push(this.formatLine('Rabaty:', `-${this.formatMoney(reportData.discounts)}`));
+    }
+
+    parts.push(this.formatLine('Sprzedaz netto:', this.formatMoney(reportData.netSales)));
+
+    // VAT Summary
+    if (reportData.vatSummary && reportData.vatSummary.length > 0) {
+      parts.push(this.text(''));
+      parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text('PODSUMOWANIE VAT'));
+      parts.push(ESCPOS.BOLD_OFF);
+      parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+      for (const vat of reportData.vatSummary) {
+        parts.push(this.formatLine(`PTU ${vat.rate}%:`, this.formatMoney(vat.amount)));
+      }
+    }
+
+    // Payment methods
+    if (reportData.paymentSummary && reportData.paymentSummary.length > 0) {
+      parts.push(this.text(''));
+      parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text('FORMY PLATNOSCI'));
+      parts.push(ESCPOS.BOLD_OFF);
+      parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+      for (const payment of reportData.paymentSummary) {
+        parts.push(this.formatLine(`${payment.method}:`, this.formatMoney(payment.amount)));
+      }
+    }
+
+    // Separator
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+
+    // Total
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+    parts.push(this.formatLine('SUMA:', this.formatMoney(reportData.netSales)));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(ESCPOS.BOLD_OFF);
+
+    // Footer
+    parts.push(this.text(''));
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+
+    if (reportData.cashierName) {
+      parts.push(this.text(`Kasjer: ${reportData.cashierName}`));
+    }
+
+    // Feed and cut
+    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.CUT_PARTIAL);
+
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format X Report (non-zeroing report)
+   */
+  formatXReport(reportData: DailyReportData): Buffer {
+    const parts: Buffer[] = [];
+
+    parts.push(ESCPOS.INIT);
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.DOUBLE_SIZE_ON);
+    parts.push(this.text('RAPORT X'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(this.text('(Raport niefiskalny)'));
+    parts.push(this.text(''));
+
+    // Rest is similar to daily report
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text(`Data: ${reportData.date}`));
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+    parts.push(this.formatLine('Transakcje:', reportData.transactionCount.toString()));
+    parts.push(this.formatLine('Sprzedaz:', this.formatMoney(reportData.grossSales)));
+    parts.push(this.formatLine('Rabaty:', this.formatMoney(reportData.discounts)));
+    parts.push(this.formatLine('Netto:', this.formatMoney(reportData.netSales)));
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+
+    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.CUT_PARTIAL);
+
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Format Z Report (end of day, zeroing report)
+   */
+  formatZReport(reportData: DailyReportData): Buffer {
+    const parts: Buffer[] = [];
+
+    parts.push(ESCPOS.INIT);
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(ESCPOS.DOUBLE_SIZE_ON);
+    parts.push(this.text('RAPORT Z'));
+    parts.push(ESCPOS.NORMAL_SIZE);
+    parts.push(this.text('(Raport dobowy fiskalny)'));
+    parts.push(this.text(''));
+
+    // This is the same as daily report but marked as Z report
+    const dailyReport = this.formatDailyReport(reportData);
+
+    // Remove the header part and add Z report header
+    parts.push(ESCPOS.ALIGN_LEFT);
+    parts.push(this.text(`Nr raportu: ${reportData.reportNumber || 'N/A'}`));
+    parts.push(this.text(`Data: ${reportData.date}`));
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+
+    parts.push(this.formatLine('Transakcje:', reportData.transactionCount.toString()));
+    parts.push(this.formatLine('Sprzedaz brutto:', this.formatMoney(reportData.grossSales)));
+    parts.push(this.formatLine('Rabaty:', this.formatMoney(reportData.discounts)));
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(this.formatLine('SUMA NETTO:', this.formatMoney(reportData.netSales)));
+    parts.push(ESCPOS.BOLD_OFF);
+
+    // VAT breakdown
+    if (reportData.vatSummary) {
+      parts.push(this.text(''));
+      parts.push(this.text('PTU:'));
+      for (const vat of reportData.vatSummary) {
+        parts.push(this.formatLine(`  ${vat.rate}%:`, this.formatMoney(vat.amount)));
+      }
+    }
+
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+
+    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.CUT_PARTIAL);
+
+    return Buffer.concat(parts);
+  }
+}
+
+/**
+ * Daily report data structure
+ */
+export interface DailyReportData {
+  date: string;
+  reportNumber?: string;
+  transactionCount: number;
+  grossSales: number;      // In grosze
+  discounts: number;       // In grosze
+  netSales: number;        // In grosze
+  vatSummary?: Array<{
+    rate: number;          // VAT rate (23, 8, 5, 0)
+    amount: number;        // In grosze
+  }>;
+  paymentSummary?: Array<{
+    method: string;        // CASH, CARD, etc.
+    amount: number;        // In grosze
+  }>;
+  cashierName?: string;
+}

@@ -1,0 +1,223 @@
+import { database } from '../database/database';
+import { orderRepo } from '../database/repos/order-repo';
+import { DailyReportData, PrinterType } from '../../shared/types';
+import { apiClient } from '../network/api-client';
+import { getConfigValue, getSecureAuthToken } from '../config/store';
+import logger from '../logger';
+
+export interface ShiftReport {
+  shiftId: string;
+  staffName: string | null;
+  openedAt: string;
+  closedAt: string;
+  openingCash: number;
+  closingCash: number;
+  totalSales: number;
+  totalOrders: number;
+  cashTotal: number;
+  cardTotal: number;
+  difference: number; // closingCash - (openingCash + cashTotal)
+}
+
+type PrinterDriver = {
+  isConnected(): boolean;
+  printZReport(data: DailyReportData): Promise<void>;
+};
+
+export class ShiftController {
+  constructor(
+    private getPrinter: (type: string) => PrinterDriver | null,
+    private isOnline: () => boolean,
+  ) {}
+
+  /**
+   * Open a new shift
+   */
+  openShift(staffId: string, staffName: string, openingCash: number): string {
+    const shiftId = crypto.randomUUID();
+
+    database.run(
+      'INSERT INTO shifts (id, staff_id, staff_name, opening_cash) VALUES (?, ?, ?, ?)',
+      [shiftId, staffId, staffName, openingCash],
+    );
+    database.save();
+
+    // Async sync to backend (non-blocking)
+    this.syncShiftOpen(shiftId, staffId, openingCash);
+
+    logger.info(`[Shift] Opened shift ${shiftId} for ${staffName}, opening cash: ${openingCash}`);
+    return shiftId;
+  }
+
+  /**
+   * Close a shift and generate report
+   */
+  closeShift(shiftId: string, closingCash: number): ShiftReport {
+    const shift = database.get<{
+      id: string;
+      staff_id: string | null;
+      staff_name: string | null;
+      opened_at: string;
+      opening_cash: number;
+    }>('SELECT * FROM shifts WHERE id = ?', [shiftId]);
+
+    if (!shift) throw new Error(`Shift ${shiftId} not found`);
+
+    // Get orders for this shift
+    const orders = orderRepo.getByShift(shiftId);
+    const totalSales = orders.reduce((sum, o) => sum + o.total, 0);
+    const cashTotal = orders
+      .filter((o) => o.payment_method === 'CASH')
+      .reduce((sum, o) => sum + o.total, 0);
+    const cardTotal = orders
+      .filter((o) => o.payment_method === 'CARD')
+      .reduce((sum, o) => sum + o.total, 0);
+
+    const difference = closingCash - (shift.opening_cash + cashTotal);
+
+    database.run(
+      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ? WHERE id = ?",
+      [closingCash, totalSales, orders.length, shiftId],
+    );
+    database.save();
+
+    const report: ShiftReport = {
+      shiftId,
+      staffName: shift.staff_name,
+      openedAt: shift.opened_at,
+      closedAt: new Date().toISOString(),
+      openingCash: shift.opening_cash,
+      closingCash,
+      totalSales,
+      totalOrders: orders.length,
+      cashTotal,
+      cardTotal,
+      difference,
+    };
+
+    // Async sync to backend (non-blocking)
+    this.syncShiftClose(shiftId, closingCash);
+
+    logger.info(
+      `[Shift] Closed shift ${shiftId}: ${orders.length} orders, total ${totalSales}, diff ${difference}`,
+    );
+
+    return report;
+  }
+
+  /**
+   * Print Z-report (shift end report)
+   */
+  async printZReport(report: ShiftReport): Promise<void> {
+    const printer = this.getPrinter(PrinterType.RECEIPT) as PrinterDriver | null;
+    if (!printer || !printer.isConnected()) {
+      logger.warn('[Shift] No receipt printer connected, skipping Z-report print');
+      return;
+    }
+
+    const reportData: DailyReportData = {
+      date: report.closedAt.split('T')[0],
+      transactionCount: report.totalOrders,
+      grossSales: report.totalSales,
+      discounts: 0,
+      netSales: report.totalSales,
+      paymentSummary: [
+        { method: 'CASH', amount: report.cashTotal },
+        { method: 'CARD', amount: report.cardTotal },
+      ],
+      cashierName: report.staffName || undefined,
+    };
+
+    try {
+      await printer.printZReport(reportData);
+      logger.info(`[Shift] Z-report printed for shift ${report.shiftId}`);
+    } catch (err) {
+      logger.error(`[Shift] Z-report print failed: ${err}`);
+    }
+  }
+
+  /**
+   * Retry syncing any unsynced shifts (called on reconnect)
+   */
+  async retryUnsyncedShifts(): Promise<void> {
+    const token = getSecureAuthToken();
+    if (!token || !this.isOnline()) return;
+
+    // Retry unsynced shift opens
+    const unsyncedOpen = database.all<{ id: string; staff_id: string; opening_cash: number }>(
+      'SELECT id, staff_id, opening_cash FROM shifts WHERE synced = 0 AND backend_id IS NULL',
+    );
+    for (const shift of unsyncedOpen) {
+      try {
+        const result = await apiClient.openPosShift(token, {
+          staffId: shift.staff_id,
+          openingCash: shift.opening_cash,
+        });
+        database.run('UPDATE shifts SET backend_id = ?, synced = 1 WHERE id = ?', [
+          result.shiftId,
+          shift.id,
+        ]);
+        database.save();
+        logger.info(`[Shift] Retry: synced shift open ${shift.id}`);
+      } catch (err) {
+        logger.warn(`[Shift] Retry failed for shift open ${shift.id}: ${err}`);
+      }
+    }
+
+    // Retry unsynced shift closes (have backend_id but closed_at set and not synced)
+    const unsyncedClose = database.all<{ id: string; backend_id: string; closing_cash: number }>(
+      'SELECT id, backend_id, closing_cash FROM shifts WHERE synced = 1 AND backend_id IS NOT NULL AND closed_at IS NOT NULL AND closing_cash IS NOT NULL',
+    );
+    for (const shift of unsyncedClose) {
+      try {
+        await apiClient.closePosShift(token, shift.backend_id, {
+          closingCash: shift.closing_cash,
+        });
+        logger.info(`[Shift] Retry: synced shift close ${shift.id}`);
+      } catch (err) {
+        logger.warn(`[Shift] Retry failed for shift close ${shift.id}: ${err}`);
+      }
+    }
+  }
+
+  private async syncShiftOpen(shiftId: string, staffId: string, openingCash: number): Promise<void> {
+    if (!this.isOnline()) {
+      logger.info(`[Shift] Offline, shift open ${shiftId} queued for retry`);
+      return;
+    }
+    const token = getSecureAuthToken();
+    if (!token) return;
+
+    try {
+      const result = await apiClient.openPosShift(token, { staffId, openingCash });
+      database.run('UPDATE shifts SET backend_id = ?, synced = 1 WHERE id = ?', [
+        result.shiftId,
+        shiftId,
+      ]);
+      database.save();
+    } catch (err) {
+      logger.warn(`[Shift] Failed to sync shift open ${shiftId}, will retry on reconnect: ${err}`);
+    }
+  }
+
+  private async syncShiftClose(shiftId: string, closingCash: number): Promise<void> {
+    if (!this.isOnline()) {
+      logger.info(`[Shift] Offline, shift close ${shiftId} queued for retry`);
+      return;
+    }
+    const token = getSecureAuthToken();
+    if (!token) return;
+
+    const shift = database.get<{ backend_id: string | null }>(
+      'SELECT backend_id FROM shifts WHERE id = ?',
+      [shiftId],
+    );
+    if (!shift?.backend_id) return;
+
+    try {
+      await apiClient.closePosShift(token, shift.backend_id, { closingCash });
+    } catch (err) {
+      logger.warn(`[Shift] Failed to sync shift close ${shiftId}, will retry on reconnect: ${err}`);
+    }
+  }
+}

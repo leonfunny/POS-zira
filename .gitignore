@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# Electron
+*.deb
+*.AppImage
+*.exe
+*.msi
+*.dmg
+
+# Local AI memory / config
+.claude/
+
+# Cloudflare Wrangler
+.wrangler/
+
+# Screenshots / temp files
+*.png
+*.jpg
+screenshots/
+_nul

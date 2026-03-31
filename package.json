@@ -1,0 +1,105 @@
+{
+  "name": "zira-ai",
+  "version": "1.0.3",
+  "description": "Zira AI - Desktop application for connecting POS with thermal printers and barcode scanners",
+  "author": "Zira AI <contact@zira-ai.com>",
+  "license": "MIT",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:renderer": "vite",
+    "typecheck:renderer": "tsc -p tsconfig.renderer.json --noEmit",
+    "build": "npm run typecheck:renderer && npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "postinstall": "echo 'Skipping native rebuild for cross-platform build'",
+    "scrape:fb": "node scripts/facebook-scraper.js",
+    "scrape:fb:ts": "npx ts-node scripts/facebook-scraper.ts",
+    "scrape:fb:stealth": "node scripts/facebook-scraper-stealth.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.7.3",
+    "grammy": "^1.21.0",
+    "lucide-react": "^0.563.0",
+    "openai": "^4.77.0",
+    "qrcode": "^1.5.4",
+    "react-zoom-pan-pinch": "^3.7.0",
+    "rebrowser-playwright-core": "^1.52.0",
+    "socket.io-client": "^4.8.1",
+    "sql.js": "^1.13.0",
+    "winston": "^3.17.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.982.0",
+    "@types/node": "^22.10.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/sql.js": "^1.4.9",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "playwright": "^1.58.1",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.0.18"
+  },
+  "build": {
+    "appId": "com.zira-ai.agent",
+    "productName": "Zira AI",
+    "copyright": "Copyright © 2024 Zira AI",
+    "asar": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icons/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "assets/icons/installer.ico"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://img.zira.pl/downloads/"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ]
+  }
+}
