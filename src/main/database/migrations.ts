@@ -734,4 +734,11 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_checkin_booking_number ON checkins(booking_number);
     `,
   },
+  {
+    version: 12,
+    name: 'salon_customer_marketing_consent',
+    up: `
+      ALTER TABLE salon_customers ADD COLUMN marketing_consent INTEGER DEFAULT 0;
+    `,
+  },
 ];

@@ -13,6 +13,7 @@ export interface SalonCustomerRow {
   visit_count: number;
   last_visit_at: string | null;
   last_service_name: string | null;
+  marketing_consent: number;
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +42,7 @@ export interface SalonCustomerCreateData {
   email?: string;
   birthday?: string;
   notes?: string;
+  marketing_consent?: boolean;
   backend_customer_id?: string;
 }
 
@@ -72,8 +74,8 @@ export const salonCustomerRepo = {
 
   create(data: SalonCustomerCreateData): SalonCustomerRow {
     database.run(
-      `INSERT INTO salon_customers (id, name, phone, email, birthday, notes, backend_customer_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO salon_customers (id, name, phone, email, birthday, notes, marketing_consent, backend_customer_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.id,
         data.name,
@@ -81,6 +83,7 @@ export const salonCustomerRepo = {
         data.email || null,
         data.birthday || null,
         data.notes || null,
+        data.marketing_consent ? 1 : 0,
         data.backend_customer_id || null,
       ],
     );
@@ -94,8 +97,8 @@ export const salonCustomerRepo = {
         database.run(
           `UPDATE salon_customers SET name = ?, email = COALESCE(?, email),
            birthday = COALESCE(?, birthday), notes = COALESCE(?, notes),
-           updated_at = datetime('now') WHERE id = ?`,
-          [data.name, data.email || null, data.birthday || null, data.notes || null, existing.id],
+           marketing_consent = ?, updated_at = datetime('now') WHERE id = ?`,
+          [data.name, data.email || null, data.birthday || null, data.notes || null, data.marketing_consent ? 1 : 0, existing.id],
         );
         return this.getById(existing.id)!;
       }

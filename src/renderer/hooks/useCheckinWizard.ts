@@ -281,7 +281,7 @@ export function useCheckinWizard() {
     });
   }, [update]);
 
-  const createCustomer = useCallback(async (form: { name: string; phone: string; birthday?: string; notes?: string }) => {
+  const createCustomer = useCallback(async (form: { name: string; phone: string; birthday?: string; notes?: string; marketingConsent?: boolean }) => {
     try {
       const id = `sc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const result = await window.electronAPI.salonCustomer.create({
@@ -290,6 +290,7 @@ export function useCheckinWizard() {
         phone: form.phone || undefined,
         birthday: form.birthday || undefined,
         notes: form.notes || undefined,
+        marketing_consent: form.marketingConsent,
       });
       if (result.success && result.data) {
         const bestsellers = await window.electronAPI.servicePopularity.get();
@@ -364,6 +365,7 @@ export function useCheckinWizard() {
         bookingNumber: result?.bookingNumber,
         customerName: customer?.name || customer?.phone || 'Guest',
         customerPhone: customer?.phone,
+        customerNotes: customer?.notes || undefined,
         services: selectedServices.map((s) => ({ name: s.name, price: s.price || 0 })),
         staffName: selectedStaff?.name,
         checkinTime: new Date().toISOString(),

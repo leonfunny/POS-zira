@@ -303,7 +303,7 @@ interface ElectronAPI {
     addUpsells: (id: string, upsells: string[]) => Promise<{ success: boolean }>;
     updateNotes: (id: string, notes: string) => Promise<{ success: boolean }>;
     getStats: (date?: string) => Promise<CheckinStats>;
-    printConfirmation: (data: { bookingNumber?: string; customerName: string; customerPhone?: string; services: { name: string; price: number }[]; staffName?: string; checkinTime: string }) => Promise<{ success: boolean; error?: string }>;
+    printConfirmation: (data: { bookingNumber?: string; customerName: string; customerPhone?: string; customerNotes?: string; services: { name: string; price: number }[]; staffName?: string; checkinTime: string }) => Promise<{ success: boolean; error?: string }>;
   };
 
   // Salon Customers (check-in wizard)

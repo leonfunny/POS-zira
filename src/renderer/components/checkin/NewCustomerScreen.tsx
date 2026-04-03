@@ -6,7 +6,7 @@ type ActiveField = 'name' | 'notes' | null;
 interface Props {
   t: (key: string) => string;
   initialPhone: string;
-  onSubmit: (form: { name: string; phone: string; birthday?: string; notes?: string }) => void;
+  onSubmit: (form: { name: string; phone: string; birthday?: string; notes?: string; marketingConsent?: boolean }) => void;
   onBack: () => void;
 }
 
@@ -18,6 +18,7 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
   const [phone] = useState(initialPhone);
   const [birthday, setBirthday] = useState('');
   const [notes, setNotes] = useState('');
+  const [marketingConsent, setMarketingConsent] = useState(true);
   const [activeField, setActiveField] = useState<ActiveField>('name');
 
   const nameRef = useRef<HTMLInputElement>(null);
@@ -42,7 +43,7 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({ name: name.trim(), phone: phone.trim(), birthday: birthday || undefined, notes: notes || undefined });
+    onSubmit({ name: name.trim(), phone: phone.trim(), birthday: birthday || undefined, notes: notes || undefined, marketingConsent });
   };
 
   const handleKey = useCallback((key: string) => {
@@ -177,11 +178,14 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                     className="w-full pl-9 pr-3 py-3 text-sm border-2 border-stone-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 transition-all hover:border-stone-300"
                   />
                 </div>
+                <p className="text-[10px] text-brand-500 mt-1.5 flex items-center gap-1">
+                  <span>🎂</span> {t('wizard.birthdayHint')}
+                </p>
               </div>
             </div>
 
             {/* Notes */}
-            <div className="mb-5">
+            <div className="mb-4">
               <label htmlFor="nc-notes" className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                 {t('wizard.notes')}
                 <span className="ml-1 normal-case font-normal text-stone-400">({t('wizard.optional')})</span>
@@ -201,6 +205,22 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                 placeholder={t('wizard.notesPlaceholder') || 'Allergies, preferences...'}
               />
             </div>
+
+            {/* Marketing consent */}
+            <label className="flex items-start gap-3 mb-5 cursor-pointer select-none" onClick={() => setMarketingConsent(!marketingConsent)}>
+              <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
+                marketingConsent
+                  ? 'bg-brand-600 border-brand-600'
+                  : 'bg-white border-stone-300'
+              }`}>
+                {marketingConsent && (
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+              <span className="text-xs text-stone-600 leading-relaxed">{t('wizard.marketingConsent')}</span>
+            </label>
 
             <button
               type="submit"

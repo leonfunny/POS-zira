@@ -89,6 +89,7 @@ export interface CheckinConfirmationData {
   bookingNumber?: string;  // e.g. "001/0204"
   customerName: string;
   customerPhone?: string;
+  customerNotes?: string;
   services: CheckinConfirmationService[];
   staffName?: string;
   checkinTime: string;  // ISO string
