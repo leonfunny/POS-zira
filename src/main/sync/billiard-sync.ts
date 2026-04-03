@@ -184,7 +184,7 @@ export class BilliardSync {
 
         // Trigger a quick dashboard refresh to update local cache
         // Run in background — don't block the mutation response
-        this.refreshDashboard().catch(() => {});
+        this.refreshDashboard().catch((e) => { logger.debug('[BilliardSync] post-mutation refresh failed:', e?.message); });
 
         return result;
       } catch (err: any) {
@@ -470,7 +470,7 @@ export class BilliardSync {
     database.save();
 
     // Force dashboard refresh after replay
-    await this.refreshDashboard().catch(() => {});
+    await this.refreshDashboard().catch((e) => { logger.debug('[BilliardSync] post-replay refresh failed:', e?.message); });
 
     logger.info(`[BilliardSync] Queue replay done: ${ok} ok, ${failed} failed`);
     this.notifyRenderer('queue-replayed');

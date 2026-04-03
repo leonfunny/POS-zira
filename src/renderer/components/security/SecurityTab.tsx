@@ -4,6 +4,9 @@ import AlertsList from './AlertsList';
 import CameraSettings from './CameraSettings';
 import AnalyticsDashboard from './AnalyticsDashboard';
 import type { AgentConfig, SecurityConfig, SecurityStatus, CameraConfig } from '../../../shared/types';
+import { useTranslation } from '../../i18n/useTranslation';
+import type { Language } from '../../i18n/translations';
+import rlog from '../../utils/logger';
 
 type SubView = 'cameras' | 'alerts' | 'analytics' | 'settings';
 
@@ -31,6 +34,7 @@ const defaultSecurityConfig: SecurityConfig = {
 };
 
 export default function SecurityTab({ config }: SecurityTabProps) {
+  const { t } = useTranslation((config?.language as Language) || 'en');
   const [subView, setSubView] = useState<SubView>('cameras');
   const [securityConfig, setSecurityConfig] = useState<SecurityConfig>(defaultSecurityConfig);
   const [status, setStatus] = useState<SecurityStatus>({
@@ -52,7 +56,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
         if (cfg) setSecurityConfig(cfg);
         if (sts) setStatus(sts);
       } catch (err) {
-        console.error('[SecurityTab] Load error:', err);
+        rlog.error('[SecurityTab] Load error:', err);
       } finally {
         setLoading(false);
       }
@@ -116,11 +120,11 @@ export default function SecurityTab({ config }: SecurityTabProps) {
   const onlineCameras = status.cameras.filter(c => c.connected).length;
   const totalCameras = securityConfig.cameras.length;
 
-  const SUB_VIEWS: { key: SubView; label: string }[] = [
-    { key: 'cameras', label: 'Cameras' },
-    { key: 'alerts', label: 'Alerts' },
-    { key: 'analytics', label: 'Analytics' },
-    { key: 'settings', label: 'Settings' },
+  const SUB_VIEWS: { key: SubView; labelKey: string }[] = [
+    { key: 'cameras', labelKey: 'security.cameras' },
+    { key: 'alerts', labelKey: 'security.alerts' },
+    { key: 'analytics', labelKey: 'security.analytics' },
+    { key: 'settings', labelKey: 'security.settings' },
   ];
 
   return (
@@ -128,11 +132,11 @@ export default function SecurityTab({ config }: SecurityTabProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-800">Security Monitoring</h2>
+          <h2 className="text-lg font-semibold text-slate-800">{t('security.title')}</h2>
           <p className="text-xs text-slate-500">
-            {totalCameras} camera{totalCameras !== 1 ? 's' : ''}
+            {totalCameras} {totalCameras !== 1 ? t('security.camerasCount') : t('security.cameraCount')}
             {status.running && (
-              <> &middot; {onlineCameras} online &middot; {status.totalInferenceFps} FPS total</>
+              <> &middot; {onlineCameras} {t('security.online')} &middot; {status.totalInferenceFps} {t('security.fpsTotal')}</>
             )}
           </p>
         </div>
@@ -140,24 +144,26 @@ export default function SecurityTab({ config }: SecurityTabProps) {
           {status.running ? (
             <button
               onClick={handleStop}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              aria-label={t('security.stop')}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors touch-manipulation"
             >
-              <span>&#x23F9;</span> Stop
+              <span>&#x23F9;</span> {t('security.stop')}
             </button>
           ) : (
             <button
               onClick={handleStart}
               disabled={totalCameras === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label={t('security.start')}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
             >
-              <span>&#x25B6;</span> Start
+              <span>&#x25B6;</span> {t('security.start')}
             </button>
           )}
           <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium ${
             status.running ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${status.running ? 'bg-green-500' : 'bg-slate-400'}`} />
-            {status.running ? 'Running' : 'Stopped'}
+            {status.running ? t('security.running') : t('security.stopped')}
           </span>
         </div>
       </div>
@@ -174,7 +180,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            {sv.label}
+            {t(sv.labelKey)}
           </button>
         ))}
       </div>
@@ -190,17 +196,18 @@ export default function SecurityTab({ config }: SecurityTabProps) {
               name: c.name,
               zone: c.zone,
             }))}
+            t={t}
           />
-          <AlertsList limit={5} />
+          <AlertsList limit={5} t={t} />
         </div>
       )}
 
       {subView === 'alerts' && (
-        <AlertsList limit={100} />
+        <AlertsList limit={100} t={t} />
       )}
 
       {subView === 'analytics' && (
-        <AnalyticsDashboard cameras={securityConfig.cameras} />
+        <AnalyticsDashboard cameras={securityConfig.cameras} t={t} />
       )}
 
       {subView === 'settings' && (
@@ -208,26 +215,27 @@ export default function SecurityTab({ config }: SecurityTabProps) {
           <CameraSettings
             cameras={securityConfig.cameras}
             onSave={handleSaveCameras}
+            t={t}
           />
 
           {/* Global settings */}
           <div className="border border-slate-200 rounded-lg p-3 space-y-3">
-            <h3 className="text-sm font-medium text-slate-700">Global Settings</h3>
+            <h3 className="text-sm font-medium text-slate-700">{t('security.globalSettings')}</h3>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">YOLO Model</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.yoloModel')}</label>
                 <select
                   value={securityConfig.modelSize}
                   onChange={(e) => handleSaveGlobalConfig({ modelSize: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                 >
-                  <option value="yolov8n">YOLOv8 Nano (fastest)</option>
-                  <option value="yolov8s">YOLOv8 Small (balanced)</option>
+                  <option value="yolov8n">{t('security.yoloNano')}</option>
+                  <option value="yolov8s">{t('security.yoloSmall')}</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Cooldown (s)</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.cooldown')}</label>
                 <input
                   type="number"
                   value={securityConfig.cooldownSeconds}
@@ -240,7 +248,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">MJPEG Port</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.mjpegPort')}</label>
                 <input
                   type="number"
                   value={securityConfig.mjpegPort}
@@ -250,7 +258,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Evidence Retention (days)</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.evidenceRetention')}</label>
                 <input
                   type="number"
                   value={securityConfig.evidenceRetentionDays}
@@ -263,7 +271,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Business Hours Start</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.businessHoursStart')}</label>
                 <input
                   type="time"
                   value={securityConfig.businessHoursStart}
@@ -272,7 +280,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Business Hours End</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.businessHoursEnd')}</label>
                 <input
                   type="time"
                   value={securityConfig.businessHoursEnd}
@@ -289,7 +297,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                   checked={securityConfig.snapshotOnAlert}
                   onChange={(e) => handleSaveGlobalConfig({ snapshotOnAlert: e.target.checked })}
                 />
-                Snapshot on Alert
+                {t('security.snapshotOnAlert')}
               </label>
               <label className="flex items-center gap-1.5 text-xs">
                 <input
@@ -297,7 +305,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                   checked={securityConfig.clipOnAlert}
                   onChange={(e) => handleSaveGlobalConfig({ clipOnAlert: e.target.checked })}
                 />
-                Clip on Alert
+                {t('security.clipOnAlert')}
               </label>
               <label className="flex items-center gap-1.5 text-xs">
                 <input
@@ -305,19 +313,19 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                   checked={securityConfig.telegramAlertEnabled}
                   onChange={(e) => handleSaveGlobalConfig({ telegramAlertEnabled: e.target.checked })}
                 />
-                Telegram Alerts
+                {t('security.telegramAlerts')}
               </label>
             </div>
 
             {securityConfig.telegramAlertEnabled && (
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Telegram Chat ID</label>
+                <label className="text-xs text-slate-500 block mb-1">{t('security.telegramChatId')}</label>
                 <input
                   type="text"
                   value={securityConfig.telegramChatId}
                   onChange={(e) => handleSaveGlobalConfig({ telegramChatId: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
-                  placeholder="e.g. -1001234567890"
+                  placeholder={t('security.telegramChatIdPlaceholder')}
                 />
               </div>
             )}

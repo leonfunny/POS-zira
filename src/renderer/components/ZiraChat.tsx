@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ZiraAIStatus, ZiraAIChatResponse, AuthUser } from '../../shared/types';
 import AuthScreen from './AuthScreen';
+import rlog from '../utils/logger';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -33,7 +34,7 @@ export default function ZiraChat() {
           setIsAuthenticated(false);
         }
       } catch (err) {
-        console.error('[ZiraChat] Auth check failed:', err);
+        rlog.error('[ZiraChat] Auth check failed:', err);
         setIsAuthenticated(false);
       } finally {
         setAuthChecking(false);
@@ -50,7 +51,7 @@ export default function ZiraChat() {
         const s = await window.electronAPI.ai.getStatus();
         setStatus(s);
       } catch (err) {
-        console.error('[ZiraChat] Failed to get AI status:', err);
+        rlog.error('[ZiraChat] Failed to get AI status:', err);
       } finally {
         setStatusLoading(false);
       }
@@ -82,7 +83,7 @@ export default function ZiraChat() {
       setStatus(null);
       setStatusLoading(true);
     } catch (err) {
-      console.error('[ZiraChat] Logout failed:', err);
+      rlog.error('[ZiraChat] Logout failed:', err);
     }
   };
 
@@ -139,7 +140,7 @@ export default function ZiraChat() {
       const s = await window.electronAPI.ai.getStatus();
       setStatus(s);
     } catch (err) {
-      console.error('[ZiraChat] Failed to clear history:', err);
+      rlog.error('[ZiraChat] Failed to clear history:', err);
     }
   };
 

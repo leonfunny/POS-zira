@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { usePosStore } from '../../hooks/usePosStore';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
+import rlog from '../../utils/logger';
 import ShiftModal from './ShiftModal';
 import ShiftReportModal from './ShiftReport';
 import RetailTemplate from './templates/retail/RetailTemplate';
@@ -56,7 +57,7 @@ export default function POSLayout() {
     try {
       await window.electronAPI.setConfig({ posLanguage: lang });
     } catch (e) {
-      console.error('Failed to save language:', e);
+      rlog.error('Failed to save language:', e);
     }
   };
 
@@ -71,11 +72,11 @@ export default function POSLayout() {
       if (cfg?.posMode) {
         setPosMode(cfg.posMode);
       }
-    }).catch((err) => console.error('[POSLayout] Failed to load config:', err));
+    }).catch((err) => rlog.error('[POSLayout] Failed to load config:', err));
 
     window.electronAPI.getStatus().then((status: any) => {
       setIsOnline(status?.connected ?? false);
-    }).catch((err) => console.error('[POSLayout] Failed to load status:', err));
+    }).catch((err) => rlog.error('[POSLayout] Failed to load status:', err));
   }, []);
 
   // Listen for connection status changes
@@ -137,7 +138,7 @@ export default function POSLayout() {
           {!session.isOpen && (
             <button
               onClick={() => setShowShiftModal('open')}
-              className="px-3 py-1.5 text-xs bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 font-medium transition-colors border border-emerald-200"
+              className="px-4 py-2.5 text-sm bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 font-medium transition-colors border border-emerald-200 touch-manipulation"
             >
               {t('pos.shift.open')}
             </button>
@@ -145,7 +146,7 @@ export default function POSLayout() {
           {session.isOpen && (
             <button
               onClick={() => setShowShiftModal('close')}
-              className="px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 font-medium transition-colors border border-red-200"
+              className="px-4 py-2.5 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 font-medium transition-colors border border-red-200 touch-manipulation"
             >
               {t('pos.shift.close')}
             </button>
@@ -156,7 +157,7 @@ export default function POSLayout() {
           <div className="relative" ref={langDropdownRef}>
             <button
               onClick={() => setShowLangDropdown(!showLangDropdown)}
-              className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 text-gray-600 border border-gray-200 hover:bg-gray-100 flex items-center gap-1.5 transition-colors font-medium"
+              className="px-3 py-2.5 text-xs rounded-lg bg-slate-50 text-gray-600 border border-gray-200 hover:bg-gray-100 flex items-center gap-1.5 transition-colors font-medium touch-manipulation"
             >
               <span className="text-sm">{LANGUAGE_FLAGS[language]}</span>
               <span className="hidden sm:inline">{languageNames[language]}</span>
@@ -170,7 +171,7 @@ export default function POSLayout() {
                   <button
                     key={lang}
                     onClick={() => handleLanguageChange(lang)}
-                    className={`w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-slate-50 transition-colors ${
+                    className={`w-full px-3 py-3 text-left text-xs flex items-center gap-2 hover:bg-slate-50 transition-colors touch-manipulation ${
                       language === lang ? 'bg-slate-50 text-brand-600' : 'text-gray-600'
                     }`}
                   >

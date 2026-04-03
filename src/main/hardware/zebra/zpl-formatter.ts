@@ -1,4 +1,4 @@
-import { ReceiptData, LabelData, BarcodeType } from '../../../shared/types';
+import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData } from '../../../shared/types';
 
 /**
  * ZPL command mappings for barcode types
@@ -22,6 +22,14 @@ export class ZplFormatter {
     dpi: number = 203                   // Common: 203 or 300 dpi
   ) {
     this.dotsPerMm = dpi / 25.4;
+  }
+
+  /**
+   * Update label dimensions (used by auto-detect)
+   */
+  updateDimensions(widthMm: number, heightMm: number): void {
+    this.labelWidth = widthMm;
+    this.labelHeight = heightMm;
   }
 
   /**
@@ -54,6 +62,7 @@ export class ZplFormatter {
     // Set label size
     lines.push(`^LL${this.mmToDots(this.labelHeight)}`);
     lines.push(`^PW${this.mmToDots(this.labelWidth)}`);
+
 
     // Position for barcode
     const barcodeX = this.mmToDots(5);
@@ -120,6 +129,7 @@ export class ZplFormatter {
 
     // Use continuous media mode for receipts
     lines.push('^MNN');  // Non-continuous media
+
 
     const leftMargin = this.mmToDots(3);
     const rightCol = this.mmToDots(this.labelWidth - 25);
@@ -228,47 +238,174 @@ export class ZplFormatter {
   }
 
   /**
+   * How many services fit on a single check-in label.
+   */
+  getMaxServicesPerLabel(): number {
+    return this.labelHeight <= 25 ? 2 : this.labelHeight <= 35 ? 3 : this.labelHeight <= 50 ? 4 : 6;
+  }
+
+  /**
+   * Format check-in confirmation label(s).
+   * Omits ^LL so the printer uses its auto-calibrated label length.
+   * If services exceed one label, outputs multiple ^XA…^XZ blocks
+   * that the printer processes as sequential labels.
+   */
+  formatCheckinConfirmation(data: CheckinConfirmationData): string {
+    const maxPerLabel = this.getMaxServicesPerLabel();
+
+    if (data.services.length <= maxPerLabel) {
+      // Single label — all services fit
+      return this.buildCheckinLabel(data, data.services, 1, 1);
+    }
+
+    // Multi-label: split services into chunks
+    const chunks: typeof data.services[] = [];
+    for (let i = 0; i < data.services.length; i += maxPerLabel) {
+      chunks.push(data.services.slice(i, i + maxPerLabel));
+    }
+
+    // Print in reverse order: summary page first, CHECK-IN header last.
+    // Last printed label ends up on top of the stack → customer sees header first.
+    return chunks.map((chunk, idx) =>
+      this.buildCheckinLabel(data, chunk, idx + 1, chunks.length)
+    ).reverse().join('\n');
+  }
+
+  /**
+   * Build a single check-in label ZPL block.
+   */
+  private buildCheckinLabel(
+    data: CheckinConfirmationData,
+    services: CheckinConfirmationData['services'],
+    page: number,
+    totalPages: number,
+  ): string {
+    const lines: string[] = [];
+    const margin = this.mmToDots(2);
+    const contentWidth = this.mmToDots(this.labelWidth - 4);
+    let y = this.mmToDots(2);
+
+    const titleFont = this.mmToDots(3);
+    const bodyFont = this.mmToDots(2);
+    const lineStep = this.mmToDots(3.2);
+    const isFirstPage = page === 1;
+    const isLastPage = page === totalPages;
+    const isMultiPage = totalPages > 1;
+
+    lines.push('^XA');
+    lines.push(`^PW${this.mmToDots(this.labelWidth)}`);
+
+    if (isFirstPage) {
+      // Header
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${titleFont},${titleFont}`);
+      lines.push('^FDCheck-in Confirmed^FS');
+      if (isMultiPage) {
+        // Page indicator right-aligned
+        const pageText = `${page}/${totalPages}`;
+        lines.push(`^FO${this.mmToDots(this.labelWidth - 12)},${y}`);
+        lines.push(`^A0,${bodyFont},${bodyFont}`);
+        lines.push(`^FD${pageText}^FS`);
+      }
+      y += this.mmToDots(4);
+
+      // Separator
+      lines.push(`^FO${margin},${y}^GB${contentWidth},1,1^FS`);
+      y += this.mmToDots(2);
+
+      // Customer name
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${titleFont},${titleFont}`);
+      lines.push(`^FD${this.sanitizeText(data.customerName, 30)}^FS`);
+      y += this.mmToDots(3.5);
+    } else {
+      // Continuation header: customer name + page
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${titleFont},${titleFont}`);
+      lines.push(`^FD${this.sanitizeText(data.customerName, 25)}^FS`);
+      const pageText = `${page}/${totalPages}`;
+      lines.push(`^FO${this.mmToDots(this.labelWidth - 12)},${y}`);
+      lines.push(`^A0,${bodyFont},${bodyFont}`);
+      lines.push(`^FD${pageText}^FS`);
+      y += this.mmToDots(4);
+
+      lines.push(`^FO${margin},${y}^GB${contentWidth},1,1^FS`);
+      y += this.mmToDots(2);
+    }
+
+    // Services for this page
+    for (const svc of services) {
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${bodyFont},${bodyFont}`);
+      lines.push(`^FD- ${this.sanitizeText(svc.name, 28)}^FS`);
+      y += lineStep;
+    }
+
+    if (isLastPage) {
+      // Staff
+      if (data.staffName) {
+        lines.push(`^FO${margin},${y}`);
+        lines.push(`^A0,${bodyFont},${bodyFont}`);
+        lines.push(`^FDStaff: ${this.sanitizeText(data.staffName, 25)}^FS`);
+        y += lineStep;
+      }
+
+      // Date/time
+      const dt = new Date(data.checkinTime);
+      const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const dateStr = dt.toLocaleDateString();
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${bodyFont},${bodyFont}`);
+      lines.push(`^FD${dateStr} ${timeStr}^FS`);
+      y += lineStep;
+
+      // Bottom separator + Welcome
+      lines.push(`^FO${margin},${y}^GB${contentWidth},1,1^FS`);
+      y += this.mmToDots(2);
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${bodyFont},${bodyFont}`);
+      lines.push('^FDWelcome! Please wait.^FS');
+    } else {
+      // "continued" indicator
+      lines.push(`^FO${margin},${y}`);
+      lines.push(`^A0,${bodyFont},${bodyFont}`);
+      lines.push('^FD>> continued...^FS');
+    }
+
+    lines.push('^XZ');
+    return lines.join('\n');
+  }
+
+  /**
    * Format test print ZPL
    */
   formatTestPrint(): string {
     const lines: string[] = [];
-    const leftMargin = this.mmToDots(5);
-    let currentY = this.mmToDots(5);
-    const lineHeight = this.mmToDots(6);
+    const margin = this.mmToDots(3);
+    let y = this.mmToDots(3);
+    const step = this.mmToDots(5);
 
     lines.push('^XA');
-    lines.push(`^LL${this.mmToDots(this.labelHeight)}`);
+    // No ^LL — let the printer use its own calibrated label length.
+    // ^PW set to configured width so content stays within the label.
     lines.push(`^PW${this.mmToDots(this.labelWidth)}`);
 
     // Title
-    lines.push(`^FO${leftMargin},${currentY}`);
-    lines.push(`^A0,${this.mmToDots(5)},${this.mmToDots(5)}`);
-    lines.push('^FDZira AI^FS');
-    currentY += lineHeight;
+    lines.push(`^FO${margin},${y}^A0,${this.mmToDots(4)},${this.mmToDots(4)}^FDZira AI^FS`);
+    y += step;
 
     // Subtitle
-    lines.push(`^FO${leftMargin},${currentY}`);
-    lines.push(`^A0,${this.mmToDots(3.5)},${this.mmToDots(3.5)}`);
-    lines.push('^FDZebra Test Print^FS');
-    currentY += lineHeight;
+    lines.push(`^FO${margin},${y}^A0,${this.mmToDots(3)},${this.mmToDots(3)}^FDTest Print OK^FS`);
+    y += step;
 
-    // Date/time
+    // Date/time (ASCII-safe)
     const now = new Date();
-    lines.push(`^FO${leftMargin},${currentY}`);
-    lines.push(`^A0,${this.mmToDots(3)},${this.mmToDots(3)}`);
-    lines.push(`^FD${now.toLocaleString()}^FS`);
-    currentY += lineHeight;
+    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    lines.push(`^FO${margin},${y}^A0,${this.mmToDots(2.5)},${this.mmToDots(2.5)}^FD${ts}^FS`);
+    y += step;
 
-    // Test barcode
-    lines.push(`^FO${leftMargin},${currentY}^BY2`);
-    lines.push(`^BC,${this.mmToDots(10)},Y,N,N`);
-    lines.push('^FD123456789^FS');
-    currentY += this.mmToDots(18);
-
-    // Label dimensions info
-    lines.push(`^FO${leftMargin},${currentY}`);
-    lines.push(`^A0,${this.mmToDots(2.5)},${this.mmToDots(2.5)}`);
-    lines.push(`^FDLabel: ${this.labelWidth}x${this.labelHeight}mm^FS`);
+    // Dimensions info
+    lines.push(`^FO${margin},${y}^A0,${this.mmToDots(2.5)},${this.mmToDots(2.5)}^FD${this.labelWidth}x${this.labelHeight}mm^FS`);
 
     lines.push('^XZ');
 

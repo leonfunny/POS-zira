@@ -1,6 +1,6 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-03-31 (session 17 — tsconfig fix + kiosk lockdown attempt) | Read this file at the start of every new session.
+> Last updated: 2026-04-03 (session 28 — Settings audit: 9 of 10 bugs fixed) | Read this file at the start of every new session.
 
 ---
 
@@ -11,18 +11,18 @@ Connects a salon's eNail POS system with hardware (thermal printers, barcode sca
 The user (`kaipizz`) works **remotely via Discord** and never sees the POS machine directly.
 
 **Remote workflow:**
-- User sends instructions → Discord channel `1486692296379596810`
+- User sends instructions via Discord channel `1488850360742182922`
 - AI makes code changes on the POS machine, takes screenshots, sends them back via Discord
 - Screenshots saved to: `C:\Users\pc\Pictures\zira-screenshots\` (numbered sequentially)
 
-**⚠️ Always report context warnings, build results, errors, and status via Discord — not just terminal.**
+**Key rule: Don't trust anything too much.** Always verify paths, references, config, and test infrastructure against reality before assuming they're correct. If already verified this session, skip.
 
 ---
 
 ## GitHub / Multi-Computer Workflow
 
 - Repo: `https://github.com/KaiPizz/zira-pos.git` (pushed 2026-03-31)
-- **Start of every session on the main machine:** run `git pull origin main` before touching any code — changes may have arrived from another computer
+- **Start of every session on the main machine:** only run `git pull origin main` before touching any code when the user told — changes may have arrived from another computer
 - The user sometimes continues work on a separate machine using Codex or another AI; those sessions commit and push to `main`
 - SESSION_HANDOFF.md is the canonical context file — always read it first, always update it at the end
 
@@ -56,7 +56,7 @@ powershell -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;
 
 **Login bypass (offline mode):**
 1. Click email field (~x=655, y=165)
-2. Tab × 5 → Enter → Offline Mode → all tabs accessible
+2. Tab x 5 -> Enter -> Offline Mode -> all tabs accessible
 
 ---
 
@@ -64,81 +64,58 @@ powershell -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;
 
 | Skill | Commands |
 |-------|---------|
+| **Audit System** | `/audit-app` (master), `/audit-code`, `/audit-architecture`, `/audit-security`, `/audit-ui`, `/audit-functional` |
 | **GSD** | `/gsd:*` (50+ commands) |
 | **UI/UX Pro Max** | Auto-activates for UI work |
-| **ECC Skills** (9) | `/ecc:security-review`, `ecc:e2e-testing`, `ecc:verification-loop`, `ecc:backend-patterns`, `ecc:frontend-patterns`, `ecc:coding-standards`, `ecc:api-design`, `ecc:feature-development`, `ecc:database-migration` |
+| **ECC Skills (9)** | `/ecc:security-review`, `ecc:e2e-testing`, `ecc:verification-loop`, `ecc:backend-patterns`, `ecc:frontend-patterns`, `ecc:coding-standards`, `ecc:api-design`, `ecc:feature-development`, `ecc:database-migration` |
 
-Auto-activation rules in `CLAUDE.md` — no need to ask. Key triggers: UI work → `ui-ux-pro-max` | Auth/IPC → `ecc:security-review` | Main process/DB → `ecc:backend-patterns` | Renderer → `ecc:frontend-patterns`
-
----
-
-## What Has Been Built (summary — details in git log)
-
-- **Check-in tab full UI redesign** (sessions 1, 15) — EntryScreen, PhoneEntryScreen, NewCustomerScreen, ServiceSelectionScreen; warm luxury aesthetic; all 7 languages
-- **Custom touch keyboard** (sessions 2, 10) — local keyboard in check-in, global `useKeyboardManager` hook for all other tabs; replaced Windows OSK
-- **Tab visibility toggle** (session 3) — hide/show sidebar tabs from Settings; persists to config
-- **POS tab UI/UX redesign** (sessions 6-8) — rose palette, touch targets, cart layout, sidebar width
-- **Invoicing tab redesign + bug fixes** (sessions 8-9) — i18n completeness, inline modals replacing `alert()`/`prompt()`/`confirm()`
-- **Settings tab redesign + bug audit** (sessions 11-12) — toggle switches, save state, SVG icons, 8 bugs fixed
-- **Check-in kiosk mode + display toggles** (session 14) — fullscreen mode from main window, stats bar + queue visibility toggles
-- **App starts maximized** — `mainWindow.maximize()` in orchestrator
-- **Sidebar language bug fixed** — was hardcoded `'en'`, now reads from config
-- **All tabs enabled, Billiard hidden** — `DEFAULT_ENTITLEMENTS` set for offline/nail salon use
-- **tsconfig.json fixed** (session 17) — removed invalid `references`, `isolatedModules`, excluded archive; zero errors
+Auto-activation rules in `CLAUDE.md` — no need to ask. Key triggers: UI work -> `ui-ux-pro-max` | Auth/IPC -> `ecc:security-review` | Main process/DB -> `ecc:backend-patterns` | Renderer -> `ecc:frontend-patterns`
 
 ---
 
-## 🔜 NEXT UP
+## What Has Been Built (sessions 1–28)
 
-### 1. Customer display kiosk lockdown (🔴 BROKEN — top priority)
-See Known Issues below. The "−" bar and swipe-based fullscreen exits still not fixed.
+- **Check-in tab full UI redesign** (s1, 15) — EntryScreen, PhoneEntryScreen, NewCustomerScreen, ServiceSelectionScreen; warm luxury aesthetic; all 7 languages
+- **Custom touch keyboard** (s2, 10) — local keyboard in check-in, global `useKeyboardManager` hook for all other tabs
+- **Tab visibility toggle** (s3) — hide/show sidebar tabs from Settings; persists to config
+- **POS tab UI/UX redesign** (s6-8) — rose palette, touch targets, cart layout, sidebar width
+- **Invoicing tab redesign + bug fixes** (s8-9) — i18n, inline modals replacing native dialogs
+- **Settings tab redesign + deep audit + 9 fixes** (s11-12, 27-28) — toggle switches, save state, SVG icons, security/UX bugs fixed
+- **Check-in kiosk mode + display toggles** (s14) — fullscreen, stats bar + queue visibility
+- **Posnet fiscal printer detection** (s18) — 4-service architecture, test print confirmed on Posnet Temo HS COM5
+- **Codex bug audit + fixes** (s19-20) — 9 bugs fixed from comprehensive scan
+- **Printer bug fixes + Zebra calibrate** (s24) — removed auto-calibrate on startup, ESC/POS binary test print, Zebra Calibrate button
+- **HTML label printing + booking numbers** (s25-26) — hidden BrowserWindow → `webContents.print()` to Zebra, `NNN/DDMM` booking numbers, price support in labels
+- **Multi-page label print fix** (s27) — grand total on all pages, correct print order, no blank pages
+- **Security hardening** (s28) — all credentials (API key, AI key, remote PIN) use DPAPI encryption via safeStorage; dedicated IPC handlers (`AUTH_CHANGE_SALON`, `AUTH_SET_AI_API_KEY`, `AUTH_SET_REMOTE_PIN`); SET_CONFIG blocks all sensitive fields
+- **Misc:** app starts maximized, sidebar language fix, all tabs enabled (Billiard hidden), tsconfig fix
 
-### 2. Check-in tab — remaining screens
-- **BookingListScreen**, **BookingDetailScreen**, **ConfirmationScreen**, **CustomerProfileScreen** — not yet redesigned
-
-### 3. Tab-by-tab audit status
-
-| Tab | Status |
-|-----|--------|
-| POS | ✅ Done |
-| Invoicing | ✅ Done |
-| Settings | ✅ Done |
-| **Check-in** | 🔄 In progress — 4 screens remaining |
-| Booksy | ⏳ Next after check-in |
-| Chat / Status / Debug | ⏳ Low priority |
-
----
-
-## Known Issues
-
-### 🔴 IN PROGRESS (session 17) — Customer display kiosk lockdown
-
-**Goal:** Lock the customer display (secondary touchscreen monitor) in fullscreen. Prevent OS touch gestures from exiting. Make staff exit require a deliberate 3-finger gesture.
-
-**What was done:**
-- `tsconfig.json` — zero TS errors now (see "What Has Been Built")
-- `src/main/windows/window-manager.ts` — `customerExitRequested` flag + `leave-full-screen` handler that re-enters kiosk within 50ms + `display:close` IPC for intentional exit
-- `src/preload/preload-display.ts` — exposed `display.close()`
-- `src/shared/electron.d.ts` — typed `display.close()`
-- `src/renderer/windows/customer/CustomerApp.tsx` — touch guard: blocks single-finger edge swipes (<20px from edge), 3-finger swipe-down from top zone (≥80px) triggers `display.close()`
-
-**Still broken:**
-- "−" bar at top of customer display still visible
-- Swipe gestures can still exit fullscreen
-
-**Root cause to investigate:**
-- Confirm kiosk mode IS being applied: add log `[WindowManager] kiosk=true` when creating customer window, check it appears on startup
-- Check if `win.on('blur', () => win.focus())` prevents OS from stealing focus via swipe gestures
-- The "−" bar may be a Windows system overlay rendered *above* kiosk apps — not something Electron can suppress. If so, the correct fix is disabling Windows edge-swipe gestures system-wide via registry or PowerShell on first launch
-
-**Key files:** `src/main/windows/window-manager.ts` (lines ~114–145 for kiosk setup, ~191–210 for leave-full-screen handler)
+### Test scripts
+- `scripts/test-print-label-electron.js` — real print test: `npx electron scripts/test-print-label-electron.js`
 
 ---
 
-### ✅ FIXED (session 16) — Blank screen on launch
-`useRef`/`useCallback` hooks were after conditional early returns in `App.tsx` → Rules of Hooks violation → React crash. Moved to top level.
+## Carried Forward Issues
 
----
+### Settings — unfixed
+- **Inconsistent save behavior** — some settings instant-save (tab visibility, check-in toggles, AI, remote access, SSH), others require Save button (language, printer config, POS). UX inconsistency, needs design decision.
 
-### Low priority
-- [ ] Windows activation watermark — not a code issue
+### From AUDIT_REPORT.md (sessions 21-22)
+- **Remove/redesign `run_command` AI tool** — `zira-ai.ts:1131` — Full RCE
+- **Fix `open_application` shell injection** — `zira-ai.ts:910`
+- **Fix non-null assertions in sync.module** — 4 handlers crash if billiardSync not initialized
+- **Split zira-ai.ts** (4,075 lines) into focused modules
+- **Add `npm run test`** to CI pipeline
+
+### From earlier sessions
+- **P2 #7:** Missing display API methods in preload
+- **P2 #8:** Missing billiard feature APIs in preload
+- **P2 #9:** Payment timeout race condition
+- **P2 #10:** Auto-updater missing error handling
+- **P3 #12:** Hooks returning unvalidated `unsub`
+- **P4:** No linting, `asar: false`, no code signing, stale files in repo
+
+### Environment issues (not code fixes)
+- Customer display "-" bar + swipe gestures can exit fullscreen
+- Python security deps not installed
+- Windows activation watermark

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import type { PosState } from '../../hooks/usePosStore';
 import { getTranslation, Language } from '../../i18n/translations';
+import rlog from '../../utils/logger';
 import IdleView from './views/IdleView';
 import CartView from './views/CartView';
 import ThankYouView from './views/ThankYouView';
@@ -22,7 +23,7 @@ class ErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[CustomerDisplay] Render error:', error, info);
+    rlog.error('[CustomerDisplay] Render error:', error, info);
   }
 
   render() {

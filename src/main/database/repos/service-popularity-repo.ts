@@ -22,7 +22,7 @@ export const servicePopularityRepo = {
     // Rebuild from checkins table
     database.run('DELETE FROM service_popularity');
     database.run(
-      `INSERT INTO service_popularity (service_id, service_name, total_count, last_30_days_count, updated_at)
+      `INSERT OR REPLACE INTO service_popularity (service_id, service_name, total_count, last_30_days_count, updated_at)
        SELECT
          COALESCE(service_id, 'svc-' || REPLACE(LOWER(service_name), ' ', '-')),
          service_name,

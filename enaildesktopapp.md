@@ -389,7 +389,7 @@ ZPL label printing via Windows API P/Invoke.
 
 - **Engine:** sql.js (SQLite compiled to WASM)
 - **Storage:** In-memory for speed, auto-save every 5s to disk
-- **Location:** `%APPDATA%/enail-print-agent/pos.db`
+- **Location:** `%APPDATA%/Zira AI/pos.db`
 - **Save:** 3 retry attempts with backoff, notifies renderer on 2+ failures
 
 ### Schema (8 Migrations)
@@ -634,7 +634,7 @@ t('pos.cart.total'); // "Total"
 
 ## 9. Config & Storage
 
-### AgentConfig (`%APPDATA%/enail-print-agent/config.json`)
+### AgentConfig (`%APPDATA%/Zira AI/config.json`)
 
 ```typescript
 {

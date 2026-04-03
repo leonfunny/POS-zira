@@ -92,6 +92,28 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
     };
   }, [step, onBack]);
 
+  // Transition to upsell or directly to confirmed
+  const transitionAfterCheckIn = (data: typeof confirmedData) => {
+    setConfirmedData(data);
+    if (upsellItems && upsellItems.length > 0) {
+      setStep('upsell');
+    } else {
+      setStep('confirmed');
+    }
+  };
+
+  const finishCheckIn = useCallback(() => {
+    if (upsellTimerRef.current) clearTimeout(upsellTimerRef.current);
+    // If upsells were selected, include them in check-in data
+    if (selectedUpsells.length > 0 && confirmedData) {
+      window.electronAPI.display.checkIn({
+        ...confirmedData,
+        upsellsAdded: selectedUpsells,
+      } as any).catch(() => {});
+    }
+    setStep('confirmed');
+  }, [selectedUpsells, confirmedData]);
+
   // Upsell auto-dismiss after 15s
   useEffect(() => {
     if (step === 'upsell') {
@@ -102,7 +124,7 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
     return () => {
       if (upsellTimerRef.current) clearTimeout(upsellTimerRef.current);
     };
-  }, [step]);
+  }, [step, finishCheckIn]);
 
   // Load bookings when entering booking search
   const handleBookingSearch = useCallback(async () => {
@@ -161,28 +183,6 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
         (b.status === 'BOOKED' || b.status === 'PENDING'),
       )
     : bookings.filter((b) => b.status === 'BOOKED' || b.status === 'PENDING');
-
-  // Transition to upsell or directly to confirmed
-  const transitionAfterCheckIn = (data: typeof confirmedData) => {
-    setConfirmedData(data);
-    if (upsellItems && upsellItems.length > 0) {
-      setStep('upsell');
-    } else {
-      setStep('confirmed');
-    }
-  };
-
-  const finishCheckIn = () => {
-    if (upsellTimerRef.current) clearTimeout(upsellTimerRef.current);
-    // If upsells were selected, include them in check-in data
-    if (selectedUpsells.length > 0 && confirmedData) {
-      window.electronAPI.display.checkIn({
-        ...confirmedData,
-        upsellsAdded: selectedUpsells,
-      } as any).catch(() => {});
-    }
-    setStep('confirmed');
-  };
 
   // Check in with a booking
   const handleBookingCheckIn = useCallback(async (booking: BookingSummary) => {

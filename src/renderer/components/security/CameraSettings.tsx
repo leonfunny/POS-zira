@@ -4,19 +4,8 @@ import type { CameraConfig, CameraZone, CameraAlgorithm } from '../../../shared/
 interface CameraSettingsProps {
   cameras: CameraConfig[];
   onSave: (cameras: CameraConfig[]) => void;
+  t?: (key: string) => string;
 }
-
-const OUTSIDE_ALGORITHMS: { key: CameraAlgorithm; label: string }[] = [
-  { key: 'loitering', label: 'Loitering Detection' },
-  { key: 'recording', label: 'Suspicious Recording' },
-];
-
-const INSIDE_ALGORITHMS: { key: CameraAlgorithm; label: string }[] = [
-  { key: 'theft', label: 'Anti-Theft / Intrusion' },
-  { key: 'fire', label: 'Fire & Smoke' },
-  { key: 'analytics_flow', label: 'Customer Flow' },
-  { key: 'analytics_staff', label: 'Staff Analytics' },
-];
 
 function generateId(): string {
   return `cam_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -43,9 +32,21 @@ const defaultCamera: Omit<CameraConfig, 'id'> = {
   scheduleDays: [0, 1, 2, 3, 4, 5, 6],
 };
 
-export default function CameraSettings({ cameras, onSave }: CameraSettingsProps) {
+export default function CameraSettings({ cameras, onSave, t }: CameraSettingsProps) {
   const [editCameras, setEditCameras] = useState<CameraConfig[]>(cameras);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const OUTSIDE_ALGORITHMS: { key: CameraAlgorithm; labelKey: string }[] = [
+    { key: 'loitering', labelKey: 'security.loitering' },
+    { key: 'recording', labelKey: 'security.recording' },
+  ];
+
+  const INSIDE_ALGORITHMS: { key: CameraAlgorithm; labelKey: string }[] = [
+    { key: 'theft', labelKey: 'security.theft' },
+    { key: 'fire', labelKey: 'security.fire' },
+    { key: 'analytics_flow', labelKey: 'security.customerFlow' },
+    { key: 'analytics_staff', labelKey: 'security.staffAnalytics' },
+  ];
 
   // Sync with parent when cameras prop changes (e.g., after save)
   useEffect(() => {
@@ -70,31 +71,33 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
     onSave(editCameras);
   };
 
+  const tl = (key: string, fallback: string) => t?.(key) ?? fallback;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-slate-700">
-          Cameras ({editCameras.length})
+          {tl('security.cameras', 'Cameras')} ({editCameras.length})
         </h3>
         <div className="flex gap-2">
           <button
             onClick={addCamera}
-            className="px-3 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
+            className="px-3 py-2 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors touch-manipulation"
           >
-            + Add Camera
+            {tl('security.addCamera', '+ Add Camera')}
           </button>
           <button
             onClick={handleSave}
-            className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            className="px-3 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors touch-manipulation"
           >
-            Save All
+            {tl('security.saveAll', 'Save All')}
           </button>
         </div>
       </div>
 
       {editCameras.length === 0 ? (
         <div className="text-sm text-slate-400 p-6 text-center bg-slate-50 rounded-lg">
-          No cameras configured. Click "Add Camera" to get started.
+          {tl('security.noCameras', 'No cameras configured. Click "Add Camera" to get started.')}
         </div>
       ) : (
         <div className="space-y-2">
@@ -111,11 +114,11 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                 >
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${cam.enabled ? 'bg-green-500' : 'bg-slate-300'}`} />
-                    <span className="text-sm font-medium text-slate-700">{cam.name || 'Unnamed'}</span>
+                    <span className="text-sm font-medium text-slate-700">{cam.name || tl('security.unnamed', 'Unnamed')}</span>
                     <span className="text-[10px] text-slate-400 uppercase bg-slate-200 px-1.5 py-0.5 rounded">{cam.zone}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-400">{cam.algorithms.length} algos</span>
+                    <span className="text-xs text-slate-400">{cam.algorithms.length} {tl('security.algos', 'algos')}</span>
                     <span className="text-slate-400">{isExpanded ? '▲' : '▼'}</span>
                   </div>
                 </div>
@@ -126,54 +129,54 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                     {/* Name + Zone */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-xs text-slate-500 block mb-1">Name</label>
+                        <label className="text-xs text-slate-500 block mb-1">{tl('security.name', 'Name')}</label>
                         <input
                           type="text"
                           value={cam.name}
                           onChange={(e) => updateCamera(cam.id, { name: e.target.value })}
                           className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
-                          placeholder="Front Door"
+                          placeholder={tl('security.namePlaceholder', 'Front Door')}
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500 block mb-1">Zone</label>
+                        <label className="text-xs text-slate-500 block mb-1">{tl('security.zone', 'Zone')}</label>
                         <select
                           value={cam.zone}
                           onChange={(e) => updateCamera(cam.id, { zone: e.target.value as CameraZone, algorithms: [] })}
                           className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                         >
-                          <option value="outside">Outside (Perimeter)</option>
-                          <option value="inside">Inside (Safety + Analytics)</option>
+                          <option value="outside">{tl('security.zoneOutside', 'Outside (Perimeter)')}</option>
+                          <option value="inside">{tl('security.zoneInside', 'Inside (Safety + Analytics)')}</option>
                         </select>
                       </div>
                     </div>
 
                     {/* RTSP URLs */}
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">RTSP Substream (AI)</label>
+                      <label className="text-xs text-slate-500 block mb-1">{tl('security.rtspSubstream', 'RTSP Substream (AI)')}</label>
                       <input
                         type="text"
                         value={cam.rtspSubstream}
                         onChange={(e) => updateCamera(cam.id, { rtspSubstream: e.target.value })}
                         className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 font-mono"
-                        placeholder="rtsp://admin:pass@192.168.1.100:554/stream1"
+                        placeholder={tl('security.rtspSubstreamPlaceholder', 'rtsp://admin:pass@192.168.1.100:554/stream1')}
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">RTSP Mainstream (Evidence, optional)</label>
+                      <label className="text-xs text-slate-500 block mb-1">{tl('security.rtspMainstream', 'RTSP Mainstream (Evidence, optional)')}</label>
                       <input
                         type="text"
                         value={cam.rtspMainstream || ''}
                         onChange={(e) => updateCamera(cam.id, { rtspMainstream: e.target.value })}
                         className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 font-mono"
-                        placeholder="rtsp://admin:pass@192.168.1.100:554/stream0"
+                        placeholder={tl('security.rtspMainstreamPlaceholder', 'rtsp://admin:pass@192.168.1.100:554/stream0')}
                       />
                     </div>
 
                     {/* AI Settings */}
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-xs text-slate-500 block mb-1">AI FPS</label>
+                        <label className="text-xs text-slate-500 block mb-1">{tl('security.aiFps', 'AI FPS')}</label>
                         <input
                           type="number"
                           value={cam.aiFps}
@@ -183,7 +186,7 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500 block mb-1">Confidence</label>
+                        <label className="text-xs text-slate-500 block mb-1">{tl('security.confidence', 'Confidence')}</label>
                         <input
                           type="number"
                           value={cam.confidenceThreshold}
@@ -199,7 +202,7 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                             checked={cam.enabled}
                             onChange={(e) => updateCamera(cam.id, { enabled: e.target.checked })}
                           />
-                          Enabled
+                          {tl('security.enabled', 'Enabled')}
                         </label>
                         <label className="flex items-center gap-1.5 text-xs">
                           <input
@@ -207,14 +210,14 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                             checked={cam.aiEnabled}
                             onChange={(e) => updateCamera(cam.id, { aiEnabled: e.target.checked })}
                           />
-                          AI On
+                          {tl('security.aiOn', 'AI On')}
                         </label>
                       </div>
                     </div>
 
                     {/* Algorithms */}
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">Algorithms</label>
+                      <label className="text-xs text-slate-500 block mb-1">{tl('security.algorithms', 'Algorithms')}</label>
                       <div className="flex flex-wrap gap-2">
                         {algos.map(algo => (
                           <label key={algo.key} className="flex items-center gap-1.5 text-xs bg-slate-50 px-2 py-1 rounded">
@@ -228,7 +231,7 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                                 updateCamera(cam.id, { algorithms: algs });
                               }}
                             />
-                            {algo.label}
+                            {tl(algo.labelKey, algo.key)}
                           </label>
                         ))}
                       </div>
@@ -240,7 +243,7 @@ export default function CameraSettings({ cameras, onSave }: CameraSettingsProps)
                         onClick={() => removeCamera(cam.id)}
                         className="text-xs text-red-500 hover:text-red-700 transition-colors"
                       >
-                        Remove Camera
+                        {tl('security.removeCamera', 'Remove Camera')}
                       </button>
                     </div>
                   </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { TelegramBotStatus } from '../../shared/types';
+import rlog from '../utils/logger';
 
 export function useTelegram() {
   const [status, setStatus] = useState<TelegramBotStatus | null>(null);
@@ -13,7 +14,7 @@ export function useTelegram() {
       const result = await window.electronAPI.telegram.getStatus();
       setStatus(result);
     } catch (err) {
-      console.error('[useTelegram] Failed to load:', err);
+      rlog.error('[useTelegram] Failed to load:', err);
     } finally {
       setLoading(false);
     }

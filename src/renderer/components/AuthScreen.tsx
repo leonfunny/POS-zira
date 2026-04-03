@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { AuthUser } from '../../shared/types';
 import { detectSystemLanguage, getAuthTranslation } from '../i18n/auth-translations';
 import { Language, languageNames } from '../i18n/translations';
+import rlog from '../utils/logger';
 
 /**
  * Minimal QR Code generator - pure JS, no canvas dependency.
@@ -512,7 +513,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
       // Start polling
       startPolling(token);
     } catch (err: any) {
-      console.error('[AuthScreen] Failed to generate QR:', err);
+      rlog.error('[AuthScreen] Failed to generate QR:', err);
       setErrorMessage(err.message || 'QR generation error');
       setQrStatus('error');
     }
@@ -550,7 +551,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
           setQrStatus('expired');
         }
       } catch (err) {
-        console.error('[AuthScreen] Poll error:', err);
+        rlog.error('[AuthScreen] Poll error:', err);
       }
     }, 2000);
   }, [stopPolling, onLoginSuccess]);
@@ -575,7 +576,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
         window.open(result.data.deepLink, '_blank');
       }
     } catch (err: any) {
-      console.error('[AuthScreen] Register error:', err);
+      rlog.error('[AuthScreen] Register error:', err);
     }
   };
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AgentConfig, TelegramBotStatus } from '../../shared/types';
 import { getTranslation, Language } from '../i18n/translations';
+import rlog from '../utils/logger';
 
 interface TelegramConfigProps {
   config: AgentConfig | null;
@@ -42,7 +43,7 @@ export default function TelegramConfig({ config, onConfigChange, language }: Tel
         const status = await window.electronAPI.telegram.getStatus();
         setBotStatus(status);
       } catch (error) {
-        console.error('Failed to get Telegram status:', error);
+        rlog.error('Failed to get Telegram status:', error);
       }
     };
 
@@ -81,7 +82,7 @@ export default function TelegramConfig({ config, onConfigChange, language }: Tel
         setIsRestarting(false);
       }, 2000);
     } catch (error) {
-      console.error('Failed to restart Telegram:', error);
+      rlog.error('Failed to restart Telegram:', error);
       setIsRestarting(false);
     }
   };

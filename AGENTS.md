@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 This repository is a Windows-focused Electron desktop app with a React renderer. Key paths:
-- `src/main/`: Electron main process entry (`index.ts`) and lifecycle (`app.ts`).
+- `src/main/`: Electron main process entry (`index.ts`).
 - `src/renderer/`: React UI (e.g., `App.tsx`, `components/`).
 - `src/preload/`: Electron preload script.
 - `src/shared/`: Shared types and utilities.
@@ -34,5 +34,5 @@ No automated test scripts are configured in `package.json` currently. If tests a
 - PRs should include a short summary, a test plan (even if manual), screenshots for renderer UI changes, and notes on installer or build output changes when relevant.
 
 ## Security & Configuration Tips
-- Configuration is stored under `%APPDATA%/enail-print-agent/config.json` on Windows.
+- Configuration is stored under `%APPDATA%/Zira AI/config.json` on Windows.
 - If you touch hardware or network integration, note protocol or device impact in the PR description.

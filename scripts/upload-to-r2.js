@@ -10,15 +10,22 @@ const fs = require('fs');
 const path = require('path');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-// R2 Configuration
+// R2 Configuration — read from environment variables
 const R2_CONFIG = {
-  accountId: '34683e60b1c21e5610da5b65cf65f93f',
-  accessKeyId: '948efa6e631e7525d5d66f1e67784c1f',
-  secretAccessKey: 'f1cbc73f9b22aba78bf4804a75a422bc810c78271dc4f30c8fc4346d10cc80f9',
-  bucketName: 'zira',
-  publicUrl: 'https://img.zira.pl',
-  endpoint: 'https://34683e60b1c21e5610da5b65cf65f93f.r2.cloudflarestorage.com',
+  accountId: process.env.R2_ACCOUNT_ID || '',
+  accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  bucketName: process.env.R2_BUCKET_NAME || 'zira',
+  publicUrl: process.env.R2_PUBLIC_URL || 'https://img.zira.pl',
+  endpoint: process.env.R2_ACCOUNT_ID
+    ? `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
+    : '',
 };
+
+if (!R2_CONFIG.accountId || !R2_CONFIG.accessKeyId || !R2_CONFIG.secretAccessKey) {
+  console.error('ERROR: R2 credentials not set. Export R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY');
+  process.exit(1);
+}
 
 // Get version from package.json
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));

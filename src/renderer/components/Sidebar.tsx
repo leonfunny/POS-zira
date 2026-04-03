@@ -10,7 +10,6 @@ import {
   Settings,
   Bug,
   ChevronLeft,
-  ChevronRight,
   Maximize,
   LogOut,
   LayoutDashboard,
@@ -96,29 +95,39 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`sidebar fixed left-0 top-0 h-screen bg-white/90 backdrop-blur border-r border-[var(--sand-200)] z-40 flex flex-col ${
+      className={`sidebar fixed left-0 top-0 h-screen bg-white/90 backdrop-blur border-r border-[var(--sand-200)] z-40 flex flex-col overflow-hidden ${
         collapsed ? 'sidebar-collapsed' : ''
       }`}
       style={{ width: collapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded }}
     >
       {/* Brand header */}
-      <div className="h-14 flex items-center gap-2.5 px-3 border-b border-[var(--sand-200)] shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--primary)] to-[var(--primary-deep)] flex items-center justify-center shrink-0">
-          <span className="text-base font-bold text-white">Z</span>
+      {collapsed ? (
+        <div className="h-14 flex items-center justify-center border-b border-[var(--sand-200)] shrink-0">
+          <button
+            onClick={onToggleCollapse}
+            className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--primary)] to-[var(--primary-deep)] flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
+            title={t('sidebar.expand')}
+          >
+            <span className="text-base font-bold text-white">Z</span>
+          </button>
         </div>
-        {!collapsed && (
+      ) : (
+        <div className="h-14 flex items-center gap-2.5 px-3 border-b border-[var(--sand-200)] shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--primary)] to-[var(--primary-deep)] flex items-center justify-center shrink-0">
+            <span className="text-base font-bold text-white">Z</span>
+          </div>
           <span className="text-sm font-semibold tracking-[0.08em] text-[var(--ink)] whitespace-nowrap">
             ZIRA <span className="text-[var(--primary)]">-</span> AI
           </span>
-        )}
-        <button
-          onClick={onToggleCollapse}
-          className="ml-auto p-1 rounded hover:bg-[var(--sand-100)] text-[var(--ink-muted)] transition-colors shrink-0"
-          title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
-        >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
-      </div>
+          <button
+            onClick={onToggleCollapse}
+            className="ml-auto p-1 rounded hover:bg-[var(--sand-100)] text-[var(--ink-muted)] transition-colors shrink-0"
+            title={t('sidebar.collapse')}
+          >
+            <ChevronLeft size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Menu groups */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-1">

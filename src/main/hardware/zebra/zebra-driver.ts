@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
 import { ZplFormatter } from './zpl-formatter';
-import { ReceiptData, LabelData, PrinterStatusInfo } from '../../../shared/types';
+import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, sanitizePrinterName } from '../port-utils';
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +37,42 @@ export class ZebraDriver {
   }
 
   /**
+   * Query the Windows printer driver for its configured paper size.
+   * Uses System.Drawing.Printing to read the driver's DEVMODE paper dimensions.
+   * Returns dimensions in mm, or null if detection fails.
+   */
+  static async detectPaperSize(printerName: string): Promise<{ widthMm: number; heightMm: number } | null> {
+    if (process.platform !== 'win32') return null;
+    try {
+      const psScript = `
+Add-Type -AssemblyName System.Drawing
+$doc = New-Object System.Drawing.Printing.PrintDocument
+$doc.PrinterSettings.PrinterName = '${printerName.replace(/'/g, "''")}'
+if ($doc.PrinterSettings.IsValid) {
+  $s = $doc.DefaultPageSettings.PaperSize
+  $wMm = [Math]::Round($s.Width * 0.254, 1)
+  $hMm = [Math]::Round($s.Height * 0.254, 1)
+  Write-Output "$wMm,$hMm"
+} else { Write-Output "INVALID" }
+`;
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+        { timeout: 10000 },
+      );
+      const trimmed = stdout.trim();
+      if (trimmed === 'INVALID' || !trimmed) return null;
+      const [w, h] = trimmed.split(',').map(Number);
+      if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return null;
+      return { widthMm: w, heightMm: h };
+    } catch (err) {
+      logger.warn('[ZebraDriver] Paper size detection failed:', err);
+      return null;
+    }
+  }
+
+  /**
    * Connect to the printer (verify it exists)
    */
   async connect(): Promise<boolean> {
@@ -50,6 +86,21 @@ export class ZebraDriver {
 
       if (this.connected) {
         logger.info(`[ZebraDriver] Connected to "${this.printerName}"`);
+
+        // Auto-detect paper size from Windows driver
+        try {
+          const detected = await ZebraDriver.detectPaperSize(this.printerName);
+          if (detected) {
+            this.formatter.updateDimensions(detected.widthMm, detected.heightMm);
+            logger.info(`[ZebraDriver] Auto-detected paper size: ${detected.widthMm}mm x ${detected.heightMm}mm`);
+          }
+        } catch (detectErr) {
+          logger.warn('[ZebraDriver] Paper size detection failed (non-fatal):', detectErr);
+        }
+
+        // Note: ~JC auto-calibrate removed — it causes the printer to feed
+        // labels on every app startup which is disruptive. Calibration should
+        // be triggered manually if needed.
       } else {
         logger.warn(`[ZebraDriver] Printer "${this.printerName}" not found in: ${printers.join(', ')}`);
       }
@@ -149,23 +200,36 @@ public class RawPrinterHelper {
     [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true)]
     public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, Int32 dwCount, out Int32 dwWritten);
 
-    public static bool SendStringToPrinter(string szPrinterName, string szString) {
+    public static string SendStringToPrinter(string szPrinterName, string szString) {
         IntPtr hPrinter = IntPtr.Zero;
         DOCINFOA di = new DOCINFOA();
         di.pDocName = "ZPL Label";
         di.pDataType = "RAW";
 
-        if (!OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) return false;
+        if (!OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) {
+            int err = Marshal.GetLastWin32Error();
+            return "OpenPrinter failed for '" + szPrinterName + "' (Win32 error " + err + ")";
+        }
 
         try {
-            if (!StartDocPrinter(hPrinter, 1, di)) return false;
+            if (!StartDocPrinter(hPrinter, 1, di)) {
+                int err = Marshal.GetLastWin32Error();
+                return "StartDocPrinter failed (Win32 error " + err + ")";
+            }
             try {
-                if (!StartPagePrinter(hPrinter)) return false;
+                if (!StartPagePrinter(hPrinter)) {
+                    int err = Marshal.GetLastWin32Error();
+                    return "StartPagePrinter failed (Win32 error " + err + ")";
+                }
                 try {
                     IntPtr pBytes = Marshal.StringToCoTaskMemAnsi(szString);
                     try {
                         int dwWritten = 0;
-                        return WritePrinter(hPrinter, pBytes, szString.Length, out dwWritten);
+                        if (!WritePrinter(hPrinter, pBytes, szString.Length, out dwWritten)) {
+                            int err = Marshal.GetLastWin32Error();
+                            return "WritePrinter failed (Win32 error " + err + ")";
+                        }
+                        return "OK";
                     } finally {
                         Marshal.FreeCoTaskMem(pBytes);
                     }
@@ -187,11 +251,27 @@ $zplFile = '${tempZplFile.replace(/\\/g, '\\\\').replace(/'/g, "''")}'
 $content = Get-Content -Path $zplFile -Raw -Encoding UTF8
 
 $result = [RawPrinterHelper]::SendStringToPrinter($printerName, $content)
-if (-not $result) {
-    $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-    throw "Failed to send data to printer. Error code: $errorCode"
+if ($result -ne "OK") {
+    throw $result
 }
-Write-Output "OK"
+
+# Non-blocking queue check — warn if job is stuck but don't fail
+try {
+    Start-Sleep -Milliseconds 1000
+    $stuckJobs = Get-PrintJob -PrinterName $printerName -ErrorAction SilentlyContinue | Where-Object {
+        $_.JobStatus -match 'Error|Offline|Blocked|PaperOut|Paused'
+    }
+    if ($stuckJobs) {
+        $status = ($stuckJobs | Select-Object -First 1).JobStatus
+        try { $stuckJobs | Remove-PrintJob -ErrorAction SilentlyContinue } catch {}
+        Write-Output "WARN:QUEUE_STUCK:$status"
+    } else {
+        Write-Output "OK"
+    }
+} catch {
+    # Queue check failed — still report success since data was sent
+    Write-Output "OK"
+}
 `;
 
       // SECURITY: Use execFile() with -EncodedCommand to avoid shell injection.
@@ -209,14 +289,37 @@ Write-Output "OK"
         logger.warn(`[ZebraDriver] PowerShell stderr: ${stderr}`);
       }
 
-      if (stdout && stdout.includes('OK')) {
+      if (stdout && stdout.includes('WARN:QUEUE_STUCK:')) {
+        const status = stdout.match(/WARN:QUEUE_STUCK:(\S+)/)?.[1] || 'Unknown';
+        logger.warn(`[ZebraDriver] Print data sent but job stuck in queue (status: ${status}) — possible ghost printer`);
+      } else if (stdout && stdout.includes('OK')) {
         logger.info('[ZebraDriver] Print job sent successfully');
       } else {
         throw new Error(`Unexpected output: ${stdout}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       logger.error('[ZebraDriver] Print failed:', error);
-      throw error;
+      const raw = error?.stderr || error?.message || String(error);
+
+      // Check for queue stuck (ghost printer detected)
+      const queueMatch = raw.match(/QUEUE_STUCK:(\S+)/);
+      if (queueMatch) {
+        const status = queueMatch[1];
+        throw new Error(
+          `Print job stuck in queue (status: ${status}). This printer may be a ghost device — ` +
+          `check that you selected the correct printer with an active USB port.`
+        );
+      }
+
+      // Look for our structured error from SendStringToPrinter (e.g. "OpenPrinter failed ...")
+      const structured = raw.match(/(OpenPrinter|StartDocPrinter|StartPagePrinter|WritePrinter) failed[^"'\r\n]*/);
+      if (structured) {
+        throw new Error(structured[0]);
+      }
+      // Fallback: strip CLIXML tags and keep first meaningful line
+      const cleaned = raw.replace(/#< CLIXML[\s\S]*$/m, '').replace(/<[^>]+>/g, '').trim();
+      const firstLine = cleaned.split(/[\r\n]+/).find((l: string) => l.trim().length > 10) || cleaned;
+      throw new Error(firstLine.slice(0, 200) || 'Print command failed');
     } finally {
       // Clean up temp ZPL file (no .ps1 file needed with EncodedCommand)
       try {
@@ -259,6 +362,41 @@ Write-Output "OK"
 
     await this.printRaw(zpl);
     logger.info('[ZebraDriver] Label printed successfully');
+  }
+
+  /**
+   * Print check-in confirmation label (ZPL fallback)
+   */
+  async printCheckinConfirmation(data: CheckinConfirmationData): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info(`[ZebraDriver] Printing check-in confirmation for "${data.customerName}"...`);
+    const zpl = this.formatter.formatCheckinConfirmation(data);
+    logger.debug(`[ZebraDriver] ZPL:\n${zpl}`);
+
+    await this.printRaw(zpl);
+    logger.info('[ZebraDriver] Check-in confirmation printed successfully');
+  }
+
+  /** Expose printer name for external callers (e.g. Electron PDF printing) */
+  getPrinterName(): string {
+    return this.printerName;
+  }
+
+  /**
+   * Send ~JC calibration command.
+   * The printer will feed several labels to detect gap/mark type and label length.
+   */
+  async calibrate(): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info('[ZebraDriver] Sending calibration (~JC)...');
+    await this.printRaw('~JC');
+    logger.info('[ZebraDriver] Calibration complete');
   }
 
   /**

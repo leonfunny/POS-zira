@@ -12,6 +12,18 @@ When running via Discord channel (`--channels plugin:discord@claude-plugins-offi
 - After completing a task, always send a summary to Discord so the operator knows the outcome.
 - If something is genuinely ambiguous and risky, state your assumption, proceed with it, and report.
 
+### Thinking Keywords from Discord
+
+Discord messages bypass CLI keyword detection, so thinking-level triggers like `ultrathink` won't automatically activate. When you see these keywords in a Discord message, manually adjust your behavior:
+
+| Keyword in message | Behavior |
+|---|---|
+| `ultrathink` | Maximum depth: research extensively, read all relevant files, consider every edge case, plan before acting, verify assumptions, use Agent tool for parallel deep research. Treat this as the hardest problem — no shortcuts. |
+| `think hard` / `think harder` | Deep analysis: read related code thoroughly, consider multiple approaches, pick the best one with reasoning. |
+| `think` | Standard careful analysis (default for complex tasks). |
+
+When you detect any of these keywords at the start of a Discord message, strip the keyword from the task description and apply the corresponding thinking level to the actual task that follows.
+
 ## Project Overview
 
 **Zira AI Print Agent** — Electron + React + TypeScript desktop app that connects the eNail POS system with hardware devices (thermal printers, barcode scanners, cash drawers). Targets **Windows 10/11 64-bit only**.
@@ -49,7 +61,7 @@ Main Process (Node.js)          Preload (contextBridge)       Renderer (React + 
 ─────────────────────           ────────────────────          ──────────────────────
 src/main/                       src/preload/preload.ts        src/renderer/
 ├── index.ts (entry)            Exposes window.electronAPI    ├── App.tsx (main window)
-├── app.ts (lifecycle)          via ipcRenderer.invoke/on     ├── windows/pos/POS.tsx
+├── core/orchestrator.ts        via ipcRenderer.invoke/on     ├── windows/pos/POS.tsx
 ├── hardware/ (drivers)                                       ├── windows/customer/
 ├── database/ (SQL.js)                                        ├── components/
 ├── network/ (Socket.IO)                                      ├── hooks/
@@ -83,7 +95,7 @@ Pattern:
 
 **SQL.js** (SQLite compiled to WASM, in-memory with disk persistence).
 
-- DB file: `%APPDATA%/enail-print-agent/pos.db`
+- DB file: `%APPDATA%/Zira AI/pos.db`
 - Schema: `src/main/database/migrations.ts` — versioned migration array
 - Repos: `src/main/database/repos/` — 13 repository files (products, orders, invoices, customers, staff, etc.)
 - Auto-saves every 5 seconds when dirty
@@ -146,7 +158,7 @@ See `docs/RELEASE_GUIDE.md` for full details.
 
 ## Config Storage
 
-`electron-store` with encrypted secrets via Electron's `safeStorage`. Config stored at `%APPDATA%/enail-print-agent/config.json`.
+`electron-store` with encrypted secrets via Electron's `safeStorage`. Config stored at `%APPDATA%/Zira AI/config.json`.
 
 ---
 
@@ -177,11 +189,21 @@ The following skills are installed globally (`~/.claude/commands/`). Activate th
 | DB schema change | `ecc:database-migration` → `ecc:backend-patterns` |
 | Bug in renderer | `gsd:debug` → fix → `ecc:verification-loop` |
 | Complex multi-phase work | `gsd:plan-phase` → `gsd:execute-phase` → `gsd:verify-work` |
+| Full app assessment | `/audit-app` (orchestrates all 5 sub-audits below) |
+| Targeted audit | `/audit-code`, `/audit-security`, `/audit-ui`, `/audit-architecture`, `/audit-functional` |
 
 ### Installed skill index
 
 | Skill | Description |
 |---|---|
+| **Audit System** | |
+| `/audit-app` | Master orchestrator — runs all 5 sub-audits in parallel, synthesizes `AUDIT_REPORT.md` |
+| `/audit-code` | Code quality — dead code, type safety, error handling, code smells (calls `ecc:coding-standards` + `ecc:backend-patterns` + `ecc:frontend-patterns`) |
+| `/audit-architecture` | Architecture — module coupling, IPC integrity, DB design, state management (calls `gsd:map-codebase`) |
+| `/audit-security` | Security — Electron config, OWASP, auth, IPC validation, secrets (calls `ecc:security-review`) |
+| `/audit-ui` | UX/UI — visual consistency, accessibility, touch, user flows, i18n (calls `ui-ux-pro-max` + `gsd:ui-review`) |
+| `/audit-functional` | Testing — E2E smoke tests, critical path coverage, test gaps (calls `test-print-agent` + `ecc:e2e-testing`) |
+| **Design & Quality** | |
 | `ui-ux-pro-max` | UI/UX design — 67 styles, 96 palettes, touch-friendly patterns |
 | `ecc:security-review` | Security checklist for auth, payments, API, secrets |
 | `ecc:e2e-testing` | Playwright Page Object Model, CI/CD, artifact management |

@@ -1622,7 +1622,7 @@ export class PrintAgentApp implements TrayManagerHost {
               chromePath = p;
               break;
             }
-          } catch {}
+          } catch (err: any) { logger.debug('[AppLegacy] check chrome path failed:', err?.message); }
         }
 
         if (!chromePath) {
@@ -1919,7 +1919,7 @@ export class PrintAgentApp implements TrayManagerHost {
               let toolArgs = {};
               try {
                 toolArgs = JSON.parse(toolCall.function.arguments || '{}');
-              } catch {}
+              } catch (err: any) { logger.debug('[AppLegacy] parse tool arguments failed:', err?.message); }
 
               logger.info(`[IPC] Executing tool locally: ${toolName}`);
               const toolResult = await executeTool(toolName, toolArgs);

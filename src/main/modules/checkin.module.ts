@@ -105,6 +105,10 @@ export class CheckinModule extends BaseModule {
     // Enhanced check-in with customer tracking
     ipcMain.handle(IPC_CHANNELS.CHECKIN_CREATE_WITH_CUSTOMER, (_e, data: any) => {
       try {
+        // Generate booking number (001/DDMM)
+        const bookingNumber = checkinRepo.nextBookingNumber();
+        data.booking_number = bookingNumber;
+
         // Create check-in
         checkinRepo.create(data);
 
@@ -124,7 +128,7 @@ export class CheckinModule extends BaseModule {
         servicePopularityRepo.refresh();
 
         database.save();
-        return { success: true };
+        return { success: true, bookingNumber };
       } catch (e: any) {
         logger.error('[CheckinModule] Create with customer error:', e);
         return { success: false, error: e.message };

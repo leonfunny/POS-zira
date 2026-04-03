@@ -7,6 +7,7 @@ import {
   KsefStatus,
 } from '../../../shared/types';
 import { useTranslation } from '../../i18n/useTranslation';
+import rlog from '../../utils/logger';
 
 interface InvoiceListProps {
   onEdit: (id: string) => void;
@@ -42,7 +43,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
       const result = await window.electronAPI.invoice.list(filter);
       setInvoices(result);
     } catch (err) {
-      console.error('Failed to load invoices:', err);
+      rlog.error('Failed to load invoices:', err);
     } finally {
       setLoading(false);
     }
@@ -376,7 +377,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
                       {invoice.status === 'DRAFT' && (
                         <button
                           onClick={() => onEdit(invoice.id)}
-                          title={t('common.edit')}
+                          title={t('common.edit')} aria-label={t('common.edit')}
                           className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -386,7 +387,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
                       )}
                       <button
                         onClick={() => handlePrint(invoice.id, 'thermal')}
-                        title={t('invoice.printThermal')}
+                        title={t('invoice.printThermal')} aria-label={t('invoice.printThermal')}
                         className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors cursor-pointer"
                       >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -395,7 +396,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
                       </button>
                       <button
                         onClick={() => handleDuplicate(invoice.id)}
-                        title={t('invoice.duplicate')}
+                        title={t('invoice.duplicate')} aria-label={t('invoice.duplicate')}
                         className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors cursor-pointer"
                       >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -405,7 +406,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
                       {['ISSUED', 'PARTIALLY_PAID'].includes(invoice.status) && (
                         <button
                           onClick={() => handleMarkPaid(invoice.id)}
-                          title={t('invoice.markPaid')}
+                          title={t('invoice.markPaid')} aria-label={t('invoice.markPaid')}
                           className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

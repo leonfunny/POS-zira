@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
+import rlog from '../../../../utils/logger';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -42,7 +43,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
         if (Array.isArray(parsed)) setHeldCarts(parsed);
       }
     } catch (err) {
-      console.warn('[RetailTemplate] Failed to load held carts:', err);
+      rlog.warn('[RetailTemplate] Failed to load held carts:', err);
     }
   }, []);
 
@@ -50,7 +51,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     try {
       window.localStorage.setItem('pos.heldCarts', JSON.stringify(heldCarts));
     } catch (err) {
-      console.warn('[RetailTemplate] Failed to save held carts:', err);
+      rlog.warn('[RetailTemplate] Failed to save held carts:', err);
     }
   }, [heldCarts]);
 
@@ -280,7 +281,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
                   <button
                     key={product.id}
                     onClick={() => handleAddProduct(product)}
-                    className="flex flex-col items-start px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:border-brand-300 hover:text-brand-600 hover:bg-brand-50 active:scale-95 transition-all cursor-pointer shadow-sm touch-manipulation overflow-hidden"
+                    className="flex flex-col items-start px-2.5 py-2.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:border-brand-300 hover:text-brand-600 hover:bg-brand-50 active:scale-95 transition-all cursor-pointer shadow-sm touch-manipulation overflow-hidden"
                   >
                     <span className="font-medium truncate w-full">{product.name}</span>
                     <span className="text-brand-500 font-semibold mt-0.5">{(product.retail_price / 100).toFixed(2)}&nbsp;{t('pos.currency')}</span>

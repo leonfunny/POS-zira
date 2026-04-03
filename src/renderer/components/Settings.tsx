@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab } from '../../shared/types';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
+import rlog from '../utils/logger';
 import { ShoppingCart, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed } from 'lucide-react';
 
 interface SettingsProps {
@@ -40,7 +41,7 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
 
 export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
-  const [windowsPrinters, setWindowsPrinters] = useState<string[]>([]);
+  const [windowsPrinters, setWindowsPrinters] = useState<Array<{name: string; port: string}>>([]);
   const [selectedPort, setSelectedPort] = useState(config?.printerPort || '');
   const [protocol, setProtocol] = useState<PrinterProtocol>(
     config?.printerProtocol || 'THERMAL'
@@ -69,6 +70,18 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   // Test print state
   const [testingPrinter, setTestingPrinter] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ printerType: string; success: boolean; error?: string } | null>(null);
+  // Calibrate state
+  const [calibratingPrinter, setCalibratingPrinter] = useState<string | null>(null);
+  const [calibrateResult, setCalibrateResult] = useState<{ printerType: string; success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } } | null>(null);
+
+  // Printer detection state
+  const [posnetStatus, setPosnetStatus] = useState<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean } | null>(null);
+  const [posnetChecking, setPosnetChecking] = useState(false);
+  const [posnetInstalling, setPosnetInstalling] = useState(false);
+  const [posnetInstallResult, setPosnetInstallResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [autoSettingUp, setAutoSettingUp] = useState(false);
+  const [autoSetupResult, setAutoSetupResult] = useState<{ success: boolean; port?: string; message: string } | null>(null);
+  const [settingUpDevice, setSettingUpDevice] = useState<string | null>(null); // brand being set up
 
   // POS settings
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
@@ -98,7 +111,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Unattended Remote Access
   const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(config?.remoteAccessEnabled ?? false);
-  const [remoteAccessPin, setRemoteAccessPin] = useState(config?.remoteAccessPin || '');
+  const [remoteAccessPin, setRemoteAccessPin] = useState('');
 
   // SSH Tunnel state
   const [sshStatus, setSshStatus] = useState<SshTunnelStatus | null>(null);
@@ -127,13 +140,19 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Load available ports and Windows printers
   useEffect(() => {
+    let mounted = true;
+
     async function loadPorts() {
-      const availablePorts = await window.electronAPI.listPorts();
-      setPorts(availablePorts);
+      try {
+        const availablePorts = await window.electronAPI.listPorts();
+        if (mounted) setPorts(availablePorts);
+      } catch { /* ignore */ }
     }
     async function loadWindowsPrinters() {
-      const printers = await window.electronAPI.listWindowsPrinters();
-      setWindowsPrinters(printers);
+      try {
+        const printers = await window.electronAPI.listWindowsPrinters();
+        if (mounted) setWindowsPrinters(printers);
+      } catch { /* ignore */ }
     }
     loadPorts();
     loadWindowsPrinters();
@@ -142,13 +161,16 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     async function loadDisplays() {
       try {
         const list = await window.electronAPI.display.list();
-        setDisplays(list);
+        if (mounted) setDisplays(list);
       } catch { /* display API may not exist in older builds */ }
     }
     loadDisplays();
 
+    // Load remote access PIN from secure storage
+    window.electronAPI.getRemotePin().then((r) => { if (mounted && r?.pin) setRemoteAccessPin(r.pin); }).catch(() => {});
+
     // Load SSH tunnel status
-    window.electronAPI.sshTunnel.getStatus().then(setSshStatus).catch(() => {});
+    window.electronAPI.sshTunnel.getStatus().then((s) => { if (mounted) setSshStatus(s); }).catch(() => {});
     const unsubSsh = window.electronAPI.sshTunnel.onStatusChanged(setSshStatus);
 
     // Listen for auto-update status
@@ -156,10 +178,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
     // Get app version
     window.electronAPI.debug.getDiagnostics().then((d) => {
-      if (d?.appVersion) setAppVersion(d.appVersion);
+      if (mounted && d?.appVersion) setAppVersion(d.appVersion);
     }).catch(() => {});
 
-    return () => { unsubSsh?.(); unsubUpdate?.(); };
+    return () => {
+      mounted = false;
+      unsubSsh?.();
+      unsubUpdate?.();
+    };
   }, []);
 
   // Update state when config changes
@@ -221,7 +247,6 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       // Multi-printer mode config (use new dictionary)
       onConfigChange({
         name,
-        serverUrl,
         autoStart,
         language,
         ...posConfig,
@@ -237,7 +262,6 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         printerPort: selectedPort,
         printerProtocol: protocol,
         printerBaudRate: baudRate,
-        serverUrl,
         zebraPrinter,
         labelWidth,
         labelHeight,
@@ -298,12 +322,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   };
 
-  // Test print for a specific printer type
+  // Test print for a specific printer type using current (unsaved) config from state
   const handleTestPrint = async (printerType: string) => {
     setTestingPrinter(printerType);
     setTestResult(null);
     try {
-      const result = await window.electronAPI.testPrinterByType(printerType);
+      const printerConfig = getPrinterConfig(printerType as PrinterTypeValue);
+      // Force enabled=true so testPrinterByConfig can create the driver even before saving
+      const result = await window.electronAPI.testPrinterByConfig({ ...printerConfig, enabled: true });
       setTestResult({ printerType, success: result.success, error: result.error });
     } catch (error: any) {
       setTestResult({ printerType, success: false, error: error.message });
@@ -311,6 +337,29 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setTestingPrinter(null);
       // Clear result after 5 seconds
       setTimeout(() => setTestResult(null), 5000);
+    }
+  };
+
+  // Calibrate Zebra printer using current (unsaved) config from state
+  const handleCalibrate = async (printerType: string) => {
+    setCalibratingPrinter(printerType);
+    setCalibrateResult(null);
+    try {
+      const printerConfig = getPrinterConfig(printerType as PrinterTypeValue);
+      const result = await window.electronAPI.calibratePrinter({ ...printerConfig, enabled: true });
+      setCalibrateResult({ printerType, success: result.success, error: result.error, paperSize: result.paperSize });
+      // Auto-update label dimensions from detected paper size
+      if (result.success && result.paperSize) {
+        updatePrinter(printerType as PrinterTypeValue, {
+          labelWidth: Math.round(result.paperSize.widthMm),
+          labelHeight: Math.round(result.paperSize.heightMm),
+        });
+      }
+    } catch (error: any) {
+      setCalibrateResult({ printerType, success: false, error: error.message });
+    } finally {
+      setCalibratingPrinter(null);
+      setTimeout(() => setCalibrateResult(null), 8000);
     }
   };
 
@@ -330,19 +379,176 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   };
 
-  // Change salon / disconnect
+  // Detect printers + auto-setup all detected devices in one step
+  const handleCheckPosnetDriver = async () => {
+    setPosnetChecking(true);
+    setPosnetInstallResult(null);
+    setAutoSetupResult(null);
+    try {
+      const status = await window.electronAPI.getPosnetDriverStatus();
+      setPosnetStatus(status);
+
+      // Auto-fill detected COM port into any POSNET-protocol printer that has no port or a wrong port
+      if (status.posnetComPort) {
+        const detectedPort = status.posnetComPort;
+        const availablePorts = await window.electronAPI.listPorts();
+        setPorts(availablePorts);
+
+        setPrinters(prev => {
+          const updated = { ...prev };
+          for (const [pt, pc] of Object.entries(updated)) {
+            if (pc && (pc as PrinterConfig).protocol === 'POSNET') {
+              (updated as any)[pt] = { ...pc, port: detectedPort };
+            }
+          }
+          return updated;
+        });
+      }
+
+      // Auto-setup all detected devices that have drivers installed
+      const configured: string[] = [];
+      const claimedSlots = new Set<string>();
+
+      // First pass: mark already-configured slots
+      for (const dev of status.devices) {
+        const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
+        const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
+        const isDymo = dev.brand === 'DYMO';
+        const model = (dev.model || '').toLowerCase();
+        const isLabel = isZebra || isDymo || ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
+        const isThermal = !isPosnet && !isLabel && (
+          ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
+          ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
+        );
+        const isA4 = !isPosnet && !isLabel && !isThermal &&
+          ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
+
+        const targetType = isPosnet ? 'RECEIPT' : isLabel ? 'LABEL' : isA4 ? 'A4' : 'RECEIPT';
+        const cfg = getPrinterConfig(targetType);
+        const alreadyConfigured = cfg.enabled && (
+          (isPosnet && cfg.protocol === 'POSNET' && cfg.port === dev.comPort) ||
+          (!isPosnet && cfg.windowsPrinter === dev.windowsPrinterName)
+        );
+        if (alreadyConfigured) claimedSlots.add(targetType);
+      }
+
+      // Second pass: auto-setup unconfigured devices
+      for (const dev of status.devices) {
+        if (!dev.driverInstalled) continue;
+
+        const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
+        const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
+        const isDymo = dev.brand === 'DYMO';
+        const model = (dev.model || '').toLowerCase();
+        const isLabel = isZebra || isDymo || ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
+        const isThermal = !isPosnet && !isLabel && (
+          ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
+          ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
+        );
+        const isA4 = !isPosnet && !isLabel && !isThermal &&
+          ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
+
+        const targetType = isPosnet ? 'RECEIPT' : isLabel ? 'LABEL' : isA4 ? 'A4' : 'RECEIPT';
+
+        // Skip if this slot is already taken
+        if (claimedSlots.has(targetType)) continue;
+
+        // Auto-setup this device
+        const result = await window.electronAPI.autoSetupPrinter(targetType, dev);
+        if (result.success) {
+          configured.push(`${dev.brand} ${dev.model} → ${targetType}`);
+          claimedSlots.add(targetType);
+        }
+      }
+
+      // Show summary if anything was auto-configured
+      if (configured.length > 0) {
+        setAutoSetupResult({
+          success: true,
+          message: `Auto-configured: ${configured.join(', ')}`,
+        });
+        // Refresh status after setup
+        const freshStatus = await window.electronAPI.getPosnetDriverStatus();
+        setPosnetStatus(freshStatus);
+        const newPorts = await window.electronAPI.listPorts();
+        setPorts(newPorts);
+        const newPrintersList = await window.electronAPI.listWindowsPrinters();
+        setWindowsPrinters(newPrintersList);
+      }
+    } finally {
+      setPosnetChecking(false);
+    }
+  };
+
+  // POSNET driver install
+  const handleInstallPosnetDriver = async () => {
+    setPosnetInstalling(true);
+    setPosnetInstallResult(null);
+    try {
+      const result = await window.electronAPI.installPosnetDriver();
+      setPosnetInstallResult(result);
+      if (result.success) {
+        // Re-check status and refresh COM ports after install
+        const status = await window.electronAPI.getPosnetDriverStatus();
+        setPosnetStatus(status);
+        const newPorts = await window.electronAPI.listPorts();
+        setPorts(newPorts);
+      }
+    } finally {
+      setPosnetInstalling(false);
+    }
+  };
+
+  // Universal auto setup — works for any printer brand
+  const handleAutoSetup = async (targetType?: string, device?: any) => {
+    setAutoSettingUp(true);
+    setAutoSetupResult(null);
+    try {
+      const result = await window.electronAPI.autoSetupPrinter(targetType || 'RECEIPT', device);
+      setAutoSetupResult(result);
+      if (result.success) {
+        // Refresh status + ports + printer config from backend
+        const status = await window.electronAPI.getPosnetDriverStatus();
+        setPosnetStatus(status);
+        const newPorts = await window.electronAPI.listPorts();
+        setPorts(newPorts);
+        const newPrinters = await window.electronAPI.listWindowsPrinters();
+        setWindowsPrinters(newPrinters);
+        // Refresh printer config so Save doesn't overwrite auto-setup results
+        const updatedConfig = await window.electronAPI.getConfig();
+        if (updatedConfig?.printers) setPrinters(updatedConfig.printers);
+      }
+    } finally {
+      setAutoSettingUp(false);
+    }
+  };
+
+  // Scan for driver via Windows PnP
+  const handleScanForDriver = async () => {
+    setPosnetInstalling(true);
+    setPosnetInstallResult(null);
+    try {
+      const result = await window.electronAPI.scanForDriver();
+      setPosnetInstallResult(result);
+      if (result.success) {
+        // Re-detect to see if driver was found
+        const status = await window.electronAPI.getPosnetDriverStatus();
+        setPosnetStatus(status);
+      }
+    } finally {
+      setPosnetInstalling(false);
+    }
+  };
+
+  // Change salon / disconnect — uses dedicated handler that clears credentials server-side
   const handleChangeSalon = async () => {
     try {
-      await window.electronAPI.disconnect();
-      onConfigChange({
-        isPaired: false,
-        apiKey: undefined,
-        agentId: undefined,
-        salonId: undefined,
-        salonName: undefined,
-      });
+      await window.electronAPI.changeSalon();
+      // Refresh config from backend to get the cleared state
+      const updated = await window.electronAPI.getConfig();
+      onConfigChange(updated);
     } catch (error) {
-      console.error('Failed to disconnect:', error);
+      rlog.error('Failed to change salon:', error);
     } finally {
       setShowChangeSalonConfirm(false);
     }
@@ -358,15 +564,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     try {
       const result = await window.electronAPI.connectWithApiKey(apiKeyInput.trim());
       if (result.success) {
-        // Connection successful, update config
-        onConfigChange({
-          apiKey: apiKeyInput.trim(),
-          isPaired: true,
-          agentId: result.data?.agentId,
-          salonId: result.data?.salonId,
-          salonName: result.data?.salonName,
-          sshTunnelEnabled: enableRemoteSupport,
-        });
+        // Connection successful — refresh config from backend (credentials stored server-side)
+        const updated = await window.electronAPI.getConfig();
+        onConfigChange({ ...updated, sshTunnelEnabled: enableRemoteSupport });
         setApiKeyInput('');
       } else {
         setConnectionError(result.error || t('pairing.connectionError'));
@@ -423,8 +623,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             <input
               type="text"
               value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+              readOnly
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-500 cursor-not-allowed outline-none"
               placeholder="https://api.enail.pro"
             />
           </div>
@@ -453,6 +653,185 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Printer Detection */}
+      <div className="panel p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">Printer Detection</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Auto-detect connected printers and COM ports</p>
+          </div>
+          <button
+            onClick={handleCheckPosnetDriver}
+            disabled={posnetChecking}
+            className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+          >
+            {posnetChecking ? (
+              <span className="flex items-center gap-1.5">
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Scanning...
+              </span>
+            ) : 'Detect Printers'}
+          </button>
+        </div>
+
+        {posnetStatus && (
+          <div className="space-y-2 mb-3">
+            {posnetStatus.devices.length === 0 && (
+              <p className="text-xs text-slate-400">No printers detected — connect a printer and try again</p>
+            )}
+            {posnetStatus.devices.map((dev, i) => {
+              const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
+              const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
+              const isDymo = dev.brand === 'DYMO';
+              const isBusy = settingUpDevice === `${dev.brand}-${i}`;
+              const model = (dev.model || '').toLowerCase();
+
+              // Smart type classification (mirrors backend classifyPrinterCategory)
+              const isLabelPrinter = isZebra || isDymo ||
+                ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
+              const isThermalReceipt = !isPosnet && !isLabelPrinter && (
+                ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
+                ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
+              );
+              const isA4Printer = !isPosnet && !isLabelPrinter && !isThermalReceipt &&
+                ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
+
+              // Determine target type
+              const targetType: PrinterTypeValue = isPosnet ? 'RECEIPT' :
+                isLabelPrinter ? 'LABEL' :
+                isA4Printer ? 'A4' : 'RECEIPT';
+              const targetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
+                isZebra ? 'ZEBRA' :
+                isA4Printer ? 'WINDOWS' : 'THERMAL';
+
+              // Check if this device is already configured in the target slot
+              const currentConfig = getPrinterConfig(targetType);
+              const isAlreadyConfigured = currentConfig.enabled && (
+                (isPosnet && currentConfig.protocol === 'POSNET' && currentConfig.port === dev.comPort) ||
+                (!isPosnet && currentConfig.windowsPrinter === dev.windowsPrinterName)
+              );
+
+              return (
+                <div key={i} className="bg-slate-50 rounded-lg px-3 py-2 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-slate-700">{dev.brand} — {dev.model}</div>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      dev.connectionType === 'USB' ? 'bg-blue-100 text-blue-700' :
+                      dev.connectionType === 'SERIAL' ? 'bg-purple-100 text-purple-700' :
+                      dev.connectionType === 'NETWORK' ? 'bg-cyan-100 text-cyan-700' :
+                      'bg-slate-100 text-slate-500'
+                    }`}>
+                      {dev.connectionType}
+                    </span>
+                  </div>
+                  <div className={dev.driverInstalled ? 'text-green-600' : 'text-amber-600'}>
+                    {dev.driverInstalled ? '● Driver installed' : '○ Driver not installed'}
+                  </div>
+                  {dev.windowsPrinterName && dev.windowsPrinterName !== dev.model && (
+                    <div className="text-slate-600">Windows name: <strong>{dev.windowsPrinterName}</strong></div>
+                  )}
+                  {dev.portName && (
+                    <div className="text-slate-600">Port: <strong>{dev.portName}</strong></div>
+                  )}
+                  {dev.comPort && (
+                    <div className="text-green-600">● COM port: <strong>{dev.comPort}</strong></div>
+                  )}
+
+                  {/* Per-device actions */}
+                  {isAlreadyConfigured ? (
+                    <div className="text-green-600 font-medium pt-1">
+                      ✓ Configured as {targetType} printer
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {/* Any brand: install/scan driver if missing */}
+                      {!dev.driverInstalled && (
+                        <button
+                          onClick={isPosnet ? handleInstallPosnetDriver : handleScanForDriver}
+                          disabled={posnetInstalling || isBusy}
+                          className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                        >
+                          {posnetInstalling ? (
+                            <>
+                              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              {isPosnet ? 'Installing...' : 'Scanning...'}
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                              {isPosnet ? 'Install POSNET Driver' : 'Scan for Driver'}
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {/* Any brand with driver: auto setup */}
+                      {dev.driverInstalled && (
+                        <button
+                          onClick={() => handleAutoSetup(targetType, dev)}
+                          disabled={autoSettingUp || isBusy}
+                          className={`px-2.5 py-1.5 rounded-md text-xs font-medium disabled:opacity-50 transition-colors flex items-center gap-1.5 ${
+                            isZebra ? 'bg-purple-50 text-purple-700 hover:bg-purple-100' :
+                            isPosnet ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' :
+                            'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                          }`}
+                        >
+                          {autoSettingUp ? (
+                            <>
+                              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              Setting up...
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                              </svg>
+                              Auto Setup as {targetType}
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {posnetInstallResult && (
+          <div className={`mb-3 px-3 py-2 rounded-lg text-xs ${
+            posnetInstallResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+          }`}>
+            {posnetInstallResult.message}
+            {posnetInstallResult.success && (posnetInstallResult as any).rebootRequired && (
+              <span className="ml-1 font-medium">(Reboot may be required)</span>
+            )}
+          </div>
+        )}
+
+        {autoSetupResult && (
+          <div className={`mb-3 px-3 py-2 rounded-lg text-xs ${
+            autoSetupResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+          }`}>
+            {autoSetupResult.success
+              ? autoSetupResult.message || `Configured on ${autoSetupResult.port || (autoSetupResult as any).windowsPrinter}`
+              : autoSetupResult.message}
+          </div>
+        )}
       </div>
 
       {/* Printer Settings */}
@@ -543,10 +922,80 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </select>
                       </div>
 
-                      {printerConfig.protocol === 'THERMAL' || printerConfig.protocol === 'POSNET' ? (
+                      {printerConfig.protocol === 'POSNET' ? (
                         <>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.comPort')}</label>
+                            <div className="flex gap-2">
+                              <select
+                                value={printerConfig.port || ''}
+                                onChange={(e) => updatePrinter(printerType, { port: e.target.value })}
+                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                              >
+                                <option value="">{t('settings.selectPort')}</option>
+                                {ports.map((port) => (
+                                  <option key={port} value={port}>{port}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={handleRefreshPorts}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.baudRate')}</label>
+                            <select
+                              value={printerConfig.baudRate || 9600}
+                              onChange={(e) => updatePrinter(printerType, { baudRate: parseInt(e.target.value) })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            >
+                              <option value={9600}>9600</option>
+                              <option value={19200}>19200</option>
+                              <option value={38400}>38400</option>
+                              <option value={57600}>57600</option>
+                              <option value={115200}>115200</option>
+                            </select>
+                          </div>
+                        </>
+                      ) : printerConfig.protocol === 'THERMAL' ? (
+                        <>
+                          {/* USB / Windows Printer — for thermal USB printers, laser printers, etc. */}
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.windowsPrinter')} (USB)</label>
+                            <div className="flex gap-2">
+                              <select
+                                value={printerConfig.windowsPrinter || ''}
+                                onChange={(e) => updatePrinter(printerType, { windowsPrinter: e.target.value })}
+                                className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
+                              >
+                                <option value="">{t('settings.selectPrinter')}</option>
+                                {windowsPrinters.map((p) => (
+                                  <option key={p.name} value={p.name}>{p.name}{p.port ? ` [${p.port}]` : ''}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={handleRefreshWindowsPrinters}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="relative flex items-center py-1">
+                            <div className="flex-grow border-t border-slate-200" />
+                            <span className="mx-2 text-xs text-slate-400">or serial</span>
+                            <div className="flex-grow border-t border-slate-200" />
+                          </div>
+                          {/* Serial / COM Port — for older serial thermal printers */}
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.comPort')} (Serial)</label>
                             <div className="flex gap-2">
                               <select
                                 value={printerConfig.port || ''}
@@ -591,11 +1040,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               <select
                                 value={printerConfig.windowsPrinter || ''}
                                 onChange={(e) => updatePrinter(printerType, { windowsPrinter: e.target.value })}
-                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                               >
                                 <option value="">{t('settings.selectPrinter')}</option>
-                                {windowsPrinters.map((printer) => (
-                                  <option key={printer} value={printer}>{printer}</option>
+                                {windowsPrinters.map((p) => (
+                                  <option key={p.name} value={p.name}>{p.name}{p.port ? ` [${p.port}]` : ''}</option>
                                 ))}
                               </select>
                               <button
@@ -613,24 +1062,26 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             <>
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                  <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelWidth')}</label>
+                                  <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelWidth')} (mm)</label>
                                   <input
                                     type="number"
-                                    value={printerConfig.labelWidth || 100}
-                                    onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 100 })}
+                                    value={printerConfig.labelWidth || ''}
+                                    onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 0 })}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: 100 }); }}
                                     min={10}
-                                    max={300}
+                                    max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelHeight')}</label>
+                                  <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelHeight')} (mm)</label>
                                   <input
                                     type="number"
-                                    value={printerConfig.labelHeight || 50}
-                                    onChange={(e) => updatePrinter(printerType, { labelHeight: parseInt(e.target.value) || 50 })}
+                                    value={printerConfig.labelHeight || ''}
+                                    onChange={(e) => updatePrinter(printerType, { labelHeight: parseInt(e.target.value) || 0 })}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: 50 }); }}
                                     min={10}
-                                    max={300}
+                                    max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                                   />
                                 </div>
@@ -680,6 +1131,49 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                           }`}>
                             {testResult.success ? t('test.success') : `${t('test.error')}: ${testResult.error}`}
                           </div>
+                        )}
+
+                        {/* Calibrate Button — Zebra only */}
+                        {printerConfig.protocol === 'ZEBRA' && (
+                          <>
+                            <button
+                              onClick={() => handleCalibrate(printerType)}
+                              disabled={calibratingPrinter === printerType}
+                              className={`w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                                calibratingPrinter === printerType
+                                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                              }`}
+                            >
+                              {calibratingPrinter === printerType ? (
+                                <>
+                                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  {t('calibrate.running')}
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                                  </svg>
+                                  {t('calibrate.button')}
+                                </>
+                              )}
+                            </button>
+                            {calibrateResult && calibrateResult.printerType === printerType && (
+                              <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
+                                calibrateResult.success
+                                  ? 'bg-green-50 text-green-700'
+                                  : 'bg-red-50 text-red-700'
+                              }`}>
+                                {calibrateResult.success
+                                  ? `${t('calibrate.success')}${calibrateResult.paperSize ? ` (${calibrateResult.paperSize.widthMm} x ${calibrateResult.paperSize.heightMm} mm)` : ''}`
+                                  : `${t('test.error')}: ${calibrateResult.error}`}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -773,12 +1267,12 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     <select
                       value={zebraPrinter}
                       onChange={(e) => setZebraPrinter(e.target.value)}
-                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                      className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                     >
                       <option value="">{t('settings.selectPrinter')}</option>
-                      {windowsPrinters.map((printer) => (
-                        <option key={printer} value={printer}>
-                          {printer}
+                      {windowsPrinters.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name}{p.port ? ` [${p.port}]` : ''}
                         </option>
                       ))}
                     </select>
@@ -802,27 +1296,29 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-600 mb-1">
-                      {t('settings.labelWidth')}
+                      {t('settings.labelWidth')} (mm)
                     </label>
                     <input
                       type="number"
-                      value={labelWidth}
-                      onChange={(e) => setLabelWidth(parseInt(e.target.value) || 100)}
+                      value={labelWidth || ''}
+                      onChange={(e) => setLabelWidth(parseInt(e.target.value) || 0)}
+                      onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) setLabelWidth(100); }}
                       min={10}
-                      max={300}
+                      max={1000}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-600 mb-1">
-                      {t('settings.labelHeight')}
+                      {t('settings.labelHeight')} (mm)
                     </label>
                     <input
                       type="number"
-                      value={labelHeight}
-                      onChange={(e) => setLabelHeight(parseInt(e.target.value) || 50)}
+                      value={labelHeight || ''}
+                      onChange={(e) => setLabelHeight(parseInt(e.target.value) || 0)}
+                      onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) setLabelHeight(50); }}
                       min={10}
-                      max={300}
+                      max={1000}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                     />
                   </div>
@@ -969,10 +1465,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   try {
                     const result = await window.electronAPI.window.open('customer');
                     if (!result.success) {
-                      console.error('[Settings] Failed to open customer display:', result.error);
+                      rlog.error('[Settings] Failed to open customer display:', result.error);
                     }
                   } catch (err) {
-                    console.error('[Settings] Failed to open customer display:', err);
+                    rlog.error('[Settings] Failed to open customer display:', err);
                   }
                 }}
                 className="w-full px-4 py-2 border border-brand-300 text-brand-700 rounded-lg text-sm font-medium hover:bg-brand-50 transition-colors cursor-pointer"
@@ -1119,7 +1615,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               {config.apiKey && (
                 <div className="mt-2 pt-2 border-t border-green-200">
                   <p className="text-xs text-green-600">
-                    {t('pairing.apiKey')}: {config.apiKey.substring(0, 7)}...{config.apiKey.substring(config.apiKey.length - 4)}
+                    {t('pairing.apiKey')}: {config.apiKey.length > 11
+                      ? `${config.apiKey.substring(0, 7)}...${config.apiKey.substring(config.apiKey.length - 4)}`
+                      : '••••••••'}
                   </p>
                 </div>
               )}
@@ -1163,10 +1661,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     if (enabled && !remoteAccessPin && config?.entitlements?.salonCode) {
                       const defaultPin = config.entitlements.salonCode;
                       setRemoteAccessPin(defaultPin);
-                      onConfigChange({ remoteAccessEnabled: enabled, remoteAccessPin: defaultPin });
-                    } else {
-                      onConfigChange({ remoteAccessEnabled: enabled });
+                      window.electronAPI.setRemotePin(defaultPin);
                     }
+                    onConfigChange({ remoteAccessEnabled: enabled });
                   }}
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${remoteAccessEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}
                 >
@@ -1188,7 +1685,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     onChange={(e) => {
                       const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
                       setRemoteAccessPin(val);
-                      onConfigChange({ remoteAccessPin: val });
+                      window.electronAPI.setRemotePin(val);
                     }}
                     placeholder={t('remote.pinPlaceholder')}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono tracking-widest text-center focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -1358,7 +1855,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 value={aiApiKeyInput}
                 onChange={(e) => {
                   setAiApiKeyInput(e.target.value);
-                  onConfigChange({ aiApiKey: e.target.value });
+                  window.electronAPI.setAiApiKey(e.target.value);
                 }}
                 placeholder={t('ai.apiKeyPlaceholder')}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"

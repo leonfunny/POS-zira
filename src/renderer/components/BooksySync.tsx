@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { BooksySyncStatus, BooksySyncConfig, BooksyBookingSummary } from '../../shared/types';
+import rlog from '../utils/logger';
+import { useTranslation } from '../i18n/useTranslation';
+import { useConfig } from '../hooks/useConfig';
 
 export default function BooksySync() {
+  const { config: appConfig } = useConfig();
+  const { t } = useTranslation(appConfig?.language || 'en');
   const [status, setStatus] = useState<BooksySyncStatus | null>(null);
   const [config, setConfig] = useState<BooksySyncConfig | null>(null);
   const [bookings, setBookings] = useState<BooksyBookingSummary[]>([]);
@@ -25,7 +30,7 @@ export default function BooksySync() {
       setConfig(c);
       setBookings(b);
     }).catch((err) => {
-      console.error('[BooksySync] Failed to load initial data:', err);
+      rlog.error('[BooksySync] Failed to load initial data:', err);
     });
   }, []);
 
@@ -137,11 +142,11 @@ export default function BooksySync() {
     try {
       const result = await window.electronAPI.shell.launchChromeDebug(config?.cdpPort || 9222);
       if (!result.success) {
-        alert('Không thể mở Chrome: ' + result.error);
+        alert(t('booksy.chromeOpenError') + result.error);
       }
     } catch (err: any) {
-      console.error('[BooksySync] Failed to launch Chrome:', err);
-      alert('Lỗi: ' + err.message);
+      rlog.error('[BooksySync] Failed to launch Chrome:', err);
+      alert(t('booksy.error') + err.message);
     }
   }, [config]);
 
@@ -149,7 +154,7 @@ export default function BooksySync() {
     try {
       await window.electronAPI.shell.openExternal('https://pro.booksy.com');
     } catch (err: any) {
-      console.error('[BooksySync] Failed to open Booksy:', err);
+      rlog.error('[BooksySync] Failed to open Booksy:', err);
     }
   }, []);
 
@@ -670,7 +675,7 @@ export default function BooksySync() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-800">Thiết lập Booksy Sync</h2>
+              <h2 className="text-lg font-semibold text-slate-800">{t('booksy.setup.title')}</h2>
               <button
                 onClick={() => setShowSetupWizard(false)}
                 className="text-slate-400 hover:text-slate-600 text-xl"
@@ -683,8 +688,8 @@ export default function BooksySync() {
               <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold flex-shrink-0">1</div>
                 <div>
-                  <p className="text-sm font-medium text-slate-800">Mở Chrome với chế độ Debug</p>
-                  <p className="text-xs text-slate-500 mt-1">Nhấn nút bên dưới để tự động mở Chrome</p>
+                  <p className="text-sm font-medium text-slate-800">{t('booksy.setup.step1Title')}</p>
+                  <p className="text-xs text-slate-500 mt-1">{t('booksy.setup.step1Desc')}</p>
                 </div>
               </div>
 
@@ -695,22 +700,22 @@ export default function BooksySync() {
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-3.952 6.848c.404.037.813.055 1.229.055 6.627 0 12-5.373 12-12 0-1.003-.124-1.979-.357-2.912zm-3.317 3.148a3.818 3.818 0 1 0 0 7.636 3.818 3.818 0 0 0 0-7.636z"/>
                 </svg>
-                Mở Chrome
+                {t('booksy.setup.openChrome')}
               </button>
 
               <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold flex-shrink-0">2</div>
                 <div>
-                  <p className="text-sm font-medium text-slate-800">Đăng nhập Booksy Pro</p>
-                  <p className="text-xs text-slate-500 mt-1">Trong Chrome vừa mở, đăng nhập tài khoản Booksy của bạn</p>
+                  <p className="text-sm font-medium text-slate-800">{t('booksy.setup.step2Title')}</p>
+                  <p className="text-xs text-slate-500 mt-1">{t('booksy.setup.step2Desc')}</p>
                 </div>
               </div>
 
               <div className="flex items-start gap-3 p-3 bg-orange-50 rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold flex-shrink-0">3</div>
                 <div>
-                  <p className="text-sm font-medium text-slate-800">Bắt đầu đồng bộ</p>
-                  <p className="text-xs text-slate-500 mt-1">Sau khi đăng nhập xong, nhấn nút bên dưới</p>
+                  <p className="text-sm font-medium text-slate-800">{t('booksy.setup.step3Title')}</p>
+                  <p className="text-xs text-slate-500 mt-1">{t('booksy.setup.step3Desc')}</p>
                 </div>
               </div>
 
@@ -723,12 +728,12 @@ export default function BooksySync() {
                 }}
                 className="w-full px-4 py-3 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700 transition-colors"
               >
-                Bắt đầu đồng bộ
+                {t('booksy.setup.startSync')}
               </button>
             </div>
 
             <p className="text-xs text-center text-slate-400">
-              Chỉ cần làm 1 lần. Lần sau chỉ cần nhấn "Start".
+              {t('booksy.setup.oneTimeNote')}
             </p>
           </div>
         </div>
@@ -744,15 +749,15 @@ export default function BooksySync() {
               </svg>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">Thiết lập Booksy Sync</h3>
-              <p className="text-xs text-slate-500">Tự động đồng bộ lịch hẹn từ Booksy</p>
+              <h3 className="text-sm font-semibold text-slate-800">{t('booksy.setup.quickTitle')}</h3>
+              <p className="text-xs text-slate-500">{t('booksy.setup.quickDesc')}</p>
             </div>
           </div>
           <button
             onClick={() => setShowSetupWizard(true)}
             className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
-            Bắt đầu thiết lập
+            {t('booksy.setup.quickButton')}
           </button>
         </div>
       )}

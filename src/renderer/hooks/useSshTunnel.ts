@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { SshTunnelStatus } from '../../shared/types';
+import rlog from '../utils/logger';
 
 export function useSshTunnel() {
   const [status, setStatus] = useState<SshTunnelStatus | null>(null);
@@ -9,7 +10,7 @@ export function useSshTunnel() {
   useEffect(() => {
     window.electronAPI.sshTunnel.getStatus()
       .then(setStatus)
-      .catch((err) => console.error('[useSshTunnel] Failed to load:', err));
+      .catch((err) => rlog.error('[useSshTunnel] Failed to load:', err));
 
     const unsub = window.electronAPI.sshTunnel.onStatusChanged(setStatus);
     return unsub;

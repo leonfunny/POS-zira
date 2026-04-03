@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { AgentConfig } from '../../shared/types';
+import rlog from '../utils/logger';
 
 export function useConfig() {
   const [config, setConfig] = useState<AgentConfig | null>(null);
@@ -10,7 +11,7 @@ export function useConfig() {
   useEffect(() => {
     window.electronAPI.getConfig()
       .then(setConfig)
-      .catch((err) => console.error('[useConfig] Failed to load:', err))
+      .catch((err) => rlog.error('[useConfig] Failed to load:', err))
       .finally(() => setLoading(false));
   }, []);
 

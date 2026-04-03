@@ -1,6 +1,7 @@
 /** useInvoices – wraps electronAPI invoice operations */
 
 import { useState, useEffect, useCallback } from 'react';
+import rlog from '../utils/logger';
 import type {
   InvoiceRow,
   InvoiceCreateDTO,
@@ -17,7 +18,7 @@ export function useInvoices(filter?: InvoiceListFilter) {
       const list = await window.electronAPI.invoice.list(filter);
       setInvoices(list);
     } catch (err) {
-      console.error('[useInvoices] Failed to load:', err);
+      rlog.error('[useInvoices] Failed to load:', err);
     } finally {
       setLoading(false);
     }

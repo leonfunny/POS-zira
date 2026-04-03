@@ -80,6 +80,20 @@ export interface LabelData {
   quantity: number;
 }
 
+export interface CheckinConfirmationService {
+  name: string;
+  price: number;  // grosze (e.g. 5000 = 50.00 zł)
+}
+
+export interface CheckinConfirmationData {
+  bookingNumber?: string;  // e.g. "001/0204"
+  customerName: string;
+  customerPhone?: string;
+  services: CheckinConfirmationService[];
+  staffName?: string;
+  checkinTime: string;  // ISO string
+}
+
 // Print job status
 export enum PrintJobStatus {
   PENDING = 'PENDING',
@@ -210,7 +224,8 @@ export interface AgentConfig {
 
   // Unattended Remote Access (Chrome RDP-style PIN)
   remoteAccessEnabled?: boolean;       // Allow remote access without dialog
-  remoteAccessPin?: string;            // PIN code (default = salon code)
+  remoteAccessPin?: string;            // PIN code (default = salon code) — legacy plain text
+  encryptedRemotePin?: string;         // Encrypted PIN via safeStorage
 
   // UI sidebar state
   sidebarCollapsed?: boolean;
@@ -511,6 +526,16 @@ export const IPC_CHANNELS = {
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   TEST_PRINT: 'test-print',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
+  TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
+  CALIBRATE_PRINTER: 'calibrate-printer',
+  GET_POSNET_DRIVER_STATUS: 'get-posnet-driver-status',
+  INSTALL_POSNET_DRIVER: 'install-posnet-driver',
+  SCAN_FOR_DRIVER: 'scan-for-driver',
+  AUTO_SETUP_PRINTER: 'auto-setup-printer',
+  POSNET_SCAN_DEVICES: 'posnet-scan-devices',
+  POSNET_LIST_DEVICES: 'posnet-list-devices',
+  POSNET_SELECT_DEVICE: 'posnet-select-device',
+  POSNET_RESCAN_KNOWN: 'posnet-rescan-known',
 
   // Events from main to renderer
   CONNECTION_STATUS: 'connection-status',
@@ -544,6 +569,10 @@ export const IPC_CHANNELS = {
   AUTH_GET_USER: 'auth-get-user',                            // Get current user (verify token)
   AUTH_LOGOUT: 'auth-logout',                                // Logout (clear token)
   AUTH_LOGIN_EMAIL: 'auth-login-email',                      // Login with email/password
+  AUTH_CHANGE_SALON: 'auth-change-salon',                    // Disconnect + clear credentials for salon switch
+  AUTH_SET_AI_API_KEY: 'auth-set-ai-api-key',                // Store AI API key via safeStorage
+  AUTH_SET_REMOTE_PIN: 'auth-set-remote-pin',                // Store remote access PIN via safeStorage
+  AUTH_GET_REMOTE_PIN: 'auth-get-remote-pin',                // Retrieve decrypted remote access PIN
 
   // Booksy Sync
   BOOKSY_GET_STATUS: 'booksy:get-status',
@@ -643,6 +672,7 @@ export const IPC_CHANNELS = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_LIST: 'window:list',
   WINDOW_SET_FULLSCREEN: 'window:setFullScreen',
+  WINDOW_SET_KIOSK: 'window:setKiosk',
 
   // Display (Customer Display)
   DISPLAY_LIST: 'display:list',
@@ -777,6 +807,7 @@ export const IPC_CHANNELS = {
   CHECKIN_UPDATE_NOTES: 'checkin:updateNotes',
   CHECKIN_GET_STATS: 'checkin:getStats',
   CHECKIN_CREATE_WITH_CUSTOMER: 'checkin:createWithCustomer',
+  CHECKIN_PRINT_CONFIRMATION: 'checkin:printConfirmation',
 
   // Salon Customers (check-in wizard)
   SALON_CUSTOMER_SEARCH: 'salonCustomer:search',

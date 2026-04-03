@@ -13,7 +13,7 @@ const path    = require('path');
 const os      = require('os');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const BOT_TOKEN          = '';
+const BOT_TOKEN          = process.env.DISCORD_BOT_TOKEN || '';
 const CHANNEL_ID         = '1486369081970917529';
 const WORK_DIR           = 'C:\\print-agent-master';
 const WIN_HOME           = process.env.USERPROFILE || `C:\\Users\\${os.userInfo().username}`;

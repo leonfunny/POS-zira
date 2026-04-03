@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { CartState, PosAction } from '../../hooks/usePosStore';
+import rlog from '../../utils/logger';
 
 interface PaymentModalProps {
   cart: CartState;
@@ -182,7 +183,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
       try {
         await window.electronAPI.pos.customers.increaseDebt(extraOrderFields.customer_id, cart.total);
       } catch (err) {
-        console.warn('[PaymentModal] Failed to increase customer debt:', err);
+        rlog.warn('[PaymentModal] Failed to increase customer debt:', err);
       }
     }
 
@@ -227,7 +228,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
         await saveOrderAndFinish(orderId, paymentAmount);
       }
     } catch (err) {
-      console.error('[PaymentModal] Failed to complete payment:', err);
+      rlog.error('[PaymentModal] Failed to complete payment:', err);
       setError(t('pos.payment.error'));
     } finally {
       setSaving(false);
@@ -250,6 +251,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
           <button
             onClick={onClose}
             disabled={saving}
+            aria-label="Close"
             className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,13 +268,13 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
           </div>
 
           {/* Payment method */}
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-3 gap-2.5">
             {paymentMethods.map((pm) => (
               <button
                 key={pm.id}
                 onClick={() => !pm.disabled && setMethod(pm.id)}
                 disabled={saving || pm.disabled}
-                className={`py-3 px-2 rounded-xl text-center transition-all flex flex-col items-center gap-1.5 border cursor-pointer ${
+                className={`py-3.5 px-3 rounded-xl text-center transition-all flex flex-col items-center gap-1.5 border cursor-pointer touch-manipulation ${
                   method === pm.id
                     ? 'bg-brand-500 text-white border-brand-500 shadow-sm'
                     : pm.disabled

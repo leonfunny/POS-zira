@@ -69,7 +69,8 @@ export class SyncModule extends BaseModule {
     // ── Billiard IPC handlers ─────────────────────────
     ipcMain.handle('billiard:get:overview', async () => {
       try {
-        return this.billiardSync!.getLocalFloorOverview();
+        if (!this.billiardSync) return { tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true };
+        return this.billiardSync.getLocalFloorOverview();
       } catch (e: any) {
         logger.warn(`[SyncModule] billiard:get:overview error: ${e.message}`);
         return { tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true };
@@ -170,7 +171,8 @@ export class SyncModule extends BaseModule {
     // Restaurant combos — in-memory cache from BilliardSync (offline-safe)
     ipcMain.handle('billiard:get:restaurant-combos', async () => {
       try {
-        return this.billiardSync!.getRestaurantCombos();
+        if (!this.billiardSync) return [];
+        return this.billiardSync.getRestaurantCombos();
       } catch (e: any) {
         logger.warn(`[SyncModule] billiard:get:restaurant-combos error: ${e.message}`);
         return [];
@@ -178,12 +180,14 @@ export class SyncModule extends BaseModule {
     });
 
     ipcMain.handle('billiard:mutate', async (_event, op: string, method: string, path: string, body?: any) => {
-      return await this.billiardSync!.executeMutation(op, method, path, body);
+      if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
+      return await this.billiardSync.executeMutation(op, method, path, body);
     });
 
     ipcMain.handle('billiard:sync:status', async () => {
       try {
-        return this.billiardSync!.getSyncStatus();
+        if (!this.billiardSync) return { pending: 0, lastSync: null, online: false };
+        return this.billiardSync.getSyncStatus();
       } catch {
         return { pending: 0, lastSync: null, online: false };
       }
@@ -311,11 +315,11 @@ export class SyncModule extends BaseModule {
         }
 
         this.orderSync?.startPeriodicSync();
-        try { await this.orderSync?.syncPendingOrders(); } catch {}
+        try { await this.orderSync?.syncPendingOrders(); } catch (err: any) { logger.debug('[SyncModule] sync pending orders failed:', err?.message); }
 
         // Retry unsynced shifts
         const shiftCtrl = this.container.getOptional<ShiftController>(SERVICE_TOKENS.SHIFT_CONTROLLER);
-        try { await shiftCtrl?.retryUnsyncedShifts(); } catch {}
+        try { await shiftCtrl?.retryUnsyncedShifts(); } catch (err: any) { logger.debug('[SyncModule] retry unsynced shifts failed:', err?.message); }
 
         // Billiard: full sync + replay queue + start polling
         if (this.billiardSync) {
@@ -360,11 +364,11 @@ export class SyncModule extends BaseModule {
 
     // Billiard real-time events
     socket.on('billiard:session-updated', () => {
-      this.billiardSync?.refreshDashboard().catch(() => {});
+      this.billiardSync?.refreshDashboard().catch((e: any) => { logger.debug('[SyncModule] billiard dashboard refresh failed:', e?.message); });
     });
 
     socket.on('billiard:resource-updated', () => {
-      this.billiardSync?.fullSync().catch(() => {});
+      this.billiardSync?.fullSync().catch((e: any) => { logger.debug('[SyncModule] billiard full sync failed:', e?.message); });
     });
   }
 

@@ -43,7 +43,7 @@ export class TelegramModule extends BaseModule {
     let token: string | null = null;
     const encrypted = getConfigValue('encryptedTelegramToken') as string | undefined;
     if (encrypted && safeStorage.isEncryptionAvailable()) {
-      try { token = safeStorage.decryptString(Buffer.from(encrypted, 'base64')); } catch {}
+      try { token = safeStorage.decryptString(Buffer.from(encrypted, 'base64')); } catch (err: any) { logger.debug('[TelegramModule] decrypt telegram token failed:', err?.message); }
     }
     if (!token) token = (getConfigValue('telegramToken') as string) || null;
     if (!token) return;

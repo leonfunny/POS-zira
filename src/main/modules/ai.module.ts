@@ -21,6 +21,7 @@ import {
   filterIdentity,
   handleProfileSelection,
 } from '../ai/zira-ai';
+import { setPendingAttachments, type PendingAttachment } from '../ai/attachment-store';
 import {
   IPC_CHANNELS,
   ZiraAIStatus,
@@ -40,7 +41,7 @@ export class AiModule extends BaseModule {
 
   private ziraAI: ZiraAI | null = null;
   private proxyHistory = new Map<string, { role: string; content: string }[]>();
-  private pendingAttachments: any[] = [];
+  // pendingAttachments now managed via attachment-store.ts
   private serverProvidedAiKey: string | null = null;
 
   constructor(private container: ServiceContainer) {
@@ -127,9 +128,9 @@ export class AiModule extends BaseModule {
             const filePath = path.join(tempDir, `${Date.now()}_${att.name.replace(/[^a-zA-Z0-9.]/g, '_')}${ext}`);
             fs.writeFileSync(filePath, buffer);
             saved.push({ type: att.type, name: att.name, path: filePath });
-          } catch {}
+          } catch (err: any) { logger.debug('[AIModule] save attachment failed:', err?.message); }
         }
-        this.pendingAttachments = saved;
+        setPendingAttachments(saved as PendingAttachment[]);
       }
 
       try {
@@ -184,7 +185,7 @@ export class AiModule extends BaseModule {
             for (const tc of result.data.tool_calls) {
               const name = tc.function.name;
               let args: Record<string, unknown> = {};
-              try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+              try { args = JSON.parse(tc.function.arguments || '{}'); } catch (err: any) { logger.debug('[AIModule] parse tool arguments failed:', err?.message); }
 
               let tr: string;
               if (registry?.has(name)) {

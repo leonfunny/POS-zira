@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { InvoiceCustomerRow, InvoiceCustomerCreateDTO } from '../../../shared/types';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useDeleteConfirm } from '../DeleteConfirmModal';
+import rlog from '../../utils/logger';
 
 interface CustomerManagementProps {
   language: string;
@@ -36,7 +37,7 @@ export default function CustomerManagement({ language }: CustomerManagementProps
 
       setCustomers(result);
     } catch (err) {
-      console.error('Failed to load customers:', err);
+      rlog.error('Failed to load customers:', err);
     } finally {
       setLoading(false);
     }

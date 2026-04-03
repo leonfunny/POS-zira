@@ -1,6 +1,7 @@
 /** useBooksy – wraps electronAPI Booksy sync operations */
 
 import { useState, useEffect, useCallback } from 'react';
+import rlog from '../utils/logger';
 import type {
   BooksySyncStatus,
   BooksySyncConfig,
@@ -25,7 +26,7 @@ export function useBooksy() {
       setStatus(s);
       setConfig(c);
     } catch (err) {
-      console.error('[useBooksy] Failed to load:', err);
+      rlog.error('[useBooksy] Failed to load:', err);
     }
   }, []);
 

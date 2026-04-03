@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import rlog from './utils/logger';
 import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH } from '../shared/types';
 import Status from './components/Status';
 import Settings from './components/Settings';
@@ -73,7 +74,7 @@ export default function App() {
   const swipeTouchStartY = useRef<number | null>(null);
   const exitKiosk = useCallback(() => {
     setIsCheckinFullscreen(false);
-    window.electronAPI.window.setFullScreen(false);
+    window.electronAPI.window.setKiosk(false);
   }, []);
 
   const loading = authLoading || entitlementsLoading;
@@ -123,7 +124,7 @@ export default function App() {
         setConnectionStatus({ connected: statusData.connected });
         setDeviceStatus(statusData.deviceStatus);
       } catch (err: any) {
-        console.error('[App] Failed to load status:', err);
+        rlog.error('[App] Failed to load status:', err);
         setInitError(err.message || 'Failed to load application data');
       }
     }
@@ -158,9 +159,10 @@ export default function App() {
       if (e.key === 'Escape' && isFullscreen) {
         setIsFullscreen(false);
       }
-      if (e.key === 'Escape' && isCheckinFullscreen) {
-        setIsCheckinFullscreen(false);
-        window.electronAPI.window.setFullScreen(false);
+      // Ctrl+Shift+Q to exit kiosk mode (hidden from customers, replaces plain ESC)
+      if (e.key === 'Q' && e.ctrlKey && e.shiftKey && isCheckinFullscreen) {
+        e.preventDefault();
+        exitKiosk();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -174,7 +176,7 @@ export default function App() {
     try {
       await saveConfig({ sidebarCollapsed: next });
     } catch (err) {
-      console.error('[App] Failed to save sidebar state:', err);
+      rlog.error('[App] Failed to save sidebar state:', err);
     }
   }, [sidebarCollapsed, saveConfig]);
 
@@ -193,7 +195,7 @@ export default function App() {
     try {
       await window.electronAPI.connect();
     } catch (err: any) {
-      console.error('[App] Failed to connect:', err);
+      rlog.error('[App] Failed to connect:', err);
     }
   };
 
@@ -201,7 +203,7 @@ export default function App() {
     try {
       await window.electronAPI.disconnect();
     } catch (err: any) {
-      console.error('[App] Failed to disconnect:', err);
+      rlog.error('[App] Failed to disconnect:', err);
     }
   };
 
@@ -209,7 +211,7 @@ export default function App() {
     try {
       await endSession('User ended session');
     } catch (err: any) {
-      console.error('[App] Failed to end remote session:', err);
+      rlog.error('[App] Failed to end remote session:', err);
     }
   };
 
@@ -225,7 +227,7 @@ export default function App() {
       setConnectionStatus({ connected: statusData.connected });
       setDeviceStatus(statusData.deviceStatus);
     } catch (err) {
-      console.error('[App] Failed to load post-login data:', err);
+      rlog.error('[App] Failed to load post-login data:', err);
     }
   };
 
@@ -233,7 +235,7 @@ export default function App() {
     try {
       await logout();
     } catch (err: any) {
-      console.error('[App] Failed to logout:', err);
+      rlog.error('[App] Failed to logout:', err);
     }
   };
 
@@ -253,7 +255,7 @@ export default function App() {
     try {
       await saveConfig({ language: lang });
     } catch (err) {
-      console.error('[App] Failed to save language:', err);
+      rlog.error('[App] Failed to save language:', err);
     }
   };
 
@@ -311,26 +313,28 @@ export default function App() {
   }
 
   // Fullscreen check-in mode — hide all chrome for customer-facing use
-  // Exit via swipe down from top (≥150px) or Escape key
+  // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
   if (isCheckinFullscreen && isFeatureEnabled('checkin')) {
     return (
       <div
         className="h-screen w-screen bg-slate-50 p-4 select-none"
         onTouchStart={(e) => {
-          const y = e.touches[0].clientY;
-          swipeTouchStartY.current = y <= 80 ? y : null;
+          // Require exactly 3 fingers starting in the top 80px zone
+          if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
+            swipeTouchStartY.current = e.touches[0].clientY;
+          } else {
+            swipeTouchStartY.current = null;
+          }
         }}
         onTouchEnd={(e) => {
           if (swipeTouchStartY.current === null) return;
+          // Only exit if all 3 fingers were held and dragged down ≥150px
           const endY = e.changedTouches[0].clientY;
           if (endY - swipeTouchStartY.current >= 150) exitKiosk();
           swipeTouchStartY.current = null;
         }}
       >
-        {/* Swipe affordance — subtle drag handle at top */}
-        <div className="absolute top-0 left-0 right-0 flex justify-center pt-2 z-50 pointer-events-none">
-          <div className="w-10 h-1 rounded-full bg-black/15" />
-        </div>
+        {/* Kiosk mode: no visible UI chrome — staff exits via 3-finger swipe or Ctrl+Shift+Q */}
         <CheckinWizard />
       </div>
     );
@@ -395,7 +399,7 @@ export default function App() {
                 />
               )}
               {activeTab === 'booksy' && isFeatureEnabled('booksy') && <BooksySyncTab />}
-              {activeTab === 'checkin' && isFeatureEnabled('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setFullScreen(true); }} />}
+              {activeTab === 'checkin' && isFeatureEnabled('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
               {activeTab === 'invoicing' && isFeatureEnabled('invoicing') && (
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
               )}

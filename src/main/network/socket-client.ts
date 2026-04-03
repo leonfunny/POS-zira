@@ -54,21 +54,38 @@ export default class SocketClient extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        cleanup();
         reject(new Error('Connection timeout'));
       }, 30000);
 
-      this.socket!.once('connected', (data) => {
+      const cleanup = () => {
         clearTimeout(timeout);
+        this.socket?.off('connected', onConnected);
+        this.socket?.off('error', onError);
+        this.socket?.off('disconnect', onDisconnect);
+      };
+
+      const onConnected = (data: any) => {
+        cleanup();
         logger.info(`Connected to server. Agent ID: ${data.agentId}, Pending jobs: ${data.pendingJobs}`);
         this.startHeartbeat();
         resolve();
-      });
+      };
 
-      this.socket!.once('error', (error) => {
-        clearTimeout(timeout);
+      const onError = (error: any) => {
+        cleanup();
         logger.error(`Connection error: ${error.message}`);
         reject(error);
-      });
+      };
+
+      const onDisconnect = (reason: string) => {
+        cleanup();
+        reject(new Error(`Socket disconnected during connect: ${reason}`));
+      };
+
+      this.socket!.once('connected', onConnected);
+      this.socket!.once('error', onError);
+      this.socket!.once('disconnect', onDisconnect);
     });
   }
 
@@ -102,21 +119,38 @@ export default class SocketClient extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        cleanup();
         reject(new Error('Connection timeout'));
       }, 30000);
 
-      this.socket!.once('connected', (data) => {
+      const cleanup = () => {
         clearTimeout(timeout);
+        this.socket?.off('connected', onConnected);
+        this.socket?.off('error', onError);
+        this.socket?.off('disconnect', onDisconnect);
+      };
+
+      const onConnected = (data: any) => {
+        cleanup();
         logger.info(`Connected to server. Agent ID: ${data.agentId}, Pending jobs: ${data.pendingJobs}`);
         this.startHeartbeat();
         resolve();
-      });
+      };
 
-      this.socket!.once('error', (error) => {
-        clearTimeout(timeout);
+      const onError = (error: any) => {
+        cleanup();
         logger.error(`Connection error: ${error.message}`);
         reject(error);
-      });
+      };
+
+      const onDisconnect = (reason: string) => {
+        cleanup();
+        reject(new Error(`Socket disconnected during connect: ${reason}`));
+      };
+
+      this.socket!.once('connected', onConnected);
+      this.socket!.once('error', onError);
+      this.socket!.once('disconnect', onDisconnect);
     });
   }
 

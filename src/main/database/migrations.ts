@@ -726,4 +726,12 @@ export const migrations: Migration[] = [
       ALTER TABLE checkins ADD COLUMN services_json TEXT;
     `,
   },
+  {
+    version: 11,
+    name: 'checkin_booking_number',
+    up: `
+      ALTER TABLE checkins ADD COLUMN booking_number TEXT;
+      CREATE INDEX IF NOT EXISTS idx_checkin_booking_number ON checkins(booking_number);
+    `,
+  },
 ];

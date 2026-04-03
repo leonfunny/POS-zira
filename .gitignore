@@ -22,22 +22,33 @@ logs/
 # Environment
 .env
 .env.local
+.env.*
 
-# Electron
+# Electron build artifacts (installers)
 *.deb
 *.AppImage
 *.exe
 *.msi
 *.dmg
 
-# Local AI memory / config
+# Local AI / Claude config
 .claude/
 
 # Cloudflare Wrangler
 .wrangler/
 
-# Screenshots / temp files
-*.png
-*.jpg
+# Screenshots (temp debug screenshots, NOT app assets)
+screenshot*.png
 screenshots/
+
+# Temporary test scripts in root
+test-*.ps1
+
+# Generated test output
+scripts/test-output/
+
+# Generated reports
+AUDIT_REPORT.md
+
+# Misc temp files
 _nul

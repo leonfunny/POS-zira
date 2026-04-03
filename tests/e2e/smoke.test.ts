@@ -24,7 +24,6 @@ let testStartTime: Date;
 /** Tabs visible by default in offline mode (entitlement defaults from App.tsx) */
 const DEFAULT_TABS = [
   { id: 'pos',       label: 'POS' },
-  { id: 'billiard',  label: 'Billiard' },
   { id: 'chat',      label: 'Zira AI' },
   { id: 'status',    label: 'Status' },
   { id: 'checkin',   label: 'Check-in' },
@@ -139,22 +138,6 @@ describe('Print Agent Smoke Tests', () => {
 
     await screenshotOnFail(page, 'tab-pos');
     console.log('[smoke] POS tab: OK');
-  });
-
-  it('tab: Billiard — zoom controls work', async () => {
-    const clicked = await navigateToTab(page, 'Billiard');
-    expect(clicked).toBe(true);
-    await page.waitForTimeout(1_500);
-
-    // Zoom controls have aria-labels
-    const zoomInClicked = await safeClick(page, 'button[aria-label="Zoom in"]');
-    const zoomOutClicked = await safeClick(page, 'button[aria-label="Zoom out"]');
-    const resetClicked = await safeClick(page, 'button[aria-label="Reset zoom"]');
-
-    console.log(`[smoke] Billiard zoom: in=${zoomInClicked} out=${zoomOutClicked} reset=${resetClicked}`);
-    // At least the tab rendered (zoom controls may not be visible if no floor plan data)
-    await screenshotOnFail(page, 'tab-billiard');
-    console.log('[smoke] Billiard tab: OK');
   });
 
   it('tab: Zira AI (Chat) — renders without crash', async () => {

@@ -1,4 +1,4 @@
-# eNail Print Agent
+# Zira AI Print Agent
 
 Desktop application (Electron + TypeScript) for connecting eNail POS with hardware devices:
 
@@ -40,7 +40,6 @@ print-agent/
 ├── src/
 │   ├── main/           # Electron main process
 │   │   ├── index.ts    # Entry point
-│   │   ├── app.ts      # App lifecycle
 │   │   ├── tray.ts     # System tray
 │   │   ├── config/     # Configuration store
 │   │   ├── network/    # Socket.IO client
@@ -69,7 +68,7 @@ print-agent/
 ## Configuration
 
 Configuration is stored in:
-- Windows: `%APPDATA%/enail-print-agent/config.json`
+- Windows: `%APPDATA%/Zira AI/config.json`
 
 ### Supported Printers
 

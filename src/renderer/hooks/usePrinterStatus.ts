@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 export function usePrinterStatus() {
-  const [printers, setPrinters] = useState<string[]>([]);
+  const [printers, setPrinters] = useState<Array<{name: string; port: string}>>([]);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [lastTestResult, setLastTestResult] = useState<{

@@ -1,8 +1,12 @@
-import { BrowserWindow, screen, ipcMain } from 'electron';
+import { BrowserWindow, screen, ipcMain, shell } from 'electron';
 import { join } from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import logger from '../logger';
 import { PosStore } from '../pos/pos-store';
 import { getConfigValue } from '../config/store';
+
+const execFileAsync = promisify(execFile);
 
 // SECURITY: Debug mode detection for conditional DevTools
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -64,6 +68,33 @@ export class WindowManager {
     logger.info('[WindowManager] Initialized');
   }
 
+  /**
+   * Disable Windows 10/11 edge-swipe gestures that can pull the customer display
+   * out of fullscreen/kiosk mode. Sets registry keys under HKCU (no admin needed).
+   * Also disables the "−" (minimize) affordance that appears on touch drag from top edge.
+   */
+  private async disableEdgeSwipeGestures(): Promise<void> {
+    const regKeys = [
+      // Disable edge UI (swipe from edges)
+      { path: 'HKCU:\\SOFTWARE\\Policies\\Microsoft\\Windows\\EdgeUI', name: 'AllowEdgeSwipe', value: 0 },
+      // Disable tablet-mode swipe gestures
+      { path: 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell\\EdgeUI', name: 'DisableTLCorner', value: 1 },
+      { path: 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell\\EdgeUI', name: 'DisableTRCorner', value: 1 },
+    ];
+
+    for (const key of regKeys) {
+      try {
+        const psCommand =
+          `$null = New-Item -Path '${key.path}' -Force; ` +
+          `Set-ItemProperty -Path '${key.path}' -Name '${key.name}' -Value ${key.value} -Type DWord -Force`;
+        await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand], { encoding: 'utf8', timeout: 5000 });
+        logger.info(`[WindowManager] Registry set: ${key.path}\\${key.name} = ${key.value}`);
+      } catch (err: any) {
+        logger.warn(`[WindowManager] Failed to set registry key ${key.name}: ${err.message}`);
+      }
+    }
+  }
+
   getWindow(id: string): BrowserWindow | null {
     const win = this.windows.get(id);
     if (win && !win.isDestroyed()) return win;
@@ -123,6 +154,11 @@ export class WindowManager {
       logger.warn('[WindowManager] Single monitor detected — customer display will open in windowed mode to prevent machine freeze');
     }
 
+    // For customer display: disable Windows edge-swipe gestures before opening
+    if (isCustomer && hasMultipleDisplays) {
+      this.disableEdgeSwipeGestures().catch((e) => { logger.debug('[WindowManager] edge-swipe disable failed:', e?.message); });
+    }
+
     const win = new BrowserWindow({
       width: config.fullscreen ? targetDisplay.workAreaSize.width : config.width,
       height: config.fullscreen ? targetDisplay.workAreaSize.height : config.height,
@@ -133,6 +169,7 @@ export class WindowManager {
       fullscreen: isCustomer ? hasMultipleDisplays : (config.fullscreen || false),
       alwaysOnTop: useAlwaysOnTop,
       kiosk: useKiosk,
+      frame: isCustomer ? false : true, // Frameless removes the "−" bar on customer display
       closable: isCustomer ? !hasMultipleDisplays : true,
       minimizable: !isCustomer,
       maximizable: !isCustomer,
@@ -162,6 +199,24 @@ export class WindowManager {
     } else {
       win.loadFile(join(__dirname, `../../renderer/${config.htmlFile}`));
     }
+
+    // SECURITY: Navigation guards — prevent redirects to malicious pages
+    win.webContents.on('will-navigate', (event, navigationUrl) => {
+      const allowed = isDev
+        ? [`http://localhost:3100`]
+        : ['file://'];
+      if (!allowed.some(prefix => navigationUrl.startsWith(prefix))) {
+        logger.warn(`[WindowManager] Blocked navigation to: ${navigationUrl}`);
+        event.preventDefault();
+      }
+    });
+
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
 
     // Register for POS state broadcasts
     this.posStore.registerWindow(win);
@@ -211,6 +266,18 @@ export class WindowManager {
         }, 50);
         win.once('closed', () => clearTimeout(restoreTimer));
       });
+
+      // Prevent OS from stealing focus via swipe gestures — immediately reclaim
+      win.on('blur', () => {
+        if (this.customerExitRequested || win.isDestroyed()) return;
+        setTimeout(() => {
+          if (!win.isDestroyed() && !this.customerExitRequested) {
+            win.focus();
+          }
+        }, 100);
+      });
+
+      logger.info(`[WindowManager] Customer display kiosk=${useKiosk}, frameless=true, blur-refocus=on`);
     }
 
     win.on('closed', () => {
@@ -248,6 +315,19 @@ export class WindowManager {
     ipcMain.handle('window:setFullScreen', (event, value: boolean) => {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (win) win.setFullScreen(value);
+      return { success: true };
+    });
+
+    ipcMain.handle('window:setKiosk', (event, value: boolean) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+        win.setKiosk(value);
+        if (value) {
+          win.setMenuBarVisibility(false);
+          win.setAutoHideMenuBar(true);
+        }
+        logger.info(`[WindowManager] Main window kiosk=${value}`);
+      }
       return { success: true };
     });
 
@@ -390,10 +470,10 @@ export class WindowManager {
       this.displayRemovedListener = null;
     }
     // Remove IPC handlers
-    try { ipcMain.removeHandler('window:open'); } catch {}
-    try { ipcMain.removeHandler('window:close'); } catch {}
-    try { ipcMain.removeHandler('window:list'); } catch {}
-    try { ipcMain.removeHandler('display:list'); } catch {}
+    try { ipcMain.removeHandler('window:open'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:open failed:', err?.message); }
+    try { ipcMain.removeHandler('window:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:close failed:', err?.message); }
+    try { ipcMain.removeHandler('window:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:list failed:', err?.message); }
+    try { ipcMain.removeHandler('display:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:list failed:', err?.message); }
     // Destroy windows
     for (const [_id, win] of this.windows) {
       if (!win.isDestroyed()) win.destroy();

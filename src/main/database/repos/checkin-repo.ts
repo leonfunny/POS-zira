@@ -2,6 +2,7 @@ import { database } from '../database';
 
 export interface CheckinRow {
   id: string;
+  booking_number: string | null; // e.g. "001/0204"
   customer_name: string;
   customer_phone: string | null;
   customer_email: string | null;
@@ -26,6 +27,7 @@ export interface CheckinRow {
 
 export interface CheckinCreateData {
   id: string;
+  booking_number?: string;
   customer_name: string;
   customer_phone?: string;
   customer_email?: string;
@@ -44,12 +46,24 @@ export interface CheckinCreateData {
 }
 
 export const checkinRepo = {
+  /** Generate next booking number for today: 001/DDMM, 002/DDMM, ... */
+  nextBookingNumber(): string {
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const count = database.get<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM checkins WHERE date(checked_in_at) = date('now')",
+    )?.cnt || 0;
+    return `${String(count + 1).padStart(3, '0')}/${dd}${mm}`;
+  },
+
   create(data: CheckinCreateData): void {
     database.run(
-      `INSERT INTO checkins (id, customer_name, customer_phone, customer_email, service_name, staff_name, booking_id, booking_source, is_walkin, notes, customer_id, service_id, staff_id, estimated_duration, services_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO checkins (id, booking_number, customer_name, customer_phone, customer_email, service_name, staff_name, booking_id, booking_source, is_walkin, notes, customer_id, service_id, staff_id, estimated_duration, services_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.id,
+        data.booking_number || null,
         data.customer_name,
         data.customer_phone || null,
         data.customer_email || null,

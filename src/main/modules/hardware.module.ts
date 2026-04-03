@@ -12,10 +12,15 @@ import type { EventBus } from '../core/event-bus';
 import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { PosnetDriver } from '../hardware/posnet/posnet-driver';
+import { DeviceDetectionService } from '../hardware/posnet/device-detection-service';
+import { PosnetProbeEngine } from '../hardware/posnet/posnet-probe-engine';
+import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registry';
+import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
+import { printLabelToDevice, cleanupOldLabels, getMaxServicesPerLabel } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
-import { listSerialPorts, listWindowsPrinters } from '../hardware/port-utils';
+import { listSerialPorts, listWindowsPrinters, listWindowsPrintersDetailed } from '../hardware/port-utils';
 import {
   IPC_CHANNELS,
   PrinterType,
@@ -26,8 +31,11 @@ import {
   ReceiptData,
   DailyReportData,
   DeviceStatus,
+  CheckinConfirmationData,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
+import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
+import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
 import { WindowManager } from '../windows/window-manager';
 import { app } from 'electron';
@@ -56,6 +64,11 @@ export class HardwareModule extends BaseModule {
   private printerDriver: PrinterDriver | null = null;
   // Barcode scanner
   private scanner: HidScanner | null = null;
+  // Posnet detection services
+  private deviceRegistry: DeviceProfileRegistry | null = null;
+  private detectionService: DeviceDetectionService | null = null;
+  private fiscalAdapter: FiscalPrinterAdapter | null = null;
+  // (PDF label generator removed — using HTML print + save instead)
   // Health check timer
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   // Event bus reference for emitting status changes
@@ -80,15 +93,22 @@ export class HardwareModule extends BaseModule {
         }
         // Notify main + POS windows
         const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
-        try { mainWindow?.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch {}
+        try { mainWindow?.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch (err: any) { logger.debug('[HardwareModule] send barcode to main window failed:', err?.message); }
         const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
         const posWindow = wm?.getWindow('pos');
-        try { if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch {}
+        try { if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch (err: any) { logger.debug('[HardwareModule] send barcode to POS window failed:', err?.message); }
       });
     } catch (err) {
       logger.error('[HardwareModule] Scanner initialization failed (non-fatal):', err);
       this.scanner = null;
     }
+
+    // Initialize Posnet detection services
+    logger.info('[HardwareModule] Initializing Posnet detection services...');
+    this.deviceRegistry = new DeviceProfileRegistry();
+    const probeEngine = new PosnetProbeEngine();
+    this.detectionService = new DeviceDetectionService(probeEngine, this.deviceRegistry);
+    this.fiscalAdapter = new FiscalPrinterAdapter(this.deviceRegistry);
 
     // Expose printers map and module reference in container
     this.container.set(SERVICE_TOKENS.PRINTERS, this.printers);
@@ -108,30 +128,34 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.LIST_WINDOWS_PRINTERS, async () => {
+      // Return {name, port}[] so the UI can show port info and help identify ghost printers
       try {
-        // Strategy 1: Electron built-in async API (getPrintersAsync, available since Electron 27)
+        const detailed = await listWindowsPrintersDetailed();
+        if (detailed.length > 0) {
+          // Filter out ghost printers: LPT ports, PORTPROMPT, nul, FILE
+          const GHOST_PORTS = /^(LPT\d+|PORTPROMPT:|nul|FILE:|TS\d+)/i;
+          const real = detailed.filter((p) => !GHOST_PORTS.test(p.portName));
+          const ghosts = detailed.length - real.length;
+          if (ghosts > 0) logger.info(`[HardwareModule] Filtered out ${ghosts} ghost printer(s)`);
+          logger.info(`[HardwareModule] Found ${real.length} printers with port info`);
+          return real.map((p) => ({ name: p.name, port: p.portName }));
+        }
+      } catch (err) {
+        logger.warn('[HardwareModule] Detailed printer list failed:', err);
+      }
+
+      // Fallback: Electron API (no port info available)
+      try {
         const win = BrowserWindow.getAllWindows()[0];
         if (win) {
           const printers = await win.webContents.getPrintersAsync();
           if (printers.length > 0) {
-            const names = printers.map((p) => p.name);
-            logger.info(`[HardwareModule] Found ${names.length} printers via Electron API`);
-            return names;
+            logger.info(`[HardwareModule] Found ${printers.length} printers via Electron API (no port info)`);
+            return printers.map((p) => ({ name: p.name, port: '' }));
           }
         }
       } catch (err) {
         logger.warn('[HardwareModule] Electron printer API failed:', err);
-      }
-
-      try {
-        // Strategy 2: shared utility (PowerShell Get-Printer → Get-CimInstance fallback)
-        const names = await listWindowsPrinters();
-        if (names.length > 0) {
-          logger.info(`[HardwareModule] Found ${names.length} printers via PowerShell`);
-          return names;
-        }
-      } catch (err) {
-        logger.warn('[HardwareModule] PowerShell printer list failed:', err);
       }
 
       logger.warn('[HardwareModule] No printers found by any method');
@@ -144,6 +168,133 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, async (_, printerType: string) => {
       return this.testPrinterByType(printerType as PrinterType);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig) => {
+      return this.testPrinterByConfig(config);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CALIBRATE_PRINTER, async (_, config: PrinterConfig) => {
+      return this.calibratePrinterByConfig(config);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.GET_POSNET_DRIVER_STATUS, async () => {
+      return getPosnetDriverStatus();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.INSTALL_POSNET_DRIVER, async () => {
+      return installPosnetDriver();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.SCAN_FOR_DRIVER, async () => {
+      return triggerWindowsDriverScan();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.AUTO_SETUP_PRINTER, async (_, printerType: string, device?: DetectedDevice) => {
+      return this.autoSetupPrinter(printerType || 'RECEIPT', device);
+    });
+
+    // Posnet device detection
+    ipcMain.handle(IPC_CHANNELS.POSNET_SCAN_DEVICES, async () => {
+      if (!this.detectionService) return { success: false, devices: [], warnings: ['Detection service not initialized'] };
+      try {
+        const result = await this.detectionService.detectAll();
+        logger.info(`[HardwareModule] Posnet scan: ${result.devices.length} device(s) found`);
+        return result;
+      } catch (err: any) {
+        logger.error('[HardwareModule] Posnet scan failed:', err);
+        return { success: false, devices: [], warnings: [err.message] };
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.POSNET_LIST_DEVICES, async () => {
+      if (!this.deviceRegistry) return { devices: [], selectedSerial: null };
+      return this.deviceRegistry.toJSON();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.POSNET_SELECT_DEVICE, async (_, serial: string) => {
+      if (!this.deviceRegistry || !this.fiscalAdapter) {
+        return { success: false, error: 'Detection service not initialized' };
+      }
+      const device = this.deviceRegistry.selectDevice(serial);
+      if (!device) return { success: false, error: `Device ${serial} not found` };
+      this.deviceRegistry.save();
+      const connected = await this.fiscalAdapter.initialize();
+      return { success: connected, device, error: connected ? undefined : 'Failed to connect to selected device' };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.POSNET_RESCAN_KNOWN, async () => {
+      if (!this.detectionService) return { success: false, devices: [], warnings: ['Detection service not initialized'] };
+      try {
+        return await this.detectionService.rescanKnownDevices();
+      } catch (err: any) {
+        logger.error('[HardwareModule] Posnet rescan failed:', err);
+        return { success: false, devices: [], warnings: [err.message] };
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CHECKIN_PRINT_CONFIRMATION, async (_, data: CheckinConfirmationData) => {
+      const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
+      if (!driver) return { success: false, error: 'No label printer configured' };
+      if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Check-in print requires Zebra printer' };
+      try {
+        const config = getConfig();
+        const labelConfig = (config as any).printers?.LABEL || {};
+        const widthMm = labelConfig.labelWidth || config.labelWidth || 50;
+        const heightMm = labelConfig.labelHeight || config.labelHeight || 30;
+        const printerName = (driver as ZebraDriver).getPrinterName();
+        const salonName = config.salonName || config.name || '';
+
+        // Calculate how many services fit per label
+        const maxPerLabel = getMaxServicesPerLabel(heightMm);
+
+        if (data.services.length <= maxPerLabel) {
+          // Single label — all services fit
+          const htmlPath = await printLabelToDevice({
+            printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
+            data, salonName,
+          });
+          return { success: true, htmlPath };
+        }
+
+        // Multi-label: split services into chunks
+        const chunks: typeof data.services[] = [];
+        for (let i = 0; i < data.services.length; i += maxPerLabel) {
+          chunks.push(data.services.slice(i, i + maxPerLabel));
+        }
+        logger.info(`[HardwareModule] Check-in has ${data.services.length} services → ${chunks.length} labels (max ${maxPerLabel}/label at ${heightMm}mm height)`);
+
+        // Grand total across ALL services (not per-page)
+        const grandTotal = data.services.reduce((s, v) => s + (v.price || 0), 0);
+
+        // Print in REVERSE order: summary/total page first, CHECK-IN header last.
+        // On a label printer the last printed label ends up on top of the stack,
+        // so the customer sees the CHECK-IN header first when picking up the labels.
+        const htmlPaths: string[] = [];
+        for (let i = chunks.length - 1; i >= 0; i--) {
+          const chunkData = { ...data, services: chunks[i] };
+          const htmlPath = await printLabelToDevice({
+            printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
+            data: chunkData, salonName, grandTotal,
+            pageInfo: { page: i + 1, total: chunks.length },
+          });
+          htmlPaths.push(htmlPath);
+          // Small delay between labels to avoid printer spooler congestion
+          if (i > 0) await new Promise(r => setTimeout(r, 400));
+        }
+
+        return { success: true, htmlPath: htmlPaths[0], totalLabels: chunks.length };
+      } catch (e: any) {
+        logger.error('[HardwareModule] Check-in confirmation print failed:', e);
+        // Fallback to ZPL if HTML print fails (ZPL handles multi-label internally)
+        try {
+          logger.info('[HardwareModule] Falling back to ZPL print...');
+          await (driver as ZebraDriver).printCheckinConfirmation(data);
+          return { success: true, fallback: 'zpl' };
+        } catch (fallbackErr: any) {
+          return { success: false, error: e.message };
+        }
+      }
     });
 
     logger.info('[HardwareModule] IPC handlers registered');
@@ -377,6 +528,190 @@ export class HardwareModule extends BaseModule {
     try { await driver.printTest(); return { success: true }; } catch (e: any) { return { success: false, error: e.message }; }
   }
 
+  /**
+   * Test a printer directly from its config object — no need to save first.
+   * Creates a temporary driver, connects, prints test page, then disconnects.
+   */
+  async testPrinterByConfig(config: PrinterConfig): Promise<{ success: boolean; error?: string }> {
+    const driver = this.createPrinterFromConfig(config, 'test');
+    if (!driver) return { success: false, error: 'Invalid printer configuration (missing port or printer name)' };
+    try {
+      const connected = await driver.connect();
+      if (!connected) return { success: false, error: 'Printer not found. Check the printer name or connection.' };
+      await driver.printTest();
+      driver.disconnect();
+      return { success: true };
+    } catch (e: any) {
+      try { driver.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect driver after test failed:', err?.message); }
+      return { success: false, error: e.message };
+    }
+  }
+
+  async calibratePrinterByConfig(config: PrinterConfig): Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }> {
+    if (config.protocol !== 'ZEBRA') {
+      return { success: false, error: 'Calibration is only supported for Zebra printers' };
+    }
+    const driver = this.createPrinterFromConfig({ ...config, enabled: true }, 'calibrate');
+    if (!driver || !(driver instanceof ZebraDriver)) {
+      return { success: false, error: 'Invalid Zebra printer configuration (missing printer name)' };
+    }
+    try {
+      const connected = await driver.connect();
+      if (!connected) return { success: false, error: 'Printer not found. Check the printer name or connection.' };
+      await driver.calibrate();
+      const paperSize = config.windowsPrinter
+        ? await ZebraDriver.detectPaperSize(config.windowsPrinter)
+        : null;
+      driver.disconnect();
+      return { success: true, paperSize: paperSize || undefined };
+    } catch (e: any) {
+      try { driver.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect driver after calibrate failed:', err?.message); }
+      return { success: false, error: e.message };
+    }
+  }
+
+  async autoSetupPrinter(printerType: string = 'RECEIPT', device?: DetectedDevice): Promise<{ success: boolean; port?: string; windowsPrinter?: string; message: string; action?: string }> {
+    // If device info provided, use smart routing based on brand
+    if (device) {
+      const classification = classifyPrinterCategory(device);
+      const effectiveType = printerType || classification.targetType;
+      const protocol = classification.protocol;
+
+      logger.info(`[HardwareModule] autoSetupPrinter: ${device.brand} ${device.model} → ${effectiveType} (${protocol})`);
+
+      // Route by protocol
+      if (protocol === 'POSNET') {
+        return this.autoSetupPosnet(effectiveType);
+      }
+      return this.autoSetupWindowsPrinter(effectiveType, protocol as PrinterProtocol, device);
+    }
+
+    // Legacy: no device info → POSNET-only flow
+    return this.autoSetupPosnet(printerType);
+  }
+
+  /** POSNET auto-setup: install CDC driver → detect COM port → configure */
+  private async autoSetupPosnet(printerType: string): Promise<{ success: boolean; port?: string; message: string; action?: string }> {
+    // Step 1: Check/install driver
+    const driverStatus = await getPosnetDriverStatus();
+    if (!driverStatus.posnetDriverInstalled) {
+      logger.info('[HardwareModule] autoSetupPosnet: driver not installed, installing...');
+      const installResult = await installPosnetDriver();
+      if (!installResult.success) {
+        return { success: false, message: `Driver install failed: ${installResult.message}`, action: 'driver_failed' };
+      }
+      // Wait for driver to register with Windows
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // Step 2: Detect port by scanning all COM ports
+    logger.info('[HardwareModule] autoSetupPosnet: scanning COM ports for POSNET...');
+    const port = await PosnetDriver.detectPosnetPort();
+    if (!port) {
+      return { success: false, message: 'POSNET printer not found on any COM port. Check USB connection and power.', action: 'not_found' };
+    }
+
+    // Step 3: Update config
+    const config = getConfig();
+    const currentPrinters = { ...(config.printers || {}) };
+    currentPrinters[printerType as PrinterType] = {
+      ...(currentPrinters[printerType as PrinterType] || {}),
+      enabled: true,
+      protocol: 'POSNET' as PrinterProtocol,
+      port,
+      baudRate: 9600,
+    };
+    setConfig({ printers: currentPrinters });
+
+    // Step 4: Reinitialize
+    await this.reinitializePrinter();
+
+    logger.info(`[HardwareModule] autoSetupPosnet: configured ${printerType} on ${port}`);
+    return { success: true, port, message: `POSNET printer configured on ${port}`, action: 'configured' };
+  }
+
+  /** Universal auto-setup for Windows-spooler printers (Zebra, Thermal, HP, etc.) */
+  private async autoSetupWindowsPrinter(
+    printerType: string,
+    protocol: PrinterProtocol,
+    device: DetectedDevice,
+  ): Promise<{ success: boolean; windowsPrinter?: string; port?: string; message: string; action?: string }> {
+    // Step 1: If driver not installed, trigger Windows driver scan
+    if (!device.driverInstalled) {
+      logger.info(`[HardwareModule] autoSetupWindowsPrinter: driver missing for ${device.brand}, triggering scan...`);
+      const scanResult = await triggerWindowsDriverScan();
+      if (!scanResult.success) {
+        return { success: false, message: `Driver scan failed: ${scanResult.message}`, action: 'driver_failed' };
+      }
+      // Re-detect to check if driver is now installed
+      const freshStatus = await getPosnetDriverStatus();
+      const freshDevice = freshStatus.devices.find(d =>
+        d.model === device.model || d.windowsPrinterName === device.windowsPrinterName,
+      );
+      if (!freshDevice?.driverInstalled) {
+        return {
+          success: false,
+          message: `Windows could not find a driver for ${device.brand} ${device.model}. Please install the driver manually from the manufacturer's website.`,
+          action: 'driver_not_found',
+        };
+      }
+      // Use fresh device info
+      device = freshDevice;
+    }
+
+    // Step 2: Determine connection details
+    const printerName = device.windowsPrinterName;
+    const comPort = device.comPort;
+
+    if (!printerName && !comPort) {
+      return { success: false, message: `No Windows printer name or COM port found for ${device.brand} ${device.model}.`, action: 'not_found' };
+    }
+
+    // Step 3: Build config based on protocol
+    const config = getConfig();
+    const currentPrinters = { ...(config.printers || {}) };
+    const printerConfig: any = {
+      ...(currentPrinters[printerType as PrinterType] || {}),
+      enabled: true,
+      protocol,
+    };
+
+    if (protocol === 'ZEBRA' || protocol === 'WINDOWS') {
+      // Zebra and WINDOWS protocol use windowsPrinter (Windows spooler name)
+      printerConfig.windowsPrinter = printerName;
+    } else if (protocol === 'THERMAL') {
+      // Thermal can use either Windows printer name (USB) or COM port (serial)
+      if (comPort) {
+        printerConfig.port = comPort;
+        printerConfig.baudRate = 9600;
+      } else {
+        printerConfig.windowsPrinter = printerName;
+      }
+    }
+
+    // Set default label dimensions for label printers
+    if (printerType === 'LABEL') {
+      printerConfig.labelWidth = printerConfig.labelWidth || 100;
+      printerConfig.labelHeight = printerConfig.labelHeight || 50;
+    }
+
+    currentPrinters[printerType as PrinterType] = printerConfig;
+    setConfig({ printers: currentPrinters });
+
+    // Step 4: Reinitialize
+    await this.reinitializePrinter();
+
+    const identifier = printerName || comPort;
+    logger.info(`[HardwareModule] autoSetupWindowsPrinter: configured ${printerType} (${protocol}) → ${identifier}`);
+    return {
+      success: true,
+      windowsPrinter: printerName || undefined,
+      port: comPort || undefined,
+      message: `${device.brand} ${device.model} configured as ${printerType} printer`,
+      action: 'configured',
+    };
+  }
+
   async openCashDrawer(printerType?: PrinterType): Promise<{ success: boolean; error?: string }> {
     let driver: PrinterDriver | null = null;
     if (printerType) { driver = this.printers[printerType] || null; }
@@ -402,9 +737,9 @@ export class HardwareModule extends BaseModule {
     const initErrors: string[] = [];
 
     // Disconnect all
-    for (const [pt, p] of Object.entries(this.printers)) { try { p?.disconnect(); } catch {} }
+    for (const [pt, p] of Object.entries(this.printers)) { try { p?.disconnect(); } catch (err: any) { logger.debug(`[HardwareModule] disconnect printer ${pt} on reinit failed:`, err?.message); } }
     this.printers = {};
-    for (const p of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { p?.disconnect(); } catch {} }
+    for (const p of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { p?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on reinit failed:', err?.message); } }
 
     const hasPrintersDict = config.printers && Object.keys(config.printers).length > 0;
 
@@ -502,9 +837,25 @@ export class HardwareModule extends BaseModule {
       if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
       }
-      if (driver.isConnected() !== wasBefore) {
+      const isNow = driver.isConnected();
+      if (isNow !== wasBefore) {
         changed = true;
-        logger.info(`[HardwareModule] Health check: ${pt} ${driver.isConnected() ? 'reconnected' : 'disconnected'}`);
+        logger.info(`[HardwareModule] Health check: ${pt} ${isNow ? 'reconnected' : 'disconnected'}`);
+      }
+      // POSNET port recovery: if just disconnected, try to find the printer on a new port
+      if (!isNow && driver instanceof PosnetDriver) {
+        logger.info(`[HardwareModule] Attempting port recovery for POSNET (${pt})...`);
+        const newPort = await (driver as PosnetDriver).recoverPort();
+        if (newPort) {
+          const config = getConfig();
+          const currentPrinters = { ...(config.printers || {}) };
+          if (currentPrinters[pt as PrinterType]) {
+            currentPrinters[pt as PrinterType] = { ...currentPrinters[pt as PrinterType]!, port: newPort };
+            setConfig({ printers: currentPrinters });
+            changed = true;
+            logger.info(`[HardwareModule] POSNET (${pt}) auto-switched to ${newPort}`);
+          }
+        }
       }
     }
 
@@ -538,7 +889,7 @@ export class HardwareModule extends BaseModule {
 
     // Notify renderer windows
     const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
-    try { mainWindow?.webContents.send(IPC_CHANNELS.DEVICE_STATUS, status); } catch {}
+    try { mainWindow?.webContents.send(IPC_CHANNELS.DEVICE_STATUS, status); } catch (err: any) { logger.debug('[HardwareModule] send device status to main window failed:', err?.message); }
 
     // Notify backend via Socket.IO
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
@@ -554,8 +905,15 @@ export class HardwareModule extends BaseModule {
 
   private createPrinterFromConfig(config: PrinterConfig | undefined, name: string): PrinterDriver | null {
     if (!config || !config.enabled) return null;
-    if (config.protocol === 'ZEBRA' || config.protocol === 'WINDOWS') {
+    if (config.protocol === 'ZEBRA') {
+      // Zebra label printers: send raw ZPL via Windows spooler API
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
+      return null;
+    }
+    if (config.protocol === 'WINDOWS') {
+      // Regular Windows printers (A4, inkjet, laser, thermal USB): use ThermalDriver USB mode
+      // which sends plain text via Out-Printer — works on any Windows-installed printer
+      if (config.windowsPrinter) return new ThermalDriver(config.windowsPrinter, config.baudRate || 9600, 'USB', config.paperWidth || 80, config.charsPerLine || 48);
       return null;
     }
     if (config.protocol === 'POSNET') {
@@ -679,21 +1037,25 @@ export class HardwareModule extends BaseModule {
     }
   }
 
-  async start(): Promise<void> { this.setState(ModuleState.RUNNING); }
+  async start(): Promise<void> {
+    this.setState(ModuleState.RUNNING);
+    // Cleanup old label files from previous days
+    cleanupOldLabels().catch(e => logger.warn('[HardwareModule] Label cleanup failed:', e));
+  }
 
   async stop(): Promise<void> {
     this.stopHealthCheck();
     this.scanner?.stop();
-    for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch {} }
-    for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch {} }
+    for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on stop failed:', err?.message); } }
+    for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on stop failed:', err?.message); } }
     this.setState(ModuleState.STOPPED);
   }
 
   async destroy(): Promise<void> {
     this.stopHealthCheck();
     this.scanner?.stop();
-    for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch {} }
-    for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch {} }
+    for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on destroy failed:', err?.message); } }
+    for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on destroy failed:', err?.message); } }
     this.setState(ModuleState.STOPPED);
   }
 }

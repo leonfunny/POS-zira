@@ -53,49 +53,41 @@ class Database {
   }
 
   private consecutiveFailures = 0;
+  private saving = false;
 
   save(): void {
     if (!this.db) return;
+    if (this.saving) return; // Prevent concurrent saves
+    this.saving = true;
 
-    // Retry up to 3 times with backoff
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const data = this.db.export();
-        writeFileSync(this.dbPath, Buffer.from(data));
-        this.dirty = false;
-        if (this.consecutiveFailures > 0) {
-          logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
-          this.consecutiveFailures = 0;
-        }
-        return;
-      } catch (error) {
-        logger.error(`[DB] Save attempt ${attempt}/3 failed:`, error);
-        if (attempt < 3) {
-          // Blocking backoff: 100ms, 500ms (acceptable for critical data persistence)
-          const delay = attempt === 1 ? 100 : 500;
-          const start = Date.now();
-          while (Date.now() - start < delay) { /* spin wait */ }
-        }
+    try {
+      const data = this.db.export();
+      writeFileSync(this.dbPath, Buffer.from(data));
+      this.dirty = false;
+      if (this.consecutiveFailures > 0) {
+        logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
+        this.consecutiveFailures = 0;
       }
-    }
+    } catch (error) {
+      this.consecutiveFailures++;
+      logger.error(`[DB] Save failed (consecutive failures: ${this.consecutiveFailures}):`, error);
 
-    // All 3 attempts failed
-    this.consecutiveFailures++;
-    logger.error(`[DB] Save failed after 3 retries (consecutive failures: ${this.consecutiveFailures})`);
-
-    // Notify renderer windows about persistent save failure
-    if (this.consecutiveFailures >= 2) {
-      try {
-        const { BrowserWindow } = require('electron');
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) {
-            win.webContents.send('db:save-error', {
-              consecutiveFailures: this.consecutiveFailures,
-              dbPath: this.dbPath,
-            });
+      // Notify renderer windows about persistent save failure
+      if (this.consecutiveFailures >= 2) {
+        try {
+          const { BrowserWindow } = require('electron');
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) {
+              win.webContents.send('db:save-error', {
+                consecutiveFailures: this.consecutiveFailures,
+                dbPath: this.dbPath,
+              });
+            }
           }
-        }
-      } catch { /* ignore if electron not ready */ }
+        } catch { /* ignore if electron not ready */ }
+      }
+    } finally {
+      this.saving = false;
     }
   }
 
@@ -207,8 +199,15 @@ class Database {
       'billiard_mutation_queue',
     ];
 
+    // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)
+    const validTablePattern = /^[a-z_]+$/;
+
     this.transaction(() => {
       for (const table of tablesToClear) {
+        if (!validTablePattern.test(table)) {
+          logger.error(`[DB] Invalid table name rejected: ${table}`);
+          continue;
+        }
         try {
           this.db!.run(`DELETE FROM ${table}`);
           logger.info(`[DB] Cleared table: ${table}`);

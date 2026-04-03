@@ -211,7 +211,9 @@ export class ThermalDriver {
   }
 
   /**
-   * Print test page
+   * Print test page using ESC/POS binary data via printRaw().
+   * printRaw() handles both USB (copy /b to printer share) and Serial paths,
+   * sending raw bytes that thermal printers understand.
    */
   async printTest(): Promise<void> {
     if (!this.connected) {
@@ -224,6 +226,48 @@ export class ThermalDriver {
     await this.printRaw(testData);
 
     logger.info('[ThermalDriver] Test page printed');
+  }
+
+  /**
+   * Print a plain-text test page via PowerShell Out-Printer.
+   * Works on any printer installed in Windows (thermal, laser, inkjet).
+   */
+  private async printTestWindowsText(): Promise<void> {
+    const now = new Date().toLocaleString('en-GB');
+    const line = '================================';
+    const text = [
+      line,
+      '     Zira AI Print Agent',
+      '         Test Print',
+      line,
+      '',
+      `Printer : ${this.printerNameOrPort}`,
+      `Date    : ${now}`,
+      '',
+      'Status  : OK',
+      line,
+      '',
+      '',
+    ].join('\r\n');
+
+    const tempFile = path.join(os.tmpdir(), `zira_test_${Date.now()}.txt`);
+    try {
+      fs.writeFileSync(tempFile, text, 'utf8');
+      const safeName = sanitizePrinterName(this.printerNameOrPort);
+      if (!safeName) throw new Error(`Invalid printer name: "${this.printerNameOrPort}"`);
+
+      const escapedFile = tempFile.replace(/\\/g, '\\\\');
+      const psScript = `Get-Content -Path '${escapedFile}' | Out-Printer '${safeName}'`;
+      const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+      await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+        { timeout: 15000 },
+      );
+      logger.info('[ThermalDriver] Windows text test page sent to spooler');
+    } finally {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    }
   }
 
   /**

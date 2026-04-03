@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { InvoiceCustomerRow, InvoiceCustomerCreateDTO, CompanyLookupResult } from '../../../shared/types';
 import { useTranslation } from '../../i18n/useTranslation';
+import rlog from '../../utils/logger';
 
 interface CustomerPickerProps {
   value: InvoiceCustomerRow | null;
@@ -57,7 +58,7 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
         const result = await window.electronAPI.invoice.customer.search(search);
         setResults(result);
       } catch (err) {
-        console.error('Customer search error:', err);
+        rlog.error('Customer search error:', err);
       } finally {
         setLoading(false);
       }

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import rlog from '../utils/logger';
 
 interface DiagnosticsData {
   appVersion: string;
@@ -19,12 +20,12 @@ export default function Debug() {
 
   const loadDiagnostics = async () => {
     try {
-      console.log('[Debug] Loading diagnostics...');
+      rlog.info('[Debug] Loading diagnostics...');
       const data = await window.electronAPI.debug.getDiagnostics();
-      console.log('[Debug] Diagnostics loaded:', data);
+      rlog.info('[Debug] Diagnostics loaded:', data);
       setDiagnostics(data);
     } catch (error) {
-      console.error('[Debug] Failed to load diagnostics:', error);
+      rlog.error('[Debug] Failed to load diagnostics:', error);
     } finally {
       setLoading(false);
     }
@@ -35,12 +36,12 @@ export default function Debug() {
   }, []);
 
   const handleOpenDevTools = async () => {
-    console.log('[Debug] Opening DevTools...');
+    rlog.info('[Debug] Opening DevTools...');
     await window.electronAPI.debug.openDevTools();
   };
 
   const handleOpenLogs = async () => {
-    console.log('[Debug] Opening logs folder...');
+    rlog.info('[Debug] Opening logs folder...');
     await window.electronAPI.debug.openLogs();
   };
 

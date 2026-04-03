@@ -147,13 +147,29 @@ interface ElectronAPI {
   connect: () => Promise<{ success: boolean }>;
   connectWithApiKey: (apiKey: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   disconnect: () => Promise<{ success: boolean }>;
+  changeSalon: () => Promise<{ success: boolean; error?: string }>;
   getStatus: () => Promise<{ connected: boolean; deviceStatus: DeviceStatus | null }>;
+
+  // Secure key setters
+  setAiApiKey: (key: string) => Promise<{ success: boolean; error?: string }>;
+  setRemotePin: (pin: string) => Promise<{ success: boolean; error?: string }>;
+  getRemotePin: () => Promise<{ success: boolean; pin: string }>;
 
   // Printer
   listPorts: () => Promise<string[]>;
-  listWindowsPrinters: () => Promise<string[]>;
+  listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
+  testPrinterByConfig: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string }>;
+  calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
+  getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
+  installPosnetDriver: () => Promise<{ success: boolean; message: string; rebootRequired?: boolean }>;
+  scanForDriver: () => Promise<{ success: boolean; message: string }>;
+  autoSetupPrinter: (printerType: string, device?: { vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }) => Promise<{ success: boolean; port?: string; windowsPrinter?: string; message: string; action?: string }>;
+  posnetScanDevices: () => Promise<{ success: boolean; devices: Array<{ serial: string; model: string; port: string; protocol: string; library: string; baudRate: number; status: string; lastSeen: string; capabilities: { fiscal: boolean; customerDisplay: boolean; cashDrawer: boolean; nip: boolean }; autoSelected: boolean }>; selectedDevice: any | null; requiresUserSelection: boolean; scannedPorts: string[]; warnings: string[] }>;
+  posnetListDevices: () => Promise<{ version: number; lastScan: string; devices: Record<string, any>; selectedSerial: string | null }>;
+  posnetSelectDevice: (serial: string) => Promise<{ success: boolean; device?: any; error?: string }>;
+  posnetRescanKnown: () => Promise<{ success: boolean; devices: any[]; warnings: string[] }>;
 
   // Event listeners
   onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void;
@@ -245,6 +261,7 @@ interface ElectronAPI {
     close: (id: string) => Promise<{ success: boolean }>;
     list: () => Promise<string[]>;
     setFullScreen: (value: boolean) => Promise<{ success: boolean }>;
+    setKiosk: (value: boolean) => Promise<{ success: boolean }>;
   };
 
   // Display info (list from main preload, touch from customer-display preload)
@@ -277,7 +294,7 @@ interface ElectronAPI {
     getToday: () => Promise<CheckinRecord[]>;
     getByDate: (date: string) => Promise<CheckinRecord[]>;
     create: (data: any) => Promise<{ success: boolean }>;
-    createWithCustomer: (data: any) => Promise<{ success: boolean }>;
+    createWithCustomer: (data: any) => Promise<{ success: boolean; bookingNumber?: string }>;
     updateStatus: (id: string, status: CheckinStatus) => Promise<{ success: boolean }>;
     startService: (id: string) => Promise<{ success: boolean }>;
     complete: (id: string) => Promise<{ success: boolean }>;
@@ -286,6 +303,7 @@ interface ElectronAPI {
     addUpsells: (id: string, upsells: string[]) => Promise<{ success: boolean }>;
     updateNotes: (id: string, notes: string) => Promise<{ success: boolean }>;
     getStats: (date?: string) => Promise<CheckinStats>;
+    printConfirmation: (data: { bookingNumber?: string; customerName: string; customerPhone?: string; services: { name: string; price: number }[]; staffName?: string; checkinTime: string }) => Promise<{ success: boolean; error?: string }>;
   };
 
   // Salon Customers (check-in wizard)

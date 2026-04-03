@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { AuthUser } from '../../shared/types';
+import rlog from '../utils/logger';
 
 export function useAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -19,7 +20,7 @@ export function useAuth() {
         setUser(null);
       }
     } catch (err) {
-      console.error('[useAuth] Failed to check auth:', err);
+      rlog.error('[useAuth] Failed to check auth:', err);
       setIsAuthenticated(false);
       setUser(null);
     }

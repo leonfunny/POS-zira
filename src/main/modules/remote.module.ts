@@ -23,7 +23,7 @@ import {
   SshTunnelStatus,
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
-import { getConfigValue } from '../config/store';
+import { getConfigValue, getSecureRemotePin } from '../config/store';
 import logger from '../logger';
 
 export class RemoteModule extends BaseModule {
@@ -166,24 +166,21 @@ export class RemoteModule extends BaseModule {
           const unattendedEnabled = getConfigValue('remoteAccessEnabled');
 
           if (unattendedEnabled) {
-            const configPin = getConfigValue('remoteAccessPin');
+            const configPin = getSecureRemotePin();
 
-            if (!configPin) {
-              // No PIN set → auto-accept (trust backend auth)
-              logger.info('[Remote] Unattended: auto-accept (no PIN)');
-              await this.remoteSessionManager?.acceptSession();
-              return;
-            }
-
-            if (request.passcode && request.passcode === configPin) {
+            // SECURITY: Require a non-empty PIN for unattended access — never auto-accept without one
+            if (!configPin || configPin.trim().length === 0) {
+              logger.warn('[Remote] Unattended: no PIN configured — refusing auto-accept, falling through to dialog');
+              // Fall through to attended (dialog) mode
+            } else if (request.passcode && request.passcode === configPin) {
               // Correct PIN → auto-accept
               logger.info('[Remote] Unattended: PIN verified, auto-accept');
               await this.remoteSessionManager?.acceptSession();
               return;
+            } else {
+              // Wrong/missing PIN → fallback to dialog
+              logger.info('[Remote] Unattended: wrong PIN, showing dialog');
             }
-
-            // Wrong/missing PIN → fallback to dialog
-            logger.info('[Remote] Unattended: wrong PIN, showing dialog');
           }
 
           // Attended mode (default): show native dialog

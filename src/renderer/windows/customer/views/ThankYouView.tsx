@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import QRCode from 'qrcode';
+import rlog from '../../../utils/logger';
 
 interface ThankYouViewProps {
   lastOrderTotal?: number;
@@ -17,7 +18,7 @@ export default function ThankYouView({ lastOrderTotal, t, bookingUrl }: ThankYou
         margin: 1,
         color: { dark: '#000000', light: '#ffffff' },
       }).catch((err: Error) => {
-        console.error('[ThankYouView] QR code generation failed:', err);
+        rlog.error('[ThankYouView] QR code generation failed:', err);
       });
     }
   }, [bookingUrl]);

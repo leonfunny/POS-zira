@@ -185,7 +185,7 @@ export class BrowserController {
     try {
       const origin = new URL(fullUrl).origin;
       await this.sessionManager.applyStorage(page, origin);
-    } catch {}
+    } catch (err: any) { logger.debug('[BrowserController] apply storage failed:', err?.message); }
 
     // Wait for page to settle (human-like)
     await humanDelay(1000, 0.5);

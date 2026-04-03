@@ -60,10 +60,18 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }, []);
 
+  // Dismiss keyboard when tapping outside inputs/buttons
+  const handleContainerTap = useCallback((e: React.PointerEvent) => {
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SVG' || tag === 'PATH') return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    if (activeField) handleDone();
+  }, [activeField, handleDone]);
+
   const kbHeight = activeField ? KB_HEIGHT[activeField === 'notes' ? 'full' : 'alpha'] : 0;
 
   return (
-    <div className="h-full flex flex-col relative overflow-hidden">
+    <div className="h-full flex flex-col relative overflow-hidden" onPointerDown={handleContainerTap}>
       {/* Header */}
       <div className="flex items-center gap-3 px-1 pt-2 pb-3 shrink-0">
         <button

@@ -238,6 +238,7 @@ const store = new Store<AgentConfig>({
     // Unattended Remote Access
     remoteAccessEnabled: { type: 'boolean', default: false },
     remoteAccessPin: { type: 'string', default: '' },
+    encryptedRemotePin: { type: 'string', default: '' },
     // UI sidebar state
     sidebarCollapsed: { type: 'boolean', default: false },
     // User-hidden tabs
@@ -468,6 +469,65 @@ export function getSecureAiApiKey(): string | null {
     if (setSecureAiApiKey(plainKey)) {
       console.info('[Config] AI API key migrated successfully');
       return plainKey;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * SECURITY: Securely store remote access PIN using Windows DPAPI encryption
+ */
+export function setSecureRemotePin(pin: string): boolean {
+  const safeStorage = getSafeStorage();
+
+  // Always clear plain text for security
+  store.set('remoteAccessPin', '');
+
+  if (!pin) {
+    store.set('encryptedRemotePin', '');
+    return true;
+  }
+
+  if (safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      const encrypted = safeStorage.encryptString(pin).toString('base64');
+      store.set('encryptedRemotePin', encrypted);
+      return true;
+    } catch (error) {
+      console.error('[Config] Failed to encrypt remote PIN:', error);
+      return false;
+    }
+  } else {
+    console.error('[Config] SECURITY: Encryption not available - remote PIN REJECTED');
+    store.set('encryptedRemotePin', '');
+    return false;
+  }
+}
+
+/**
+ * SECURITY: Securely retrieve remote access PIN (decrypted)
+ */
+export function getSecureRemotePin(): string | null {
+  const safeStorage = getSafeStorage();
+
+  // Try encrypted PIN first
+  const encryptedPin = store.get('encryptedRemotePin') as string | undefined;
+  if (encryptedPin && safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(encryptedPin, 'base64'));
+    } catch (error) {
+      console.error('[Config] Failed to decrypt remote PIN:', error);
+    }
+  }
+
+  // Migration: Check for legacy plain text PIN and encrypt it
+  const plainPin = store.get('remoteAccessPin') as string | undefined;
+  if (plainPin) {
+    console.warn('[Config] Migrating plain text remote PIN to encrypted storage...');
+    if (setSecureRemotePin(plainPin)) {
+      console.info('[Config] Remote PIN migrated successfully');
+      return plainPin;
     }
   }
 

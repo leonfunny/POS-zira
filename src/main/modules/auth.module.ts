@@ -23,6 +23,7 @@ import { ApiClient } from '../network/api-client';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
   setSecureAuthToken, getSecureAuthToken, setSecureApiKey, getSecureApiKey,
+  setSecureAiApiKey, setSecureRemotePin, getSecureRemotePin,
   clearSecureTokens,
 } from '../config/store';
 import { database } from '../database/database';
@@ -72,10 +73,41 @@ export class AuthModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.GET_CONFIG, () => getConfig());
 
     ipcMain.handle(IPC_CHANNELS.SET_CONFIG, async (_, config: Partial<AgentConfig>) => {
-      const result = setConfig(config);
+      // SECURITY: Block sensitive fields that should not be settable from the renderer
+      const blockedFields = new Set([
+        'serverUrl',        // Could redirect auth to malicious server
+        'apiKey',           // Credential — set through proper auth flow only
+        'encryptedToken',   // Credential — managed internally
+        'agentId',          // Server-assigned
+        'salonId',          // Server-assigned
+        'machineId',        // Server-assigned
+        'entitlements',     // SuperAdmin-controlled, server-assigned
+        'authToken',        // Auth credential — set through login flow
+        'authUser',         // Set through login flow
+        'aiApiKey',              // Credential — set through AUTH_SET_AI_API_KEY only
+        'encryptedAiApiKey',     // Managed internally by safeStorage
+        'encryptedTelegramToken', // Managed internally by safeStorage
+        'remoteAccessPin',       // Credential — set through AUTH_SET_REMOTE_PIN only
+        'encryptedRemotePin',    // Managed internally by safeStorage
+      ]);
+
+      const sanitized: Partial<AgentConfig> = {};
+      for (const [key, value] of Object.entries(config)) {
+        if (blockedFields.has(key)) {
+          logger.warn(`[AuthModule] SET_CONFIG: blocked attempt to set restricted field "${key}"`);
+          continue;
+        }
+        (sanitized as any)[key] = value;
+      }
+
+      if (Object.keys(sanitized).length === 0) {
+        return getConfig(); // Nothing to set after filtering
+      }
+
+      const result = setConfig(sanitized);
       // Notify modules (hardware reinit, telegram restart, AI key change, etc.)
       if (this.eventBus) {
-        this.eventBus.emit('config:changed', { changedKeys: Object.keys(config) });
+        this.eventBus.emit('config:changed', { changedKeys: Object.keys(sanitized) });
       }
       return result;
     });
@@ -165,6 +197,45 @@ export class AuthModule extends BaseModule {
       return { success: true };
     });
 
+    // ─── Salon Switch ─────────────────────────────────────────────
+    ipcMain.handle(IPC_CHANNELS.AUTH_CHANGE_SALON, async () => {
+      try {
+        const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+        socket?.disconnect();
+        setSecureApiKey('');
+        setConfig({
+          apiKey: '', agentId: '', salonId: '', salonName: '', salonSlug: '',
+          isPaired: false,
+        });
+        logger.info('[AuthModule] Salon changed — credentials cleared, socket disconnected');
+        return { success: true };
+      } catch (e: any) {
+        logger.error('[AuthModule] Change salon failed:', e);
+        return { success: false, error: e.message };
+      }
+    });
+
+    // ─── Secure Key Setters ────────────────────────────────────────
+    ipcMain.handle(IPC_CHANNELS.AUTH_SET_AI_API_KEY, async (_, key: string) => {
+      if (typeof key !== 'string') return { success: false, error: 'Invalid key' };
+      const ok = setSecureAiApiKey(key);
+      if (ok && this.eventBus) {
+        this.eventBus.emit('config:changed', { changedKeys: ['aiApiKey'] });
+      }
+      return { success: ok, error: ok ? undefined : 'Encryption not available' };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.AUTH_SET_REMOTE_PIN, async (_, pin: string) => {
+      if (typeof pin !== 'string') return { success: false, error: 'Invalid PIN' };
+      const sanitized = pin.replace(/[^0-9]/g, '').slice(0, 6);
+      const ok = setSecureRemotePin(sanitized);
+      return { success: ok, error: ok ? undefined : 'Encryption not available' };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.AUTH_GET_REMOTE_PIN, async () => {
+      return { success: true, pin: getSecureRemotePin() || '' };
+    });
+
     // ─── Auth: Telegram Login ───────────────────────────────────
     ipcMain.handle(IPC_CHANNELS.AUTH_TELEGRAM_LOGIN_TOKEN, async () => {
       try {
@@ -191,7 +262,7 @@ export class AuthModule extends BaseModule {
 
           // Multi-tenant isolation: clear if switching salons
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            try { database.clearSalonData(); } catch {}
+            try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on telegram login failed:', err?.message); }
           }
 
           setConfig({
@@ -205,14 +276,14 @@ export class AuthModule extends BaseModule {
 
           // Auto-connect Socket.IO (same as email login)
           try {
-            const existingKey = getConfigValue('apiKey') as string | undefined;
+            const existingKey = getSecureApiKey();
             if (existingKey?.startsWith('pa_')) {
               await this.connectWithApiKey(existingKey);
             } else {
               const keyResult = await client.getMyPrintAgentKey(result.access_token);
               if (keyResult?.apiKey) await this.connectWithApiKey(keyResult.apiKey);
             }
-          } catch {}
+          } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
 
           return { success: true, data: { status: 'VERIFIED', user: result.user, salon: result.salon } };
         }
@@ -253,7 +324,7 @@ export class AuthModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
-      try { database.clearSalonData(); } catch {}
+      try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on logout failed:', err?.message); }
       clearSecureTokens();
       // Preserve last salonId so next login can compare correctly
       setConfig({ authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' }, salonName: '', salonSlug: '', aiEnabled: false });
@@ -277,7 +348,7 @@ export class AuthModule extends BaseModule {
 
           // Multi-tenant isolation: only clear if switching to a genuinely different salon
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            try { database.clearSalonData(); } catch {}
+            try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on email login failed:', err?.message); }
           }
 
           const authUser: AuthUser = {
@@ -294,14 +365,14 @@ export class AuthModule extends BaseModule {
 
           // Auto-connect
           try {
-            const existingKey = getConfigValue('apiKey') as string | undefined;
+            const existingKey = getSecureApiKey();
             if (existingKey?.startsWith('pa_')) {
               await this.connectWithApiKey(existingKey);
             } else {
               const keyResult = await client.getMyPrintAgentKey(result.access_token);
               if (keyResult?.apiKey) await this.connectWithApiKey(keyResult.apiKey);
             }
-          } catch {}
+          } catch (err: any) { logger.debug('[AuthModule] auto-connect after email login failed:', err?.message); }
 
           return { success: true, data: { user: authUser } };
         }
@@ -313,9 +384,27 @@ export class AuthModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.API_CALL, async (_, method: string, path: string, body?: any) => {
       const token = getSecureAuthToken();
       if (!token) throw new Error('Not authenticated');
+
+      // SECURITY: Validate HTTP method
+      const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+      if (!allowedMethods.includes(method.toUpperCase())) {
+        throw new Error(`Invalid HTTP method: ${method}`);
+      }
+
+      // SECURITY: Only allow print-agent API paths to prevent privilege escalation
+      const allowedPrefixes = ['/api/v1/print-agent/', '/api/v1/salons/'];
+      if (!allowedPrefixes.some(prefix => path.startsWith(prefix))) {
+        throw new Error(`API path not allowed: ${path}. Only print-agent and salon APIs are accessible.`);
+      }
+
+      // SECURITY: Block path traversal
+      if (path.includes('..') || path.includes('//')) {
+        throw new Error('Invalid API path');
+      }
+
       const config = getConfig();
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-      return client.request(method, path, token, body);
+      return client.request(method.toUpperCase(), path, token, body);
     });
 
     logger.info('[AuthModule] IPC handlers registered');
@@ -328,12 +417,12 @@ export class AuthModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     if (!socket) throw new Error('Socket not initialized');
 
-    if (config.apiKey?.startsWith('pa_')) {
-      await socket.connectWithApiKey(config.serverUrl, config.apiKey);
+    const apiKey = getSecureApiKey();
+    if (apiKey?.startsWith('pa_')) {
+      await socket.connectWithApiKey(config.serverUrl, apiKey);
     } else {
-      const token = getSecureApiKey() || '';
       const machineId = config.machineId || '';
-      await socket.connect(config.serverUrl, machineId, token);
+      await socket.connect(config.serverUrl, machineId, apiKey || '');
     }
   }
 
@@ -343,7 +432,7 @@ export class AuthModule extends BaseModule {
     if (!socket) throw new Error('Socket not initialized');
 
     setSecureApiKey(apiKey);
-    setConfig({ apiKey, isPaired: true });
+    setConfig({ isPaired: true });
     await socket.connectWithApiKey(config.serverUrl, apiKey);
   }
 
@@ -354,10 +443,21 @@ export class AuthModule extends BaseModule {
   }
 
   async start(): Promise<void> {
-    // Auto-connect if paired
+    // Auto-connect if paired — but only if credentials actually exist
     const isPaired = getConfigValue('isPaired');
     if (isPaired) {
-      try { await this.connect(); } catch (e) { logger.warn('[AuthModule] Auto-connect failed:', e); }
+      const config = getConfig();
+      const secureKey = getSecureApiKey();
+      const hasApiKey = secureKey?.startsWith('pa_');
+      const hasMachineId = !!config.machineId;
+
+      if (hasApiKey || (secureKey && hasMachineId)) {
+        try { await this.connect(); } catch (e) { logger.warn('[AuthModule] Auto-connect failed:', e); }
+      } else {
+        logger.error('[AuthModule] isPaired=true but no valid credentials found (apiKey=%s, machineId=%s). Resetting isPaired.',
+          hasApiKey, hasMachineId);
+        setConfig({ isPaired: false });
+      }
     }
     this.setState(ModuleState.RUNNING);
   }

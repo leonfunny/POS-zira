@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { SecurityAnalytics, CameraConfig } from '../../../shared/types';
+import rlog from '../../utils/logger';
 
 interface AnalyticsDashboardProps {
   cameras: CameraConfig[];
+  t?: (key: string) => string;
 }
 
-export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps) {
+export default function AnalyticsDashboard({ cameras, t }: AnalyticsDashboardProps) {
   const [selectedCamera, setSelectedCamera] = useState<string>('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [analytics, setAnalytics] = useState<SecurityAnalytics | null>(null);
@@ -31,7 +33,7 @@ export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps)
         if (!cancelled) setAnalytics(data);
       })
       .catch(err => {
-        if (!cancelled) console.error('[Analytics] Failed to load:', err);
+        if (!cancelled) rlog.error('[Analytics] Failed to load:', err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -43,7 +45,7 @@ export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps)
   if (analyticsCameras.length === 0) {
     return (
       <div className="text-sm text-slate-400 p-6 text-center bg-slate-50 rounded-lg">
-        No cameras with analytics algorithms configured.
+        {t?.('security.noAnalyticsCameras') ?? 'No cameras with analytics algorithms configured.'}
       </div>
     );
   }
@@ -74,29 +76,29 @@ export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps)
       </div>
 
       {loading ? (
-        <div className="text-sm text-slate-500 p-4">Loading analytics...</div>
+        <div className="text-sm text-slate-500 p-4">{t?.('security.loadingAnalytics') ?? 'Loading analytics...'}</div>
       ) : !analytics ? (
         <div className="text-sm text-slate-400 p-4 text-center bg-slate-50 rounded-lg">
-          No analytics data for this date.
+          {t?.('security.noAnalyticsData') ?? 'No analytics data for this date.'}
         </div>
       ) : (
         <div className="space-y-4">
           {/* Summary cards */}
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">Total Visitors</div>
+              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.totalVisitors') ?? 'Total Visitors'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {analytics.hourlyCustomerCount.reduce((a, b) => a + b, 0)}
               </div>
             </div>
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">Peak Hour</div>
+              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.peakHour') ?? 'Peak Hour'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {analytics.peakHour}:00
               </div>
             </div>
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">Avg Wait</div>
+              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.avgWait') ?? 'Avg Wait'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {Math.round(analytics.avgWaitTimeSeconds / 60)}m
               </div>
@@ -105,14 +107,14 @@ export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps)
 
           {/* Hourly chart */}
           <div className="bg-white border border-slate-200 rounded-lg p-3">
-            <div className="text-xs text-slate-500 mb-2">Hourly Customer Count</div>
+            <div className="text-xs text-slate-500 mb-2">{t?.('security.hourlyCustomerCount') ?? 'Hourly Customer Count'}</div>
             <div className="flex items-end gap-px h-24">
               {analytics.hourlyCustomerCount.map((count, hour) => (
                 <div key={hour} className="flex-1 flex flex-col items-center gap-0.5">
                   <div
                     className="w-full bg-brand-500 rounded-t"
                     style={{ height: `${(count / maxCount) * 100}%`, minHeight: count > 0 ? 2 : 0 }}
-                    title={`${hour}:00 - ${count} visitors`}
+                    title={`${hour}:00 - ${count} ${t?.('security.visitors') ?? 'visitors'}`}
                   />
                   {hour % 3 === 0 && (
                     <span className="text-[8px] text-slate-400">{hour}</span>
@@ -125,15 +127,15 @@ export default function AnalyticsDashboard({ cameras }: AnalyticsDashboardProps)
           {/* Staff metrics */}
           {analytics.staffMetrics && analytics.staffMetrics.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-xs text-slate-500 mb-2">Staff Zone Activity</div>
+              <div className="text-xs text-slate-500 mb-2">{t?.('security.staffZoneActivity') ?? 'Staff Zone Activity'}</div>
               <div className="space-y-2">
                 {analytics.staffMetrics.map((metric) => (
                   <div key={metric.zoneId} className="flex items-center justify-between text-xs">
                     <span className="text-slate-700 font-medium">{metric.zoneName}</span>
                     <div className="flex items-center gap-3">
-                      <span className="text-green-600">{metric.activeMinutes}m active</span>
-                      <span className="text-slate-400">{metric.idleMinutes}m idle</span>
-                      <span className="text-brand-600">{metric.estimatedCustomersServed} served</span>
+                      <span className="text-green-600">{metric.activeMinutes}{t?.('security.mActive') ?? 'm active'}</span>
+                      <span className="text-slate-400">{metric.idleMinutes}{t?.('security.mIdle') ?? 'm idle'}</span>
+                      <span className="text-brand-600">{metric.estimatedCustomersServed} {t?.('security.served') ?? 'served'}</span>
                     </div>
                   </div>
                 ))}

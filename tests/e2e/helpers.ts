@@ -19,7 +19,7 @@ const ROOT = join(__dirname, '..', '..');
 /** Where Winston writes logs (mirrors logger.ts → app.getPath('userData')) */
 function getLogDir(): string {
   const appData = process.env.APPDATA || join(process.env.HOME || '', 'AppData', 'Roaming');
-  return join(appData, 'enail-print-agent', 'logs');
+  return join(appData, 'Zira AI', 'logs');
 }
 
 // ─── Launch ─────────────────────────────────────────────────────────

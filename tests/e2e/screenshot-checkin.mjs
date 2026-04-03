@@ -26,7 +26,7 @@ for (const sel of ['button:has-text("Offline")', 'text=Offline']) {
 }
 await page.waitForSelector('aside', { timeout: 10000 });
 
-// Turn off stats bar and queue panel
+// Hide stats bar for this screenshot
 try {
   await page.evaluate(() => {
     window.electronAPI?.saveConfig?.({ checkinShowStatsBar: false, checkinShowQueue: false });
@@ -40,12 +40,37 @@ for (const sel of ['aside button[data-tooltip="Check-in"]', 'aside button:has-te
 }
 await page.waitForTimeout(2000);
 
-// Screen 1: Entry screen
+// Click fullscreen/kiosk button
+const fsSels = ['button[title="Enter customer kiosk mode"]', 'button:has(svg path[d*="M3.75 3.75"])'];
+for (const sel of fsSels) {
+  try { await page.click(sel, { timeout: 3000 }); console.log('[ss] Fullscreen via:', sel); break; } catch {}
+}
+await page.waitForTimeout(1500);
+
+// Screen 1: Entry screen (fullscreen kiosk)
 await page.screenshot({ path: join(OUT, 'checkin-entry.png') });
 console.log('[ss] Saved checkin-entry.png');
 
+// Click "View our prices" button
+const priceSels = ['text=View our prices', 'text=Zobacz cennik', 'button:has-text("prices")'];
+for (const sel of priceSels) {
+  try { await page.click(sel, { timeout: 3000 }); console.log('[ss] Prices via:', sel); break; } catch {}
+}
+await page.waitForTimeout(1500);
+
+// Screen: Price list
+await page.screenshot({ path: join(OUT, 'checkin-prices.png') });
+console.log('[ss] Saved checkin-prices.png');
+
+// Go back to entry
+const backSels = ['button:has(svg path[d*="M15.75 19.5"])'];
+for (const sel of backSels) {
+  try { await page.click(sel, { timeout: 2000 }); break; } catch {}
+}
+await page.waitForTimeout(1000);
+
 // Navigate to Walk-in → Phone entry
-const walkInSels = ['text=Walk-in', 'button:has-text("Walk")', '[data-action="walkin"]'];
+const walkInSels = ['text=Choose services', 'button:has-text("Choose")', 'text=Get started'];
 for (const sel of walkInSels) {
   try { await page.click(sel, { timeout: 2000 }); console.log('[ss] Clicked walk-in via:', sel); break; } catch {}
 }

@@ -56,6 +56,11 @@ export class SessionManager {
   private autoSaveInterval: NodeJS.Timeout | null = null;
 
   constructor(profileId: string = 'default') {
+    // Sanitize profileId to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+$/.test(profileId)) {
+      logger.warn(`[SessionManager] Invalid profileId "${profileId}", falling back to "default"`);
+      profileId = 'default';
+    }
     this.profileId = profileId;
     this.sessionsDir = path.join(app.getPath('userData'), 'browser-sessions');
 
@@ -245,7 +250,7 @@ export class SessionManager {
         const origin = new URL(url).origin;
         session.storage[origin] = await this.captureStorage(page);
         session.metadata.lastUrl = url;
-      } catch {}
+      } catch (err: any) { logger.debug('[SessionManager] capture storage on save failed:', err?.message); }
     }
 
     await this.saveSession(session);
@@ -260,8 +265,12 @@ export class SessionManager {
     }
 
     this.autoSaveInterval = setInterval(async () => {
-      logger.debug('[SessionManager] Auto-saving session...');
-      await this.saveCurrentState(context);
+      try {
+        logger.debug('[SessionManager] Auto-saving session...');
+        await this.saveCurrentState(context);
+      } catch (error: any) {
+        logger.error(`[SessionManager] Auto-save failed: ${error.message}`);
+      }
     }, intervalMinutes * 60 * 1000);
 
     logger.info(`[SessionManager] Auto-save started (every ${intervalMinutes} minutes)`);

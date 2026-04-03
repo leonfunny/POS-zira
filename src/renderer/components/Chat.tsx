@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ZiraAIStatus } from '../../shared/types';
 import { getTranslation, Language } from '../i18n/translations';
 import { useDeleteConfirm } from './DeleteConfirmModal';
+import rlog from '../utils/logger';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -189,7 +190,7 @@ export default function Chat({ language }: ChatProps) {
       setCopiedIndex(index);
       setTimeout(() => setCopiedIndex(null), 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      rlog.error('Failed to copy:', err);
     }
   }, []);
 
@@ -300,7 +301,7 @@ export default function Chat({ language }: ChatProps) {
           await window.electronAPI.ai.clearHistory();
           setMessages([]);
         } catch (err) {
-          console.error('Failed to clear history:', err);
+          rlog.error('Failed to clear history:', err);
         }
       },
     });

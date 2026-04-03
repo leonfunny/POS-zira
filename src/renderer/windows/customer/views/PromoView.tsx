@@ -10,6 +10,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stabilize images array reference across IPC re-serializations
   // Only change when the actual image URLs change
@@ -26,7 +27,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
 
     timerRef.current = setInterval(() => {
       setIsTransitioning(true);
-      setTimeout(() => {
+      fadeTimerRef.current = setTimeout(() => {
         setCurrentIndex((prev) => (prev + 1) % stableImages.length);
         setIsTransitioning(false);
       }, 500); // fade duration
@@ -34,6 +35,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
     };
   }, [stableImages, intervalMs]);
 

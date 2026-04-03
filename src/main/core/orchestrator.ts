@@ -317,7 +317,7 @@ export class AgentOrchestrator implements TrayManagerHost {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
-        devTools: true,
+        devTools: process.env.NODE_ENV === 'development' || isDebugMode, // SECURITY: Gate DevTools behind debug mode
       },
       icon: getIconPath('icon.png'),
       title: isDebugMode ? 'Zira AI [DEBUG]' : 'Zira AI',
@@ -341,6 +341,23 @@ export class AgentOrchestrator implements TrayManagerHost {
         this.mainWindow.webContents.openDevTools();
       }
     }
+
+    // SECURITY: Navigation guards — prevent redirects to malicious pages
+    this.mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+      const allowed = isDev ? ['http://localhost:3100'] : ['file://'];
+      if (!allowed.some(prefix => navigationUrl.startsWith(prefix))) {
+        logger.warn(`[Window] Blocked navigation to: ${navigationUrl}`);
+        event.preventDefault();
+      }
+    });
+
+    this.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      // Allow opening external URLs in the default browser, block new Electron windows
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
 
     this.mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
       logger.error(`[Window] Failed to load: ${errorCode} - ${errorDescription}`);
@@ -454,7 +471,7 @@ export class AgentOrchestrator implements TrayManagerHost {
 
     // Remove IPC handlers registered by modules (per-channel, not blanket)
     for (const channel of Object.values(IPC_CHANNELS)) {
-      try { ipcMain.removeHandler(channel); } catch {}
+      try { ipcMain.removeHandler(channel); } catch (err: any) { logger.debug(`[Orchestrator] removeHandler ${channel} failed:`, err?.message); }
     }
 
     // Stop modules in reverse order
@@ -507,6 +524,6 @@ export class AgentOrchestrator implements TrayManagerHost {
     this.initStep++;
     const logMsg = `[Init Step ${this.initStep}] ${message}`;
     logger.info(logMsg);
-    try { console.log(logMsg); } catch {}
+    try { console.log(logMsg); } catch (err: any) { logger.debug('[Orchestrator] console.log failed:', err?.message); }
   }
 }

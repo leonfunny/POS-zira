@@ -374,15 +374,78 @@ export class RemoteSessionManager extends EventEmitter {
     this.emit('stateChanged', this.getState());
   }
 
+  /** Cached quality — updated async so the sync getter returns the latest reading. */
+  private cachedQuality: 'poor' | 'fair' | 'good' | 'excellent' = 'good';
+  private qualityTimer: ReturnType<typeof setInterval> | null = null;
+
   /**
-   * Get connection quality indicator
+   * Get connection quality indicator based on last async measurement.
    */
   private getConnectionQuality(): 'poor' | 'fair' | 'good' | 'excellent' | undefined {
     if (!this.webrtcPeer.isConnected()) {
+      this.stopQualityMonitor();
       return undefined;
     }
-    // TODO: Implement actual quality measurement from WebRTC stats
-    return 'good';
+    this.startQualityMonitor();
+    return this.cachedQuality;
+  }
+
+  private startQualityMonitor(): void {
+    if (this.qualityTimer) return;
+    this.qualityTimer = setInterval(() => this.measureQuality(), 5000);
+    this.measureQuality();
+  }
+
+  private stopQualityMonitor(): void {
+    if (this.qualityTimer) {
+      clearInterval(this.qualityTimer);
+      this.qualityTimer = null;
+    }
+  }
+
+  private async measureQuality(): Promise<void> {
+    try {
+      const stats = await this.webrtcPeer.getStats();
+      if (!stats) return;
+
+      let rtt = -1;
+      let packetsLost = 0;
+      let packetsSent = 0;
+
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          if (typeof report.currentRoundTripTime === 'number') {
+            rtt = report.currentRoundTripTime * 1000; // seconds → ms
+          }
+        }
+        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+          packetsSent = report.packetsSent || 0;
+        }
+        if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+          packetsLost = report.packetsLost || 0;
+        }
+      });
+
+      // Classify quality based on RTT and packet loss
+      const lossRate = packetsSent > 0 ? packetsLost / packetsSent : 0;
+
+      if (rtt < 0) {
+        // No RTT data yet, keep current
+        return;
+      }
+
+      if (rtt < 50 && lossRate < 0.01) {
+        this.cachedQuality = 'excellent';
+      } else if (rtt < 150 && lossRate < 0.03) {
+        this.cachedQuality = 'good';
+      } else if (rtt < 300 && lossRate < 0.08) {
+        this.cachedQuality = 'fair';
+      } else {
+        this.cachedQuality = 'poor';
+      }
+    } catch {
+      // Stats not available — keep last known quality
+    }
   }
 
   /**
@@ -467,6 +530,7 @@ export class RemoteSessionManager extends EventEmitter {
    */
   destroy(): void {
     console.log('[RemoteSession] Destroying...');
+    this.stopQualityMonitor();
     this.endSession('Manager destroyed');
     this._screenCapturer.destroy();
     this.webrtcPeer.destroy();

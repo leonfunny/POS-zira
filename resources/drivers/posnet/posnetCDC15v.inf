@@ -1,0 +1,123 @@
+;------------------------------------------------------------------------------
+; Copyright © 2016 POSNET S.A.
+; Comunication Device Class driver (CDC) INF FILE
+;------------------------------------------------------------------------------
+
+[Version]
+Signature="$Windows NT$"
+Class=Ports
+ClassGuid={4D36E978-E325-11CE-BFC1-08002BE10318}
+Provider=%MANUFACTURER%
+CatalogFile=posnetCDC15v.cat
+DriverVer= 06/22/2018,2.23.15
+
+[Manufacturer]
+%MANUFACTURER%=DeviceList,NTamd64
+
+[DestinationDirs]
+DefaultDestDir=12
+
+[SourceDisksNames]
+[SourceDisksFiles]
+[FakeModemCopyFileSection]
+
+[DriverServiceSec]
+DisplayName=%SERVICE%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\usbser.sys
+LoadOrderGroup = Base
+
+;----------------------------------------------------------------
+;  x86
+;----------------------------------------------------------------
+
+[DriverInstall.nt]
+include=mdmcpq.inf
+CopyFiles=FakeModemCopyFileSection
+AddReg=DriverInstall.nt.AddReg
+
+[DriverInstall.nt.AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,usbser.sys
+HKR,,EnumPropPages32,,"MsPorts.dll,SerialPortPropPageProvider"
+
+[DriverInstall.nt.Services]
+include=mdmcpq.inf 
+AddService=usbser, 0x00000002, DriverServiceSec
+
+;-----------------------------------------------------------------
+;  x64
+;-----------------------------------------------------------------
+
+[DriverInstall.ntamd64]
+include=mdmcpq.inf
+CopyFiles=FakeModemCopyFileSection
+AddReg=DriverInstall.NTamd64.AddReg
+
+[DriverInstall.NTamd64.AddReg] 
+HKR,,DevLoader,,*ntkern 
+HKR,,NTMPDriver,,usbser.sys 
+HKR,,EnumPropPages32,,"MsPorts.dll,SerialPortPropPageProvider" 
+
+[DriverInstall.ntamd64.Services]
+include=mdmcpq.inf 
+AddService=usbser, 0x00000002, DriverServiceSec
+
+;----------------------------------------------------------------
+;            VID/PID Settings
+;----------------------------------------------------------------
+
+[DeviceList]
+%DESC_TEMOHS%=DriverInstall,USB\VID_1424&PID_1015
+%DESC_MOBILEHS%=DriverInstall,USB\VID_1424&PID_1016
+%DESC_TH230%=DriverInstall,USB\VID_1424&PID_1017
+%DESC_IBM4610%=DriverInstall,USB\VID_1424&PID_1018
+%DESC_THHD%=DriverInstall,USB\VID_1424&PID_100A
+%DESC_THXL%=DriverInstall,USB\VID_1424&PID_100B
+%DESC_NEO%=DriverInstall,USB\VID_1424&PID_100C
+%DESC_ERGO%=DriverInstall,USB\VID_1424&PID_100D
+%DESC_DEV1%=DriverInstall,USB\VID_1424&PID_100E
+%DESC_DEV2%=DriverInstall,USB\VID_1424&PID_100F
+%DESC_UNI_K%=DriverInstall,USB\VID_1424&PID_10A0&REV_0300&MI_00
+%DESC_UNI_K%=DriverInstall,USB\VID_1424&PID_10A0&REV_0200
+%DESC_UNI_D%=DriverInstall,USB\VID_1424&PID_10B0&REV_0300&MI_00
+%DESC_UNI_D%=DriverInstall,USB\VID_1424&PID_10B0&REV_0200
+
+[DeviceList.NTamd64]
+%DESC_TEMOHS%=DriverInstall,USB\VID_1424&PID_1015
+%DESC_MOBILEHS%=DriverInstall,USB\VID_1424&PID_1016
+%DESC_TH230%=DriverInstall,USB\VID_1424&PID_1017
+%DESC_IBM4610%=DriverInstall,USB\VID_1424&PID_1018
+%DESC_THHD%=DriverInstall,USB\VID_1424&PID_100A
+%DESC_THXL%=DriverInstall,USB\VID_1424&PID_100B
+%DESC_NEO%=DriverInstall,USB\VID_1424&PID_100C
+%DESC_ERGO%=DriverInstall,USB\VID_1424&PID_100D
+%DESC_DEV1%=DriverInstall,USB\VID_1424&PID_100E
+%DESC_DEV2%=DriverInstall,USB\VID_1424&PID_100F
+%DESC_UNI_K%=DriverInstall,USB\VID_1424&PID_10A0&REV_0300&MI_00
+%DESC_UNI_K%=DriverInstall,USB\VID_1424&PID_10A0&REV_0200
+%DESC_UNI_D%=DriverInstall,USB\VID_1424&PID_10B0&REV_0300&MI_00
+%DESC_UNI_D%=DriverInstall,USB\VID_1424&PID_10B0&REV_0200
+
+;----------------------------------------------------------------
+;              String Definitions
+;----------------------------------------------------------------
+[Strings]
+SERVICE="USB Virtual COM port"
+MANUFACTURER="POSNET S.A."
+DSK_NAME="Posnet Installation Media"
+DESC_TEMOHS="POSNET Temo HS Serial Port"
+DESC_MOBILEHS="POSNET Mobile HS Serial Port"
+DESC_TH230="POSNET NIXDORF TH230+ FV EJ Serial Port"
+DESC_IBM4610="POSNET 4610-1NR FV EJ Serial Port"
+DESC_THHD="POSNET Thermal HD Serial Port"
+DESC_THXL="POSNET Thermal Serial Port"
+DESC_NEO="POSNET Neo Serial Port"
+DESC_ERGO="POSNET Ergo Serial Port"
+DESC_DEV1="POSNET Serial Port"
+DESC_DEV2="POSNET Serial Port"
+DESC_UNI_K="Posnet K Serial Port"
+DESC_UNI_D="Posnet D Serial Port"
+

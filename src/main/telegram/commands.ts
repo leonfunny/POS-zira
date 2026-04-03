@@ -144,7 +144,7 @@ export function registerCommands(bot: Bot, options: TelegramCommandsOptions): vo
       });
 
       // Delete status message
-      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch((e: any) => { logger.debug('[Telegram] delete status msg failed:', e?.message); });
 
       logger.info('[Telegram] Screenshot sent successfully');
     } catch (error: any) {
@@ -817,7 +817,7 @@ export function registerCommands(bot: Bot, options: TelegramCommandsOptions): vo
         caption: `🌐 ${pageInfo.title}\n${pageInfo.url}`,
       });
 
-      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch((e: any) => { logger.debug('[Telegram] delete status msg failed:', e?.message); });
       logger.info('[Telegram] Browser screenshot sent');
     } catch (error: any) {
       logger.error('[Telegram] Browser screenshot failed:', error);

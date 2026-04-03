@@ -10,9 +10,10 @@ interface CameraGridProps {
     name: string;
     zone: 'outside' | 'inside';
   }>;
+  t?: (key: string) => string;
 }
 
-export default function CameraGrid({ status, mjpegPort, cameras }: CameraGridProps) {
+export default function CameraGrid({ status, mjpegPort, cameras, t }: CameraGridProps) {
   const count = cameras.length;
 
   // Dynamic grid: 1=1x1, 2=2x1, 3-4=2x2, 5-6=3x2
@@ -40,7 +41,7 @@ export default function CameraGrid({ status, mjpegPort, cameras }: CameraGridPro
       })}
       {cameras.length === 0 && (
         <div className="col-span-full flex items-center justify-center h-48 bg-slate-100 rounded-lg">
-          <p className="text-sm text-slate-500">No cameras configured. Add cameras in Settings.</p>
+          <p className="text-sm text-slate-500">{t?.('security.noCamerasGrid') ?? 'No cameras configured. Add cameras in Settings.'}</p>
         </div>
       )}
     </div>

@@ -82,13 +82,13 @@ export default function CartItemRow({
           <button
             onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
             aria-label="Decrease quantity"
-            className="w-8 h-7 flex items-center justify-center text-gray-500 hover:bg-gray-100 active:bg-gray-200 font-bold text-sm cursor-pointer touch-manipulation transition-colors"
+            className="w-10 h-10 flex items-center justify-center text-gray-500 hover:bg-gray-100 active:bg-gray-200 font-bold text-base cursor-pointer touch-manipulation transition-colors"
           >−</button>
-          <span className="px-2 text-center text-sm font-semibold text-gray-800 select-none">{item.quantity}</span>
+          <span className="px-3 text-center text-sm font-semibold text-gray-800 select-none">{item.quantity}</span>
           <button
             onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
             aria-label="Increase quantity"
-            className="w-8 h-7 flex items-center justify-center bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white font-bold text-sm cursor-pointer touch-manipulation transition-colors"
+            className="w-10 h-10 flex items-center justify-center bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white font-bold text-base cursor-pointer touch-manipulation transition-colors"
           >+</button>
         </div>
         <span className="text-base font-bold text-gray-900">{(item.total / 100).toFixed(2)}&nbsp;{currency}</span>

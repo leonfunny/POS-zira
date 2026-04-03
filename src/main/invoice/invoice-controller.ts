@@ -267,6 +267,10 @@ export function registerInvoiceHandlers(
         },
       });
 
+      // SECURITY: Navigation guards — print window should never navigate away
+      printWindow.webContents.on('will-navigate', (event) => { event.preventDefault(); });
+      printWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' as const }));
+
       // Load HTML
       await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 

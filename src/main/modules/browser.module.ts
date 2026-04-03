@@ -41,7 +41,8 @@ export class BrowserModule extends BaseModule {
 
   private initExtensionServer(): void {
     try {
-      this.wss = new WebSocketServer({ port: 19999 });
+      // SECURITY: Bind to localhost only — prevent LAN access without auth
+      this.wss = new WebSocketServer({ port: 19999, host: '127.0.0.1' });
 
       this.wss.on('connection', (ws) => {
         logger.info('[BrowserModule] Extension connected');
@@ -56,7 +57,7 @@ export class BrowserModule extends BaseModule {
           try {
             const msg = JSON.parse(message.toString());
             if (msg.type === 'RESULT') handleGlobalExtensionResponse(msg.id, msg.data);
-          } catch {}
+          } catch (err: any) { logger.debug('[BrowserModule] parse extension WS message failed:', err?.message); }
         });
 
         ws.on('close', () => {
@@ -94,7 +95,7 @@ export class BrowserModule extends BaseModule {
         ];
         let chromePath = '';
         for (const p of chromePaths) {
-          try { if (fs.existsSync(p)) { chromePath = p; break; } } catch {}
+          try { if (fs.existsSync(p)) { chromePath = p; break; } } catch (err: any) { logger.debug('[BrowserModule] check chrome path failed:', err?.message); }
         }
         if (!chromePath) throw new Error('Chrome not found. Please install Google Chrome.');
         const userDataDir = join(app.getPath('userData'), 'booksy-chrome-profile');

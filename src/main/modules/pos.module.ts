@@ -300,15 +300,26 @@ export class PosModule extends BaseModule {
 
       return new Promise((resolve) => {
         let settled = false;
+        const cleanup = () => {
+          socket.removeListener('elavon:payment-response', onResponse);
+          socket.removeListener('disconnect', onDisconnect);
+          clearTimeout(timeout);
+        };
         const onResponse = (response: any) => {
           if (response.orderId !== data.orderId || settled) return;
           settled = true;
-          clearTimeout(timeout);
-          socket.removeListener('elavon:payment-response', onResponse);
+          cleanup();
           resolve(response.success ? { success: true, transactionId: response.transactionId } : { success: false, error: response.error || 'Payment declined' });
         };
-        const timeout = setTimeout(() => { if (settled) return; settled = true; socket.removeListener('elavon:payment-response', onResponse); resolve({ success: false, error: 'Payment timeout (60s)' }); }, 60000);
+        const onDisconnect = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve({ success: false, error: 'Connection lost during payment' });
+        };
+        const timeout = setTimeout(() => { if (settled) return; settled = true; cleanup(); resolve({ success: false, error: 'Payment timeout (60s)' }); }, 60000);
         socket.on('elavon:payment-response', onResponse);
+        socket.once('disconnect', onDisconnect);
         socket.requestElavonPayment(data);
       });
     });

@@ -93,13 +93,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   connect: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT),
   connectWithApiKey: (apiKey: string) => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_WITH_API_KEY, apiKey),
   disconnect: () => ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT),
+  changeSalon: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_CHANGE_SALON),
   getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_STATUS),
+
+  // Secure key setters
+  setAiApiKey: (key: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_SET_AI_API_KEY, key),
+  setRemotePin: (pin: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_SET_REMOTE_PIN, pin),
+  getRemotePin: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_REMOTE_PIN),
 
   // Printer
   listPorts: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_PORTS),
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
+  testPrinterByConfig: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config),
+  calibratePrinter: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.CALIBRATE_PRINTER, config),
+  getPosnetDriverStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_POSNET_DRIVER_STATUS),
+  installPosnetDriver: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_POSNET_DRIVER),
+  scanForDriver: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_FOR_DRIVER),
+  autoSetupPrinter: (printerType: string, device?: any) => ipcRenderer.invoke(IPC_CHANNELS.AUTO_SETUP_PRINTER, printerType, device),
+  posnetScanDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SCAN_DEVICES),
+  posnetListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_LIST_DEVICES),
+  posnetSelectDevice: (serial: string) => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SELECT_DEVICE, serial),
+  posnetRescanKnown: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_RESCAN_KNOWN),
 
   // Event listeners
   onConnectionStatus: (callback: (status: any) => void) => {
@@ -212,6 +228,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE, id),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_LIST),
     setFullScreen: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_FULLSCREEN, value),
+    setKiosk: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_KIOSK, value),
   },
 
   // Display info
@@ -318,6 +335,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addUpsells: (id: string, upsells: string[]) => ipcRenderer.invoke(IPC_CHANNELS.CHECKIN_ADD_UPSELLS, id, upsells),
     updateNotes: (id: string, notes: string) => ipcRenderer.invoke(IPC_CHANNELS.CHECKIN_UPDATE_NOTES, id, notes),
     getStats: (date?: string) => ipcRenderer.invoke(IPC_CHANNELS.CHECKIN_GET_STATS, date),
+    printConfirmation: (data: any) => ipcRenderer.invoke(IPC_CHANNELS.CHECKIN_PRINT_CONFIRMATION, data),
   },
 
   // Salon Customers (check-in wizard)

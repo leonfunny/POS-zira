@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { RemoteControlState } from '../../shared/types';
+import rlog from '../utils/logger';
 
 const INITIAL_STATE: RemoteControlState = {
   isBeingControlled: false,
@@ -14,7 +15,7 @@ export function useRemoteControl() {
   useEffect(() => {
     window.electronAPI.remote.getState()
       .then(setState)
-      .catch((err) => console.error('[useRemoteControl] Failed to load:', err));
+      .catch((err) => rlog.error('[useRemoteControl] Failed to load:', err));
 
     const unsub = window.electronAPI.remote.onStateChanged(setState);
     return unsub;

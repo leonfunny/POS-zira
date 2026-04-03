@@ -6,13 +6,14 @@
 
 import OpenAI from 'openai';
 import { shell, desktopCapturer, screen, nativeImage } from 'electron';
-import { exec, spawn } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import { join } from 'path';
 import { app } from 'electron';
 import * as fs from 'fs';
 import { AIChatMessage, ZiraAIChatResponse, AIProvider } from '../../shared/types';
 import { buildSystemPrompt, getDefaultSystemPrompt } from './system-prompt';
+import { getPendingAttachments, clearPendingAttachments, setGeneratedPostContent } from './attachment-store';
 import { getConfigValue, setConfigValue } from '../config/store';
 import logger from '../logger';
 import { WebSocket } from 'ws';
@@ -197,7 +198,7 @@ const ZIRA_TOOLS: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'open_application',
-      description: 'Open a Windows application (notepad, calculator, explorer, paint, cmd, powershell, settings, task manager)',
+      description: 'Open a Windows application (notepad, calculator, explorer, paint, settings, task manager, word, excel, outlook)',
       parameters: {
         type: 'object',
         properties: {
@@ -389,20 +390,7 @@ const ZIRA_TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'run_command',
-      description: 'Run a Windows command (be careful with this!)',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: { type: 'string', description: 'Command to run' },
-        },
-        required: ['command'],
-      },
-    },
-  },
+  // run_command REMOVED — was full RCE via arbitrary shell execution
 
   // === BOOKSY TOOLS ===
   {
@@ -896,10 +884,36 @@ async function executeOpenChrome(args: { url?: string }): Promise<string> {
 
 async function executeOpenUrl(args: { url: string }): Promise<string> {
   try {
-    let url = args.url;
+    let url = args.url.trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = 'https://' + url;
     }
+
+    // SECURITY: Validate URL structure to prevent abuse (e.g., javascript:, data:, file: schemes via encoding tricks)
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return `❌ URL không hợp lệ: ${args.url}`;
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `❌ Chỉ cho phép mở URL http/https`;
+    }
+
+    // SECURITY: Domain allowlist to prevent opening malicious/phishing URLs via AI prompt injection
+    const allowedDomains = [
+      'google.com', 'google.pl', 'youtube.com', 'facebook.com', 'instagram.com',
+      'booksy.com', 'enail.pro', 'zira.pl', 'github.com',
+      'wikipedia.org', 'maps.google.com', 'translate.google.com',
+      'outlook.com', 'gmail.com', 'linkedin.com',
+    ];
+    const hostname = parsed.hostname.toLowerCase();
+    const isAllowed = allowedDomains.some(d => hostname === d || hostname.endsWith('.' + d));
+    if (!isAllowed) {
+      return `❌ Domen "${hostname}" không nằm trong danh sách cho phép. Cho phép: ${allowedDomains.join(', ')}`;
+    }
+
     await shell.openExternal(url);
     return `✅ Đã mở URL: ${url}`;
   } catch (error: any) {
@@ -908,19 +922,33 @@ async function executeOpenUrl(args: { url: string }): Promise<string> {
 }
 
 async function executeOpenApplication(args: { app_name: string }): Promise<string> {
-  return new Promise((resolve) => {
-    const appName = args.app_name.toLowerCase();
-    const appMap: Record<string, string> = {
-      'notepad': 'notepad', 'calculator': 'calc', 'calc': 'calc',
-      'explorer': 'explorer', 'file explorer': 'explorer',
-      'paint': 'mspaint', 'mspaint': 'mspaint',
-      'cmd': 'cmd', 'command prompt': 'cmd', 'powershell': 'powershell',
-      'settings': 'ms-settings:', 'task manager': 'taskmgr', 'taskmgr': 'taskmgr',
-      'word': 'winword', 'excel': 'excel', 'outlook': 'outlook',
-    };
-    const command = appMap[appName] || appName;
+  const appName = args.app_name.toLowerCase().trim();
+  // SECURITY: Strict allowlist — only these apps can be opened. No fallback to raw input.
+  const appMap: Record<string, string> = {
+    'notepad': 'notepad.exe', 'calculator': 'calc.exe', 'calc': 'calc.exe',
+    'explorer': 'explorer.exe', 'file explorer': 'explorer.exe',
+    'paint': 'mspaint.exe', 'mspaint': 'mspaint.exe',
+    'settings': 'ms-settings:', 'task manager': 'taskmgr.exe', 'taskmgr': 'taskmgr.exe',
+    'word': 'winword.exe', 'excel': 'excel.exe', 'outlook': 'outlook.exe',
+  };
+  const executable = appMap[appName];
+  if (!executable) {
+    return `❌ Ứng dụng "${args.app_name}" không nằm trong danh sách cho phép. Cho phép: ${Object.keys(appMap).join(', ')}`;
+  }
 
-    exec(`start "" ${command}`, { shell: 'cmd.exe' }, (error: Error | null) => {
+  // ms-settings: is a URI, use shell.openExternal
+  if (executable.startsWith('ms-settings:')) {
+    try {
+      await shell.openExternal(executable);
+      return `✅ Đã mở ${appName}!`;
+    } catch (error: any) {
+      return `❌ Lỗi mở ${appName}: ${error.message}`;
+    }
+  }
+
+  // SECURITY: Use execFile (no shell) to prevent injection
+  return new Promise((resolve) => {
+    execFile(executable, [], (error: Error | null) => {
       if (error) {
         resolve(`❌ Lỗi mở ${appName}: ${error.message}`);
       } else {
@@ -1121,32 +1149,33 @@ async function executeTakeScreenshot(args: { filename?: string }): Promise<strin
 // --- FILE TOOLS ---
 async function executeOpenFolder(args: { path: string }): Promise<string> {
   try {
-    await shell.openPath(args.path);
-    return `✅ Đã mở thư mục: ${args.path}`;
+    const { normalize, resolve } = require('path');
+    const requestedPath = normalize(resolve(args.path));
+
+    // SECURITY: Only allow opening folders under safe base directories
+    const safeBases = [
+      app.getPath('home'),
+      app.getPath('documents'),
+      app.getPath('downloads'),
+      app.getPath('pictures'),
+      app.getPath('desktop'),
+      app.getPath('userData'),
+    ].map(p => normalize(p).toLowerCase());
+
+    const normalizedLower = requestedPath.toLowerCase();
+    const isSafe = safeBases.some(base => normalizedLower.startsWith(base));
+    if (!isSafe) {
+      return `❌ Đường dẫn không được phép. Chỉ cho mở trong: Documents, Downloads, Pictures, Desktop.`;
+    }
+
+    await shell.openPath(requestedPath);
+    return `✅ Đã mở thư mục: ${requestedPath}`;
   } catch (e: any) {
     return `❌ Lỗi: ${e.message}`;
   }
 }
 
-async function executeRunCommand(args: { command: string }): Promise<string> {
-  return new Promise((resolve) => {
-    // Safety check - block dangerous commands
-    const dangerous = ['rm ', 'del ', 'format', 'rmdir', 'rd ', ':(){', 'fork bomb'];
-    if (dangerous.some(d => args.command.toLowerCase().includes(d))) {
-      resolve('❌ Lệnh bị chặn vì lý do an toàn');
-      return;
-    }
-
-    exec(args.command, { shell: 'cmd.exe', timeout: 30000 }, (error: Error | null, stdout: string, stderr: string) => {
-      if (error) {
-        resolve(`❌ Lỗi: ${error.message}`);
-      } else {
-        const output = stdout || stderr || 'Hoàn thành (không có output)';
-        resolve(`✅ Kết quả:\n${output.substring(0, 500)}`);
-      }
-    });
-  });
-}
+// executeRunCommand REMOVED — was full RCE via arbitrary shell execution with trivially-bypassed blocklist
 
 // --- BOOKSY TOOLS ---
 async function executeBooksyGetBookings(args: { date?: string }): Promise<string> {
@@ -2433,7 +2462,7 @@ async function dismissFacebookPopups(page: any): Promise<void> {
       const notifPopup = document.querySelector('[aria-label="Allow Notifications"]');
       if (notifPopup) (notifPopup as HTMLElement).click(); // Or close it
     });
-  } catch {}
+  } catch (err: any) { logger.debug('[ZiraAI] dismiss notification popup failed:', err?.message); }
 }
 
 async function executeFacebookCreatePost(args: {
@@ -2452,7 +2481,7 @@ async function executeFacebookCreatePost(args: {
   await dismissFacebookPopups(currentBrowserPage);
 
   // Check for pending attachments from user drag & drop
-  const pendingAttachments = (global as any).pendingAttachments as Array<{ type: 'image' | 'video'; name: string; path: string }> | undefined;
+  const pendingAttachments = getPendingAttachments();
   let imagePath = args.image_path;
   let videoPath = args.video_path;
 
@@ -2468,7 +2497,7 @@ async function executeFacebookCreatePost(args: {
       }
     }
     // Clear pending attachments after use
-    (global as any).pendingAttachments = undefined;
+    clearPendingAttachments();
   }
 
   try {
@@ -3344,7 +3373,7 @@ async function executeAnalyzeVideo(args: {
   let videoPath = args.video_path;
 
   // Check for pending video attachment
-  const pendingAttachments = (global as any).pendingAttachments as Array<{ type: 'image' | 'video'; name: string; path: string }> | undefined;
+  const pendingAttachments = getPendingAttachments();
   if (!videoPath && pendingAttachments) {
     const video = pendingAttachments.find(a => a.type === 'video');
     if (video) {
@@ -3386,11 +3415,11 @@ async function executeAnalyzeVideo(args: {
       analyses.push(`**Scene ${i + 1}:** ${analysis}`);
 
       // Clean up frame file
-      try { fs.unlinkSync(frames[i]); } catch {}
+      try { fs.unlinkSync(frames[i]); } catch (err: any) { logger.debug('[ZiraAI] delete video frame file failed:', err?.message); }
     }
 
     // Clear pending attachments
-    (global as any).pendingAttachments = undefined;
+    clearPendingAttachments();
 
     const header = language === 'pl'
       ? `🎬 **Phân tích video (${frames.length} scenes):**\n\n`
@@ -3416,7 +3445,7 @@ async function executeAnalyzeImage(args: {
   let imagePath = args.image_path;
 
   // Check for pending image attachment
-  const pendingAttachments = (global as any).pendingAttachments as Array<{ type: 'image' | 'video'; name: string; path: string }> | undefined;
+  const pendingAttachments = getPendingAttachments();
   if (!imagePath && pendingAttachments) {
     const image = pendingAttachments.find(a => a.type === 'image');
     if (image) {
@@ -3453,7 +3482,7 @@ async function executeAnalyzeImage(args: {
     const analysis = await analyzeImageWithVision(imagePath, prompt);
 
     // Clear pending attachments
-    (global as any).pendingAttachments = undefined;
+    clearPendingAttachments();
 
     const header = language === 'pl'
       ? '🖼️ **Analiza obrazka:**\n\n'
@@ -3485,7 +3514,7 @@ async function executeGeneratePostContent(args: {
   } = args;
 
   // Check for pending attachments
-  const pendingAttachments = (global as any).pendingAttachments as Array<{ type: 'image' | 'video'; name: string; path: string }> | undefined;
+  const pendingAttachments = getPendingAttachments();
 
   if (!pendingAttachments || pendingAttachments.length === 0) {
     return '❌ Không có ảnh/video để tạo nội dung. Hãy kéo thả ảnh/video vào chat trước.';
@@ -3527,14 +3556,14 @@ Chỉ trả lời nội dung bài đăng, không thêm bình luận.`;
       const frames = await extractVideoFrames(mediaPath, 1);
       if (frames.length > 0) {
         content = await analyzeImageWithVision(frames[0], prompt);
-        try { fs.unlinkSync(frames[0]); } catch {}
+        try { fs.unlinkSync(frames[0]); } catch (err: any) { logger.debug('[ZiraAI] delete video thumbnail file failed:', err?.message); }
       } else {
         return '❌ Không thể phân tích video để tạo nội dung.';
       }
     }
 
     // Store generated content for potential facebook_create_post
-    (global as any).generatedPostContent = content;
+    setGeneratedPostContent(content);
 
     const header = language === 'pl'
       ? `✍️ **Wygenerowany post dla ${platform}:**\n\n`
@@ -3599,7 +3628,7 @@ export async function executeTool(name: string, args: any): Promise<string> {
 
     // File
     case 'open_folder': return executeOpenFolder(args);
-    case 'run_command': return executeRunCommand(args);
+    // run_command REMOVED — RCE vulnerability
 
     // Booksy
     case 'booksy_get_bookings': return executeBooksyGetBookings(args);
@@ -3875,7 +3904,7 @@ export class ZiraAI {
           let toolArgs = {};
           try {
             toolArgs = JSON.parse(toolCall.function.arguments || '{}');
-          } catch {}
+          } catch (err: any) { logger.debug('[ZiraAI] parse tool arguments failed:', err?.message); }
 
           const result = await executeTool(toolName, toolArgs);
           toolResults.push(result);

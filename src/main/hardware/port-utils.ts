@@ -80,40 +80,68 @@ export async function listSerialPorts(): Promise<string[]> {
   }
 }
 
+/** Printer info returned by detailed listing */
+export interface WindowsPrinterInfo {
+  name: string;
+  portName: string;
+}
+
 /**
- * List available Windows printers via PowerShell.
+ * List available Windows printers with port names via PowerShell.
+ * Port names help identify ghost printers vs. real connected devices.
  * Falls back to Get-CimInstance if Get-Printer fails.
  */
-export async function listWindowsPrinters(): Promise<string[]> {
+export async function listWindowsPrintersDetailed(): Promise<WindowsPrinterInfo[]> {
   if (process.platform !== 'win32') {
-    logger.warn('[PortUtils] listWindowsPrinters only supported on Windows');
+    logger.warn('[PortUtils] listWindowsPrintersDetailed only supported on Windows');
     return [];
   }
 
   try {
-    const stdout = await runPowerShell('Get-Printer | Select-Object -ExpandProperty Name');
+    const stdout = await runPowerShell(
+      'Get-Printer | ForEach-Object { "$($_.Name)|$($_.PortName)" }',
+    );
     const printers = stdout
       .split('\n')
       .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    logger.info(`[PortUtils] Found ${printers.length} printers`);
+      .filter((l) => l.includes('|'))
+      .map((l) => {
+        const sep = l.indexOf('|');
+        return { name: l.slice(0, sep).trim(), portName: l.slice(sep + 1).trim() };
+      })
+      .filter((p) => p.name.length > 0);
+    logger.info(`[PortUtils] Found ${printers.length} printers (detailed)`);
     return printers;
   } catch (error) {
-    logger.warn('[PortUtils] Get-Printer failed, trying Get-CimInstance fallback:', error);
+    logger.warn('[PortUtils] Get-Printer detailed failed, trying CimInstance fallback:', error);
     try {
       const stdout = await runPowerShell(
-        'Get-CimInstance -ClassName Win32_Printer | Select-Object -ExpandProperty Name',
+        'Get-CimInstance -ClassName Win32_Printer | ForEach-Object { "$($_.Name)|$($_.PortName)" }',
       );
       const printers = stdout
         .split('\n')
         .map((l) => l.trim())
-        .filter((l) => l.length > 0);
-      logger.info(`[PortUtils] Get-CimInstance fallback found ${printers.length} printers`);
+        .filter((l) => l.includes('|'))
+        .map((l) => {
+          const sep = l.indexOf('|');
+          return { name: l.slice(0, sep).trim(), portName: l.slice(sep + 1).trim() };
+        })
+        .filter((p) => p.name.length > 0);
+      logger.info(`[PortUtils] CimInstance fallback found ${printers.length} printers (detailed)`);
       return printers;
     } catch {
       return [];
     }
   }
+}
+
+/**
+ * List available Windows printers via PowerShell (names only).
+ * Falls back to Get-CimInstance if Get-Printer fails.
+ */
+export async function listWindowsPrinters(): Promise<string[]> {
+  const detailed = await listWindowsPrintersDetailed();
+  return detailed.map((p) => p.name);
 }
 
 /**

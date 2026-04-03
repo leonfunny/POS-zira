@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { BooksyBookingSummary } from '../../shared/types';
+import rlog from '../utils/logger';
 
 export type WizardStep =
   | 'entry'
+  | 'price-list'
   | 'booking-list'
   | 'booking-detail'
   | 'phone-entry'
@@ -125,7 +127,7 @@ export function useCheckinWizard() {
       ]);
       update({ checkins, stats });
     } catch (e) {
-      console.error('[Wizard] Failed to load checkins:', e);
+      rlog.error('[Wizard] Failed to load checkins:', e);
     }
   }, [update]);
 
@@ -135,7 +137,7 @@ export function useCheckinWizard() {
       const data = await window.electronAPI.booksy.getBookings();
       update({ todayBookings: data || [] });
     } catch (e) {
-      console.error('[Wizard] Failed to load bookings:', e);
+      rlog.error('[Wizard] Failed to load bookings:', e);
     }
   }, [update]);
 
@@ -153,7 +155,7 @@ export function useCheckinWizard() {
         staffList: staff.map((s: any) => ({ id: s.id, name: s.name })),
       });
     } catch (e) {
-      console.error('[Wizard] Failed to load catalog:', e);
+      rlog.error('[Wizard] Failed to load catalog:', e);
     }
   }, [update]);
 
@@ -206,7 +208,7 @@ export function useCheckinWizard() {
     update({ isSubmitting: true, errorMessage: null });
     const id = `ci-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     try {
-      await window.electronAPI.checkin.createWithCustomer({
+      const result = await window.electronAPI.checkin.createWithCustomer({
         id,
         customer_name: booking.customerName,
         service_name: booking.serviceName,
@@ -218,9 +220,17 @@ export function useCheckinWizard() {
       });
       update({ step: 'done', isSubmitting: false });
       await loadCheckins();
+      // Print check-in confirmation (fire-and-forget)
+      window.electronAPI.checkin.printConfirmation({
+        bookingNumber: result?.bookingNumber,
+        customerName: booking.customerName,
+        services: booking.serviceName ? [{ name: booking.serviceName, price: 0 }] : [],
+        staffName: staffName || booking.staffName,
+        checkinTime: new Date().toISOString(),
+      }).catch((e) => rlog.warn('[Wizard] Check-in print failed:', e));
       doneTimerRef.current = setTimeout(reset, 8000);
     } catch (e) {
-      console.error('[Wizard] Booking check-in failed:', e);
+      rlog.error('[Wizard] Booking check-in failed:', e);
       update({ isSubmitting: false, errorMessage: 'Check-in failed. Please try again.' });
     }
   }, [update, loadCheckins, reset]);
@@ -253,7 +263,7 @@ export function useCheckinWizard() {
         });
       }
     } catch (e) {
-      console.error('[Wizard] Phone lookup failed:', e);
+      rlog.error('[Wizard] Phone lookup failed:', e);
       update({
         isLoading: false,
         errorMessage: 'Phone lookup failed. Please try again.',
@@ -292,7 +302,7 @@ export function useCheckinWizard() {
         });
       }
     } catch (e) {
-      console.error('[Wizard] Create customer failed:', e);
+      rlog.error('[Wizard] Create customer failed:', e);
       update({ errorMessage: 'Failed to create customer profile. Please try again.' });
     }
   }, [update]);
@@ -335,7 +345,7 @@ export function useCheckinWizard() {
     const serviceName = selectedServices.map((s) => s.name).join(', ') || undefined;
     const serviceId = selectedServices[0]?.id;
     try {
-      await window.electronAPI.checkin.createWithCustomer({
+      const result = await window.electronAPI.checkin.createWithCustomer({
         id,
         customer_name: customer?.name || 'Guest',
         customer_phone: customer?.phone || undefined,
@@ -349,9 +359,18 @@ export function useCheckinWizard() {
       });
       update({ step: 'done', isSubmitting: false });
       await loadCheckins();
+      // Print check-in confirmation (fire-and-forget)
+      window.electronAPI.checkin.printConfirmation({
+        bookingNumber: result?.bookingNumber,
+        customerName: customer?.name || customer?.phone || 'Guest',
+        customerPhone: customer?.phone,
+        services: selectedServices.map((s) => ({ name: s.name, price: s.price || 0 })),
+        staffName: selectedStaff?.name,
+        checkinTime: new Date().toISOString(),
+      }).catch((e) => rlog.warn('[Wizard] Check-in print failed:', e));
       doneTimerRef.current = setTimeout(reset, 8000);
     } catch (e) {
-      console.error('[Wizard] Walk-in check-in failed:', e);
+      rlog.error('[Wizard] Walk-in check-in failed:', e);
       update({ isSubmitting: false, errorMessage: 'Check-in failed. Please try again.' });
     }
   }, [update, loadCheckins, reset]);
@@ -364,7 +383,7 @@ export function useCheckinWizard() {
       await window.electronAPI.checkin.startService(id);
       await loadCheckins();
     } catch (e) {
-      console.error('[Wizard] startService failed:', e);
+      rlog.error('[Wizard] startService failed:', e);
       update({ errorMessage: 'Failed to start service. Please try again.' });
     } finally {
       update({ isSubmitting: false });
@@ -378,7 +397,7 @@ export function useCheckinWizard() {
       await window.electronAPI.checkin.complete(id);
       await loadCheckins();
     } catch (e) {
-      console.error('[Wizard] completeCheckin failed:', e);
+      rlog.error('[Wizard] completeCheckin failed:', e);
       update({ errorMessage: 'Failed to complete check-in. Please try again.' });
     } finally {
       update({ isSubmitting: false });
@@ -392,7 +411,7 @@ export function useCheckinWizard() {
       await window.electronAPI.checkin.markNoShow(id);
       await loadCheckins();
     } catch (e) {
-      console.error('[Wizard] markNoShow failed:', e);
+      rlog.error('[Wizard] markNoShow failed:', e);
       update({ errorMessage: 'Failed to mark no-show. Please try again.' });
     } finally {
       update({ isSubmitting: false });
