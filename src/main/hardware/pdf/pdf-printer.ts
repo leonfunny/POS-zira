@@ -39,6 +39,7 @@ function buildLabelHtml(opts: PrintLabelOptions): string {
   // Footer (staff + time) — bigger than before
   const footSz = Math.max(6, Math.min(10, h * 0.22)).toFixed(1);
   const smallSz = Math.max(4, Math.min(7, h * 0.15)).toFixed(1);
+  const notesSz = Math.max(5, Math.min(9, h * 0.19)).toFixed(1);
 
   // Services already split by caller — render all of them
   const svcs = data.services;
@@ -62,8 +63,8 @@ function buildLabelHtml(opts: PrintLabelOptions): string {
     return `<div class="svc"><span>\u2022 ${esc(s.name)}</span>${price}</div>`;
   }).join('\n');
 
-  // Customer notes — only on first page
-  const notesHtml = isFirstPage && data.customerNotes
+  // Customer notes — only on last page, after total
+  const notesHtml = isLastPage && data.customerNotes
     ? `<div class="notes">\u{1F4DD} ${esc(data.customerNotes)}</div>`
     : '';
 
@@ -103,12 +104,12 @@ body { width:${w}mm; height:${h}mm; font-family:Helvetica,Arial,sans-serif; padd
 .svc { font-size:${bs}pt; font-weight:700; padding-left:0.5mm; line-height:1.45; display:flex; justify-content:space-between; }
 .svc .price { white-space:nowrap; padding-left:1mm; }
 .page-tag { font-size:${smallSz}pt; font-weight:700; color:#666; }
-.notes { font-size:${smallSz}pt; font-style:italic; color:#333; margin-top:0.3mm; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.notes { font-size:${notesSz}pt; font-style:italic; color:#333; margin-top:0.3mm; line-height:1.35; }
 .total { font-size:calc(${bs}pt + 1pt); font-weight:900; text-align:right; border-top:0.3mm solid #000; padding-top:0.2mm; }
 .footer { margin-top:auto; display:flex; justify-content:space-between; align-items:baseline; font-size:${footSz}pt; font-weight:700; }
 </style></head><body>
 ${headerHtml}
-${svcsHtml}${notesHtml}${totalHtml}
+${svcsHtml}${totalHtml}${notesHtml}
 ${footerHtml}
 </body></html>`;
 }

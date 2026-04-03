@@ -18,7 +18,7 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
   const [phone] = useState(initialPhone);
   const [birthday, setBirthday] = useState('');
   const [notes, setNotes] = useState('');
-  const [marketingConsent, setMarketingConsent] = useState(true);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [activeField, setActiveField] = useState<ActiveField>('name');
 
   const nameRef = useRef<HTMLInputElement>(null);

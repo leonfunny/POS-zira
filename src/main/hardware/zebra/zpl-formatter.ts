@@ -350,6 +350,14 @@ export class ZplFormatter {
         y += lineStep;
       }
 
+      // Customer notes
+      if (data.customerNotes) {
+        lines.push(`^FO${margin},${y}`);
+        lines.push(`^A0,${bodyFont},${bodyFont}`);
+        lines.push(`^FD${this.sanitizeText(data.customerNotes, 35)}^FS`);
+        y += lineStep;
+      }
+
       // Date/time
       const dt = new Date(data.checkinTime);
       const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
