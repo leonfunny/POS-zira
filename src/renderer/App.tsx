@@ -59,7 +59,7 @@ export default function App() {
   });
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPosFullscreen, setIsPosFullscreen] = useState(false);
   const [isCheckinFullscreen, setIsCheckinFullscreen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -70,10 +70,14 @@ export default function App() {
   const { entitlements, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
   const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
 
-  // Kiosk swipe-to-exit (must be top-level — used inside conditional render block below)
+  // Kiosk swipe-to-exit (must be top-level — used inside conditional render blocks below)
   const swipeTouchStartY = useRef<number | null>(null);
-  const exitKiosk = useCallback(() => {
+  const exitCheckinKiosk = useCallback(() => {
     setIsCheckinFullscreen(false);
+    window.electronAPI.window.setKiosk(false);
+  }, []);
+  const exitPosKiosk = useCallback(() => {
+    setIsPosFullscreen(false);
     window.electronAPI.window.setKiosk(false);
   }, []);
 
@@ -147,27 +151,18 @@ export default function App() {
     };
   }, []);
 
-  // F11 fullscreen toggle for POS only
+  // Ctrl+Shift+Q to exit kiosk mode (hidden from customers)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F11') {
+      if (e.key === 'Q' && e.ctrlKey && e.shiftKey) {
         e.preventDefault();
-        if (activeTab === 'pos' && isFeatureEnabled('pos')) {
-          setIsFullscreen((prev) => !prev);
-        }
-      }
-      if (e.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false);
-      }
-      // Ctrl+Shift+Q to exit kiosk mode (hidden from customers, replaces plain ESC)
-      if (e.key === 'Q' && e.ctrlKey && e.shiftKey && isCheckinFullscreen) {
-        e.preventDefault();
-        exitKiosk();
+        if (isCheckinFullscreen) exitCheckinKiosk();
+        if (isPosFullscreen) exitPosKiosk();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen, isCheckinFullscreen, activeTab, isFeatureEnabled]);
+  }, [isCheckinFullscreen, isPosFullscreen, exitCheckinKiosk, exitPosKiosk]);
 
   // Ctrl+B sidebar toggle
   const handleToggleSidebar = useCallback(async () => {
@@ -296,18 +291,27 @@ export default function App() {
     );
   }
 
-  // Fullscreen POS mode — hide all chrome
-  if (isFullscreen && activeTab === 'pos' && isFeatureEnabled('pos')) {
+  // Fullscreen POS mode — kiosk-style, same exit mechanism as checkin
+  // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
+  if (isPosFullscreen && activeTab === 'pos' && isFeatureEnabled('pos')) {
     return (
-      <div className="h-screen w-screen flex flex-col">
+      <div
+        className="h-screen w-screen flex flex-col select-none"
+        onTouchStart={(e) => {
+          if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
+            swipeTouchStartY.current = e.touches[0].clientY;
+          } else {
+            swipeTouchStartY.current = null;
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (swipeTouchStartY.current === null) return;
+          const endY = e.changedTouches[0].clientY;
+          if (endY - swipeTouchStartY.current >= 150) exitPosKiosk();
+          swipeTouchStartY.current = null;
+        }}
+      >
         <POSLayout />
-        <button
-          onClick={() => setIsFullscreen(false)}
-          className="fixed top-2 right-2 z-50 px-2 py-1 bg-black/60 text-white text-xs rounded hover:bg-black/80 transition-colors"
-          title="Exit fullscreen (Esc or F11)"
-        >
-          Exit Fullscreen
-        </button>
       </div>
     );
   }
@@ -319,7 +323,6 @@ export default function App() {
       <div
         className="h-screen w-screen bg-slate-50 p-4 select-none"
         onTouchStart={(e) => {
-          // Require exactly 3 fingers starting in the top 80px zone
           if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
             swipeTouchStartY.current = e.touches[0].clientY;
           } else {
@@ -328,9 +331,8 @@ export default function App() {
         }}
         onTouchEnd={(e) => {
           if (swipeTouchStartY.current === null) return;
-          // Only exit if all 3 fingers were held and dragged down ≥150px
           const endY = e.changedTouches[0].clientY;
-          if (endY - swipeTouchStartY.current >= 150) exitKiosk();
+          if (endY - swipeTouchStartY.current >= 150) exitCheckinKiosk();
           swipeTouchStartY.current = null;
         }}
       >
@@ -364,7 +366,7 @@ export default function App() {
           onLogout={handleLogout}
           language={(config?.language as Language) || 'en'}
           onLanguageChange={handleLanguageChange}
-          onFullscreen={() => setIsFullscreen(true)}
+          onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
         />
 
         {/* Content */}
@@ -381,7 +383,7 @@ export default function App() {
             </div>
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
-              {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout />}
+              {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
               {activeTab === 'billiard' && isFeatureEnabled('billiard') && (
                 <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
               )}

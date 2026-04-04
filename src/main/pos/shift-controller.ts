@@ -16,6 +16,8 @@ export interface ShiftReport {
   totalOrders: number;
   cashTotal: number;
   cardTotal: number;
+  blikTotal: number;
+  transferTotal: number;
   difference: number; // closingCash - (openingCash + cashTotal)
 }
 
@@ -72,6 +74,12 @@ export class ShiftController {
     const cardTotal = orders
       .filter((o) => o.payment_method === 'CARD')
       .reduce((sum, o) => sum + o.total, 0);
+    const blikTotal = orders
+      .filter((o) => o.payment_method === 'BLIK')
+      .reduce((sum, o) => sum + o.total, 0);
+    const transferTotal = orders
+      .filter((o) => o.payment_method === 'TRANSFER')
+      .reduce((sum, o) => sum + o.total, 0);
 
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
@@ -92,6 +100,8 @@ export class ShiftController {
       totalOrders: orders.length,
       cashTotal,
       cardTotal,
+      blikTotal,
+      transferTotal,
       difference,
     };
 
@@ -124,7 +134,9 @@ export class ShiftController {
       paymentSummary: [
         { method: 'CASH', amount: report.cashTotal },
         { method: 'CARD', amount: report.cardTotal },
-      ],
+        { method: 'BLIK', amount: report.blikTotal },
+        { method: 'TRANSFER', amount: report.transferTotal },
+      ].filter((p) => p.amount > 0),
       cashierName: report.staffName || undefined,
     };
 

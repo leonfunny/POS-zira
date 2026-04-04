@@ -11,6 +11,8 @@ interface ShiftReportData {
   totalOrders: number;
   cashTotal: number;
   cardTotal: number;
+  blikTotal: number;
+  transferTotal: number;
   difference: number;
 }
 
@@ -57,6 +59,8 @@ export default function ShiftReportModal({ report, onClose, t }: ShiftReportProp
             <Row label={t('pos.shift.totalSales')} value={formatPrice(report.totalSales, currency)} bold />
             <Row label={t('pos.shift.cashSales')} value={formatPrice(report.cashTotal, currency)} />
             <Row label={t('pos.shift.cardSales')} value={formatPrice(report.cardTotal, currency)} />
+            {report.blikTotal > 0 && <Row label={t('pos.shift.blikSales') || 'Blik Sales'} value={formatPrice(report.blikTotal, currency)} />}
+            {report.transferTotal > 0 && <Row label={t('pos.shift.transferSales') || 'Transfer Sales'} value={formatPrice(report.transferTotal, currency)} />}
             <div className="border-t border-slate-700 my-2" />
             <Row
               label={t('pos.shift.difference')}

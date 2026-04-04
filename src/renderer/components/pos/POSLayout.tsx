@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePosStore } from '../../hooks/usePosStore';
+import { useConfig } from '../../hooks/useConfig';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import ShiftModal from './ShiftModal';
@@ -11,17 +12,16 @@ import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
-const LANGUAGE_FLAGS: Record<Language, string> = {
-  en: 'EN',
-  vi: 'VI',
-  tr: 'TR',
-  zh: 'ZH',
-  uk: 'UK',
-  ru: 'RU',
-  pl: 'PL',
-};
+const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
 
-const LANGUAGES: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
+function useLiveClock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 10_000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
 
 const MODE_LABELS: Record<PosMode, string> = {
   retail: 'pos.mode.retail',
@@ -30,50 +30,101 @@ const MODE_LABELS: Record<PosMode, string> = {
   restaurant: 'pos.mode.restaurant',
 };
 
-export default function POSLayout() {
+interface POSLayoutProps {
+  onFullscreen?: () => void;
+}
+
+export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const { state, dispatch } = usePosStore();
-  const [language, setLanguage] = useState<Language>('pl');
-  const [posMode, setPosMode] = useState<PosMode>('salon');
+  const { config, saveConfig } = useConfig();
+  const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
+  const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'salon');
   const [isOnline, setIsOnline] = useState(false);
   const [showShiftModal, setShowShiftModal] = useState<'open' | 'close' | null>(null);
   const [shiftReport, setShiftReport] = useState<any>(null);
-  const [showLangDropdown, setShowLangDropdown] = useState(false);
-  const langDropdownRef = useRef<HTMLDivElement>(null);
+  const [langOpen, setLangOpen] = useState(false);
+  const clock = useLiveClock();
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (langDropdownRef.current && !langDropdownRef.current.contains(e.target as Node)) {
-        setShowLangDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+  // Hidden barcode capture for USB HID keyboard-style scanners.
+  // Stays focused, captures rapid keystrokes ending with Enter, looks up product.
+  // inputMode="none" prevents the on-screen touch keyboard from appearing.
+  const barcodeRef = useRef<HTMLInputElement>(null);
+  const [barcodeBuffer, setBarcodeBuffer] = useState('');
+
+  const focusBarcode = useCallback(() => {
+    const el = barcodeRef.current;
+    if (!el) return;
+    const active = document.activeElement;
+    // Don't steal focus from visible inputs (search bar, cart qty, etc.)
+    if (active && active !== document.body && active !== el) return;
+    el.focus();
   }, []);
+
+  // Re-focus hidden input after clicks, but with enough delay for the
+  // on-screen keyboard to fully dismiss when tapping away from the search bar.
+  useEffect(() => {
+    const handler = () => setTimeout(focusBarcode, 300);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [focusBarcode]);
+
+  useEffect(() => { focusBarcode(); }, [focusBarcode]);
+
+  const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const code = barcodeBuffer.trim();
+      setBarcodeBuffer('');
+      if (code.length >= 3 && dispatch) {
+        try {
+          const product = await window.electronAPI.pos.products.getByBarcode(code);
+          if (product) {
+            dispatch({
+              type: 'cart/addItem',
+              payload: {
+                id: crypto.randomUUID(),
+                variantId: product.id,
+                name: product.name,
+                sku: product.sku || '',
+                price: product.retail_price,
+                quantity: 1,
+                total: product.retail_price,
+                imageUrl: product.image_url || undefined,
+                vatRate: product.vat_rate,
+              },
+            });
+          }
+        } catch (err) {
+          rlog.error('[POSLayout] Barcode lookup failed:', err);
+        }
+      }
+    }
+  }, [barcodeBuffer, dispatch]);
+
+  // Sync language/mode from config
+  useEffect(() => {
+    if (config?.posLanguage) {
+      setLanguage(config.posLanguage as Language);
+    } else if (config?.language) {
+      setLanguage(config.language as Language);
+    }
+    if (config?.posMode) {
+      setPosMode(config.posMode as PosMode);
+    }
+  }, [config?.posLanguage, config?.language, config?.posMode]);
 
   const handleLanguageChange = async (lang: Language) => {
     setLanguage(lang);
-    setShowLangDropdown(false);
+    setLangOpen(false);
     try {
-      await window.electronAPI.setConfig({ posLanguage: lang });
+      await saveConfig({ posLanguage: lang });
     } catch (e) {
       rlog.error('Failed to save language:', e);
     }
   };
 
-  // Load config (language + posMode) + initial connection status
+  // Load initial connection status
   useEffect(() => {
-    window.electronAPI.getConfig().then((cfg) => {
-      if (cfg?.posLanguage) {
-        setLanguage(cfg.posLanguage);
-      } else if (cfg?.language) {
-        setLanguage(cfg.language);
-      }
-      if (cfg?.posMode) {
-        setPosMode(cfg.posMode);
-      }
-    }).catch((err) => rlog.error('[POSLayout] Failed to load config:', err));
-
     window.electronAPI.getStatus().then((status: any) => {
       setIsOnline(status?.connected ?? false);
     }).catch((err) => rlog.error('[POSLayout] Failed to load status:', err));
@@ -123,6 +174,18 @@ export default function POSLayout() {
 
   return (
     <div className="h-screen bg-slate-50 text-gray-900 flex flex-col overflow-hidden">
+      {/* Hidden barcode capture input for USB HID scanners */}
+      <input
+        ref={barcodeRef}
+        value={barcodeBuffer}
+        onChange={(e) => setBarcodeBuffer(e.target.value)}
+        onKeyDown={handleBarcodeKeyDown}
+        inputMode="none"
+        data-keyboard="false"
+        aria-hidden="true"
+        tabIndex={-1}
+        className="absolute w-0 h-0 opacity-0 pointer-events-none"
+      />
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
         <div className="flex items-center gap-3">
@@ -152,39 +215,57 @@ export default function POSLayout() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {/* Language Switcher */}
-          <div className="relative" ref={langDropdownRef}>
+        <div className="flex items-center gap-2.5">
+          {/* Current time */}
+          <div className="text-right">
+            <span className="block text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">{clock.toLocaleDateString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+            <span className="block text-sm font-bold text-slate-700 tabular-nums">
+              {clock.toLocaleTimeString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+
+          {/* Fullscreen icon button */}
+          {onFullscreen && (
             <button
-              onClick={() => setShowLangDropdown(!showLangDropdown)}
-              className="px-3 py-2.5 text-xs rounded-lg bg-slate-50 text-gray-600 border border-gray-200 hover:bg-gray-100 flex items-center gap-1.5 transition-colors font-medium touch-manipulation"
+              onClick={onFullscreen}
+              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              title="Enter fullscreen mode"
             >
-              <span className="text-sm">{LANGUAGE_FLAGS[language]}</span>
-              <span className="hidden sm:inline">{languageNames[language]}</span>
-              <svg className={`w-3 h-3 transition-transform ${showLangDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9M20.25 20.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
               </svg>
             </button>
-            {showLangDropdown && (
-              <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-[140px] py-1 overflow-hidden">
-                {LANGUAGES.map((lang) => (
-                  <button
-                    key={lang}
-                    onClick={() => handleLanguageChange(lang)}
-                    className={`w-full px-3 py-3 text-left text-xs flex items-center gap-2 hover:bg-slate-50 transition-colors touch-manipulation ${
-                      language === lang ? 'bg-slate-50 text-brand-600' : 'text-gray-600'
-                    }`}
-                  >
-                    <span className="text-sm">{LANGUAGE_FLAGS[lang]}</span>
-                    <span>{languageNames[lang]}</span>
-                    {language === lang && (
-                      <svg className="w-3 h-3 ml-auto text-brand-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </button>
-                ))}
-              </div>
+          )}
+
+          {/* Language — globe icon with dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setLangOpen(!langOpen)}
+              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              title="Change language"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 003 12c0-1.605.42-3.113 1.157-4.418" />
+              </svg>
+            </button>
+            {langOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setLangOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-30 bg-white rounded-xl border border-slate-200 shadow-lg py-1 min-w-[120px]">
+                  {POS_LANGS.map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => handleLanguageChange(l)}
+                      className={`w-full px-3 py-2 text-left text-sm transition-colors duration-150 cursor-pointer flex items-center justify-between ${
+                        language === l ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>{languageNames[l]}</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">{l}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction } from '../../../../hooks/usePosStore';
 import PaymentModal from '../../PaymentModal';
+import SearchBar from '../../SearchBar';
 
 interface StaffMember {
   id: string;
@@ -42,15 +43,11 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   const [categories, setCategories] = useState<Category[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const productGridRef = useRef<HTMLDivElement>(null);
 
   const cart = state.cart;
   const tip = state.tip ?? 0;
   const currency = t('pos.currency');
-  const activeCategory = categories.find((c) => c.id === activeCategoryId);
-  const quickPicks = allProducts.slice(0, 6);
 
   // Load staff and categories once
   useEffect(() => {
@@ -66,17 +63,6 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   useEffect(() => {
     productGridRef.current?.scrollTo({ top: 0 });
   }, [activeCategoryId]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   // Load filtered products
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -138,6 +124,11 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
     [dispatch],
   );
 
+  const handleBarcodeScanned = useCallback(async (barcode: string) => {
+    const product = await window.electronAPI.pos.products.getByBarcode(barcode);
+    if (product) handleAddProduct(product);
+  }, [handleAddProduct]);
+
   const grandTotal = cart.total + tip;
 
   return (
@@ -147,108 +138,50 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
         {/* ── Left panel ── */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
-          {/* Top bar: category dropdown + search */}
-          <div className="flex items-center gap-2 px-4 pt-4 pb-2 shrink-0">
-
-            {/* Category dropdown */}
-            <div className="relative shrink-0" ref={dropdownRef}>
-              <button
-                onClick={() => setDropdownOpen((o) => !o)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-semibold text-gray-800 hover:border-brand-300 hover:text-brand-600 transition-colors cursor-pointer shadow-sm min-w-[130px]"
-                aria-haspopup="listbox"
-                aria-expanded={dropdownOpen}
-              >
-                <span className="truncate max-w-[110px]">
-                  {activeCategory?.name ?? (t('pos.allCategories') || 'All Services')}
-                </span>
-                <svg
-                  className={`w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200 ${dropdownOpen ? 'rotate-180' : ''}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              {dropdownOpen && (
-                <div
-                  className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 min-w-[180px] py-1 overflow-hidden"
-                  role="listbox"
-                >
-                  <button
-                    role="option"
-                    aria-selected={activeCategoryId === null}
-                    onClick={() => { setActiveCategoryId(null); setDropdownOpen(false); }}
-                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
-                      activeCategoryId === null
-                        ? 'bg-brand-50 text-brand-600 font-semibold'
-                        : 'text-gray-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    {t('pos.allCategories') || 'All Services'}
-                  </button>
-                  {categories.map((cat) => (
-                    <button
-                      key={cat.id}
-                      role="option"
-                      aria-selected={activeCategoryId === cat.id}
-                      onClick={() => { setActiveCategoryId(cat.id); setDropdownOpen(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
-                        activeCategoryId === cat.id
-                          ? 'bg-brand-50 text-brand-600 font-semibold'
-                          : 'text-gray-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      {cat.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
+          {/* Toolbar: search + category pills */}
+          <div className="flex items-center gap-2.5 px-4 pt-4 pb-2 shrink-0">
             {/* Search */}
-            <div className="relative flex-1">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
+            <div className="w-56 shrink-0">
+              <SearchBar
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={setSearchQuery}
+                onBarcodeScanned={handleBarcodeScanned}
                 placeholder={t('pos.search') || 'Search services...'}
-                className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 text-gray-700 placeholder-gray-400 shadow-sm"
               />
             </div>
-          </div>
 
-          {/* Quick Picks */}
-          {quickPicks.length > 0 && (
-            <div className="px-4 pb-2 shrink-0">
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-                {t('pos.quickPick')}
-              </p>
-              <div className="grid grid-cols-4 gap-1.5">
-                {quickPicks.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleAddProduct(p)}
-                    className="flex flex-col items-start px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:border-brand-300 hover:text-brand-600 hover:bg-brand-50 active:scale-95 transition-all cursor-pointer shadow-sm touch-manipulation overflow-hidden"
-                  >
-                    <span className="font-medium truncate w-full">{p.name}</span>
-                    <span className="text-brand-500 font-semibold mt-0.5">{(p.retail_price / 100).toFixed(2)}&nbsp;{currency}</span>
-                  </button>
-                ))}
-              </div>
+            {/* Category pills */}
+            <div className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <button
+                onClick={() => setActiveCategoryId(null)}
+                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer touch-manipulation border ${
+                  activeCategoryId === null
+                    ? 'bg-brand-500 text-white border-brand-500 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-brand-300 hover:text-brand-600'
+                }`}
+              >
+                {t('pos.allCategories') || 'All'}
+              </button>
+              {categories.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCategoryId(activeCategoryId === cat.id ? null : cat.id)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer touch-manipulation border ${
+                    activeCategoryId === cat.id
+                      ? 'text-white shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-brand-300 hover:text-brand-600'
+                  }`}
+                  style={
+                    activeCategoryId === cat.id
+                      ? { backgroundColor: cat.color || 'var(--color-brand-500)', borderColor: cat.color || 'var(--color-brand-500)' }
+                      : undefined
+                  }
+                >
+                  {cat.name}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           {/* Service grid */}
           <div ref={productGridRef} className="flex-1 overflow-y-auto px-4 pb-4">
@@ -257,16 +190,16 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                 {t('pos.noProducts') || 'No services found'}
               </div>
             ) : (
-              <div className="grid grid-cols-3 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-4 gap-2.5">
                 {products.map((product) => {
                   const colorClass = placeholderColor(product.name);
                   return (
                     <div
                       key={product.id}
-                      className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
+                      className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
                     >
                       {/* Image / placeholder */}
-                      <div className="relative aspect-square w-full overflow-hidden bg-slate-50">
+                      <div className="relative aspect-[3/2] w-full overflow-hidden bg-slate-50">
                         {product.image_url ? (
                           <img
                             src={product.image_url}
@@ -275,7 +208,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
                         ) : (
-                          <div className={`w-full h-full flex items-center justify-center text-3xl font-bold ${colorClass}`}>
+                          <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${colorClass}`}>
                             {product.name.charAt(0).toUpperCase()}
                           </div>
                         )}
@@ -283,20 +216,20 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                         <button
                           onClick={() => handleAddProduct(product)}
                           aria-label={`Add ${product.name}`}
-                          className="absolute bottom-2 right-2 w-9 h-9 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer touch-manipulation"
+                          className="absolute bottom-1.5 right-1.5 w-8 h-8 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer touch-manipulation"
                         >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                           </svg>
                         </button>
                       </div>
 
                       {/* Name + price */}
-                      <div className="px-3 py-2.5">
-                        <div className="text-sm font-medium text-gray-800 leading-snug truncate">
+                      <div className="px-2.5 py-2">
+                        <div className="text-xs font-medium text-gray-800 leading-snug truncate">
                           {product.name}
                         </div>
-                        <div className="text-sm font-bold text-brand-500 mt-0.5">
+                        <div className="text-xs font-bold text-brand-500 mt-0.5">
                           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
                         </div>
                       </div>

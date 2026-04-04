@@ -32,7 +32,7 @@ export default function ProductGrid({ products, onAddProduct, t, resetScrollKey 
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div className="grid grid-cols-3 gap-3 p-1">
+      <div className="grid grid-cols-4 gap-2.5 p-1">
         {products.map((product) => (
           <ProductCard key={product.id} product={product} onAdd={onAddProduct} t={t} />
         ))}

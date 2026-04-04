@@ -106,13 +106,26 @@ const initialState: WizardState = {
   errorMessage: null,
 };
 
+// Module-level snapshot so wizard progress survives component remounts
+// (tab switches, fullscreen enter/exit).
+let _snapshot: WizardState | null = null;
+
 export function useCheckinWizard() {
-  const [state, setState] = useState<WizardState>(initialState);
+  const [state, setState] = useState<WizardState>(() => {
+    if (_snapshot) {
+      // Restore persisted progress but reset transient flags
+      return { ..._snapshot, isLoading: false, isSubmitting: false, errorMessage: null };
+    }
+    return initialState;
+  });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stateRef = useRef<WizardState>(state);
   stateRef.current = state;
+
+  // Keep module-level snapshot in sync (survives unmount/remount)
+  _snapshot = state;
 
   const update = useCallback((patch: Partial<WizardState>) => {
     setState((prev) => ({ ...prev, ...patch }));

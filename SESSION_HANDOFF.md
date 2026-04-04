@@ -1,6 +1,6 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-03 (session 28 — Settings audit: 9 of 10 bugs fixed) | Read this file at the start of every new session.
+> Last updated: 2026-04-04 (session 29 — POS UI rework + barcode + shift report fix) | Read this file at the start of every new session.
 
 ---
 
@@ -88,6 +88,15 @@ Auto-activation rules in `CLAUDE.md` — no need to ask. Key triggers: UI work -
 - **HTML label printing + booking numbers** (s25-26) — hidden BrowserWindow → `webContents.print()` to Zebra, `NNN/DDMM` booking numbers, price support in labels
 - **Multi-page label print fix** (s27) — grand total on all pages, correct print order, no blank pages
 - **Security hardening** (s28) — all credentials (API key, AI key, remote PIN) use DPAPI encryption via safeStorage; dedicated IPC handlers (`AUTH_CHANGE_SALON`, `AUTH_SET_AI_API_KEY`, `AUTH_SET_REMOTE_PIN`); SET_CONFIG blocks all sensitive fields
+- **POS UI rework + barcode + shift fix** (s29):
+  - Replaced dropdown category menus with horizontal scrollable pill buttons in both `RetailTemplate` and `SalonTemplate`
+  - Removed "Quick Picks" section from both templates
+  - Added checkin-style header to POS: live date/time clock, fullscreen button, globe language picker
+  - Implemented kiosk-style fullscreen exit for POS tab (3-finger swipe down or Ctrl+Shift+Q)
+  - Compacted `ProductCard` and `ProductGrid` to 4-per-row layout
+  - Fixed clock label showing raw i18n key (`pos.currentTime`) — now shows formatted date
+  - Added hidden barcode capture input in `POSLayout` for USB HID keyboard-style scanners (`inputMode="none"`, `data-keyboard="false"` to prevent touch keyboard); works alongside existing IPC barcode handler
+  - Fixed shift report: added `blikTotal` and `transferTotal` to `ShiftReport` interface, `shift-controller.ts` calculation, `ShiftReportModal` display, and Z-report print data
 - **Misc:** app starts maximized, sidebar language fix, all tabs enabled (Billiard hidden), tsconfig fix
 
 ### Test scripts

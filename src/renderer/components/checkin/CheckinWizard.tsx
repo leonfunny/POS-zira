@@ -70,7 +70,7 @@ function useLiveClock() {
 
 export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {}) {
   const { config, saveConfig } = useConfig();
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>((config?.language as Language) || 'en');
   const [confirmingNoShow, setConfirmingNoShow] = useState<string | null>(null);
   const [langOpen, setLangOpen] = useState(false);
   const showStatsBar = config?.checkinShowStatsBar ?? true;
