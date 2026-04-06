@@ -1,6 +1,6 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-04 (session 29 — POS UI rework + barcode + shift report fix) | Read this file at the start of every new session.
+> Last updated: 2026-04-06 (session 31 — Printer auto-detection optimization) | Read this file at the start of every new session.
 
 ---
 
@@ -73,31 +73,74 @@ Auto-activation rules in `CLAUDE.md` — no need to ask. Key triggers: UI work -
 
 ---
 
-## What Has Been Built (sessions 1–28)
+## What Has Been Built
 
-- **Check-in tab full UI redesign** (s1, 15) — EntryScreen, PhoneEntryScreen, NewCustomerScreen, ServiceSelectionScreen; warm luxury aesthetic; all 7 languages
-- **Custom touch keyboard** (s2, 10) — local keyboard in check-in, global `useKeyboardManager` hook for all other tabs
-- **Tab visibility toggle** (s3) — hide/show sidebar tabs from Settings; persists to config
-- **POS tab UI/UX redesign** (s6-8) — rose palette, touch targets, cart layout, sidebar width
-- **Invoicing tab redesign + bug fixes** (s8-9) — i18n, inline modals replacing native dialogs
-- **Settings tab redesign + deep audit + 9 fixes** (s11-12, 27-28) — toggle switches, save state, SVG icons, security/UX bugs fixed
-- **Check-in kiosk mode + display toggles** (s14) — fullscreen, stats bar + queue visibility
-- **Posnet fiscal printer detection** (s18) — 4-service architecture, test print confirmed on Posnet Temo HS COM5
-- **Codex bug audit + fixes** (s19-20) — 9 bugs fixed from comprehensive scan
-- **Printer bug fixes + Zebra calibrate** (s24) — removed auto-calibrate on startup, ESC/POS binary test print, Zebra Calibrate button
-- **HTML label printing + booking numbers** (s25-26) — hidden BrowserWindow → `webContents.print()` to Zebra, `NNN/DDMM` booking numbers, price support in labels
-- **Multi-page label print fix** (s27) — grand total on all pages, correct print order, no blank pages
-- **Security hardening** (s28) — all credentials (API key, AI key, remote PIN) use DPAPI encryption via safeStorage; dedicated IPC handlers (`AUTH_CHANGE_SALON`, `AUTH_SET_AI_API_KEY`, `AUTH_SET_REMOTE_PIN`); SET_CONFIG blocks all sensitive fields
-- **POS UI rework + barcode + shift fix** (s29):
-  - Replaced dropdown category menus with horizontal scrollable pill buttons in both `RetailTemplate` and `SalonTemplate`
-  - Removed "Quick Picks" section from both templates
-  - Added checkin-style header to POS: live date/time clock, fullscreen button, globe language picker
-  - Implemented kiosk-style fullscreen exit for POS tab (3-finger swipe down or Ctrl+Shift+Q)
-  - Compacted `ProductCard` and `ProductGrid` to 4-per-row layout
-  - Fixed clock label showing raw i18n key (`pos.currentTime`) — now shows formatted date
-  - Added hidden barcode capture input in `POSLayout` for USB HID keyboard-style scanners (`inputMode="none"`, `data-keyboard="false"` to prevent touch keyboard); works alongside existing IPC barcode handler
-  - Fixed shift report: added `blikTotal` and `transferTotal` to `ShiftReport` interface, `shift-controller.ts` calculation, `ShiftReportModal` display, and Z-report print data
-- **Misc:** app starts maximized, sidebar language fix, all tabs enabled (Billiard hidden), tsconfig fix
+### Sessions 1–28 (compacted)
+
+| Area | Sessions | Summary |
+|------|----------|---------|
+| **Check-in UI** | s1, 10, 14, 15 | Full redesign (7 screens), custom touch keyboard, kiosk mode, stats bar/queue toggles |
+| **POS UI** | s6-8 | Rose palette, touch targets, cart layout, sidebar width |
+| **Invoicing** | s8-9 | i18n, inline modals replacing native dialogs |
+| **Settings** | s11-12, 27-28 | Toggle switches, save state, SVG icons, 9 security/UX fixes |
+| **Hardware / Printing** | s18, 24-27 | Posnet fiscal detection (4-service arch), Zebra calibrate, ESC/POS binary test print, HTML label printing via hidden BrowserWindow, multi-page labels with booking numbers |
+| **Security** | s28 | DPAPI encryption for all credentials via safeStorage; dedicated IPC handlers; SET_CONFIG blocks sensitive fields |
+| **Bug fixes** | s19-20 | Codex audit → 9 bugs fixed |
+| **Misc** | s3 | Tab visibility toggle, app starts maximized, sidebar language fix, tsconfig fix |
+
+### Session 29 — POS UI rework + barcode + shift fix
+- Pill-button category nav replacing dropdowns in `RetailTemplate` / `SalonTemplate`; removed Quick Picks
+- POS header: live clock, fullscreen button, language picker; kiosk exit (3-finger swipe / Ctrl+Shift+Q)
+- Compact 4-per-row `ProductGrid`; fixed i18n key `pos.currentTime`
+- Hidden barcode capture input for USB HID scanners (`inputMode="none"`)
+- Shift report: added `blikTotal` / `transferTotal` to interface, controller, modal, and Z-report
+
+### Session 30 — Universal printer detection & auto-recovery
+- New `src/main/hardware/detection/` module (4 files): types, device registry, detection service, barrel index
+- `UniversalDeviceRegistry` — persists to `%APPDATA%/Zira AI/printer-registry.json`; 11 brands; stable IDs; port/name migration history
+- `UniversalDetectionService` — `detectAll()`, `rescanKnown()`, `recoverDevice()` with ESC/POS serial probe + Windows brand-match
+- `ThermalDriver.recoverPrinter()` — USB brand scan + serial DLE EOT probe
+- `ZebraDriver.recoverPrinter()` — zebra/zdesigner pattern match + paper size verify
+- `HardwareModule.runHealthCheck()` — recovery for all driver types; auto-updates config
+- 4 new IPC channels (`universal-scan/list/rescan/recover`); backward compatible with POSNET channels
+
+### Session 31 — Printer auto-detection optimization
+Full optimization pass over the printer detection/recovery architecture. All changes verified with `npm run build`.
+
+**Phase 1 — Quick fixes (high priority):**
+- **1A:** Dynamic VID list from `BRAND_PATTERNS` (11 brands) instead of 3 hardcoded VIDs in PnP scan
+- **1B:** Extracted shared `probeEscPosPort()` into `port-utils.ts`, used by ThermalDriver + UniversalDetectionService
+- **1C:** Health check exponential backoff (30s → 60s → 120s → 300s) for offline printers — reduces log spam
+
+**Phase 2 — Backend classification for UI:**
+- **2A:** `DetectedDevice` extended with `targetType` + `recommendedProtocol`, populated by backend `classifyPrinterCategory()`
+- **2B:** Renderer `Settings.tsx` uses backend classification instead of duplicating brand heuristics
+
+**Phase 3 — PowerShell overhead reduction:**
+- **3A:** Batched Get-Printer + PnP VID scan + COM port lookup into 1 PS script (was 3+ separate PS spawns)
+- **3B:** Health check fetches printer/port lists once per cycle, passes cached lists to all drivers
+
+**Phase 4 — Stability & architecture:**
+- **4A:** `generateDeviceId()` prefers `usb:VID_PID` for stable IDs across driver reinstalls
+- **4B:** Centralized `attemptDriverRecovery()` + `RecoverableDriver` interface with `reconnect()` on all drivers
+
+**Bug fix round (correctness):**
+- **Fix 7:** Race condition — `rescanKnown()` now checks `scanning` flag before starting
+- **Fix 3:** `driverInstalled` false positive — COM port alone no longer counts as "driver installed"
+- **Fix 4+5:** Deleted dead `getWindowsPrinters()` + `getComPortForVid()` (replaced by batch script)
+- **Fix 1:** Recovery methods (`recoverPrinter()`/`recoverPort()`) made pure — `reconnect()` is single state mutation point
+- **Fix 2:** Cached printer/port lists passed through to recovery methods (zero redundant PS calls)
+- **Fix 6:** Legacy drivers now get recovery too (was silently skipped)
+- **Zebra paper size:** `reconnect()` re-detects paper size after recovery (lost during pure refactor)
+- **POSNET auto-setup:** UI allows auto-setup for devices with COM port even without Windows driver
+- **detectBrand():** Unified with `BRAND_PATTERNS` (was hardcoded duplicate)
+
+**Key architectural decisions:**
+- `RecoverableDriver` interface in `detection/types.ts` — all drivers implement `reconnect()`
+- Recovery methods are pure (return result, don't mutate) → orchestrator calls `reconnect()` → single state mutation point
+- `attemptDriverRecovery()` in `hardware.module.ts` centralizes recovery + config update for all driver types
+
+**Files changed:** `driver-installer.ts`, `port-utils.ts`, `detection/types.ts`, `universal-detection-service.ts`, `thermal-driver.ts`, `zebra-driver.ts`, `posnet-driver.ts`, `hardware.module.ts`, `Settings.tsx`, `electron.d.ts`
 
 ### Test scripts
 - `scripts/test-print-label-electron.js` — real print test: `npx electron scripts/test-print-label-electron.js`
@@ -125,6 +168,5 @@ Auto-activation rules in `CLAUDE.md` — no need to ask. Key triggers: UI work -
 - **P4:** No linting, `asar: false`, no code signing, stale files in repo
 
 ### Environment issues (not code fixes)
-- Customer display "-" bar + swipe gestures can exit fullscreen
 - Python security deps not installed
 - Windows activation watermark

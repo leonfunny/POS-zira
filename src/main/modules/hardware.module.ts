@@ -17,6 +17,7 @@ import { PosnetProbeEngine } from '../hardware/posnet/posnet-probe-engine';
 import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registry';
 import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
+import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
 import { printLabelToDevice, cleanupOldLabels, getMaxServicesPerLabel } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
@@ -47,6 +48,10 @@ type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 /** How often to run printer health checks (ms) */
 const HEALTH_CHECK_INTERVAL = 30_000;
 
+/** Health check backoff multipliers: after N consecutive failures, skip N×interval checks.
+ *  Index = min(failCount, length-1). E.g. [1,2,4,10] → 30s, 60s, 120s, 300s */
+const HEALTH_CHECK_BACKOFF = [1, 2, 4, 10];
+
 /** Max retries for a failed print job */
 const PRINT_JOB_MAX_RETRIES = 2;
 
@@ -68,9 +73,15 @@ export class HardwareModule extends BaseModule {
   private deviceRegistry: DeviceProfileRegistry | null = null;
   private detectionService: DeviceDetectionService | null = null;
   private fiscalAdapter: FiscalPrinterAdapter | null = null;
+  // Universal detection services (all printer types)
+  private universalRegistry: UniversalDeviceRegistry | null = null;
+  private universalDetection: UniversalDetectionService | null = null;
   // (PDF label generator removed — using HTML print + save instead)
   // Health check timer
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  // Health check backoff: consecutive fail count per printer type key
+  private healthCheckFailCount: Map<string, number> = new Map();
+  private healthCheckTick = 0;
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
 
@@ -109,6 +120,11 @@ export class HardwareModule extends BaseModule {
     const probeEngine = new PosnetProbeEngine();
     this.detectionService = new DeviceDetectionService(probeEngine, this.deviceRegistry);
     this.fiscalAdapter = new FiscalPrinterAdapter(this.deviceRegistry);
+
+    // Initialize universal detection services (all printer types)
+    logger.info('[HardwareModule] Initializing universal detection services...');
+    this.universalRegistry = new UniversalDeviceRegistry();
+    this.universalDetection = new UniversalDetectionService(this.universalRegistry);
 
     // Expose printers map and module reference in container
     this.container.set(SERVICE_TOKENS.PRINTERS, this.printers);
@@ -230,6 +246,44 @@ export class HardwareModule extends BaseModule {
       } catch (err: any) {
         logger.error('[HardwareModule] Posnet rescan failed:', err);
         return { success: false, devices: [], warnings: [err.message] };
+      }
+    });
+
+    // Universal printer detection (all brands)
+    ipcMain.handle(IPC_CHANNELS.UNIVERSAL_SCAN_DEVICES, async () => {
+      if (!this.universalDetection) return { success: false, devices: [], configured: [], warnings: ['Universal detection not initialized'] };
+      try {
+        const result = await this.universalDetection.detectAll();
+        logger.info(`[HardwareModule] Universal scan: ${result.devices.length} device(s) found`);
+        return result;
+      } catch (err: any) {
+        logger.error('[HardwareModule] Universal scan failed:', err);
+        return { success: false, devices: [], configured: [], warnings: [err.message] };
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UNIVERSAL_LIST_DEVICES, async () => {
+      if (!this.universalRegistry) return { version: 2, lastScan: '', devices: {} };
+      return this.universalRegistry.toJSON();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UNIVERSAL_RESCAN_KNOWN, async () => {
+      if (!this.universalDetection) return { success: false, devices: [], configured: [], warnings: ['Universal detection not initialized'] };
+      try {
+        return await this.universalDetection.rescanKnown();
+      } catch (err: any) {
+        logger.error('[HardwareModule] Universal rescan failed:', err);
+        return { success: false, devices: [], configured: [], warnings: [err.message] };
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UNIVERSAL_RECOVER_DEVICE, async (_, deviceId: string) => {
+      if (!this.universalDetection) return { recovered: false, oldIdentifier: deviceId, message: 'Universal detection not initialized' };
+      try {
+        return await this.universalDetection.recoverDevice(deviceId);
+      } catch (err: any) {
+        logger.error('[HardwareModule] Universal recover failed:', err);
+        return { recovered: false, oldIdentifier: deviceId, message: err.message };
       }
     });
 
@@ -827,14 +881,98 @@ export class HardwareModule extends BaseModule {
     }
   }
 
+  /** Check if a driver should be skipped this tick due to backoff. */
+  private shouldSkipHealthCheck(key: string): boolean {
+    const fails = this.healthCheckFailCount.get(key) || 0;
+    if (fails === 0) return false;
+    const backoffIdx = Math.min(fails - 1, HEALTH_CHECK_BACKOFF.length - 1);
+    const multiplier = HEALTH_CHECK_BACKOFF[backoffIdx];
+    // Skip unless tick is aligned to the multiplier
+    return (this.healthCheckTick % multiplier) !== 0;
+  }
+
+  /**
+   * Centralized recovery for any offline printer driver.
+   * Delegates to driver-specific recovery, then updates config + calls reconnect().
+   * Returns true if recovery succeeded.
+   */
+  private async attemptDriverRecovery(
+    pt: PrinterType,
+    driver: PrinterDriver,
+    cachedPrinters?: string[],
+    cachedPorts?: string[],
+  ): Promise<boolean> {
+    let newIdentifier: string | null = null;
+    let isPort = false;
+
+    if (driver instanceof PosnetDriver) {
+      logger.info(`[HardwareModule] Attempting port recovery for POSNET (${pt})...`);
+      newIdentifier = await driver.recoverPort();
+      isPort = true;
+    } else if (driver instanceof ThermalDriver) {
+      logger.info(`[HardwareModule] Attempting recovery for Thermal printer (${pt})...`);
+      const result = await driver.recoverPrinter(cachedPrinters, cachedPorts);
+      if (result.recovered && result.newIdentifier) {
+        newIdentifier = result.newIdentifier;
+        isPort = !!newIdentifier.match(/^COM\d+$/i);
+      }
+    } else if (driver instanceof ZebraDriver) {
+      logger.info(`[HardwareModule] Attempting recovery for Zebra printer (${pt})...`);
+      const result = await driver.recoverPrinter(cachedPrinters);
+      if (result.recovered && result.newIdentifier) {
+        newIdentifier = result.newIdentifier;
+      }
+    }
+
+    if (!newIdentifier) return false;
+
+    // Single state mutation point — driver.reconnect() sets internal state
+    await driver.reconnect(newIdentifier);
+
+    // Update config to persist the new identifier
+    const config = getConfig();
+    const currentPrinters = { ...(config.printers || {}) };
+    if (currentPrinters[pt]) {
+      const pc = { ...currentPrinters[pt]! };
+      if (isPort) {
+        pc.port = newIdentifier;
+      } else {
+        pc.windowsPrinter = newIdentifier;
+      }
+      currentPrinters[pt] = pc;
+      setConfig({ printers: currentPrinters });
+    }
+
+    logger.info(`[HardwareModule] ${pt} recovered → ${newIdentifier}`);
+    return true;
+  }
+
   private async runHealthCheck(): Promise<void> {
+    this.healthCheckTick++;
     let changed = false;
+
+    // Fetch printer and port lists once for the entire health check cycle
+    // This avoids each driver spawning its own PowerShell process
+    const [cachedPrinters, cachedPorts] = await Promise.all([
+      listWindowsPrinters(),
+      listSerialPorts(),
+    ]);
 
     // Check all drivers in the printers map
     for (const [pt, driver] of Object.entries(this.printers)) {
       if (!driver) continue;
+
+      // Backoff: skip if this driver has been failing repeatedly
+      if (this.shouldSkipHealthCheck(pt)) continue;
+
       const wasBefore = driver.isConnected();
-      if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
+      if (driver instanceof PosnetDriver) {
+        await driver.healthCheck(cachedPorts);
+      } else if (driver instanceof ThermalDriver) {
+        await driver.healthCheck(cachedPrinters, cachedPorts);
+      } else if (driver instanceof ZebraDriver) {
+        await driver.healthCheck(cachedPrinters);
+      } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
       }
       const isNow = driver.isConnected();
@@ -842,20 +980,25 @@ export class HardwareModule extends BaseModule {
         changed = true;
         logger.info(`[HardwareModule] Health check: ${pt} ${isNow ? 'reconnected' : 'disconnected'}`);
       }
-      // POSNET port recovery: if just disconnected, try to find the printer on a new port
-      if (!isNow && driver instanceof PosnetDriver) {
-        logger.info(`[HardwareModule] Attempting port recovery for POSNET (${pt})...`);
-        const newPort = await (driver as PosnetDriver).recoverPort();
-        if (newPort) {
-          const config = getConfig();
-          const currentPrinters = { ...(config.printers || {}) };
-          if (currentPrinters[pt as PrinterType]) {
-            currentPrinters[pt as PrinterType] = { ...currentPrinters[pt as PrinterType]!, port: newPort };
-            setConfig({ printers: currentPrinters });
-            changed = true;
-            logger.info(`[HardwareModule] POSNET (${pt}) auto-switched to ${newPort}`);
-          }
+
+      // If online now, reset backoff
+      if (isNow) {
+        if (this.healthCheckFailCount.has(pt)) {
+          this.healthCheckFailCount.delete(pt);
         }
+        continue;
+      }
+
+      // Offline — attempt recovery then update backoff
+      const recovered = await this.attemptDriverRecovery(pt as PrinterType, driver, cachedPrinters, cachedPorts);
+      if (recovered) changed = true;
+
+      // Update backoff counter
+      if (recovered) {
+        this.healthCheckFailCount.delete(pt);
+      } else {
+        const prev = this.healthCheckFailCount.get(pt) || 0;
+        this.healthCheckFailCount.set(pt, prev + 1);
       }
     }
 
@@ -866,13 +1009,78 @@ export class HardwareModule extends BaseModule {
       ['Default', this.printerDriver],
     ] as const) {
       if (!driver) continue;
+      if (this.shouldSkipHealthCheck(`legacy:${label}`)) continue;
+
       const wasBefore = driver.isConnected();
-      if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
+      if (driver instanceof PosnetDriver) {
+        await driver.healthCheck(cachedPorts);
+      } else if (driver instanceof ThermalDriver) {
+        await driver.healthCheck(cachedPrinters, cachedPorts);
+      } else if (driver instanceof ZebraDriver) {
+        await driver.healthCheck(cachedPrinters);
+      } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
       }
-      if (driver.isConnected() !== wasBefore) {
+      const isNow = driver.isConnected();
+      if (isNow !== wasBefore) {
         changed = true;
-        logger.info(`[HardwareModule] Health check: ${label} ${driver.isConnected() ? 'reconnected' : 'disconnected'}`);
+        logger.info(`[HardwareModule] Health check: ${label} ${isNow ? 'reconnected' : 'disconnected'}`);
+      }
+      // Update backoff for legacy drivers too
+      const legacyKey = `legacy:${label}`;
+      if (isNow) {
+        this.healthCheckFailCount.delete(legacyKey);
+      } else {
+        // Attempt recovery for offline legacy drivers
+        // Legacy drivers don't have a PrinterType key, so we update config by legacy field name
+        let legacyRecovered = false;
+        if (driver instanceof PosnetDriver) {
+          const newPort = await driver.recoverPort();
+          if (newPort) {
+            await driver.reconnect(newPort);
+            const config = getConfig();
+            const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
+            if (legacyField && (config as any)[legacyField]) {
+              setConfig({ [legacyField]: { ...(config as any)[legacyField], port: newPort } });
+            }
+            legacyRecovered = true;
+            changed = true;
+          }
+        } else if (driver instanceof ThermalDriver) {
+          const result = await driver.recoverPrinter(cachedPrinters, cachedPorts);
+          if (result.recovered && result.newIdentifier) {
+            await driver.reconnect(result.newIdentifier);
+            const config = getConfig();
+            const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
+            if (legacyField && (config as any)[legacyField]) {
+              const pc = { ...(config as any)[legacyField] };
+              if (result.newIdentifier.match(/^COM\d+$/i)) { pc.port = result.newIdentifier; }
+              else { pc.windowsPrinter = result.newIdentifier; }
+              setConfig({ [legacyField]: pc });
+            }
+            legacyRecovered = true;
+            changed = true;
+          }
+        } else if (driver instanceof ZebraDriver) {
+          const result = await driver.recoverPrinter(cachedPrinters);
+          if (result.recovered && result.newIdentifier) {
+            await driver.reconnect(result.newIdentifier);
+            const config = getConfig();
+            const legacyField = label === 'Label' ? 'labelPrinter' : null;
+            if (legacyField && (config as any)[legacyField]) {
+              setConfig({ [legacyField]: { ...(config as any)[legacyField], windowsPrinter: result.newIdentifier } });
+            }
+            legacyRecovered = true;
+            changed = true;
+          }
+        }
+
+        if (legacyRecovered) {
+          this.healthCheckFailCount.delete(legacyKey);
+          logger.info(`[HardwareModule] Legacy ${label} recovered`);
+        } else {
+          this.healthCheckFailCount.set(legacyKey, (this.healthCheckFailCount.get(legacyKey) || 0) + 1);
+        }
       }
     }
 

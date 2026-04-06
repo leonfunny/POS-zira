@@ -109,21 +109,23 @@ export class PosnetDriver {
   async recoverPort(): Promise<string | null> {
     logger.info('[PosnetDriver] Scanning all COM ports for POSNET device...');
     const found = await PosnetDriver.detectPosnetPort();
-    if (found && found !== this.portName) {
-      logger.info(`[PosnetDriver] Port changed: ${this.portName} → ${found}`);
-      this.portName = found;
-    }
     if (found) {
-      this.connected = true;
-      logger.info(`[PosnetDriver] Recovered on ${found}`);
+      logger.info(`[PosnetDriver] Found POSNET on ${found} (current: ${this.portName})`);
     }
     return found;
   }
 
   isConnected(): boolean { return this.connected; }
 
-  async healthCheck(): Promise<boolean> {
-    const ports = await listSerialPorts();
+  /** Reconnect using a new COM port (RecoverableDriver). */
+  reconnect(newPort: string): void {
+    logger.info(`[PosnetDriver] Reconnecting: ${this.portName} → ${newPort}`);
+    this.portName = newPort;
+    this.connected = true;
+  }
+
+  async healthCheck(cachedPorts?: string[]): Promise<boolean> {
+    const ports = cachedPorts ?? await listSerialPorts();
     const stillAvailable = ports.includes(this.portName);
     if (this.connected && !stillAvailable) {
       logger.warn(`[PosnetDriver] Health check: port ${this.portName} disappeared`);

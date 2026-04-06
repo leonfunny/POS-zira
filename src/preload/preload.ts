@@ -116,6 +116,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   posnetListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_LIST_DEVICES),
   posnetSelectDevice: (serial: string) => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SELECT_DEVICE, serial),
   posnetRescanKnown: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_RESCAN_KNOWN),
+  // Universal printer detection (all brands)
+  universalScanDevices: () => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_SCAN_DEVICES),
+  universalListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_LIST_DEVICES),
+  universalRescanKnown: () => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_RESCAN_KNOWN),
+  universalRecoverDevice: (deviceId: string) => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_RECOVER_DEVICE, deviceId),
 
   // Event listeners
   onConnectionStatus: (callback: (status: any) => void) => {

@@ -537,6 +537,11 @@ export const IPC_CHANNELS = {
   POSNET_LIST_DEVICES: 'posnet-list-devices',
   POSNET_SELECT_DEVICE: 'posnet-select-device',
   POSNET_RESCAN_KNOWN: 'posnet-rescan-known',
+  // Universal printer detection (all brands)
+  UNIVERSAL_SCAN_DEVICES: 'universal-scan-devices',
+  UNIVERSAL_LIST_DEVICES: 'universal-list-devices',
+  UNIVERSAL_RESCAN_KNOWN: 'universal-rescan-known',
+  UNIVERSAL_RECOVER_DEVICE: 'universal-recover-device',
 
   // Events from main to renderer
   CONNECTION_STATUS: 'connection-status',

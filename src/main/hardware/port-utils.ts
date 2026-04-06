@@ -159,3 +159,44 @@ export async function serialPortExists(port: string): Promise<boolean> {
   const ports = await listSerialPorts();
   return ports.includes(port.toUpperCase());
 }
+
+/**
+ * Probe a COM port with ESC/POS status command (DLE EOT 1 = 0x10 0x04 0x01).
+ * Returns true if the printer responds with any data.
+ * Used by ThermalDriver and UniversalDetectionService for serial printer recovery.
+ */
+export async function probeEscPosPort(port: string, baudRate: number = 9600): Promise<boolean> {
+  const safePort = sanitizePortName(port);
+  if (!safePort) return false;
+
+  try {
+    const psScript =
+      '$ProgressPreference = "SilentlyContinue"\n' +
+      `$p = New-Object System.IO.Ports.SerialPort('${safePort}', ${baudRate}, 'None', 8, 'One')\n` +
+      '$p.ReadTimeout = 2000\n$p.WriteTimeout = 2000\n' +
+      '$p.DtrEnable = $true\n$p.RtsEnable = $true\n' +
+      'try {\n  $p.Open()\n' +
+      '  $f = [byte[]]@(0x10, 0x04, 0x01)\n' +
+      '  $p.Write($f, 0, $f.Length)\n' +
+      '  Start-Sleep -Milliseconds 1000\n' +
+      '  $n = $p.BytesToRead\n' +
+      "  if ($n -gt 0) { Write-Output 'ESCPOS' }\n" +
+      "  else { Write-Output 'NOREPLY' }\n" +
+      '} catch { Write-Output "ERROR:$($_.Exception.Message)" }\n' +
+      'finally { if ($p.IsOpen) { $p.Close() } }\n';
+
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { encoding: 'utf8', timeout: 10000 },
+    );
+
+    const result = stdout.trim();
+    logger.info(`[PortUtils] ESC/POS probe ${safePort}: ${result}`);
+    return result === 'ESCPOS';
+  } catch (err: any) {
+    logger.debug(`[PortUtils] ESC/POS probe ${port} failed: ${err.message}`);
+    return false;
+  }
+}

@@ -6,7 +6,8 @@ import * as os from 'os';
 import logger from '../../logger';
 import { EscPosFormatter, DailyReportData } from './escpos-formatter';
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
-import { listWindowsPrinters, listSerialPorts, sanitizePrinterName } from '../port-utils';
+import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort } from '../port-utils';
+import { matchBrand, type RecoveryResult } from '../detection/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +25,8 @@ export class ThermalDriver {
   private connected = false;
   private formatter: EscPosFormatter;
   private connectionType: ThermalConnectionType;
+  /** Detected brand name, used for recovery matching. */
+  private brand: string = '';
 
   constructor(
     private printerNameOrPort: string,  // Windows printer name or COM port
@@ -34,7 +37,10 @@ export class ThermalDriver {
   ) {
     this.connectionType = connectionType;
     this.formatter = new EscPosFormatter(paperWidth, charsPerLine);
-    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm)`);
+    // Auto-detect brand from printer name for recovery
+    const matched = matchBrand(printerNameOrPort);
+    if (matched) this.brand = matched.brand;
+    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm)${this.brand ? ` [${this.brand}]` : ''}`);
   }
 
   /**
@@ -97,14 +103,14 @@ export class ThermalDriver {
    * Verify the printer/port is still available.
    * Used by periodic health checks.
    */
-  async healthCheck(): Promise<boolean> {
+  async healthCheck(cachedPrinters?: string[], cachedPorts?: string[]): Promise<boolean> {
     let stillAvailable: boolean;
 
     if (this.connectionType === 'USB') {
-      const printers = await listWindowsPrinters();
+      const printers = cachedPrinters ?? await listWindowsPrinters();
       stillAvailable = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
     } else {
-      const ports = await listSerialPorts();
+      const ports = cachedPorts ?? await listSerialPorts();
       stillAvailable = ports.includes(this.printerNameOrPort);
     }
 
@@ -131,6 +137,110 @@ export class ThermalDriver {
    */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  /** Get the current printer name or COM port. */
+  getPrinterNameOrPort(): string { return this.printerNameOrPort; }
+
+  /** Reconnect using a new identifier — printer name or COM port (RecoverableDriver). */
+  reconnect(newIdentifier: string): void {
+    logger.info(`[ThermalDriver] Reconnecting: "${this.printerNameOrPort}" → "${newIdentifier}"`);
+    this.printerNameOrPort = newIdentifier;
+    if (newIdentifier.match(/^COM\d+$/i)) {
+      this.connectionType = 'SERIAL';
+    }
+    this.connected = true;
+  }
+
+  /** Get the detected brand. */
+  getBrand(): string { return this.brand; }
+
+  /** Set brand explicitly (e.g. from auto-setup). */
+  setBrand(brand: string): void { this.brand = brand; }
+
+  /**
+   * Attempt to recover the printer when it disappears.
+   *
+   * USB mode:    Scan Windows printers for a brand-matching name.
+   * Serial mode: Scan all COM ports with ESC/POS status probe (DLE EOT 1).
+   *
+   * Pure: does NOT mutate driver state. Caller should use reconnect() on success.
+   */
+  async recoverPrinter(cachedPrinters?: string[], cachedPorts?: string[]): Promise<RecoveryResult> {
+    const oldId = this.printerNameOrPort;
+    logger.info(`[ThermalDriver] Attempting recovery for "${oldId}" (${this.connectionType})...`);
+
+    if (this.connectionType === 'USB') {
+      return this.recoverUsbPrinter(oldId, cachedPrinters);
+    } else {
+      return this.recoverSerialPrinter(oldId, cachedPorts);
+    }
+  }
+
+  /**
+   * USB recovery: scan Windows printers for a brand-matching name.
+   */
+  private async recoverUsbPrinter(oldId: string, cachedPrinters?: string[]): Promise<RecoveryResult> {
+    try {
+      const printers = cachedPrinters ?? await listWindowsPrinters();
+
+      // First, check if the original name came back
+      if (printers.some(p => p.toLowerCase() === oldId.toLowerCase())) {
+        return { recovered: true, newIdentifier: oldId, oldIdentifier: oldId, message: `Printer "${oldId}" reappeared` };
+      }
+
+      // Try brand-based recovery
+      const brandPattern = this.brand ? matchBrand(this.brand) : matchBrand(oldId);
+      if (!brandPattern) {
+        return { recovered: false, oldIdentifier: oldId, message: `No brand pattern for "${oldId}" — cannot recover` };
+      }
+
+      for (const name of printers) {
+        const nameLower = name.toLowerCase();
+        if (brandPattern.namePatterns.some(p => nameLower.includes(p))) {
+          return { recovered: true, newIdentifier: name, oldIdentifier: oldId, message: `Printer recovered as "${name}"` };
+        }
+      }
+
+      return { recovered: false, oldIdentifier: oldId, message: `No ${brandPattern.brand} printer found in Windows` };
+    } catch (err: any) {
+      return { recovered: false, oldIdentifier: oldId, message: `USB recovery failed: ${err.message}` };
+    }
+  }
+
+  /**
+   * Serial recovery: scan all COM ports with ESC/POS DLE EOT probe.
+   */
+  private async recoverSerialPrinter(oldId: string, cachedPorts?: string[]): Promise<RecoveryResult> {
+    try {
+      const ports = cachedPorts ?? await listSerialPorts();
+      if (ports.length === 0) {
+        return { recovered: false, oldIdentifier: oldId, message: 'No COM ports available' };
+      }
+
+      // Check if original port came back first
+      if (ports.includes(oldId.toUpperCase())) {
+        return { recovered: true, newIdentifier: oldId, oldIdentifier: oldId, message: `Port ${oldId} reappeared` };
+      }
+
+      // Try other ports with ESC/POS probe
+      for (const port of ports) {
+        if (port.toUpperCase() === oldId.toUpperCase()) continue;
+        const responded = await probeEscPosPort(port, this.baudRate);
+        if (responded) {
+          return { recovered: true, newIdentifier: port, oldIdentifier: oldId, message: `Printer recovered on ${port}` };
+        }
+      }
+
+      return { recovered: false, oldIdentifier: oldId, message: `Thermal printer not found on any COM port` };
+    } catch (err: any) {
+      return { recovered: false, oldIdentifier: oldId, message: `Serial recovery failed: ${err.message}` };
+    }
+  }
+
+  /** @deprecated Use shared probeEscPosPort from port-utils instead. Kept for backward compatibility. */
+  static async probeEscPosPort(port: string, baudRate: number = 9600): Promise<boolean> {
+    return probeEscPosPort(port, baudRate);
   }
 
   /**

@@ -7,6 +7,7 @@ import logger from '../../logger';
 import { ZplFormatter } from './zpl-formatter';
 import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, sanitizePrinterName } from '../port-utils';
+import { type RecoveryResult } from '../detection/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,12 +129,29 @@ if ($doc.PrinterSettings.IsValid) {
     return this.connected;
   }
 
+  /** Reconnect using a new Windows printer name (RecoverableDriver). */
+  async reconnect(newPrinterName: string): Promise<void> {
+    logger.info(`[ZebraDriver] Reconnecting: "${this.printerName}" → "${newPrinterName}"`);
+    this.printerName = newPrinterName;
+    this.connected = true;
+    // Re-detect paper size for the new printer name
+    try {
+      const paperSize = await ZebraDriver.detectPaperSize(newPrinterName);
+      if (paperSize) {
+        this.formatter.updateDimensions(paperSize.widthMm, paperSize.heightMm);
+        logger.info(`[ZebraDriver] Paper size updated: ${paperSize.widthMm}x${paperSize.heightMm}mm`);
+      }
+    } catch (err: any) {
+      logger.debug(`[ZebraDriver] Paper size detection after reconnect failed: ${err.message}`);
+    }
+  }
+
   /**
    * Verify the printer is still available in Windows.
    * Used by periodic health checks.
    */
-  async healthCheck(): Promise<boolean> {
-    const printers = await listWindowsPrinters();
+  async healthCheck(cachedPrinters?: string[]): Promise<boolean> {
+    const printers = cachedPrinters ?? await listWindowsPrinters();
     const stillAvailable = printers.some(p => p.toLowerCase() === this.printerName.toLowerCase());
     if (this.connected && !stillAvailable) {
       logger.warn(`[ZebraDriver] Health check: "${this.printerName}" disappeared — marking disconnected`);
@@ -143,6 +161,40 @@ if ($doc.PrinterSettings.IsValid) {
       this.connected = true;
     }
     return this.connected;
+  }
+
+  /** Zebra brand patterns for printer name matching. */
+  private static readonly ZEBRA_PATTERNS = ['zebra', 'zdesigner', 'ztc '];
+
+  /**
+   * Attempt to recover the printer when it disappears.
+   * Scans Windows printers for Zebra/ZDesigner pattern match.
+   * Pure: does NOT mutate driver state. Caller should use reconnect() on success.
+   */
+  async recoverPrinter(cachedPrinters?: string[]): Promise<RecoveryResult> {
+    const oldName = this.printerName;
+    logger.info(`[ZebraDriver] Attempting recovery for "${oldName}"...`);
+
+    try {
+      const printers = cachedPrinters ?? await listWindowsPrinters();
+
+      // First, check if the original name came back
+      if (printers.some(p => p.toLowerCase() === oldName.toLowerCase())) {
+        return { recovered: true, newIdentifier: oldName, oldIdentifier: oldName, message: `Printer "${oldName}" reappeared` };
+      }
+
+      // Search for any Zebra printer
+      for (const name of printers) {
+        const nameLower = name.toLowerCase();
+        if (ZebraDriver.ZEBRA_PATTERNS.some(p => nameLower.includes(p))) {
+          return { recovered: true, newIdentifier: name, oldIdentifier: oldName, message: `Zebra printer recovered as "${name}"` };
+        }
+      }
+
+      return { recovered: false, oldIdentifier: oldName, message: 'No Zebra printer found in Windows' };
+    } catch (err: any) {
+      return { recovered: false, oldIdentifier: oldName, message: `Recovery failed: ${err.message}` };
+    }
   }
 
   /**

@@ -75,7 +75,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [calibrateResult, setCalibrateResult] = useState<{ printerType: string; success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } } | null>(null);
 
   // Printer detection state
-  const [posnetStatus, setPosnetStatus] = useState<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean } | null>(null);
+  const [posnetStatus, setPosnetStatus] = useState<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean } | null>(null);
   const [posnetChecking, setPosnetChecking] = useState(false);
   const [posnetInstalling, setPosnetInstalling] = useState(false);
   const [posnetInstallResult, setPosnetInstallResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -406,24 +406,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       }
 
       // Auto-setup all detected devices that have drivers installed
+      // Uses backend-provided targetType from classifyPrinterCategory()
       const configured: string[] = [];
       const claimedSlots = new Set<string>();
 
       // First pass: mark already-configured slots
       for (const dev of status.devices) {
-        const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
-        const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
-        const isDymo = dev.brand === 'DYMO';
-        const model = (dev.model || '').toLowerCase();
-        const isLabel = isZebra || isDymo || ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
-        const isThermal = !isPosnet && !isLabel && (
-          ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
-          ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
-        );
-        const isA4 = !isPosnet && !isLabel && !isThermal &&
-          ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
-
-        const targetType = isPosnet ? 'RECEIPT' : isLabel ? 'LABEL' : isA4 ? 'A4' : 'RECEIPT';
+        const targetType = (dev.targetType || 'RECEIPT') as PrinterTypeValue;
+        const isPosnet = dev.recommendedProtocol === 'POSNET';
         const cfg = getPrinterConfig(targetType);
         const alreadyConfigured = cfg.enabled && (
           (isPosnet && cfg.protocol === 'POSNET' && cfg.port === dev.comPort) ||
@@ -434,21 +424,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
       // Second pass: auto-setup unconfigured devices
       for (const dev of status.devices) {
-        if (!dev.driverInstalled) continue;
+        if (!dev.driverInstalled && !dev.comPort) continue;
 
-        const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
-        const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
-        const isDymo = dev.brand === 'DYMO';
-        const model = (dev.model || '').toLowerCase();
-        const isLabel = isZebra || isDymo || ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
-        const isThermal = !isPosnet && !isLabel && (
-          ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
-          ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
-        );
-        const isA4 = !isPosnet && !isLabel && !isThermal &&
-          ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
-
-        const targetType = isPosnet ? 'RECEIPT' : isLabel ? 'LABEL' : isA4 ? 'A4' : 'RECEIPT';
+        const targetType = dev.targetType || 'RECEIPT';
 
         // Skip if this slot is already taken
         if (claimedSlots.has(targetType)) continue;
@@ -660,7 +638,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-sm font-semibold text-slate-700">Printer Detection</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Auto-detect connected printers and COM ports</p>
+            <p className="text-xs text-slate-500 mt-0.5">Auto-detect and auto-recover all connected printers</p>
           </div>
           <button
             onClick={handleCheckPosnetDriver}
@@ -749,8 +727,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2 pt-1">
-                      {/* Any brand: install/scan driver if missing */}
-                      {!dev.driverInstalled && (
+                      {/* Any brand: install/scan driver if missing and no COM port fallback */}
+                      {!dev.driverInstalled && !dev.comPort && (
                         <button
                           onClick={isPosnet ? handleInstallPosnetDriver : handleScanForDriver}
                           disabled={posnetInstalling || isBusy}
@@ -775,8 +753,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </button>
                       )}
 
-                      {/* Any brand with driver: auto setup */}
-                      {dev.driverInstalled && (
+                      {/* Any brand with driver or COM port: auto setup */}
+                      {(dev.driverInstalled || dev.comPort) && (
                         <button
                           onClick={() => handleAutoSetup(targetType, dev)}
                           disabled={autoSettingUp || isBusy}

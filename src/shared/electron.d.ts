@@ -162,14 +162,19 @@ interface ElectronAPI {
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string }>;
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
-  getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
+  getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
   installPosnetDriver: () => Promise<{ success: boolean; message: string; rebootRequired?: boolean }>;
   scanForDriver: () => Promise<{ success: boolean; message: string }>;
-  autoSetupPrinter: (printerType: string, device?: { vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean }) => Promise<{ success: boolean; port?: string; windowsPrinter?: string; message: string; action?: string }>;
+  autoSetupPrinter: (printerType: string, device?: { vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }) => Promise<{ success: boolean; port?: string; windowsPrinter?: string; message: string; action?: string }>;
   posnetScanDevices: () => Promise<{ success: boolean; devices: Array<{ serial: string; model: string; port: string; protocol: string; library: string; baudRate: number; status: string; lastSeen: string; capabilities: { fiscal: boolean; customerDisplay: boolean; cashDrawer: boolean; nip: boolean }; autoSelected: boolean }>; selectedDevice: any | null; requiresUserSelection: boolean; scannedPorts: string[]; warnings: string[] }>;
   posnetListDevices: () => Promise<{ version: number; lastScan: string; devices: Record<string, any>; selectedSerial: string | null }>;
   posnetSelectDevice: (serial: string) => Promise<{ success: boolean; device?: any; error?: string }>;
   posnetRescanKnown: () => Promise<{ success: boolean; devices: any[]; warnings: string[] }>;
+  // Universal printer detection (all brands)
+  universalScanDevices: () => Promise<{ success: boolean; devices: Array<{ id: string; brand: string; model: string; protocol: string; printerType: string; connectionType: string; windowsPrinterName?: string; port?: string; status: string; lastSeen: string; autoSelected: boolean }>; configured: any[]; warnings: string[] }>;
+  universalListDevices: () => Promise<{ version: number; lastScan: string; devices: Record<string, any> }>;
+  universalRescanKnown: () => Promise<{ success: boolean; devices: any[]; configured: any[]; warnings: string[] }>;
+  universalRecoverDevice: (deviceId: string) => Promise<{ recovered: boolean; newIdentifier?: string; oldIdentifier: string; message: string }>;
 
   // Event listeners
   onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void;

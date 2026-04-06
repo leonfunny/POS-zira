@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import logger from '../logger';
+import { BRAND_PATTERNS } from './detection/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -11,6 +12,9 @@ const execFileAsync = promisify(execFile);
 const POSNET_VID = '1424';   // POSNET Polska S.A.
 const ZEBRA_VID  = '0A5F';   // Zebra Technologies (GK420d, ZD410, etc.)
 const HP_VID     = '03F0';   // HP printers
+
+/** All known printer VIDs from brand patterns (for PnP scan) */
+const ALL_PRINTER_VIDS = [...new Set(BRAND_PATTERNS.flatMap(bp => bp.vids))];
 
 export interface DetectedDevice {
   vid: string;
@@ -22,6 +26,10 @@ export interface DetectedDevice {
   portName: string | null;             // Windows port name (USB001, USB002, etc.)
   connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL';
   driverInstalled: boolean;
+  /** Recommended printer type slot (RECEIPT, LABEL, A4). Set by classifyPrinterCategory(). */
+  targetType?: string;
+  /** Recommended protocol (POSNET, ZEBRA, THERMAL, WINDOWS). Set by classifyPrinterCategory(). */
+  recommendedProtocol?: string;
 }
 
 export interface HardwareStatus {
@@ -48,21 +56,73 @@ export function getPosnetInfPath(): string {
 
 /**
  * Detect all connected printers and their status.
- * Combines two detection methods:
+ * Combines two detection methods in a single PowerShell invocation:
  * 1. Windows Get-Printer — finds all installed printers (USB, network, virtual)
  * 2. USB PnP VID scan — finds POSNET serial/CDC devices that don't appear as Windows printers
+ *    (includes COM port lookup for serial devices)
  */
 export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
   const devices: DetectedDevice[] = [];
   const seenPrinterNames = new Set<string>();
 
   try {
-    // --- Step 1: Detect all Windows-installed printers ---
-    const installedPrinters = await getWindowsPrinters();
+    // --- Batched PowerShell: Get-Printer + PnP VID scan + COM port lookup ---
+    const vids = ALL_PRINTER_VIDS;
+    const batchScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+# Section 1: Windows printers
+Write-Output '---PRINTERS---'
+try {
+  Get-Printer | Select-Object Name,PortName,DriverName | ConvertTo-Csv -NoTypeInformation
+} catch {
+  try { Get-CimInstance -ClassName Win32_Printer | Select-Object Name,PortName,DriverName | ConvertTo-Csv -NoTypeInformation } catch {}
+}
+# Section 2: PnP VID devices
+Write-Output '---PNPDEVICES---'
+$vids = @(${vids.map(v => `'${v}'`).join(',')})
+foreach ($vid in $vids) {
+  $devs = Get-PnpDevice -Status OK | Where-Object { $_.InstanceId -match "VID_$vid" }
+  foreach ($d in $devs) {
+    $desc = (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc' -ErrorAction SilentlyContinue).Data
+    # Also resolve COM port for Ports-class devices inline
+    $com = ''
+    if ($d.Class -eq 'Ports') {
+      $fn = (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_FriendlyName' -ErrorAction SilentlyContinue).Data
+      if ($fn -match '\\(COM(\\d+)\\)') { $com = "COM$($Matches[1])" }
+    }
+    Write-Output "$vid|$($d.InstanceId)|$($d.Class)|$desc|$com"
+  }
+}
+`;
+    const encoded = Buffer.from(batchScript, 'utf16le').toString('base64');
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { encoding: 'utf8', timeout: 20000 },
+    );
+
+    // Parse sections
+    const sections = stdout.split(/---(\w+)---/).filter(Boolean);
+    let printerSection = '';
+    let pnpSection = '';
+    for (let i = 0; i < sections.length; i++) {
+      if (sections[i] === 'PRINTERS' && i + 1 < sections.length) printerSection = sections[i + 1];
+      if (sections[i] === 'PNPDEVICES' && i + 1 < sections.length) pnpSection = sections[i + 1];
+    }
+
+    // --- Process Section 1: Windows printers ---
+    const installedPrinters: Array<{ name: string; port: string; driver: string }> = [];
+    const printerLines = printerSection.split('\n').slice(1); // skip CSV header
+    for (const line of printerLines) {
+      const trimmed = line.trim().replace(/^"|"$/g, '');
+      if (!trimmed) continue;
+      const parts = trimmed.split('","');
+      if (parts.length < 2) continue;
+      installedPrinters.push({ name: parts[0], port: parts[1] || '', driver: parts[2] || '' });
+    }
 
     for (const printer of installedPrinters) {
       const connType = classifyConnection(printer.port);
-      // Skip virtual/software printers (PDF, XPS, Fax, OneNote)
       if (connType === 'VIRTUAL') continue;
 
       const brand = detectBrand(printer.name, printer.driver);
@@ -81,43 +141,23 @@ export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
       });
     }
 
-    // --- Step 2: Detect USB PnP devices with known printer VIDs ---
-    // This catches POSNET CDC serial devices that don't show as Windows printers
-    const vids = [POSNET_VID, ZEBRA_VID, HP_VID];
-    const psScript = `
-$vids = @(${vids.map(v => `'${v}'`).join(',')})
-$results = @()
-foreach ($vid in $vids) {
-  $devs = Get-PnpDevice -Status OK | Where-Object { $_.InstanceId -match "VID_$vid" }
-  foreach ($d in $devs) {
-    $desc = (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc' -ErrorAction SilentlyContinue).Data
-    $results += "$vid|$($d.InstanceId)|$($d.Class)|$desc"
-  }
-}
-$results
-`;
-    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-      { encoding: 'utf8', timeout: 15000 },
-    );
-
-    for (const line of stdout.split('\n').map(l => l.trim()).filter(Boolean)) {
-      const [vid, instanceId, devClass, rawModel] = line.split('|');
-      const model = (rawModel || '').trim();
+    // --- Process Section 2: PnP VID devices ---
+    for (const line of pnpSection.split('\n').map(l => l.trim()).filter(Boolean)) {
+      const parts = line.split('|');
+      const vid = parts[0] || '';
+      const instanceId = parts[1] || '';
+      const devClass = parts[2] || '';
+      const rawModel = parts[3] || '';
+      const comPortFromScript = (parts[4] || '').trim();
+      const model = rawModel.trim();
       if (!model) continue;
 
-      // Skip if this device is already covered by a Windows printer entry
       const brand = getBrandByVid(vid);
       const matchedPrinter = findPrinterForVid(installedPrinters, vid, model);
       if (matchedPrinter && seenPrinterNames.has(matchedPrinter.toLowerCase())) continue;
 
-      // Check COM port for serial (Ports class) devices
-      let comPort: string | null = null;
-      if (devClass === 'Ports' || vid === POSNET_VID) {
-        comPort = await getComPortForVid(vid);
-      }
+      // COM port already resolved inline by the batch script
+      const comPort: string | null = comPortFromScript || null;
 
       devices.push({
         vid,
@@ -128,11 +168,18 @@ $results
         comPort,
         portName: comPort,
         connectionType: comPort ? 'SERIAL' : 'USB',
-        driverInstalled: matchedPrinter !== null && matchedPrinter !== undefined || comPort !== null,
+        driverInstalled: matchedPrinter != null,
       });
     }
   } catch (err) {
     logger.warn('[DriverInstaller] getPosnetDriverStatus error:', err);
+  }
+
+  // Classify each device and attach targetType + recommendedProtocol
+  for (const dev of devices) {
+    const classification = classifyPrinterCategory(dev);
+    dev.targetType = classification.targetType;
+    dev.recommendedProtocol = classification.protocol;
   }
 
   const posnetDevice = devices.find(d => d.vid === POSNET_VID || d.brand === 'POSNET');
@@ -145,23 +192,6 @@ $results
   };
 }
 
-/** Get all installed Windows printer names + port info */
-async function getWindowsPrinters(): Promise<Array<{ name: string; port: string; driver: string }>> {
-  try {
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command',
-        'Get-Printer | Select-Object Name,PortName,DriverName | ConvertTo-Csv -NoTypeInformation'],
-      { encoding: 'utf8', timeout: 8000 },
-    );
-    return stdout.split('\n').slice(1)
-      .map(l => l.trim().replace(/^"|"$/g, '').split('","'))
-      .filter(p => p.length >= 2)
-      .map(p => ({ name: p[0], port: p[1] || '', driver: p[2] || '' }));
-  } catch {
-    return [];
-  }
-}
 
 /** Classify a printer's connection type by its port name */
 function classifyConnection(port: string): 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL' {
@@ -174,20 +204,12 @@ function classifyConnection(port: string): 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTU
   return 'USB'; // default assumption for unknown port types
 }
 
-/** Detect brand from printer name or driver string */
+/** Detect brand from printer name or driver string using shared BRAND_PATTERNS */
 function detectBrand(name: string, driver: string): string {
   const combined = `${name} ${driver}`.toLowerCase();
-  if (combined.includes('posnet')) return 'POSNET';
-  if (combined.includes('zebra') || combined.includes('zdesigner')) return 'Zebra';
-  if (combined.includes('hp') || combined.includes('hewlett')) return 'HP';
-  if (combined.includes('epson')) return 'Epson';
-  if (combined.includes('brother')) return 'Brother';
-  if (combined.includes('canon')) return 'Canon';
-  if (combined.includes('star') && combined.includes('micronics')) return 'Star Micronics';
-  if (combined.includes('citizen')) return 'Citizen';
-  if (combined.includes('bixolon')) return 'Bixolon';
-  if (combined.includes('dymo')) return 'DYMO';
-  if (combined.includes('samsung')) return 'Samsung';
+  for (const bp of BRAND_PATTERNS) {
+    if (bp.namePatterns.some(p => combined.includes(p))) return bp.brand;
+  }
   return 'Unknown';
 }
 
@@ -197,56 +219,29 @@ function findPrinterForVid(
   vid: string,
   model: string,
 ): string | undefined {
+  const brand = getBrandByVid(vid);
+  const brandPattern = BRAND_PATTERNS.find(bp => bp.brand === brand);
+  if (!brandPattern) return undefined;
+
   const modelLower = model.toLowerCase();
-  if (vid === ZEBRA_VID) {
-    return printers.find(p =>
-      p.driver.toLowerCase().includes('zebra') ||
-      p.driver.toLowerCase().includes('zdesigner') ||
-      p.name.toLowerCase().includes('zebra') ||
-      p.name.toLowerCase().includes('zdesigner') ||
-      (modelLower && p.name.toLowerCase().includes(modelLower.replace('ztc ', ''))),
-    )?.name;
-  }
-  if (vid === POSNET_VID) {
-    return printers.find(p =>
-      p.driver.toLowerCase().includes('posnet') ||
-      p.name.toLowerCase().includes('posnet'),
-    )?.name;
-  }
-  if (vid === HP_VID) {
-    return printers.find(p =>
-      p.driver.toLowerCase().includes('hp') ||
-      p.name.toLowerCase().includes('hp') ||
-      p.name.toLowerCase().includes('hewlett'),
-    )?.name;
-  }
-  return undefined;
+  return printers.find(p => {
+    const nameLower = p.name.toLowerCase();
+    const driverLower = p.driver.toLowerCase();
+    // Match by brand name patterns
+    if (brandPattern.namePatterns.some(pat => nameLower.includes(pat) || driverLower.includes(pat))) {
+      return true;
+    }
+    // Match by model substring
+    if (modelLower && nameLower.includes(modelLower)) return true;
+    return false;
+  })?.name;
 }
 
-/** Get COM port for a device by USB Vendor ID (only active/OK devices) */
-async function getComPortForVid(vid: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command',
-        `Get-PnpDevice -Class Ports -Status OK | Where-Object { $_.InstanceId -match 'VID_${vid}' } | ` +
-        `ForEach-Object { ($_ | Get-PnpDeviceProperty -KeyName 'DEVPKEY_Device_FriendlyName').Data }`],
-      { encoding: 'utf8', timeout: 8000 },
-    );
-    const match = stdout.match(/\(COM(\d+)\)/);
-    return match ? `COM${match[1]}` : null;
-  } catch {
-    return null;
-  }
-}
 
 function getBrandByVid(vid: string): string {
-  switch (vid.toUpperCase()) {
-    case '1424': return 'POSNET';
-    case '0A5F': return 'Zebra';
-    case '03F0': return 'HP';
-    default: return `VID_${vid}`;
-  }
+  const upper = vid.toUpperCase();
+  const match = BRAND_PATTERNS.find(bp => bp.vids.some(v => v.toUpperCase() === upper));
+  return match ? match.brand : `VID_${vid}`;
 }
 
 /** Known thermal/receipt printer model patterns */
