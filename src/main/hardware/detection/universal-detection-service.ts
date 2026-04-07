@@ -66,6 +66,12 @@ export class UniversalDetectionService {
     try {
       logger.info('[UniversalDetection] Starting full device scan...');
 
+      // Mark all known devices offline BEFORE the scan. registerDetectedDevice()
+      // (via upsert) will flip the ones we find back to online. Anything that
+      // was previously known but is no longer detected stays offline — this is
+      // how we drop ghost printers from the UI when the cable is unplugged.
+      this.registry.markAllOffline();
+
       // Use existing detection infrastructure
       const hwStatus = await getPosnetDriverStatus();
       logger.info(`[UniversalDetection] Found ${hwStatus.devices.length} device(s) from hardware scan`);

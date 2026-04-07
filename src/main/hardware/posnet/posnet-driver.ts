@@ -66,30 +66,33 @@ export class PosnetDriver {
     logger.info(`[PosnetDriver] Connecting to ${this.portName}...`);
     try {
       const ports = await listSerialPorts();
-      if (ports.includes(this.portName)) {
-        // Port exists — verify a POSNET device is actually on it
+      const portUpper = this.portName.toUpperCase();
+      if (ports.includes(portUpper)) {
+        // Port exists — verify a POSNET device is actually on it.
+        // No more "connect anyway" fallback: if the configured port has no
+        // POSNET response, we MUST fail loud (otherwise test prints succeed
+        // silently while the printer is unplugged — exactly the bug report).
         const verified = await PosnetDriver.verifyPosnetDevice(this.portName);
         if (verified) {
           this.connected = true;
           logger.info(`[PosnetDriver] Connected and verified POSNET on ${this.portName}`);
           return true;
         }
-        // Port exists but no POSNET device responded — still mark connected
-        // so test print can attempt (and fail with a clear error)
-        logger.warn(`[PosnetDriver] Port ${this.portName} exists but no POSNET response — connecting anyway`);
-        this.connected = true;
-        return true;
+        logger.warn(`[PosnetDriver] Port ${this.portName} exists but no POSNET responded — trying other ports`);
+      } else {
+        logger.warn(`[PosnetDriver] COM port "${this.portName}" not present. Available: ${ports.join(', ') || 'none'}`);
       }
 
-      logger.warn(`[PosnetDriver] COM port "${this.portName}" not found. Available: ${ports.join(', ') || 'none'}`);
+      // Configured port didn't work — scan all VID-1424 candidates to recover.
       const posnetPort = await PosnetDriver.detectPosnetPort();
-      if (posnetPort) {
-        logger.info(`[PosnetDriver] Auto-detected POSNET device on ${posnetPort}`);
+      if (posnetPort && posnetPort.toUpperCase() !== portUpper) {
+        logger.info(`[PosnetDriver] Auto-detected POSNET on ${posnetPort} (was ${this.portName})`);
         this.portName = posnetPort;
         this.connected = true;
         return true;
       }
 
+      // Nothing found
       this.connected = false;
       return false;
     } catch (error) {
@@ -396,9 +399,10 @@ export class PosnetDriver {
         }
       }
 
-      // Fallback: return first openable VID match
-      logger.warn(`[PosnetDriver] Step 3: No POSNET response, falling back to ${openable[0]}`);
-      return openable[0];
+      // No POSNET response on any candidate — do NOT silently return a random
+      // port (the old behavior caused test prints to "succeed" silently).
+      logger.warn(`[PosnetDriver] Step 3: No POSNET device responded on any candidate port`);
+      return null;
     } catch (error) {
       logger.error('[PosnetDriver] detectPosnetPort failed:', error);
       return null;

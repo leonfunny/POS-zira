@@ -33,6 +33,7 @@ import {
   DailyReportData,
   DeviceStatus,
   CheckinConfirmationData,
+  ALLOWED_PROTOCOLS_BY_TYPE,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
@@ -144,16 +145,48 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.LIST_WINDOWS_PRINTERS, async () => {
-      // Return {name, port}[] so the UI can show port info and help identify ghost printers
+      // Return {name, port}[] so the UI can show port info and help identify ghost printers.
+      //
+      // Source of truth: getPosnetDriverStatus() runs the v4 ghost-printer filter
+      // (PNPDeviceID + Section-2 class allowlist + ghost-name memory). Anything
+      // it returns has been verified physically present. We use that as the
+      // authoritative list for the dropdown so the user can never select an
+      // unplugged "ZDesigner GK420d", "OneNote", "Fax", or stale HP LaserJet.
+      //
+      // Fallback chain (only used if the filtered status is unusable):
+      //   1. Raw Get-Printer with port-name virtual filter (LPT/PORTPROMPT/nul/FILE/TS).
+      //   2. Electron printer API (no port info available).
+      try {
+        const status = await getPosnetDriverStatus();
+        const filteredNames = new Map<string, string>(); // name -> port
+        for (const dev of status.devices) {
+          const name = dev.windowsPrinterName;
+          if (!name) continue;
+          if (dev.connectionType === 'VIRTUAL') continue;
+          // Prefer the windows port name if available; otherwise comPort
+          const port = dev.portName || dev.comPort || '';
+          if (!filteredNames.has(name)) filteredNames.set(name, port);
+        }
+        // getPosnetDriverStatus() succeeded — trust its result even if empty.
+        // Empty means 0 printers physically connected; do NOT fall through to
+        // unfiltered legacy listing (that resurrects ghost printers).
+        const result = Array.from(filteredNames, ([name, port]) => ({ name, port }));
+        logger.info(`[HardwareModule] LIST_WINDOWS_PRINTERS — returning ${result.length} physically-present printer(s) (filtered via getPosnetDriverStatus)`);
+        return result;
+      } catch (err) {
+        logger.warn('[HardwareModule] LIST_WINDOWS_PRINTERS — filtered query failed, using legacy listing:', err);
+      }
+
       try {
         const detailed = await listWindowsPrintersDetailed();
         if (detailed.length > 0) {
-          // Filter out ghost printers: LPT ports, PORTPROMPT, nul, FILE
-          const GHOST_PORTS = /^(LPT\d+|PORTPROMPT:|nul|FILE:|TS\d+)/i;
-          const real = detailed.filter((p) => !GHOST_PORTS.test(p.portName));
+          // Filter out obvious virtual printers by port name as a last-ditch sanity pass
+          const GHOST_PORTS = /^(LPT\d+|PORTPROMPT:|nul|FILE:|TS\d+|SHRFAX:|Microsoft\.|OneNote)/i;
+          const VIRTUAL_NAMES = /(OneNote|Fax|Microsoft Print to PDF|Microsoft XPS Document Writer|Send To OneNote)/i;
+          const real = detailed.filter((p) => !GHOST_PORTS.test(p.portName) && !VIRTUAL_NAMES.test(p.name));
           const ghosts = detailed.length - real.length;
-          if (ghosts > 0) logger.info(`[HardwareModule] Filtered out ${ghosts} ghost printer(s)`);
-          logger.info(`[HardwareModule] Found ${real.length} printers with port info`);
+          if (ghosts > 0) logger.info(`[HardwareModule] LIST_WINDOWS_PRINTERS — fallback dropped ${ghosts} virtual printer(s)`);
+          logger.info(`[HardwareModule] LIST_WINDOWS_PRINTERS — fallback returning ${real.length} printer(s) (unfiltered for hardware presence)`);
           return real.map((p) => ({ name: p.name, port: p.portName }));
         }
       } catch (err) {
@@ -186,8 +219,8 @@ export class HardwareModule extends BaseModule {
       return this.testPrinterByType(printerType as PrinterType);
     });
 
-    ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig) => {
-      return this.testPrinterByConfig(config);
+    ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig, printerType?: string) => {
+      return this.testPrinterByConfig(config, printerType);
     });
 
     ipcMain.handle(IPC_CHANNELS.CALIBRATE_PRINTER, async (_, config: PrinterConfig) => {
@@ -586,8 +619,21 @@ export class HardwareModule extends BaseModule {
    * Test a printer directly from its config object — no need to save first.
    * Creates a temporary driver, connects, prints test page, then disconnects.
    */
-  async testPrinterByConfig(config: PrinterConfig): Promise<{ success: boolean; error?: string }> {
-    const driver = this.createPrinterFromConfig(config, 'test');
+  async testPrinterByConfig(config: PrinterConfig, printerType?: string): Promise<{ success: boolean; error?: string }> {
+    // Backend protocol lock — reject invalid (printerType, protocol) combos
+    // before even creating the driver. The UI dropdown should also enforce this,
+    // but the backend is the source of truth.
+    if (printerType) {
+      const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerType.toUpperCase() as PrinterType];
+      if (allowed && !allowed.includes(config.protocol)) {
+        return {
+          success: false,
+          error: `${printerType} slot cannot use ${config.protocol} protocol. Allowed: ${allowed.join(', ')}`,
+        };
+      }
+    }
+    // Pass the printerType as the slot name so createPrinterFromConfig also validates.
+    const driver = this.createPrinterFromConfig(config, printerType || 'test');
     if (!driver) return { success: false, error: 'Invalid printer configuration (missing port or printer name)' };
     try {
       const connected = await driver.connect();
@@ -786,6 +832,65 @@ export class HardwareModule extends BaseModule {
     } catch (e: any) { return { success: false, error: e.message }; }
   }
 
+  /**
+   * After a successful connect(), check if the driver auto-migrated to a new
+   * port/printer name (e.g. PosnetDriver detects POSNET on a different COM port
+   * than what was in config). If so, persist the new identifier back to
+   * electron-store so the renderer UI reflects reality.
+   *
+   * Returns true if config was updated.
+   */
+  private persistDriverPortMigration(
+    pt: PrinterType,
+    driver: PrinterDriver,
+    originalConfig: PrinterConfig,
+  ): boolean {
+    let actualIdentifier: string | null = null;
+    let isPort = false;
+
+    if (driver instanceof PosnetDriver) {
+      actualIdentifier = driver.getPort();
+      isPort = true;
+    } else if (driver instanceof ThermalDriver) {
+      actualIdentifier = driver.getPrinterNameOrPort();
+      isPort = !!actualIdentifier.match(/^COM\d+$/i);
+    } else if (driver instanceof ZebraDriver) {
+      actualIdentifier = driver.getPrinterName();
+      isPort = false;
+    }
+
+    if (!actualIdentifier) return false;
+
+    const configuredIdentifier = isPort
+      ? (originalConfig.port || '')
+      : (originalConfig.windowsPrinter || '');
+
+    if (actualIdentifier.toLowerCase() === configuredIdentifier.toLowerCase()) {
+      return false; // no migration
+    }
+
+    logger.warn(
+      `[HardwareModule] ${pt} driver auto-migrated: ` +
+      `config="${configuredIdentifier}" → actual="${actualIdentifier}". Persisting...`
+    );
+
+    const config = getConfig();
+    const currentPrinters = { ...(config.printers || {}) };
+    if (currentPrinters[pt]) {
+      const pc = { ...currentPrinters[pt]! };
+      if (isPort) {
+        pc.port = actualIdentifier;
+      } else {
+        pc.windowsPrinter = actualIdentifier;
+      }
+      currentPrinters[pt] = pc;
+      setConfig({ printers: currentPrinters });
+      logger.info(`[HardwareModule] ${pt} config updated: ${isPort ? 'port' : 'windowsPrinter'}="${actualIdentifier}"`);
+      return true;
+    }
+    return false;
+  }
+
   async reinitializePrinter(): Promise<void> {
     const config = getConfig();
     const initErrors: string[] = [];
@@ -803,12 +908,26 @@ export class HardwareModule extends BaseModule {
         const pt = ptStr as PrinterType;
         const driver = this.createPrinterFromConfig(pc, pt);
         if (driver) {
+          // Always register the driver so the health check can monitor it
+          // and recover when the printer comes back online. Previously,
+          // drivers that failed connect() were silently dropped — the health
+          // check never knew about them, so a config save while the printer
+          // was briefly unavailable permanently lost the driver until restart.
+          this.printers[pt] = driver;
           try {
             const ok = await driver.connect();
             if (ok) {
-              this.printers[pt] = driver;
+              // P4.2: If connect() auto-migrated to a different identifier
+              // (e.g. POSNET found on a different COM port), persist the change
+              // so the UI reflects the new port instead of the stale one.
+              try {
+                this.persistDriverPortMigration(pt, driver, pc);
+              } catch (persistErr: any) {
+                logger.warn(`[HardwareModule] Persist port migration failed for ${pt}:`, persistErr?.message);
+              }
             } else {
               initErrors.push(`${pt}: failed to connect`);
+              logger.warn(`[HardwareModule] ${pt}: connect failed — driver registered for health-check recovery`);
             }
           } catch (e: any) {
             logger.error(`[HardwareModule] ${pt} connect failed:`, e);
@@ -1111,17 +1230,48 @@ export class HardwareModule extends BaseModule {
 
   // ─── Private helpers ──────────────────────────────────────────
 
+  /**
+   * Allowed (printerType → protocol) combinations.
+   *
+   * Source of truth lives in shared/types.ts ALLOWED_PROTOCOLS_BY_TYPE so the
+   * renderer dropdown and the backend validation cannot drift apart. The
+   * backend lock is the LAST line of defence: if the UI is wrong or the user
+   * has a stale config on disk, the backend still refuses to build a driver
+   * with an illegal (type, protocol) combo.
+   */
+
   private createPrinterFromConfig(config: PrinterConfig | undefined, name: string): PrinterDriver | null {
     if (!config || !config.enabled) return null;
+
+    // ─── Backend protocol lock ──────────────────────────────────────────
+    // Reject invalid (printerType, protocol) combinations.
+    const printerTypeKey = (name || '').toUpperCase() as PrinterType;
+    const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerTypeKey];
+    if (allowed && !allowed.includes(config.protocol)) {
+      logger.error(
+        `[HardwareModule] REJECTED: ${printerTypeKey} slot cannot use ${config.protocol} protocol. ` +
+        `Allowed: ${allowed.join(', ')}`
+      );
+      return null;
+    }
+
     if (config.protocol === 'ZEBRA') {
       // Zebra label printers: send raw ZPL via Windows spooler API
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
       return null;
     }
     if (config.protocol === 'WINDOWS') {
-      // Regular Windows printers (A4, inkjet, laser, thermal USB): use ThermalDriver USB mode
-      // which sends plain text via Out-Printer — works on any Windows-installed printer
-      if (config.windowsPrinter) return new ThermalDriver(config.windowsPrinter, config.baudRate || 9600, 'USB', config.paperWidth || 80, config.charsPerLine || 48);
+      // Regular Windows printers (A4, inkjet, laser): use ThermalDriver in
+      // windowsTextMode so printTest sends plain text via Out-Printer instead
+      // of ESC/POS bytes (which would print as garbage on a laser printer).
+      if (config.windowsPrinter) return new ThermalDriver(
+        config.windowsPrinter,
+        config.baudRate || 9600,
+        'USB',
+        config.paperWidth || 80,
+        config.charsPerLine || 48,
+        true,  // windowsTextMode — A4/laser path
+      );
       return null;
     }
     if (config.protocol === 'POSNET') {
@@ -1129,6 +1279,7 @@ export class HardwareModule extends BaseModule {
       logger.warn(`[HardwareModule] POSNET printer "${name}" requires a serial port`);
       return null;
     }
+    // THERMAL protocol: ESC/POS thermal receipt printers (USB or serial)
     if (config.windowsPrinter) return new ThermalDriver(config.windowsPrinter, config.baudRate || 9600, 'USB', config.paperWidth || 80, config.charsPerLine || 48);
     if (config.port) return new ThermalDriver(config.port, config.baudRate || 9600, 'SERIAL', config.paperWidth || 80, config.charsPerLine || 48);
     return null;

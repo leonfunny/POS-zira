@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import logger from '../logger';
 import { BRAND_PATTERNS } from './detection/types';
+import { listSerialPorts } from './port-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -65,32 +66,106 @@ export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
   const devices: DetectedDevice[] = [];
   const seenPrinterNames = new Set<string>();
 
+  logger.info('[DriverInstaller] getPosnetDriverStatus() called — running with ghost-printer filter v4 (PNPDeviceID + Section-2 class allowlist + ghost-name memory)');
+
+  // Names of every spooler printer we considered — kept OR filtered. Used at the
+  // end of Section 2 to make sure a PnP hit can never resurrect a ghost as a
+  // standalone USB device. Lowercased for case-insensitive matching.
+  const allSpoolerNames = new Set<string>();
+  // Subset of allSpoolerNames that we explicitly DROPPED as ghosts. Used in
+  // Section 2 to refuse hits that would resurrect them.
+  const ghostSpoolerNames = new Set<string>();
+
   try {
-    // --- Batched PowerShell: Get-Printer + PnP VID scan + COM port lookup ---
+    // --- Batched PowerShell: Win32_Printer + present-PnP set + brand VID scan ---
+    //
+    // v3 design: instead of fragile CSV parsing of Get-Printer, use Win32_Printer
+    // (which exposes PNPDeviceID) and pre-build a hashset of all currently-present
+    // PnP InstanceIds. Each printer's PNPDeviceID is then cross-checked against
+    // that set: if the printer's backing PnP device isn't physically present right
+    // now, the printer is a ghost spooler entry and we drop it.
+    //
+    // Output format uses `PRT|` line prefix instead of CSV to eliminate CSV-header
+    // parsing bugs entirely. Pipes inside fields are normalized to '/' before output.
     const vids = ALL_PRINTER_VIDS;
     const batchScript = `
 $ErrorActionPreference = 'SilentlyContinue'
-# Section 1: Windows printers
+
+# Pre-query: hashset of every PnP InstanceId currently physically present
+$presentIds = @{}
+try {
+  Get-PnpDevice -PresentOnly -Status OK -ErrorAction SilentlyContinue | ForEach-Object {
+    $presentIds[$_.InstanceId] = $true
+  }
+} catch {}
+
+# Section 1: Win32_Printer rows with PNPDeviceID + present flag
+# Format: PRT|name|port|driver|offline|status|pnpId|present
 Write-Output '---PRINTERS---'
 try {
-  Get-Printer | Select-Object Name,PortName,DriverName | ConvertTo-Csv -NoTypeInformation
-} catch {
-  try { Get-CimInstance -ClassName Win32_Printer | Select-Object Name,PortName,DriverName | ConvertTo-Csv -NoTypeInformation } catch {}
-}
-# Section 2: PnP VID devices
+  Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | ForEach-Object {
+    $name = if ($_.Name) { ($_.Name -as [string]).Replace('|','/') } else { '' }
+    $port = if ($_.PortName) { ($_.PortName -as [string]).Replace('|','/') } else { '' }
+    $driver = if ($_.DriverName) { ($_.DriverName -as [string]).Replace('|','/') } else { '' }
+    $offline = if ($_.WorkOffline) { 'true' } else { 'false' }
+    # Win32_Printer.PrinterStatus is an int (3=Idle,4=Printing,5=Warmup,7=Offline)
+    $statusName = switch ($_.PrinterStatus) {
+      1 { 'Other' }
+      2 { 'Unknown' }
+      3 { 'Idle' }
+      4 { 'Printing' }
+      5 { 'Warmup' }
+      6 { 'StoppedPrinting' }
+      7 { 'Offline' }
+      default { 'Unknown' }
+    }
+    $pnpId = if ($_.PNPDeviceID) { ($_.PNPDeviceID -as [string]).Replace('|','/') } else { '' }
+    $present = if ($pnpId -and $presentIds.ContainsKey($pnpId)) { 'true' } elseif ($pnpId) { 'false' } else { 'unknown' }
+    Write-Output "PRT|$name|$port|$driver|$offline|$statusName|$pnpId|$present"
+  }
+} catch {}
+
+# Section 2: PnP VID devices — PresentOnly (catches POSNET CDC and similar serial-only devices that have no spooler entry)
+#
+# CRITICAL: We only emit devices whose Class is plausibly a printer. Many printer
+# brands also sell unrelated peripherals on the same VID (HP keyboards, HP USB
+# hubs, Brother scanners, etc.). Without this filter, the parser used to pick up
+# an HP "USB2.1 Hub" (Class=USB), match it to a leftover HP LaserJet spooler
+# entry, and resurrect that ghost as a "real" printer.
+#
+# Allowed classes:
+#   Ports     - CDC serial devices (POSNET, Star CDC, etc.)
+#   Printer   - native Windows printer-class devices
+#   USB       - ONLY if the bus-reported description contains a printer keyword
+#               (catches USBPRINT-backed devices that report Class=USB)
+# Anything else (USBDevice, HIDClass, Net, Bluetooth, Keyboard, Mouse, Image,
+# Media, Monitor, System, Multimedia, ...) is dropped.
 Write-Output '---PNPDEVICES---'
 $vids = @(${vids.map(v => `'${v}'`).join(',')})
+$printerKeywords = @('printer','print','label','receipt','pos','ZDesigner','LaserJet','OfficeJet','DeskJet','EPSON','TM-','TSP','Bixolon','SRP','POSNET')
 foreach ($vid in $vids) {
-  $devs = Get-PnpDevice -Status OK | Where-Object { $_.InstanceId -match "VID_$vid" }
+  $devs = Get-PnpDevice -PresentOnly -Status OK -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match "VID_$vid" }
   foreach ($d in $devs) {
     $desc = (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc' -ErrorAction SilentlyContinue).Data
-    # Also resolve COM port for Ports-class devices inline
+    $cls = if ($d.Class) { $d.Class } else { '' }
+    $allowed = $false
+    if ($cls -eq 'Ports' -or $cls -eq 'Printer' -or $cls -eq 'USBPRINT') {
+      $allowed = $true
+    } elseif ($cls -eq 'USB') {
+      # Class=USB is too generic on its own (matches USB hubs). Require the
+      # bus-reported description to mention something printer-like.
+      $combined = "$desc $($d.FriendlyName) $($d.Description)"
+      foreach ($kw in $printerKeywords) {
+        if ($combined -match $kw) { $allowed = $true; break }
+      }
+    }
+    if (-not $allowed) { continue }
     $com = ''
-    if ($d.Class -eq 'Ports') {
+    if ($cls -eq 'Ports') {
       $fn = (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 'DEVPKEY_Device_FriendlyName' -ErrorAction SilentlyContinue).Data
       if ($fn -match '\\(COM(\\d+)\\)') { $com = "COM$($Matches[1])" }
     }
-    Write-Output "$vid|$($d.InstanceId)|$($d.Class)|$desc|$com"
+    Write-Output "PNP|$vid|$($d.InstanceId)|$cls|$desc|$com"
   }
 }
 `;
@@ -101,31 +176,185 @@ foreach ($vid in $vids) {
       { encoding: 'utf8', timeout: 20000 },
     );
 
-    // Parse sections
-    const sections = stdout.split(/---(\w+)---/).filter(Boolean);
-    let printerSection = '';
-    let pnpSection = '';
-    for (let i = 0; i < sections.length; i++) {
-      if (sections[i] === 'PRINTERS' && i + 1 < sections.length) printerSection = sections[i + 1];
-      if (sections[i] === 'PNPDEVICES' && i + 1 < sections.length) pnpSection = sections[i + 1];
+    // --- Parse output ---
+    // We use line-prefix parsing instead of section markers + CSV. This is
+    // immune to CSV header parsing bugs (no headers at all).
+    interface SpoolerPrinter {
+      name: string;
+      port: string;
+      driver: string;
+      workOffline: boolean;
+      printerStatus: string;
+      pnpId: string;
+      pnpPresent: 'true' | 'false' | 'unknown';
+    }
+    const installedPrinters: SpoolerPrinter[] = [];
+    interface PnpHit {
+      vid: string;
+      instanceId: string;
+      devClass: string;
+      model: string;
+      comPort: string | null;
+    }
+    const pnpHits: PnpHit[] = [];
+
+    for (const rawLine of stdout.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.startsWith('PRT|')) {
+        const parts = line.slice(4).split('|');
+        // parts = [name, port, driver, offline, status, pnpId, present]
+        if (parts.length < 7) continue;
+        const name = parts[0] || '';
+        if (!name) continue;
+        const presentRaw = (parts[6] || 'unknown').trim().toLowerCase();
+        installedPrinters.push({
+          name,
+          port: parts[1] || '',
+          driver: parts[2] || '',
+          workOffline: (parts[3] || '').trim().toLowerCase() === 'true',
+          printerStatus: parts[4] || '',
+          pnpId: parts[5] || '',
+          pnpPresent: presentRaw === 'true' ? 'true' : presentRaw === 'false' ? 'false' : 'unknown',
+        });
+      } else if (line.startsWith('PNP|')) {
+        const parts = line.slice(4).split('|');
+        // parts = [vid, instanceId, devClass, model, com]
+        if (parts.length < 4) continue;
+        const model = (parts[3] || '').trim();
+        if (!model) continue;
+        pnpHits.push({
+          vid: parts[0] || '',
+          instanceId: parts[1] || '',
+          devClass: parts[2] || '',
+          model,
+          comPort: (parts[4] || '').trim() || null,
+        });
+      }
     }
 
-    // --- Process Section 1: Windows printers ---
-    const installedPrinters: Array<{ name: string; port: string; driver: string }> = [];
-    const printerLines = printerSection.split('\n').slice(1); // skip CSV header
-    for (const line of printerLines) {
-      const trimmed = line.trim().replace(/^"|"$/g, '');
-      if (!trimmed) continue;
-      const parts = trimmed.split('","');
-      if (parts.length < 2) continue;
-      installedPrinters.push({ name: parts[0], port: parts[1] || '', driver: parts[2] || '' });
+    const presentVidsLower = new Set(pnpHits.map(h => h.vid.toLowerCase()));
+
+    // Get currently-present COM ports (PnP -PresentOnly) so we can validate
+    // spooler printers attached to a serial port.
+    let presentComPorts: Set<string>;
+    try {
+      const pcs = await listSerialPorts();
+      presentComPorts = new Set(pcs.map(p => p.toUpperCase()));
+    } catch {
+      presentComPorts = new Set();
     }
 
+    // --- Filter Section 1 by physical presence ---
+    // A spooler printer is REAL if all of these hold:
+    //   1. WorkOffline is false
+    //   2. PrinterStatus is not Offline/Error
+    //   3. AND its connection backend is present:
+    //      - COM port  → port is in present COM list
+    //      - Network   → trust spooler (we can't probe network without printing)
+    //      - USB / any other / unknown → if the brand has known VIDs, REQUIRE
+    //        a matching VID present in the PnP scan. This catches ghost
+    //        printers via custom port names (ZDesigner USB001, Port_#0001.Hub_#0008, etc.)
+    //        that don't match the simple `^USB\d+$` regex.
+    logger.info(
+      `[DriverInstaller] Filtering ${installedPrinters.length} spooler printer(s); ` +
+      `present COM=${[...presentComPorts].join(',') || 'none'}; ` +
+      `present VIDs=${[...presentVidsLower].join(',') || 'none'}`,
+    );
     for (const printer of installedPrinters) {
-      const connType = classifyConnection(printer.port);
-      if (connType === 'VIRTUAL') continue;
+      // Remember every spooler printer name we considered, regardless of outcome.
+      // Section 2 (PnP VID hits) uses this to refuse resurrection.
+      allSpoolerNames.add(printer.name.toLowerCase());
 
+      const connType = classifyConnection(printer.port);
+      if (connType === 'VIRTUAL') {
+        logger.info(`[DriverInstaller] Skipping virtual printer "${printer.name}" (port=${printer.port})`);
+        ghostSpoolerNames.add(printer.name.toLowerCase());
+        continue;
+      }
+
+      // PRIMARY signal: PNPDeviceID lookup against present-PnP set.
+      // This is authoritative — Windows knows exactly which device backs this
+      // spooler entry, and Get-PnpDevice -PresentOnly tells us if it's plugged
+      // in right now. Catches HP M426/M402d ghosts left over from old USB installs
+      // even when WorkOffline incorrectly reports false.
+      if (printer.pnpId && printer.pnpPresent === 'false') {
+        logger.info(`[DriverInstaller] FILTERED ghost printer "${printer.name}" — PNPDeviceID="${printer.pnpId}" not in present PnP set`);
+        ghostSpoolerNames.add(printer.name.toLowerCase());
+        continue;
+      }
+
+      // Hard offline signals
+      if (printer.workOffline) {
+        logger.info(`[DriverInstaller] Skipping offline printer "${printer.name}" (WorkOffline=true)`);
+        ghostSpoolerNames.add(printer.name.toLowerCase());
+        continue;
+      }
+      if (/Offline|Error|NotAvailable/i.test(printer.printerStatus)) {
+        logger.info(`[DriverInstaller] Skipping printer "${printer.name}" (status=${printer.printerStatus})`);
+        ghostSpoolerNames.add(printer.name.toLowerCase());
+        continue;
+      }
+
+      // If we have a verified-present PNPDeviceID, skip the heuristic checks below
+      if (printer.pnpId && printer.pnpPresent === 'true') {
+        logger.info(`[DriverInstaller] KEEPING printer "${printer.name}" — PNPDeviceID verified present`);
+        seenPrinterNames.add(printer.name.toLowerCase());
+        const portUpper2 = (printer.port || '').toUpperCase();
+        const connType2 = classifyConnection(printer.port);
+        if (connType2 === 'VIRTUAL') continue;
+        devices.push({
+          vid: '',
+          pid: '',
+          brand: detectBrand(printer.name, printer.driver),
+          model: printer.name,
+          windowsPrinterName: printer.name,
+          comPort: portUpper2.match(/^COM\d+$/) ? portUpper2 : null,
+          portName: printer.port,
+          connectionType: connType2,
+          driverInstalled: true,
+        });
+        continue;
+      }
+
+      // Fallback: Backend presence check (used when PNPDeviceID is empty —
+      // typical for network printers, virtual printers, very old drivers)
+      const portUpper = (printer.port || '').toUpperCase();
       const brand = detectBrand(printer.name, printer.driver);
+      const bp = BRAND_PATTERNS.find(b => b.brand.toUpperCase() === brand.toUpperCase());
+      const isNetworkPort =
+        /^(WSD|TCPIP|IP_)/i.test(portUpper) ||
+        portUpper.includes('\\\\') ||
+        portUpper.startsWith('PORTPROMPT');
+
+      let backendPresent = true;
+      let reason = '';
+
+      if (/^COM\d+$/.test(portUpper)) {
+        backendPresent = presentComPorts.has(portUpper);
+        reason = `COM port ${portUpper} ${backendPresent ? 'present' : 'absent'}`;
+      } else if (isNetworkPort) {
+        // Network printer — trust the spooler (can't probe without sending data)
+        backendPresent = true;
+        reason = `network port ${portUpper}, trusting spooler`;
+      } else if (bp) {
+        // USB / DOT4 / custom port name with KNOWN brand → require VID present
+        backendPresent = bp.vids.some(v => presentVidsLower.has(v.toLowerCase()));
+        reason = `brand=${bp.brand} VIDs=[${bp.vids.join(',')}] ${backendPresent ? 'matched present PnP' : 'NOT matched (ghost)'}`;
+      } else {
+        // Unknown brand on non-network port — fall back optimistic but log loud
+        backendPresent = true;
+        reason = `unknown brand on ${portUpper}, trusting spooler (no VID cross-check possible)`;
+      }
+
+      if (!backendPresent) {
+        logger.info(`[DriverInstaller] FILTERED ghost printer "${printer.name}" — ${reason}`);
+        ghostSpoolerNames.add(printer.name.toLowerCase());
+        continue;
+      }
+      logger.info(`[DriverInstaller] KEEPING printer "${printer.name}" — ${reason}`);
+
       seenPrinterNames.add(printer.name.toLowerCase());
 
       devices.push({
@@ -134,43 +363,86 @@ foreach ($vid in $vids) {
         brand,
         model: printer.name,
         windowsPrinterName: printer.name,
-        comPort: printer.port.match(/^COM\d+$/i) ? printer.port.toUpperCase() : null,
+        comPort: portUpper.match(/^COM\d+$/) ? portUpper : null,
         portName: printer.port,
         connectionType: connType,
         driverInstalled: true,
       });
     }
 
-    // --- Process Section 2: PnP VID devices ---
-    for (const line of pnpSection.split('\n').map(l => l.trim()).filter(Boolean)) {
-      const parts = line.split('|');
-      const vid = parts[0] || '';
-      const instanceId = parts[1] || '';
-      const devClass = parts[2] || '';
-      const rawModel = parts[3] || '';
-      const comPortFromScript = (parts[4] || '').trim();
-      const model = rawModel.trim();
-      if (!model) continue;
+    // --- Add Section 2: PnP VID devices NOT already covered by spooler ---
+    //
+    // Section 2 exists for one reason: serial-only CDC devices (POSNET) that
+    // never appear in the Windows print spooler at all. For everything else,
+    // Section 1 is authoritative.
+    //
+    // Resurrection guards (in order of strictness):
+    //   (1) If matchedPrinter is a name we already kept in Section 1, skip
+    //       (already represented).
+    //   (2) If matchedPrinter is a name we explicitly DROPPED as a ghost in
+    //       Section 1, skip — never resurrect a filtered ghost. This catches
+    //       e.g. an HP USB hub PnP hit that findPrinterForVid would otherwise
+    //       happily attach to a leftover "HP LaserJet ... USB003" spooler entry.
+    //   (3) For non-POSNET PnP hits, REQUIRE the device to also have a matched
+    //       spooler entry that wasn't dropped. A bare PnP-VID hit with no live
+    //       spooler entry behind it (e.g. an HP keyboard) must not become a
+    //       phantom printer card in the UI.
+    for (const hit of pnpHits) {
+      const brand = getBrandByVid(hit.vid);
+      const isPosnet = hit.vid === POSNET_VID || brand === 'POSNET';
 
-      const brand = getBrandByVid(vid);
-      const matchedPrinter = findPrinterForVid(installedPrinters, vid, model);
-      if (matchedPrinter && seenPrinterNames.has(matchedPrinter.toLowerCase())) continue;
+      const matchedPrinter = findPrinterForVid(
+        installedPrinters.map(p => ({ name: p.name, port: p.port, driver: p.driver })),
+        hit.vid,
+        hit.model,
+      );
 
-      // COM port already resolved inline by the batch script
-      const comPort: string | null = comPortFromScript || null;
+      // Guard (1): already represented as a kept Section 1 device
+      if (matchedPrinter && seenPrinterNames.has(matchedPrinter.toLowerCase())) {
+        continue;
+      }
+
+      // Guard (2): would resurrect a Section 1 ghost — refuse
+      if (matchedPrinter && ghostSpoolerNames.has(matchedPrinter.toLowerCase())) {
+        logger.info(`[DriverInstaller] Section 2: REFUSING PnP hit (${brand}/${hit.model}/${hit.devClass}) — would resurrect filtered ghost "${matchedPrinter}"`);
+        continue;
+      }
+
+      // Guard (3): non-POSNET PnP hits without a real spooler match are dropped.
+      // A printer (HP LaserJet, Zebra label, etc.) MUST have a Windows spooler
+      // entry to be usable. If we got a PnP-VID hit but no spooler entry, the
+      // device is either (a) a non-printer peripheral on the same VID, or
+      // (b) a printer with no driver installed yet. In case (b) we used to add
+      // a card so the user could install drivers — but the new "Detect Printers"
+      // UI auto-runs Windows driver scan, so it's safer to drop than risk
+      // showing a phantom card.
+      if (!isPosnet && !matchedPrinter) {
+        logger.info(`[DriverInstaller] Section 2: dropping ${brand}/${hit.model} (class=${hit.devClass}) — no live spooler entry`);
+        continue;
+      }
+
+      // POSNET CDC and similar serial-only devices have no spooler entry,
+      // so they show up here. driverInstalled should reflect "we can talk to it"
+      // — for serial devices that means we have a COM port, NOT that there's
+      // a Windows spooler entry.
+      const driverInstalled = isPosnet
+        ? !!hit.comPort                  // POSNET CDC: needs COM port to be talkable
+        : matchedPrinter != null;        // Other USB devices: need spooler driver
 
       devices.push({
-        vid,
-        pid: (instanceId.match(/PID_([0-9A-F]+)/i) || [])[1] || '',
+        vid: hit.vid,
+        pid: (hit.instanceId.match(/PID_([0-9A-F]+)/i) || [])[1] || '',
         brand,
-        model,
+        model: hit.model,
         windowsPrinterName: matchedPrinter || null,
-        comPort,
-        portName: comPort,
-        connectionType: comPort ? 'SERIAL' : 'USB',
-        driverInstalled: matchedPrinter != null,
+        comPort: hit.comPort,
+        portName: hit.comPort,
+        connectionType: hit.comPort ? 'SERIAL' : 'USB',
+        driverInstalled,
       });
     }
+
+    logger.info(`[DriverInstaller] Result: ${devices.length} real device(s); ${ghostSpoolerNames.size} ghost(s) filtered out of ${allSpoolerNames.size} spooler entries`);
   } catch (err) {
     logger.warn('[DriverInstaller] getPosnetDriverStatus error:', err);
   }

@@ -6,7 +6,7 @@ import * as os from 'os';
 import logger from '../../logger';
 import { ZplFormatter } from './zpl-formatter';
 import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo } from '../../../shared/types';
-import { listWindowsPrinters, sanitizePrinterName } from '../port-utils';
+import { listWindowsPrinters, sanitizePrinterName, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { type RecoveryResult } from '../detection/types';
 
 const execFileAsync = promisify(execFile);
@@ -74,36 +74,53 @@ if ($doc.PrinterSettings.IsValid) {
   }
 
   /**
-   * Connect to the printer (verify it exists)
+   * Connect to the printer.
+   *
+   * Two-stage check:
+   *   1. Spooler list contains the printer name (cheap)
+   *   2. Hardware presence cross-check via PnP / WorkOffline / port topology (reliable)
+   *
+   * Returns true ONLY if the printer is BOTH installed in the spooler AND
+   * physically present right now. This prevents the "ghost printer" bug where
+   * connect() succeeds for a disconnected USB printer and jobs accumulate in
+   * the queue until the cable is re-plugged and they all flush at once.
    */
   async connect(): Promise<boolean> {
     try {
       logger.info(`[ZebraDriver] Connecting to "${this.printerName}"...`);
 
+      // Stage 1: Spooler list check
       const printers = await ZebraDriver.listPrinters();
-      this.connected = printers.some(p =>
+      const inSpooler = printers.some(p =>
         p.toLowerCase() === this.printerName.toLowerCase()
       );
 
-      if (this.connected) {
-        logger.info(`[ZebraDriver] Connected to "${this.printerName}"`);
+      if (!inSpooler) {
+        logger.warn(`[ZebraDriver] Printer "${this.printerName}" not found in spooler. Available: ${printers.join(', ') || 'none'}`);
+        this.connected = false;
+        return false;
+      }
 
-        // Auto-detect paper size from Windows driver
-        try {
-          const detected = await ZebraDriver.detectPaperSize(this.printerName);
-          if (detected) {
-            this.formatter.updateDimensions(detected.widthMm, detected.heightMm);
-            logger.info(`[ZebraDriver] Auto-detected paper size: ${detected.widthMm}mm x ${detected.heightMm}mm`);
-          }
-        } catch (detectErr) {
-          logger.warn('[ZebraDriver] Paper size detection failed (non-fatal):', detectErr);
+      // Stage 2: Hardware presence cross-check
+      const present = await isWindowsPrinterPresent(this.printerName);
+      if (!present) {
+        logger.warn(`[ZebraDriver] Printer "${this.printerName}" is in spooler but NOT physically present (cable unplugged or powered off)`);
+        this.connected = false;
+        return false;
+      }
+
+      this.connected = true;
+      logger.info(`[ZebraDriver] Connected to "${this.printerName}" (verified present)`);
+
+      // Auto-detect paper size from Windows driver
+      try {
+        const detected = await ZebraDriver.detectPaperSize(this.printerName);
+        if (detected) {
+          this.formatter.updateDimensions(detected.widthMm, detected.heightMm);
+          logger.info(`[ZebraDriver] Auto-detected paper size: ${detected.widthMm}mm x ${detected.heightMm}mm`);
         }
-
-        // Note: ~JC auto-calibrate removed — it causes the printer to feed
-        // labels on every app startup which is disruptive. Calibration should
-        // be triggered manually if needed.
-      } else {
-        logger.warn(`[ZebraDriver] Printer "${this.printerName}" not found in: ${printers.join(', ')}`);
+      } catch (detectErr) {
+        logger.warn('[ZebraDriver] Paper size detection failed (non-fatal):', detectErr);
       }
 
       return this.connected;
@@ -147,17 +164,28 @@ if ($doc.PrinterSettings.IsValid) {
   }
 
   /**
-   * Verify the printer is still available in Windows.
+   * Verify the printer is still available in Windows AND physically present.
    * Used by periodic health checks.
    */
   async healthCheck(cachedPrinters?: string[]): Promise<boolean> {
     const printers = cachedPrinters ?? await listWindowsPrinters();
-    const stillAvailable = printers.some(p => p.toLowerCase() === this.printerName.toLowerCase());
+    const inSpooler = printers.some(p => p.toLowerCase() === this.printerName.toLowerCase());
+
+    let stillAvailable = false;
+    if (inSpooler) {
+      // Cross-check physical presence — spooler entry alone is not enough
+      try {
+        stillAvailable = await isWindowsPrinterPresent(this.printerName);
+      } catch {
+        stillAvailable = inSpooler; // fallback if presence check fails
+      }
+    }
+
     if (this.connected && !stillAvailable) {
-      logger.warn(`[ZebraDriver] Health check: "${this.printerName}" disappeared — marking disconnected`);
+      logger.warn(`[ZebraDriver] Health check: "${this.printerName}" gone (inSpooler=${inSpooler}) — marking disconnected`);
       this.connected = false;
     } else if (!this.connected && stillAvailable) {
-      logger.info(`[ZebraDriver] Health check: "${this.printerName}" reappeared — marking connected`);
+      logger.info(`[ZebraDriver] Health check: "${this.printerName}" present again — marking connected`);
       this.connected = true;
     }
     return this.connected;
@@ -198,12 +226,39 @@ if ($doc.PrinterSettings.IsValid) {
   }
 
   /**
-   * Send raw ZPL data to printer using Windows API
+   * Send raw ZPL data to printer using Windows API.
+   *
+   * Pre-flight: verify hardware is present + flush any stuck jobs from a
+   * previous offline period (otherwise those ghost jobs would print as soon
+   * as the printer comes back online, surprising the user).
+   *
+   * Post-flight: check the queue again — if a job is stuck, throw rather
+   * than report success. This is the "smoking gun" fix for the bug where
+   * test prints all "succeed" while the printer is unplugged and then
+   * suddenly all print at once on reconnect.
    */
   private async printRaw(data: string): Promise<void> {
     if (process.platform !== 'win32') {
       throw new Error('ZebraDriver only supports Windows');
     }
+
+    // ─── Pre-flight: verify printer is physically present ────────────────
+    const present = await isWindowsPrinterPresent(this.printerName);
+    if (!present) {
+      this.connected = false;
+      throw new Error(
+        `Printer "${this.printerName}" is not physically connected. ` +
+        `Check the USB cable and power, then click Detect Printers.`
+      );
+    }
+
+    // ─── Pre-flight: flush any leftover stuck jobs from a previous offline period ─
+    try {
+      const flushed = await flushStuckPrintJobs(this.printerName);
+      if (flushed > 0) {
+        logger.warn(`[ZebraDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerName}"`);
+      }
+    } catch { /* best-effort */ }
 
     const timestamp = Date.now();
     const tempZplFile = path.join(os.tmpdir(), `zebra_${timestamp}.zpl`);
@@ -343,11 +398,32 @@ try {
 
       if (stdout && stdout.includes('WARN:QUEUE_STUCK:')) {
         const status = stdout.match(/WARN:QUEUE_STUCK:(\S+)/)?.[1] || 'Unknown';
-        logger.warn(`[ZebraDriver] Print data sent but job stuck in queue (status: ${status}) — possible ghost printer`);
+        logger.error(`[ZebraDriver] Job stuck in queue (status: ${status}) — printer is a ghost (cable unplugged or powered off)`);
+        this.connected = false;
+        throw new Error(
+          `Print job stuck in queue (${status}). The printer "${this.printerName}" ` +
+          `appears to be installed in Windows but not physically connected. ` +
+          `Check USB/power and click Detect Printers.`
+        );
       } else if (stdout && stdout.includes('OK')) {
         logger.info('[ZebraDriver] Print job sent successfully');
       } else {
         throw new Error(`Unexpected output: ${stdout}`);
+      }
+
+      // ─── Post-flight: confirm queue actually drained ──────────────────
+      // The in-script check above only inspects status 1 second after WritePrinter.
+      // Re-check after another short delay to catch jobs that took longer to error out.
+      await new Promise(r => setTimeout(r, 800));
+      const stuckStatus = await getStuckPrintJobStatus(this.printerName);
+      if (stuckStatus) {
+        logger.error(`[ZebraDriver] Post-flight queue check found stuck job: ${stuckStatus}`);
+        try { await flushStuckPrintJobs(this.printerName); } catch { /* best-effort */ }
+        this.connected = false;
+        throw new Error(
+          `Printer "${this.printerName}" did not accept the job (${stuckStatus}). ` +
+          `Check the printer is powered on and connected.`
+        );
       }
     } catch (error: any) {
       logger.error('[ZebraDriver] Print failed:', error);

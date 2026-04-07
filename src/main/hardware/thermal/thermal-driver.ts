@@ -6,7 +6,7 @@ import * as os from 'os';
 import logger from '../../logger';
 import { EscPosFormatter, DailyReportData } from './escpos-formatter';
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
-import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort } from '../port-utils';
+import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { matchBrand, type RecoveryResult } from '../detection/types';
 
 const execFileAsync = promisify(execFile);
@@ -28,19 +28,27 @@ export class ThermalDriver {
   /** Detected brand name, used for recovery matching. */
   private brand: string = '';
 
+  /**
+   * When true, printTest() uses plain-text Out-Printer instead of ESC/POS bytes.
+   * Set this for A4/laser/inkjet printers that don't understand ESC/POS.
+   */
+  private windowsTextMode: boolean = false;
+
   constructor(
     private printerNameOrPort: string,  // Windows printer name or COM port
     private baudRate: number = 9600,
     connectionType: ThermalConnectionType = 'USB',
     private paperWidth: number = 80,     // 80mm or 58mm
-    private charsPerLine: number = 48    // Characters per line
+    private charsPerLine: number = 48,   // Characters per line
+    windowsTextMode: boolean = false,    // true → A4/laser path (Out-Printer text)
   ) {
     this.connectionType = connectionType;
+    this.windowsTextMode = windowsTextMode;
     this.formatter = new EscPosFormatter(paperWidth, charsPerLine);
     // Auto-detect brand from printer name for recovery
     const matched = matchBrand(printerNameOrPort);
     if (matched) this.brand = matched.brand;
-    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm)${this.brand ? ` [${this.brand}]` : ''}`);
+    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm${windowsTextMode ? ', TEXT' : ''})${this.brand ? ` [${this.brand}]` : ''}`);
   }
 
   /**
@@ -59,36 +67,65 @@ export class ThermalDriver {
 
   /**
    * Connect to the printer.
-   * Only marks connected = true when the printer/port is actually found.
+   *
+   * USB mode: spooler list check + isWindowsPrinterPresent() cross-check
+   *           (verifies the underlying USB device is physically present, not
+   *            just the spooler entry).
+   *
+   * SERIAL mode: present-port list check + ESC/POS DLE EOT probe (verifies
+   *              there's actually a printer responding on the port).
+   *
+   * Only sets connected=true when the hardware is verified present right now.
    */
   async connect(): Promise<boolean> {
     logger.info(`[ThermalDriver] Connecting to "${this.printerNameOrPort}" via ${this.connectionType}...`);
 
     try {
       if (this.connectionType === 'USB') {
+        // Stage 1: spooler list check
         const printers = await ThermalDriver.listPrinters();
-        const found = printers.some(p =>
+        const inSpooler = printers.some(p =>
           p.toLowerCase() === this.printerNameOrPort.toLowerCase()
         );
 
-        if (!found) {
-          logger.warn(`[ThermalDriver] Printer "${this.printerNameOrPort}" not found. Available: ${printers.join(', ') || 'none'}`);
+        if (!inSpooler) {
+          logger.warn(`[ThermalDriver] Printer "${this.printerNameOrPort}" not in spooler. Available: ${printers.join(', ') || 'none'}`);
+          this.connected = false;
+          return false;
+        }
+
+        // Stage 2: hardware presence cross-check
+        const present = await isWindowsPrinterPresent(this.printerNameOrPort);
+        if (!present) {
+          logger.warn(`[ThermalDriver] Printer "${this.printerNameOrPort}" in spooler but NOT physically present`);
           this.connected = false;
           return false;
         }
 
         this.connected = true;
-        logger.info(`[ThermalDriver] Connected to USB printer "${this.printerNameOrPort}"`);
+        logger.info(`[ThermalDriver] Connected to USB printer "${this.printerNameOrPort}" (verified present)`);
       } else {
+        // Serial path: present-port list check + ESC/POS probe
         const ports = await ThermalDriver.listPorts();
-        if (!ports.includes(this.printerNameOrPort)) {
-          logger.warn(`[ThermalDriver] COM port "${this.printerNameOrPort}" not found. Available: ${ports.join(', ') || 'none'}`);
+        const portUpper = this.printerNameOrPort.toUpperCase();
+        if (!ports.includes(portUpper)) {
+          logger.warn(`[ThermalDriver] COM port "${this.printerNameOrPort}" not present. Available: ${ports.join(', ') || 'none'}`);
+          this.connected = false;
+          return false;
+        }
+
+        // Probe with ESC/POS DLE EOT to confirm a real printer is responding.
+        // This catches the case where the COM port exists (e.g. a generic CDC
+        // device) but no thermal printer is actually attached.
+        const responded = await probeEscPosPort(this.printerNameOrPort, this.baudRate);
+        if (!responded) {
+          logger.warn(`[ThermalDriver] COM port "${this.printerNameOrPort}" present but no ESC/POS response`);
           this.connected = false;
           return false;
         }
 
         this.connected = true;
-        logger.info(`[ThermalDriver] Connected to serial port "${this.printerNameOrPort}"`);
+        logger.info(`[ThermalDriver] Connected to serial printer on "${this.printerNameOrPort}" (probe OK)`);
       }
 
       return this.connected;
@@ -100,7 +137,7 @@ export class ThermalDriver {
   }
 
   /**
-   * Verify the printer/port is still available.
+   * Verify the printer/port is still available AND physically present.
    * Used by periodic health checks.
    */
   async healthCheck(cachedPrinters?: string[], cachedPorts?: string[]): Promise<boolean> {
@@ -108,17 +145,26 @@ export class ThermalDriver {
 
     if (this.connectionType === 'USB') {
       const printers = cachedPrinters ?? await listWindowsPrinters();
-      stillAvailable = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
+      const inSpooler = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
+      if (inSpooler) {
+        try {
+          stillAvailable = await isWindowsPrinterPresent(this.printerNameOrPort);
+        } catch {
+          stillAvailable = inSpooler;
+        }
+      } else {
+        stillAvailable = false;
+      }
     } else {
       const ports = cachedPorts ?? await listSerialPorts();
-      stillAvailable = ports.includes(this.printerNameOrPort);
+      stillAvailable = ports.includes(this.printerNameOrPort.toUpperCase());
     }
 
     if (this.connected && !stillAvailable) {
-      logger.warn(`[ThermalDriver] Health check: "${this.printerNameOrPort}" disappeared — marking disconnected`);
+      logger.warn(`[ThermalDriver] Health check: "${this.printerNameOrPort}" gone — marking disconnected`);
       this.connected = false;
     } else if (!this.connected && stillAvailable) {
-      logger.info(`[ThermalDriver] Health check: "${this.printerNameOrPort}" reappeared — marking connected`);
+      logger.info(`[ThermalDriver] Health check: "${this.printerNameOrPort}" present again — marking connected`);
       this.connected = true;
     }
     return this.connected;
@@ -244,9 +290,55 @@ export class ThermalDriver {
   }
 
   /**
-   * Send raw data to printer
+   * Send raw data to printer.
+   *
+   * USB pre-flight: verify hardware presence + flush any stuck jobs left over
+   * from a previous offline period (so the user doesn't get a flood of old
+   * test prints when they re-plug the cable).
+   *
+   * USB post-flight: re-check Get-PrintJob for stuck status. If stuck, throw
+   * rather than report success.
+   *
+   * SERIAL pre-flight: re-probe with ESC/POS DLE EOT to verify the printer is
+   * still responding before sending the actual job.
    */
   private async printRaw(data: Buffer | string): Promise<void> {
+    // ─── Pre-flight verification ───────────────────────────────────────────
+    if (this.connectionType === 'USB') {
+      const present = await isWindowsPrinterPresent(this.printerNameOrPort);
+      if (!present) {
+        this.connected = false;
+        throw new Error(
+          `Printer "${this.printerNameOrPort}" is not physically connected. ` +
+          `Check the USB cable and power, then click Detect Printers.`
+        );
+      }
+      try {
+        const flushed = await flushStuckPrintJobs(this.printerNameOrPort);
+        if (flushed > 0) {
+          logger.warn(`[ThermalDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerNameOrPort}"`);
+        }
+      } catch { /* best-effort */ }
+    } else {
+      // SERIAL — re-probe to confirm printer still responds
+      const ports = await listSerialPorts();
+      if (!ports.includes(this.printerNameOrPort.toUpperCase())) {
+        this.connected = false;
+        throw new Error(
+          `Serial port "${this.printerNameOrPort}" is not present. ` +
+          `Check the cable and click Detect Printers.`
+        );
+      }
+      const responded = await probeEscPosPort(this.printerNameOrPort, this.baudRate);
+      if (!responded) {
+        this.connected = false;
+        throw new Error(
+          `No printer responding on ${this.printerNameOrPort}. ` +
+          `Check the cable and printer power, then click Detect Printers.`
+        );
+      }
+    }
+
     const tempFile = path.join(os.tmpdir(), `thermal_${Date.now()}.bin`);
 
     try {
@@ -276,6 +368,21 @@ export class ThermalDriver {
             'powershell.exe',
             ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
             { timeout: 15000 },
+          );
+        }
+
+        // ─── Post-flight: confirm queue actually drained ───────────────
+        // copy /b and Out-Printer both queue silently — they return success even
+        // if the spooler will then mark the job as Error/Offline. Re-check.
+        await new Promise(r => setTimeout(r, 1500));
+        const stuckStatus = await getStuckPrintJobStatus(this.printerNameOrPort);
+        if (stuckStatus) {
+          logger.error(`[ThermalDriver] Post-flight queue check: stuck job (${stuckStatus})`);
+          try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
+          this.connected = false;
+          throw new Error(
+            `Printer "${this.printerNameOrPort}" did not accept the job (${stuckStatus}). ` +
+            `Check the printer is powered on and connected.`
           );
         }
       } else {
@@ -321,16 +428,48 @@ export class ThermalDriver {
   }
 
   /**
-   * Print test page using ESC/POS binary data via printRaw().
-   * printRaw() handles both USB (copy /b to printer share) and Serial paths,
-   * sending raw bytes that thermal printers understand.
+   * Print test page.
+   *
+   * In ESC/POS mode (default): sends raw ESC/POS bytes via printRaw() — works
+   *   on thermal receipt printers that understand ESC/POS.
+   *
+   * In windowsTextMode: sends a plain-text page via Out-Printer — works on
+   *   any Windows-installed printer (A4 laser, inkjet, multi-function), which
+   *   would otherwise interpret ESC/POS bytes as garbage.
    */
   async printTest(): Promise<void> {
     if (!this.connected) {
       throw new Error('Printer not connected');
     }
 
-    logger.info('[ThermalDriver] Printing test page...');
+    logger.info(`[ThermalDriver] Printing test page (${this.windowsTextMode ? 'TEXT' : 'ESC/POS'})...`);
+
+    if (this.windowsTextMode) {
+      // A4/laser path — pre-flight check then send plain text via Out-Printer
+      const present = await isWindowsPrinterPresent(this.printerNameOrPort);
+      if (!present) {
+        this.connected = false;
+        throw new Error(
+          `Printer "${this.printerNameOrPort}" is not physically connected. ` +
+          `Check the cable and power, then click Detect Printers.`
+        );
+      }
+      try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
+      await this.printTestWindowsText();
+      // Post-flight check
+      await new Promise(r => setTimeout(r, 1500));
+      const stuckStatus = await getStuckPrintJobStatus(this.printerNameOrPort);
+      if (stuckStatus) {
+        try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
+        this.connected = false;
+        throw new Error(
+          `Printer "${this.printerNameOrPort}" did not accept the job (${stuckStatus}). ` +
+          `Check the printer is powered on and connected.`
+        );
+      }
+      logger.info('[ThermalDriver] Test page printed (text mode)');
+      return;
+    }
 
     const testData = this.formatter.formatTestPage();
     await this.printRaw(testData);

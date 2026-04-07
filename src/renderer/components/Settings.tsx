@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType } from '../../shared/types';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
@@ -82,6 +82,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [autoSettingUp, setAutoSettingUp] = useState(false);
   const [autoSetupResult, setAutoSetupResult] = useState<{ success: boolean; port?: string; message: string } | null>(null);
   const [settingUpDevice, setSettingUpDevice] = useState<string | null>(null); // brand being set up
+  const [refreshingDevice, setRefreshingDevice] = useState<string | null>(null); // device being refreshed
+  const [refreshDeviceResult, setRefreshDeviceResult] = useState<{ key: string; success: boolean; message: string } | null>(null);
 
   // POS settings
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
@@ -176,6 +178,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     // Listen for auto-update status
     const unsubUpdate = window.electronAPI.update.onStatus(setUpdateStatus);
 
+    // Listen for health-check status changes — auto-refresh printer lists
+    // when the backend detects a plug/unplug event
+    const unsubDevice = window.electronAPI.onDeviceStatus(() => {
+      if (!mounted) return;
+      window.electronAPI.listPorts().then(p => { if (mounted) setPorts(p); }).catch(() => {});
+      window.electronAPI.listWindowsPrinters().then(p => { if (mounted) setWindowsPrinters(p); }).catch(() => {});
+      window.electronAPI.getPosnetDriverStatus().then(s => { if (mounted) setPosnetStatus(s); }).catch(() => {});
+    });
+
     // Get app version
     window.electronAPI.debug.getDiagnostics().then((d) => {
       if (mounted && d?.appVersion) setAppVersion(d.appVersion);
@@ -185,6 +196,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       mounted = false;
       unsubSsh?.();
       unsubUpdate?.();
+      unsubDevice?.();
     };
   }, []);
 
@@ -329,7 +341,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     try {
       const printerConfig = getPrinterConfig(printerType as PrinterTypeValue);
       // Force enabled=true so testPrinterByConfig can create the driver even before saving
-      const result = await window.electronAPI.testPrinterByConfig({ ...printerConfig, enabled: true });
+      const result = await window.electronAPI.testPrinterByConfig({ ...printerConfig, enabled: true }, printerType);
       setTestResult({ printerType, success: result.success, error: result.error });
     } catch (error: any) {
       setTestResult({ printerType, success: false, error: error.message });
@@ -474,6 +486,80 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       }
     } finally {
       setPosnetInstalling(false);
+    }
+  };
+
+  /**
+   * P6.1: Per-device refresh.
+   *
+   * Re-runs universal scan + targeted recovery for one specific detected device.
+   * Used when a device shows up offline/missing and the user wants to verify
+   * if it's back without re-running the full global "Detect Printers" sweep
+   * across all hardware.
+   *
+   * Flow:
+   *  1. Trigger universalScanDevices() — refreshes the universal device registry
+   *     and runs markAllOffline() before re-detecting.
+   *  2. Find the matching device in the universal registry by brand +
+   *     windowsPrinterName/comPort.
+   *  3. If matched device is not online, call universalRecoverDevice(id) —
+   *     which scans for the device on a new port/printer name (e.g. POSNET
+   *     migrated to a different COM port).
+   *  4. Re-fetch posnetStatus to update the UI.
+   */
+  const handleRefreshDevice = async (dev: any, devKey: string) => {
+    setRefreshingDevice(devKey);
+    setRefreshDeviceResult(null);
+    try {
+      // Step 1: Fresh universal scan
+      const scanResult = await window.electronAPI.universalScanDevices();
+      const universalDevices: any[] = (scanResult && scanResult.devices) || [];
+
+      // Step 2: Find matching device by brand + identifier
+      const matched = universalDevices.find((d) => {
+        if (d.brand !== dev.brand) return false;
+        if (dev.windowsPrinterName && d.windowsPrinterName === dev.windowsPrinterName) return true;
+        if (dev.comPort && d.port === dev.comPort) return true;
+        if (dev.model && d.model === dev.model) return true;
+        return false;
+      });
+
+      let recoveryMsg = '';
+      if (matched && matched.id && matched.status !== 'online') {
+        // Step 3: Targeted recovery for this device id
+        const rec = await window.electronAPI.universalRecoverDevice(matched.id);
+        recoveryMsg = rec.message || (rec.recovered ? 'Recovered' : 'Not found');
+      }
+
+      // Step 4: Refresh posnetStatus + ports + Windows printers
+      const status = await window.electronAPI.getPosnetDriverStatus();
+      setPosnetStatus(status);
+      const newPorts = await window.electronAPI.listPorts();
+      setPorts(newPorts);
+      const newPrinters = await window.electronAPI.listWindowsPrinters();
+      setWindowsPrinters(newPrinters);
+
+      // Recompute presence from fresh scan: did our device come back?
+      const stillThere = status.devices.some((d: any) =>
+        d.brand === dev.brand && (
+          (dev.windowsPrinterName && d.windowsPrinterName === dev.windowsPrinterName) ||
+          (dev.comPort && d.comPort === dev.comPort) ||
+          (dev.model && d.model === dev.model)
+        )
+      );
+
+      setRefreshDeviceResult({
+        key: devKey,
+        success: stillThere,
+        message: stillThere
+          ? `${dev.brand} ${dev.model} is connected${recoveryMsg ? ` (${recoveryMsg})` : ''}`
+          : `${dev.brand} ${dev.model} not detected${recoveryMsg ? ` (${recoveryMsg})` : ''}`,
+      });
+    } catch (err: any) {
+      setRefreshDeviceResult({ key: devKey, success: false, message: err.message || 'Refresh failed' });
+    } finally {
+      setRefreshingDevice(null);
+      setTimeout(() => setRefreshDeviceResult(null), 5000);
     }
   };
 
@@ -721,9 +807,29 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   )}
 
                   {/* Per-device actions */}
+                  {(() => {
+                    const devKey = `${dev.brand}-${dev.model}-${i}`;
+                    const isRefreshing = refreshingDevice === devKey;
+                    const refreshMsg = refreshDeviceResult?.key === devKey ? refreshDeviceResult : null;
+                    return (
+                  <>
                   {isAlreadyConfigured ? (
-                    <div className="text-green-600 font-medium pt-1">
-                      ✓ Configured as {targetType} printer
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="text-green-600 font-medium">
+                        ✓ Configured as {targetType} printer
+                      </div>
+                      {/* P6.1: Per-device refresh button — re-runs targeted recovery */}
+                      <button
+                        onClick={() => handleRefreshDevice(dev, devKey)}
+                        disabled={isRefreshing}
+                        title="Re-detect this device and recover if it moved to a new port"
+                        className="px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50 transition-colors flex items-center gap-1"
+                      >
+                        <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                      </button>
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -782,8 +888,29 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                           )}
                         </button>
                       )}
+
+                      {/* P6.1: Per-device refresh button (also shown for unconfigured) */}
+                      <button
+                        onClick={() => handleRefreshDevice(dev, devKey)}
+                        disabled={isRefreshing}
+                        title="Re-detect this device"
+                        className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                      >
+                        <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                      </button>
                     </div>
                   )}
+                  {refreshMsg && (
+                    <div className={`mt-1 text-[11px] ${refreshMsg.success ? 'text-green-600' : 'text-amber-600'}`}>
+                      {refreshMsg.message}
+                    </div>
+                  )}
+                  </>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -874,30 +1001,40 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     </button>
                   </div>
 
-                  {printerConfig.enabled && (
+                  {printerConfig.enabled && (() => {
+                    // P5.3: Filter protocol options to only those allowed for this printer type.
+                    // Source of truth lives in shared/types.ts ALLOWED_PROTOCOLS_BY_TYPE so the
+                    // backend validation cannot drift apart from the dropdown.
+                    const allowedProtocols = ALLOWED_PROTOCOLS_BY_TYPE[printerType as PrinterType] || [];
+                    // If the saved protocol is not allowed for this slot (e.g. stale config),
+                    // show it but flag it visually so the user knows to switch.
+                    const currentIsAllowed = allowedProtocols.includes(printerConfig.protocol);
+                    const labelTrKey = (proto: PrinterProtocol) => isLabel ? `protocol.${proto}.label` : `protocol.${proto}`;
+                    return (
                     <div className="space-y-3">
                       <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.protocol')}</label>
                         <select
                           value={printerConfig.protocol}
                           onChange={(e) => updatePrinter(printerType, { protocol: e.target.value as PrinterProtocol })}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none ${
+                            currentIsAllowed ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
+                          }`}
                         >
-                          {isLabel ? (
-                            <>
-                              <option value="ZEBRA">{t('protocol.ZEBRA.label')}</option>
-                              <option value="WINDOWS">{t('protocol.WINDOWS.label')}</option>
-                              <option value="THERMAL">{t('protocol.THERMAL.label')}</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="THERMAL">{t('protocol.THERMAL')}</option>
-                              <option value="POSNET">{t('protocol.POSNET')}</option>
-                              <option value="ZEBRA">{t('protocol.ZEBRA')}</option>
-                              <option value="WINDOWS">{t('protocol.WINDOWS')}</option>
-                            </>
+                          {allowedProtocols.map((proto) => (
+                            <option key={proto} value={proto}>{t(labelTrKey(proto))}</option>
+                          ))}
+                          {!currentIsAllowed && (
+                            <option value={printerConfig.protocol}>
+                              {t(labelTrKey(printerConfig.protocol))} (invalid for {printerType})
+                            </option>
                           )}
                         </select>
+                        {!currentIsAllowed && (
+                          <p className="mt-1 text-xs text-amber-700">
+                            {printerConfig.protocol} is not valid for {printerType}. Allowed: {allowedProtocols.join(', ')}
+                          </p>
+                        )}
                       </div>
 
                       {printerConfig.protocol === 'POSNET' ? (
@@ -1155,7 +1292,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         )}
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}

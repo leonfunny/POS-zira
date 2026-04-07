@@ -106,7 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
-  testPrinterByConfig: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config),
+  testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
   calibratePrinter: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.CALIBRATE_PRINTER, config),
   getPosnetDriverStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_POSNET_DRIVER_STATUS),
   installPosnetDriver: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_POSNET_DRIVER),

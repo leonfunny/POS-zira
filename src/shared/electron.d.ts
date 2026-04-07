@@ -160,7 +160,7 @@ interface ElectronAPI {
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
-  testPrinterByConfig: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string }>;
+  testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<{ success: boolean; error?: string }>;
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
   getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
   installPosnetDriver: () => Promise<{ success: boolean; message: string; rebootRequired?: boolean }>;

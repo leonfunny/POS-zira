@@ -23,6 +23,23 @@ export const PrinterType = {
 } as const;
 export type PrinterType = typeof PrinterType[keyof typeof PrinterType];
 
+/**
+ * Allowed protocols per printer type — single source of truth.
+ *
+ * Used by:
+ *  - Renderer (Settings.tsx) to filter the protocol dropdown
+ *  - Main (HardwareModule) to validate test/save requests
+ *
+ * Keep this map in sync between both processes — do not duplicate it.
+ */
+export const ALLOWED_PROTOCOLS_BY_TYPE: Record<PrinterType, PrinterProtocol[]> = {
+  RECEIPT: ['POSNET', 'THERMAL', 'WINDOWS'],
+  LABEL:   ['ZEBRA', 'WINDOWS'],
+  A4:      ['WINDOWS'],
+  TICKET:  ['POSNET', 'THERMAL', 'WINDOWS'],
+  KITCHEN: ['POSNET', 'THERMAL', 'WINDOWS'],
+};
+
 // Print job types
 export enum PrintJobType {
   RECEIPT = 'RECEIPT',
