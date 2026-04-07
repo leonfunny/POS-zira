@@ -539,6 +539,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Scan to book online',
     'customer.serviceRequested': 'Service requested!',
     'customer.categories': 'Categories',
+    'customer.serviceCount': '{count} services',
+    'customer.fromPrice': 'From {price}',
     'customer.duration': '{min} min',
     'customer.back': 'Back',
 
@@ -1434,6 +1436,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Quét để đặt lịch online',
     'customer.serviceRequested': 'Đã yêu cầu dịch vụ!',
     'customer.categories': 'Danh mục',
+    'customer.serviceCount': '{count} dịch vụ',
+    'customer.fromPrice': 'Từ {price}',
     'customer.duration': '{min} phút',
     'customer.back': 'Quay lại',
 
@@ -2329,6 +2333,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Online randevu için tarayın',
     'customer.serviceRequested': 'Hizmet talep edildi!',
     'customer.categories': 'Kategoriler',
+    'customer.serviceCount': '{count} hizmet',
+    'customer.fromPrice': '{price} başlangıç',
     'customer.duration': '{min} dk',
     'customer.back': 'Geri',
 
@@ -3224,6 +3230,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': '扫码在线预约',
     'customer.serviceRequested': '已请求服务！',
     'customer.categories': '分类',
+    'customer.serviceCount': '{count} 项服务',
+    'customer.fromPrice': '{price} 起',
     'customer.duration': '{min} 分钟',
     'customer.back': '返回',
 
@@ -4119,6 +4127,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Скануйте для онлайн-бронювання',
     'customer.serviceRequested': 'Послугу запитано!',
     'customer.categories': 'Категорії',
+    'customer.serviceCount': 'Послуг: {count}',
+    'customer.fromPrice': 'Від {price}',
     'customer.duration': '{min} хв',
     'customer.back': 'Назад',
 
@@ -5014,6 +5024,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Сканируйте для онлайн-записи',
     'customer.serviceRequested': 'Услуга запрошена!',
     'customer.categories': 'Категории',
+    'customer.serviceCount': 'Услуг: {count}',
+    'customer.fromPrice': 'От {price}',
     'customer.duration': '{min} мин',
     'customer.back': 'Назад',
 
@@ -5929,6 +5941,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.scanToBook': 'Zeskanuj, by zarezerwować online',
     'customer.serviceRequested': 'Usługa wybrana!',
     'customer.categories': 'Kategorie',
+    'customer.serviceCount': '{count} usług',
+    'customer.fromPrice': 'Od {price}',
     'customer.duration': '{min} min',
     'customer.back': 'Wróć',
 

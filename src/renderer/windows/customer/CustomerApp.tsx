@@ -23,6 +23,7 @@ import ThankYouView from './views/ThankYouView';
 import PromoView from './views/PromoView';
 import SalonInteractiveView from './views/SalonInteractiveView';
 import CheckInView from './views/CheckInView';
+import { resolveCustomerDisplayLanguage } from './customer-display-model';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -174,7 +175,7 @@ export default function CustomerApp() {
 
     // Load language from config
     window.electronAPI.getConfig().then((cfg: any) => {
-      if (cfg?.language) setLang(cfg.language as Language);
+      setLang(resolveCustomerDisplayLanguage(cfg));
     });
 
     return unsub;
@@ -215,11 +216,6 @@ export default function CustomerApp() {
     }
   }, [displayMode]);
 
-  // Handle service request from customer display
-  const handleRequestService = useCallback((serviceId: string) => {
-    window.electronAPI.display?.requestService?.(serviceId);
-  }, []);
-
   // Handle browse services from check-in
   const handleBrowseServices = useCallback(() => {
     window.electronAPI.display?.browseServices?.();
@@ -228,6 +224,23 @@ export default function CustomerApp() {
   // Handle back to idle/promo from check-in
   const handleBackToIdle = useCallback(() => {
     window.electronAPI.display?.backToIdle?.();
+  }, []);
+
+  const handleBackToCheckIn = useCallback(() => {
+    window.electronAPI.display?.backToCheckin?.();
+  }, []);
+
+  const handleRequestService = useCallback((serviceId: string) => {
+    window.electronAPI.display?.requestService?.(serviceId);
+  }, []);
+
+  const handleDisplayLanguageChange = useCallback(async (nextLanguage: Language) => {
+    setLang(nextLanguage);
+    try {
+      await window.electronAPI.saveConfig({ customerDisplayLanguage: nextLanguage });
+    } catch (error) {
+      rlog.error('[CustomerApp] Failed to save customer display language:', error);
+    }
   }, []);
 
   // Determine if we have salon data (service categories populated = salon mode)
@@ -257,9 +270,13 @@ export default function CustomerApp() {
     return (
       <CheckInView
         t={t}
+        language={lang}
         salonName={display?.salonName}
+        categories={display?.serviceCategories || []}
+        upsellItems={display?.upsellItems}
         onBrowseServices={handleBrowseServices}
         onBack={handleBackToIdle}
+        onLanguageChange={handleDisplayLanguageChange}
       />
     );
   }
@@ -270,9 +287,13 @@ export default function CustomerApp() {
       return (
         <SalonInteractiveView
           t={t}
+          language={lang}
           categories={display!.serviceCategories!}
           salonName={display?.salonName}
-          onRequestService={handleRequestService}
+          onHome={handleBackToIdle}
+          onReturnToCheckIn={handleBackToCheckIn}
+          onBack={handleBackToIdle}
+          onLanguageChange={handleDisplayLanguageChange}
         />
       );
     }

@@ -175,6 +175,7 @@ const store = new Store<AgentConfig>({
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'] },
+    customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },
     customerDisplayMonitor: { type: 'number', default: 0 },
     // When true (default), customer display opens in true fullscreen kiosk even on

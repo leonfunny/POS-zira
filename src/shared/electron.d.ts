@@ -287,6 +287,7 @@ interface ElectronAPI {
     checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
       Promise<{ success: boolean }>;
     browseServices: () => Promise<{ success: boolean }>;
+    backToCheckin: () => Promise<{ success: boolean }>;
     backToIdle: () => Promise<{ success: boolean }>;
     ping: () => Promise<{ success: boolean }>;
     searchByPhone: (phone: string) => Promise<{ customers: any[]; bookings: any[] }>;

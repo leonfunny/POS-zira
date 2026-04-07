@@ -434,6 +434,18 @@ export class PosStore {
     this.transitionToPromoOrIdle();
   }
 
+  /** Return interactive browse flow back to the check-in hub */
+  handleBackToCheckin(): void {
+    logger.info('[PosStore] Customer returning from browse services to check-in');
+    this.loadServiceCategories();
+    this.state = {
+      ...this.state,
+      display: { ...this.state.display, mode: 'checkin' },
+    };
+    this.broadcast();
+    this.resetInteractionTimer();
+  }
+
   /** Switch display from checkin to interactive (browse services) */
   handleBrowseFromCheckin(): void {
     logger.info('[PosStore] Customer switching to browse services from checkin');

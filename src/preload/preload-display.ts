@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Config (for language)
   getConfig: () => ipcRenderer.invoke('get-config'),
+  saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('set-config', config),
   // Customer display interactions
   display: {
     touch: () => ipcRenderer.invoke('display:touch'),
@@ -27,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
       ipcRenderer.invoke('display:check-in', data),
     browseServices: () => ipcRenderer.invoke('display:browse-services'),
+    backToCheckin: () => ipcRenderer.invoke('display:back-to-checkin'),
     backToIdle: () => ipcRenderer.invoke('display:back-to-idle'),
     ping: () => ipcRenderer.invoke('display:interaction-ping'),
     searchByPhone: (phone: string) => ipcRenderer.invoke('display:search-by-phone', phone),

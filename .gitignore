@@ -33,6 +33,7 @@ logs/
 
 # Local AI / Claude config
 .claude/
+.superpowers/
 
 # Cloudflare Wrangler
 .wrangler/

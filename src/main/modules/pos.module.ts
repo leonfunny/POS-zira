@@ -181,6 +181,12 @@ export class PosModule extends BaseModule {
       return { success: true };
     });
 
+    // Customer display: back from browse services to check-in hub
+    ipcMain.handle('display:back-to-checkin', () => {
+      this.posStore?.handleBackToCheckin();
+      return { success: true };
+    });
+
     // Customer display: back to idle/promo
     ipcMain.handle('display:back-to-idle', () => {
       this.posStore?.handleBackToIdle();

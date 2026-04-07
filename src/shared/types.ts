@@ -214,6 +214,7 @@ export interface AgentConfig {
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
+  customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
   customerDisplayMonitor?: number;     // Monitor index for customer display (0 = primary)
   customerDisplayForceKiosk?: boolean; // Force kiosk/fullscreen even on single monitor (default true). Esc + 3-finger swipe-down still exit.
@@ -705,6 +706,7 @@ export const IPC_CHANNELS = {
   DISPLAY_GET_BOOKINGS: 'display:get-bookings',
   DISPLAY_CHECK_IN: 'display:check-in',
   DISPLAY_BROWSE_SERVICES: 'display:browse-services',
+  DISPLAY_BACK_TO_CHECKIN: 'display:back-to-checkin',
   DISPLAY_BACK_TO_IDLE: 'display:back-to-idle',
   DISPLAY_INTERACTION_PING: 'display:interaction-ping',
   DISPLAY_PING: 'display:ping',
