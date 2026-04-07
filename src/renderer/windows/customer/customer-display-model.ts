@@ -30,7 +30,6 @@ export interface BrowseCategorySummary {
   name: string;
   serviceCount: number;
   startingPrice: number;
-  maxDuration: number;
 }
 
 const LANGUAGES: Language[] = ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'];
@@ -106,7 +105,6 @@ export function summarizeServiceCategories(
         name: category.name,
         serviceCount: services.length,
         startingPrice: Math.min(...services.map((service) => service.price)),
-        maxDuration: Math.max(...services.map((service) => service.duration || 0)),
       };
     })
     .filter((category): category is BrowseCategorySummary => category !== null);

@@ -113,7 +113,6 @@ describe('summarizeServiceCategories', () => {
         name: 'Nails',
         serviceCount: 2,
         startingPrice: 4500,
-        maxDuration: 60,
       },
     ]);
   });

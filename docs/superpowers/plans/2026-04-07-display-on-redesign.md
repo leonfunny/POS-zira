@@ -1,78 +1,95 @@
-# Display On Redesign Implementation Plan
+# Display On Redesign Implementation Plan / Session Handoff
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Use `executing-plans` or equivalent discipline if this work continues in another session. This file is the living handoff, not the original untouched checklist.
 
-**Goal:** Implement the concierge-style redesign for Display On after `Touch to explore`, including independent persisted display language.
+## Current State
+- Concierge-style Display On redesign is implemented on `main`.
+- `Touch to explore` remains the idle entry and the post-idle flow has been rebuilt around:
+  - `Check in with phone`
+  - `I have booking`
+  - `Walk in`
+  - `Browse services`
+- Display On now persists its own language via `customerDisplayLanguage`, separate from POS language.
+- Browse overview copy has been clarified to explicit `services` and `from price` text.
+- Phone keypad entry now displays grouped digits as `123 456 789` and caps input at 9 digits.
+- Post-implementation cleanup has removed dead legacy files and temporary debug plumbing added during troubleshooting.
 
-**Architecture:** Add a small set of shared customer-display helpers plus a reusable kiosk shell, then split the current monolithic customer-display check-in/catalog experience into focused screen components. Keep existing IPC/state contracts unless a config save hook is required for display language persistence.
+## Implemented Files
+- `docs/superpowers/specs/2026-04-07-display-on-concierge-design.md`
+- `src/main/config/store.ts`
+- `src/main/modules/pos.module.ts`
+- `src/main/pos/pos-store.ts`
+- `src/preload/preload-display.ts`
+- `src/renderer/i18n/translations.ts`
+- `src/renderer/windows/customer/CustomerApp.tsx`
+- `src/renderer/windows/customer/customer-display-model.ts`
+- `src/renderer/windows/customer/components/CustomerBookingCard.tsx`
+- `src/renderer/windows/customer/components/CustomerDisplayPrimitives.tsx`
+- `src/renderer/windows/customer/components/CustomerDisplayShell.tsx`
+- `src/renderer/windows/customer/components/WalkInServicePicker.tsx`
+- `src/renderer/windows/customer/views/CheckInView.tsx`
+- `src/renderer/windows/customer/views/SalonInteractiveView.tsx`
+- `src/shared/electron.d.ts`
+- `src/shared/types.ts`
+- `tests/customer-display-model.test.ts`
 
-**Tech Stack:** Electron, React 18, TypeScript, Tailwind, Vitest
+## Cleanup Applied
+- Removed unused customer-display legacy files:
+  - `src/renderer/windows/customer/views/InteractiveView.tsx`
+  - `src/renderer/windows/customer/views/UpsellStrip.tsx`
+- Removed unused `maxDuration` from browse-category summaries.
+- Removed temporary customer-display debug bridge code from:
+  - `src/preload/preload-display.ts`
+  - `src/main/modules/pos.module.ts`
+  - `src/renderer/windows/customer/CustomerApp.tsx`
+- Added `.superpowers/` to `.gitignore` so local brainstorm artifacts stop polluting git status.
 
----
+## Verification History
+- `npm test`
+- `npm run build`
 
-### Task 1: Add docs and config contract
+Latest expected evidence before further completion claims:
+- full Vitest suite passes
+- full build passes
 
-**Files:**
-- Create: `docs/superpowers/specs/2026-04-07-display-on-concierge-design.md`
-- Create: `docs/superpowers/plans/2026-04-07-display-on-redesign.md`
-- Modify: `src/shared/types.ts`
-- Modify: `src/main/config/store.ts`
-- Modify: `src/preload/preload-display.ts`
-- Modify: `src/shared/electron.d.ts`
+## Completed Checklist
 
-- [ ] Add `customerDisplayLanguage` to shared config typing.
-- [ ] Add `customerDisplayLanguage` to the config schema with the same language enum as POS.
-- [ ] Expose `saveConfig` in the display preload bridge.
-- [ ] Update display preload typings in `electron.d.ts`.
+### Task 1: Config and contract
+- [x] Add `customerDisplayLanguage` to shared config typing.
+- [x] Add `customerDisplayLanguage` to the config schema with the same language enum as POS.
+- [x] Expose config save to the customer display so language changes persist.
+- [x] Update display preload typings in `electron.d.ts`.
 
-### Task 2: Add failing tests for customer-display language and flow helpers
+### Task 2: Helper tests and model
+- [x] Add tests for display language fallback order.
+- [x] Add tests for booking filtering.
+- [x] Add tests for phone sanitization and display formatting.
+- [x] Add tests for browse category summarization.
+- [x] Implement helper logic to satisfy those tests.
 
-**Files:**
-- Create: `tests/customer-display-model.test.ts`
-- Create: `src/renderer/windows/customer/customer-display-model.ts`
+### Task 3: UI architecture and flows
+- [x] Introduce a shared kiosk shell for redesigned customer-display screens.
+- [x] Split customer-display UI into smaller focused components instead of one monolithic view.
+- [x] Redesign the post-idle home screen around fast-arrival hierarchy.
+- [x] Redesign phone check-in for keypad, live results, and walk-in fallback.
+- [x] Redesign booking lookup for fast search and short confirmation flow.
+- [x] Redesign walk-in flow for identity first, then service selection.
+- [x] Redesign browse services as catalog + handoff, not a second main engine.
+- [x] Replace emoji-driven customer-display visuals with consistent SVG/icon treatment.
+- [x] Add translations required for the new copy.
 
-- [ ] Write failing tests for:
-  - display language fallback order
-  - booking filtering for the booking lookup screen
-  - phone digit sanitization / minimum-search behavior
-  - browse catalog grouping behavior used by the redesigned flow
-- [ ] Run the targeted test file and confirm failure before implementation.
-- [ ] Implement only the helper logic required to make those tests pass.
+### Task 4: Verification
+- [x] Run targeted customer-display tests.
+- [x] Run broader POS/display regression tests.
+- [x] Run full build validation.
 
-### Task 3: Build the kiosk shell and redesigned screens
+## Remaining Manual Checks
+- Verify language persistence by changing Display On language, closing the customer window, and reopening it.
+- Recheck `Touch to explore` visually after any future shell/layout changes.
+- Confirm the interactive fallback in `CustomerApp.tsx` is still needed once salon-only customer-display usage is fully certain.
+- Continue iterative polish on spacing, panel density, and hierarchy based on live screenshots rather than assumptions.
 
-**Files:**
-- Create: `src/renderer/windows/customer/components/CustomerDisplayShell.tsx`
-- Create: `src/renderer/windows/customer/components/CustomerDisplayLanguageMenu.tsx`
-- Create: `src/renderer/windows/customer/components/checkin/CheckInHomeScreen.tsx`
-- Create: `src/renderer/windows/customer/components/checkin/PhoneCheckInScreen.tsx`
-- Create: `src/renderer/windows/customer/components/checkin/BookingLookupScreen.tsx`
-- Create: `src/renderer/windows/customer/components/checkin/WalkInScreen.tsx`
-- Create: `src/renderer/windows/customer/components/checkin/BrowseCatalogScreen.tsx`
-- Modify: `src/renderer/windows/customer/views/CheckInView.tsx`
-- Modify: `src/renderer/windows/customer/views/SalonInteractiveView.tsx`
-- Modify: `src/renderer/windows/customer/CustomerApp.tsx`
-- Modify: `src/renderer/i18n/translations.ts`
-
-- [ ] Replace the current `CheckInView` layout with an orchestrator that uses the new shell and purpose-built screens.
-- [ ] Redesign the post-idle home screen around fast-arrival hierarchy.
-- [ ] Redesign phone check-in for keypad + live results + fallback.
-- [ ] Redesign booking lookup for fast name search and short confirmation path.
-- [ ] Redesign walk-in flow for minimal identity first and clear continuation.
-- [ ] Redesign browse services as catalog + handoff, not a second primary selection engine.
-- [ ] Remove emoji-based category/icon rendering and replace it with consistent SVG/icon treatment.
-- [ ] Add or update translations needed by the new UI copy.
-
-### Task 4: Verify behavior and regressions
-
-**Files:**
-- Test: `tests/customer-display-model.test.ts`
-
-- [ ] Run the targeted vitest file for new helper logic.
-- [ ] Run the existing POS store test file to catch display-flow regressions.
-- [ ] Run a renderer typecheck or build command that proves the new customer-display code compiles.
-- [ ] Summarize any remaining manual-only checks:
-  - touch targets
-  - language persistence
-  - idle/back flow
-  - unchanged `Touch to explore`
+## Recommended Next Session
+1. Polish remaining “safe” panels that still feel too generic.
+2. Audit secondary summaries/side rails for any remaining duplicated information.
+3. Validate the full customer-display flow on the real Electron window, not only via screenshots and tests.

@@ -91,14 +91,6 @@ export class PosModule extends BaseModule {
       return { success: true };
     });
 
-    // Renderer-side debug log forwarder for the customer display window.
-    // Fire-and-forget (ipcRenderer.send → ipcMain.on), no response required.
-    // This is the only way we can see renderer-level events in combined.log,
-    // because rlog (src/renderer/utils/logger.ts) only writes to devtools console.
-    ipcMain.on('display:debug-log', (e, msg: string) => {
-      logger.info(`[CustomerDisplay-Renderer] (${e.sender.getTitle?.() ?? 'unknown'}) ${msg}`);
-    });
-
     // Customer display: service request
     ipcMain.handle('display:request-service', (_e, serviceId: string) => {
       this.posStore?.handleServiceRequest(serviceId);
@@ -435,3 +427,5 @@ export class PosModule extends BaseModule {
 
   async destroy(): Promise<void> { this.setState(ModuleState.STOPPED); }
 }
+
+
