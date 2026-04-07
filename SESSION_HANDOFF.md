@@ -1,6 +1,107 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-07 (session 38 — customer display force-kiosk on single monitor + cart auto-jump fix + salon-data diagnostic log, BUILT, awaiting user test) | Read this file at the start of every new session.
+> Last updated: 2026-04-07 (session 39 - Display On concierge redesign + scoped customer-display cleanup, BUILT/TESTED, merged to main) | Read this file at the start of every new session.
+
+## Session 39 - Display On concierge redesign + scoped cleanup
+
+**User goal:** Redesign the full Display On flow inside POS after `Touch to explore`, keep the existing warm palette, add a Display On language switch matching POS, make the UI feel intentional rather than AI-generated, then clean up the project around the work.
+
+**Important scope note:** Cleanup in this session was **not repo-wide cleanup**. It was a **scoped cleanup around the customer display / Display On flow only**. The rest of the repo was not audited for dead code in this pass.
+
+### What was redesigned
+
+`Touch to explore` was kept unchanged. Everything after that was rebuilt around a concierge-style arrival flow:
+
+- `Check in with phone`
+- `I have booking`
+- `Walk in`
+- `Browse services`
+
+### Main behavior changes
+
+- Added independent Display On language persistence via `customerDisplayLanguage`
+- Fallback order: `customerDisplayLanguage -> posLanguage -> language`
+- Changing Display On language does **not** change POS language
+- Added a persistent language dropdown in the Display On shell, styled to match POS
+- Rebuilt the post-idle home screen so the primary hierarchy is now `Check in with phone` and `I have booking`, with `Walk in` and `Browse services` as secondary choices
+- Reworked `Browse services` into a catalog + handoff flow instead of a second main selection engine
+- Reworked `Walk in` into identity first, then service choice
+- Reworked phone check-in for keypad input, live results, and clear walk-in fallback
+- Reworked booking lookup for faster search and a shorter confirmation flow
+
+### UX polish applied during follow-up iterations
+
+- Fixed the Display On language dropdown being visually covered by content beneath it
+- Added back navigation to `Browse services` so it behaves consistently with the booking flow
+- Reworked ambiguous overview copy from compressed values like `10 / PLN 5.00` into explicit text such as `10 services` and `From PLN 5.00`
+- Applied the clearer overview copy both in the browse screen and the welcome/check-in hub side panel
+- Updated the phone keypad display so customers see grouped 9-digit formatting like `123 456 789`
+- Replaced the old `---` placeholder with a phone-shaped numeric hint
+- Capped phone input at 9 digits
+
+### Files and architecture added for the redesign
+
+- `src/renderer/windows/customer/customer-display-model.ts`
+- `src/renderer/windows/customer/components/CustomerBookingCard.tsx`
+- `src/renderer/windows/customer/components/CustomerDisplayPrimitives.tsx`
+- `src/renderer/windows/customer/components/CustomerDisplayShell.tsx`
+- `src/renderer/windows/customer/components/WalkInServicePicker.tsx`
+
+### Major files changed in the redesign
+
+- `src/renderer/windows/customer/CustomerApp.tsx`
+- `src/renderer/windows/customer/views/CheckInView.tsx`
+- `src/renderer/windows/customer/views/SalonInteractiveView.tsx`
+- `src/renderer/i18n/translations.ts`
+- `src/main/config/store.ts`
+- `src/main/modules/pos.module.ts`
+- `src/main/pos/pos-store.ts`
+- `src/preload/preload-display.ts`
+- `src/shared/electron.d.ts`
+- `src/shared/types.ts`
+- `tests/customer-display-model.test.ts`
+- `docs/superpowers/specs/2026-04-07-display-on-concierge-design.md`
+- `docs/superpowers/plans/2026-04-07-display-on-redesign.md`
+
+### Scoped cleanup done in this session
+
+Removed only code confirmed to be unused or temporary within the customer-display scope:
+
+- Deleted dead legacy files `src/renderer/windows/customer/views/InteractiveView.tsx` and `src/renderer/windows/customer/views/UpsellStrip.tsx`
+- Removed dead `maxDuration` from the browse summary model because no redesigned UI reads it
+- Removed temporary debug bridge and instrumentation added during troubleshooting in preload/types, `pos.module.ts`, and `CustomerApp.tsx`
+- Added `.superpowers/` to `.gitignore` so brainstorm artifacts stop polluting git status
+
+### Verification run in this session
+
+Before the final pushed state, the following were run and passed:
+
+- `npm test -- tests/customer-display-model.test.ts`
+- `npm test`
+- `npm run typecheck:renderer`
+- `npm run build`
+
+At the end of cleanup, the full suite still passed:
+
+- `Vitest: 106 passed`
+- `Build: passed`
+
+### Git and process status
+
+This session was already merged to `main` before the user clarified a workflow preference.
+
+- Redesign commit on `main`: `e247b61` - `feat: redesign customer display concierge flow`
+- Cleanup commit on `main`: `8e425cf` - `chore: clean up customer display redesign`
+
+**Process note for next session:** user explicitly said future work should **not** be committed or pushed automatically. Keep changes local until the user explicitly approves commit/push.
+
+### Remaining work / next-session direction
+
+- Continue visual polish on Display On screens based on live screenshots
+- Manually verify language persistence by closing and reopening the customer display
+- Manually verify `Touch to explore` still looks and behaves unchanged
+- Reassess whether the interactive fallback block in `CustomerApp.tsx` is still needed once salon-only usage is certain
+
 
 ## Session 38 — Customer display: true kiosk + restored flow visibility
 
