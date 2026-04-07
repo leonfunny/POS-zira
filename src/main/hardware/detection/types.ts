@@ -82,7 +82,7 @@ export interface RecoveryResult {
  */
 export interface RecoverableDriver {
   /** Reconnect the driver using a new identifier (printer name or COM port). */
-  reconnect(newIdentifier: string): void;
+  reconnect(newIdentifier: string): void | Promise<void>;
 }
 
 // ─── Persisted registry file ───────────────────────────────────────────────────

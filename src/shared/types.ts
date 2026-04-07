@@ -216,6 +216,7 @@ export interface AgentConfig {
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
   customerDisplayMonitor?: number;     // Monitor index for customer display (0 = primary)
+  customerDisplayForceKiosk?: boolean; // Force kiosk/fullscreen even on single monitor (default true). Esc + 3-finger swipe-down still exit.
   customerDisplayPromoFolder?: string; // Local folder path for promo images
   customerDisplayPromoInterval?: number; // Carousel interval in ms (default 5000)
   customerDisplayIdleTimeout?: number;   // Idle timeout before promo in ms (default 120000)

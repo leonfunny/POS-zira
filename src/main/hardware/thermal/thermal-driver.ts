@@ -189,13 +189,21 @@ export class ThermalDriver {
   getPrinterNameOrPort(): string { return this.printerNameOrPort; }
 
   /** Reconnect using a new identifier — printer name or COM port (RecoverableDriver). */
-  reconnect(newIdentifier: string): void {
+  async reconnect(newIdentifier: string): Promise<void> {
     logger.info(`[ThermalDriver] Reconnecting: "${this.printerNameOrPort}" → "${newIdentifier}"`);
     this.printerNameOrPort = newIdentifier;
     if (newIdentifier.match(/^COM\d+$/i)) {
       this.connectionType = 'SERIAL';
+      // Verify serial port is present
+      const ports = await listSerialPorts();
+      this.connected = ports.some(p => p.toUpperCase() === newIdentifier.toUpperCase());
+    } else {
+      // Verify Windows printer is physically present
+      this.connected = await isWindowsPrinterPresent(newIdentifier);
     }
-    this.connected = true;
+    if (!this.connected) {
+      logger.warn(`[ThermalDriver] Reconnect failed — "${newIdentifier}" not physically present`);
+    }
   }
 
   /** Get the detected brand. */

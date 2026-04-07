@@ -317,7 +317,7 @@ export async function flushStuckPrintJobs(printerName: string): Promise<number> 
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
       `$jobs = Get-PrintJob -PrinterName '${safe.replace(/'/g, "''")}' -ErrorAction SilentlyContinue\n` +
       'if (-not $jobs) { Write-Output "0"; exit }\n' +
-      "$stuck = $jobs | Where-Object { $_.JobStatus -match 'Error|Offline|Blocked|PaperOut|Paused|UserIntervention|Restart|Spooling' }\n" +
+      "$stuck = $jobs | Where-Object { $_.JobStatus -match 'Error|Offline|Blocked|PaperOut|Paused|UserIntervention|Restart' }\n" +
       'if (-not $stuck) { Write-Output "0"; exit }\n' +
       '$count = ($stuck | Measure-Object).Count\n' +
       'try { $stuck | Remove-PrintJob -ErrorAction SilentlyContinue } catch {}\n' +

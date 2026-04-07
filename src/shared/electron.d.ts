@@ -292,6 +292,8 @@ interface ElectronAPI {
     searchByPhone: (phone: string) => Promise<{ customers: any[]; bookings: any[] }>;
     /** Staff intentional exit — bypasses kiosk lock */
     close: () => Promise<{ success: boolean }>;
+    /** Fire-and-forget debug log forwarder — customer-display preload only */
+    debugLog?: (msg: string) => void;
   };
 
   // Checkin

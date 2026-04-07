@@ -23,67 +23,70 @@ export default function CartView({ cart, t, upsellItems, onRequestService }: Car
 
   return (
     <div className="w-full max-w-2xl px-8">
+      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-brand-500 mb-5">
+        {t('customer.yourOrder') || 'Your order'}
+      </p>
       <div className="space-y-3">
         {cart.items.map((item) => (
           <div
             key={item.id}
-            className="flex justify-between text-2xl animate-fadeIn"
+            className="flex justify-between items-baseline text-2xl animate-fadeIn border-b border-slate-100 pb-3"
           >
-            <span className="text-slate-200">
+            <span className="text-slate-800">
               {item.name}
               {item.quantity > 1 && (
-                <span className="text-slate-500 ml-2">x{item.quantity}</span>
+                <span className="text-slate-400 ml-2 text-xl">x{item.quantity}</span>
               )}
               {item.staffName && (
-                <span className="text-slate-500 text-sm ml-2">({item.staffName})</span>
+                <span className="text-slate-400 text-sm ml-2">({item.staffName})</span>
               )}
             </span>
-            <span className="font-mono tabular-nums">
+            <span className="tabular-nums font-semibold text-slate-900">
               {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(item.total / 100)}
             </span>
           </div>
         ))}
       </div>
       {cart.discount > 0 && (
-        <div className="flex justify-between text-xl text-green-400 mt-4">
+        <div className="flex justify-between text-xl text-emerald-600 mt-4 font-medium">
           <span>{t('customer.discount')}</span>
-          <span>-{new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(cart.discount / 100)}</span>
+          <span className="tabular-nums">-{new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(cart.discount / 100)}</span>
         </div>
       )}
-      <div className="border-t border-white/20 mt-6 pt-6 text-right">
-        <p className="text-sm text-slate-500 mb-1">{t('customer.toPay')}</p>
-        <span className="text-5xl font-bold">
+      <div className="mt-8 pt-6 border-t-2 border-brand-100 text-right">
+        <p className="text-sm text-slate-500 mb-2 uppercase tracking-wider font-medium">{t('customer.toPay')}</p>
+        <span className="text-6xl font-bold text-brand-600 tabular-nums">
           {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(cart.total / 100)}
         </span>
       </div>
 
       {/* Upsell strip */}
       {hasUpsell && (
-        <div className="mt-8 border-t border-white/10 pt-6">
-          <p className="text-lg text-slate-300 mb-3">
+        <div className="mt-10 border-t border-slate-100 pt-6">
+          <p className="text-lg text-slate-600 mb-4 font-medium">
             {t('customer.completeYourLook') || 'Complete your look'}
           </p>
           <div className="flex gap-3 overflow-x-auto pb-2">
             {upsellItems!.map((item) => (
               <div
                 key={item.id}
-                className="w-44 shrink-0 bg-slate-900/60 border border-white/10 rounded-lg p-3"
+                className="w-44 shrink-0 bg-white border border-slate-200 rounded-xl p-3 shadow-sm"
               >
-                <div className="h-20 rounded-md overflow-hidden bg-slate-800 mb-2 flex items-center justify-center">
+                <div className="h-20 rounded-lg overflow-hidden bg-rose-50 mb-2 flex items-center justify-center">
                   {item.imageUrl ? (
                     <img src={item.imageUrl} alt="" className="w-full h-full object-cover" draggable={false} />
                   ) : (
                     <div className="text-3xl">💅</div>
                   )}
                 </div>
-                <div className="text-sm font-medium text-slate-100 line-clamp-2">{item.name}</div>
-                <div className="text-sm font-semibold mt-1 text-purple-300">
+                <div className="text-sm font-medium text-slate-800 line-clamp-2">{item.name}</div>
+                <div className="text-sm font-semibold mt-1 text-brand-600">
                   {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(item.price / 100)}
                 </div>
                 {onRequestService && (
                   <button
                     onClick={() => onRequestService(item.id)}
-                    className="mt-2 w-full py-1.5 text-xs bg-purple-600/80 hover:bg-purple-500 text-white rounded transition-colors"
+                    className="mt-2 w-full py-1.5 text-xs bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors font-medium"
                   >
                     {t('customer.addToVisit') || 'Add to my visit'}
                   </button>

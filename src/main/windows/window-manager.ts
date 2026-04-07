@@ -145,17 +145,24 @@ export class WindowManager {
     }
 
     const isCustomer = id === 'customer';
-    // On single-monitor setups, disable kiosk/alwaysOnTop to prevent freezing
     const hasMultipleDisplays = displays.length > 1;
-    const useKiosk = isCustomer && hasMultipleDisplays;
-    const useAlwaysOnTop = isCustomer && hasMultipleDisplays;
+    // Force kiosk flag (default true): when set, customer display goes true-fullscreen kiosk
+    // even on single-monitor machines. Toggle it off in Settings on dev machines that need
+    // the old windowed fallback. Esc and 3-finger swipe-down (CustomerApp.tsx) still exit.
+    const forceKiosk = !!getConfigValue('customerDisplayForceKiosk');
+    const useKiosk = isCustomer && (hasMultipleDisplays || forceKiosk);
+    const useAlwaysOnTop = useKiosk;
 
     if (isCustomer && !hasMultipleDisplays) {
-      logger.warn('[WindowManager] Single monitor detected — customer display will open in windowed mode to prevent machine freeze');
+      if (forceKiosk) {
+        logger.warn('[WindowManager] Single monitor + force kiosk ON — customer display will cover this screen. Press Esc or 3-finger swipe-down from the top to exit.');
+      } else {
+        logger.warn('[WindowManager] Single monitor + force kiosk OFF — customer display opens windowed (legacy fallback)');
+      }
     }
 
     // For customer display: disable Windows edge-swipe gestures before opening
-    if (isCustomer && hasMultipleDisplays) {
+    if (isCustomer && useKiosk) {
       this.disableEdgeSwipeGestures().catch((e) => { logger.debug('[WindowManager] edge-swipe disable failed:', e?.message); });
     }
 
@@ -166,15 +173,15 @@ export class WindowManager {
       y: targetDisplay.bounds.y,
       minWidth: config.minWidth,
       minHeight: config.minHeight,
-      fullscreen: isCustomer ? hasMultipleDisplays : (config.fullscreen || false),
+      fullscreen: isCustomer ? useKiosk : (config.fullscreen || false),
       alwaysOnTop: useAlwaysOnTop,
       kiosk: useKiosk,
       frame: isCustomer ? false : true, // Frameless removes the "−" bar on customer display
-      closable: isCustomer ? !hasMultipleDisplays : true,
+      closable: isCustomer ? !useKiosk : true,
       minimizable: !isCustomer,
       maximizable: !isCustomer,
-      movable: isCustomer ? !hasMultipleDisplays : true,
-      resizable: isCustomer ? !hasMultipleDisplays : true,
+      movable: isCustomer ? !useKiosk : true,
+      resizable: isCustomer ? !useKiosk : true,
       skipTaskbar: isCustomer,
       webPreferences: {
         preload: join(__dirname, `../../preload/${config.preload}`),

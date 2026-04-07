@@ -150,7 +150,13 @@ if ($doc.PrinterSettings.IsValid) {
   async reconnect(newPrinterName: string): Promise<void> {
     logger.info(`[ZebraDriver] Reconnecting: "${this.printerName}" → "${newPrinterName}"`);
     this.printerName = newPrinterName;
-    this.connected = true;
+    // Verify the new printer is actually present before marking connected
+    const present = await isWindowsPrinterPresent(newPrinterName);
+    this.connected = present;
+    if (!present) {
+      logger.warn(`[ZebraDriver] Reconnect failed — "${newPrinterName}" not physically present`);
+      return;
+    }
     // Re-detect paper size for the new printer name
     try {
       const paperSize = await ZebraDriver.detectPaperSize(newPrinterName);

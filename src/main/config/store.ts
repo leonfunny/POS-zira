@@ -177,6 +177,10 @@ const store = new Store<AgentConfig>({
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'] },
     customerDisplayEnabled: { type: 'boolean', default: true },
     customerDisplayMonitor: { type: 'number', default: 0 },
+    // When true (default), customer display opens in true fullscreen kiosk even on
+    // single-monitor setups. Set to false on dev machines to keep the old windowed
+    // fallback so the screen isn't fully taken over. Esc and 3-finger swipe-down still exit.
+    customerDisplayForceKiosk: { type: 'boolean', default: true },
     customerDisplayPromoFolder: { type: 'string', default: '' },
     customerDisplayPromoInterval: { type: 'number', default: 5000 },
     customerDisplayIdleTimeout: { type: 'number', default: 120000 },

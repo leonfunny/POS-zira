@@ -26,84 +26,70 @@ export default function IdleView({ t, salonName }: IdleViewProps) {
   const displayName = salonName || translate('customer.brandName');
 
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center overflow-hidden relative">
-      {/* Animated gradient background */}
-      <div
-        className="absolute inset-0 opacity-30"
-        style={{
-          background: 'linear-gradient(135deg, #1a0a2e 0%, #16213e 25%, #0f3460 50%, #1a0a2e 75%, #16213e 100%)',
-          backgroundSize: '400% 400%',
-          animation: 'salonGradient 15s ease infinite',
-        }}
-      />
-
-      {/* Decorative floating shapes */}
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex items-center justify-center overflow-hidden relative">
+      {/* Soft pastel floating shapes */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div
-          className="absolute w-64 h-64 rounded-full opacity-10"
+          className="absolute w-96 h-96 rounded-full opacity-40"
           style={{
-            background: 'radial-gradient(circle, #c084fc 0%, transparent 70%)',
-            top: '10%',
-            right: '15%',
-            animation: 'float 8s ease-in-out infinite',
+            background: 'radial-gradient(circle, rgba(251,113,133,0.25) 0%, transparent 70%)',
+            top: '5%',
+            right: '10%',
+            animation: 'float 9s ease-in-out infinite',
           }}
         />
         <div
-          className="absolute w-48 h-48 rounded-full opacity-8"
+          className="absolute w-80 h-80 rounded-full opacity-40"
           style={{
-            background: 'radial-gradient(circle, #f0abfc 0%, transparent 70%)',
-            bottom: '15%',
-            left: '10%',
-            animation: 'float 10s ease-in-out infinite reverse',
+            background: 'radial-gradient(circle, rgba(253,186,116,0.22) 0%, transparent 70%)',
+            bottom: '8%',
+            left: '8%',
+            animation: 'float 11s ease-in-out infinite reverse',
           }}
         />
         <div
-          className="absolute w-32 h-32 rounded-full opacity-10"
+          className="absolute w-64 h-64 rounded-full opacity-30"
           style={{
-            background: 'radial-gradient(circle, #e879f9 0%, transparent 70%)',
-            top: '50%',
-            left: '60%',
-            animation: 'float 12s ease-in-out infinite 2s',
+            background: 'radial-gradient(circle, rgba(244,114,182,0.25) 0%, transparent 70%)',
+            top: '45%',
+            left: '55%',
+            animation: 'float 13s ease-in-out infinite 2s',
           }}
         />
       </div>
 
       {/* Content */}
-      <div className="text-center z-10">
+      <div className="text-center z-10 px-8">
         {/* Clock */}
-        <p className="text-lg text-slate-500 font-mono tabular-nums mb-8">
+        <p className="text-lg text-slate-400 font-light tabular-nums mb-10 tracking-widest">
           {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </p>
 
-        <h1 className="text-7xl font-bold mb-6 bg-gradient-to-r from-purple-400 via-fuchsia-400 to-pink-400 bg-clip-text text-transparent">
+        <h1 className="text-7xl font-bold mb-6 text-brand-600 tracking-tight">
           {displayName}
         </h1>
 
-        <p className="text-2xl text-slate-400 mb-12">
+        <div className="w-24 h-1 mx-auto bg-gradient-to-r from-transparent via-brand-400 to-transparent mb-6 rounded-full" />
+
+        <p className="text-3xl text-slate-600 font-light mb-14">
           {translate('customer.welcome')}
         </p>
 
         <p
-          className="text-lg text-slate-500"
-          style={{ animation: 'pulse 2.5s ease-in-out infinite' }}
+          className="text-base text-slate-400 font-medium tracking-wide"
+          style={{ animation: 'pulseSoft 2.8s ease-in-out infinite' }}
         >
           {translate('customer.touchToExplore')}
         </p>
       </div>
 
       <style>{`
-        @keyframes salonGradient {
-          0%, 100% { background-position: 0% 50%; }
-          25% { background-position: 100% 0%; }
-          50% { background-position: 100% 100%; }
-          75% { background-position: 0% 100%; }
-        }
         @keyframes float {
           0%, 100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-30px) scale(1.1); }
+          50% { transform: translateY(-24px) scale(1.05); }
         }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
+        @keyframes pulseSoft {
+          0%, 100% { opacity: 0.55; }
           50% { opacity: 1; }
         }
       `}</style>

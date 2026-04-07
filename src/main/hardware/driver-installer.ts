@@ -447,6 +447,71 @@ foreach ($vid in $vids) {
     logger.warn('[DriverInstaller] getPosnetDriverStatus error:', err);
   }
 
+  // Dedup variant printer names: Windows creates "Printer (1)", "Printer (2)"
+  // after driver reinstalls on different ports (e.g. USB001 vs LPT1:).
+  // Only dedup when one name is clearly a "(N)" variant of another.
+  {
+    const VARIANT_RE = /\s+\(\d+\)$/;
+    const baseName = (name: string) => name.replace(VARIANT_RE, '');
+    // Port quality: prefer USB > SERIAL > NETWORK > LPT/virtual
+    const portScore = (port: string) => {
+      const p = (port || '').toUpperCase();
+      if (p.match(/^USB\d+$/)) return 4;
+      if (p.match(/^COM\d+$/)) return 3;
+      if (p.match(/^(WSD|TCPIP|IP_)/)) return 2;
+      return 0; // LPT, PORTPROMPT, nul, unknown — least preferred
+    };
+    // Build lookup: baseName -> indices of devices sharing that base name
+    const baseGroups = new Map<string, number[]>();
+    for (let i = 0; i < devices.length; i++) {
+      const raw = devices[i].windowsPrinterName || devices[i].model || '';
+      const base = baseName(raw).toLowerCase();
+      if (!base) continue;
+      const arr = baseGroups.get(base) || [];
+      arr.push(i);
+      baseGroups.set(base, arr);
+    }
+    const toRemove = new Set<number>();
+    for (const [, indices] of baseGroups) {
+      if (indices.length < 2) continue;
+      // Only dedup if at least one entry has the "(N)" suffix — otherwise
+      // they're genuinely different devices (e.g. two POSNET on different COMs)
+      const hasVariant = indices.some(i => {
+        const raw = devices[i].windowsPrinterName || devices[i].model || '';
+        return VARIANT_RE.test(raw);
+      });
+      if (!hasVariant) continue;
+      // Keep the entry on the best port; tie-break: prefer base name over variant
+      let bestIdx = indices[0];
+      for (let j = 1; j < indices.length; j++) {
+        const idx = indices[j];
+        const bestScore = portScore(devices[bestIdx].portName || devices[bestIdx].comPort || '');
+        const currScore = portScore(devices[idx].portName || devices[idx].comPort || '');
+        if (currScore > bestScore) {
+          toRemove.add(bestIdx);
+          bestIdx = idx;
+        } else if (currScore === bestScore) {
+          // Same port quality — keep the base-named one
+          const bestRaw = devices[bestIdx].windowsPrinterName || devices[bestIdx].model || '';
+          const currRaw = devices[idx].windowsPrinterName || devices[idx].model || '';
+          if (VARIANT_RE.test(bestRaw) && !VARIANT_RE.test(currRaw)) {
+            toRemove.add(bestIdx);
+            bestIdx = idx;
+          } else {
+            toRemove.add(idx);
+          }
+        } else {
+          toRemove.add(idx);
+        }
+      }
+    }
+    if (toRemove.size > 0) {
+      const removed = [...toRemove].map(idx => devices[idx].windowsPrinterName || devices[idx].model);
+      logger.info(`[DriverInstaller] Dedup: removed ${toRemove.size} variant(s): ${removed.join(', ')}`);
+      for (const idx of [...toRemove].sort((a, b) => b - a)) devices.splice(idx, 1);
+    }
+  }
+
   // Classify each device and attach targetType + recommendedProtocol
   for (const dev of devices) {
     const classification = classifyPrinterCategory(dev);

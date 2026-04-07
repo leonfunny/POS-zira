@@ -80,6 +80,8 @@ export class HardwareModule extends BaseModule {
   // (PDF label generator removed — using HTML print + save instead)
   // Health check timer
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  // Last known serial ports — for detecting port changes
+  private lastKnownPorts: string[] = [];
   // Health check backoff: consecutive fail count per printer type key
   private healthCheckFailCount: Map<string, number> = new Map();
   private healthCheckTick = 0;
@@ -141,7 +143,20 @@ export class HardwareModule extends BaseModule {
   registerIpcHandlers(): void {
     ipcMain.handle(IPC_CHANNELS.LIST_PORTS, async () => {
       // Use the same shared utility as the drivers
-      return listSerialPorts();
+      const ports = await listSerialPorts();
+      // Trigger background rescan when port list changes (USB plug/unplug)
+      const sorted = [...ports].sort();
+      const prev = [...this.lastKnownPorts].sort();
+      if (sorted.join(',') !== prev.join(',')) {
+        this.lastKnownPorts = ports;
+        if (this.universalDetection) {
+          logger.info(`[HardwareModule] Port list changed (${prev.join(',')} -> ${sorted.join(',')}), triggering background rescan`);
+          void this.universalDetection.rescanKnown().catch(err =>
+            logger.warn('[HardwareModule] Background rescan after port change failed:', err)
+          );
+        }
+      }
+      return ports;
     });
 
     ipcMain.handle(IPC_CHANNELS.LIST_WINDOWS_PRINTERS, async () => {

@@ -242,59 +242,81 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
   if (step === 'welcome') {
     return (
       <div
-        className="min-h-screen bg-black text-white flex items-center justify-center overflow-hidden relative"
+        className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex items-center justify-center overflow-hidden relative"
         onPointerDown={resetIdleTimer}
       >
-        {/* Background */}
-        <div
-          className="absolute inset-0 opacity-20 pointer-events-none"
-          style={{
-            background: 'linear-gradient(135deg, #1a0a2e 0%, #16213e 50%, #0f3460 100%)',
-          }}
-        />
+        {/* Soft pastel floating shapes */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div
+            className="absolute w-96 h-96 rounded-full opacity-40"
+            style={{
+              background: 'radial-gradient(circle, rgba(218,119,86,0.18) 0%, transparent 70%)',
+              top: '5%',
+              right: '8%',
+              animation: 'float 10s ease-in-out infinite',
+            }}
+          />
+          <div
+            className="absolute w-80 h-80 rounded-full opacity-40"
+            style={{
+              background: 'radial-gradient(circle, rgba(253,186,116,0.20) 0%, transparent 70%)',
+              bottom: '10%',
+              left: '6%',
+              animation: 'float 12s ease-in-out infinite reverse',
+            }}
+          />
+        </div>
 
-        <div className="relative z-10 text-center px-8 max-w-2xl w-full">
+        <div className="relative z-10 text-center px-8 max-w-3xl w-full">
           {/* Salon name */}
-          <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-fuchsia-400 to-pink-400 bg-clip-text text-transparent">
+          <h1 className="text-6xl font-bold mb-4 text-brand-600 tracking-tight">
             {displayName}
           </h1>
-          <p className="text-3xl text-slate-300 mb-16">
+          <div className="w-20 h-1 mx-auto bg-gradient-to-r from-transparent via-brand-400 to-transparent mb-6 rounded-full" />
+          <p className="text-3xl text-slate-600 font-light mb-14">
             {t('checkin.welcome')}
           </p>
 
           {/* Main buttons */}
-          <div className="grid grid-cols-3 gap-4 mb-8">
+          <div className="grid grid-cols-3 gap-5 mb-8">
             <button
               onClick={handleBookingSearch}
-              className="py-8 px-4 rounded-2xl bg-gradient-to-br from-purple-600 to-purple-800 hover:from-purple-500 hover:to-purple-700 transition-all active:scale-95 shadow-lg shadow-purple-900/40"
+              className="py-9 px-4 rounded-2xl bg-white border border-slate-200 hover:border-brand-300 hover:bg-brand-50/60 shadow-sm transition-all active:scale-95"
             >
-              <div className="text-4xl mb-3">&#128203;</div>
-              <div className="text-lg font-semibold">{t('checkin.iHaveBooking')}</div>
+              <div className="text-5xl mb-3">&#128203;</div>
+              <div className="text-lg font-semibold text-slate-800">{t('checkin.iHaveBooking')}</div>
             </button>
             <button
               onClick={() => { resetIdleTimer(); setPhoneDigits(''); setPhoneResults(null); setStep('phone-search'); }}
-              className="py-8 px-4 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 hover:from-blue-500 hover:to-blue-700 transition-all active:scale-95 shadow-lg shadow-blue-900/40"
+              className="py-9 px-4 rounded-2xl bg-white border border-slate-200 hover:border-sky-300 hover:bg-sky-50/60 shadow-sm transition-all active:scale-95"
             >
-              <div className="text-4xl mb-3">&#128222;</div>
-              <div className="text-lg font-semibold">{t('checkin.phoneSearch')}</div>
+              <div className="text-5xl mb-3">&#128222;</div>
+              <div className="text-lg font-semibold text-slate-800">{t('checkin.phoneSearch')}</div>
             </button>
             <button
               onClick={() => { resetIdleTimer(); setStep('walkin'); }}
-              className="py-8 px-4 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 hover:from-emerald-500 hover:to-emerald-700 transition-all active:scale-95 shadow-lg shadow-emerald-900/40"
+              className="py-9 px-4 rounded-2xl bg-white border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/60 shadow-sm transition-all active:scale-95"
             >
-              <div className="text-4xl mb-3">&#128694;</div>
-              <div className="text-lg font-semibold">{t('checkin.walkIn')}</div>
+              <div className="text-5xl mb-3">&#128694;</div>
+              <div className="text-lg font-semibold text-slate-800">{t('checkin.walkIn')}</div>
             </button>
           </div>
 
           {/* Browse services link */}
           <button
             onClick={onBrowseServices}
-            className="px-8 py-4 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white transition-all text-lg"
+            className="px-8 py-4 rounded-xl bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-600 hover:text-brand-600 transition-all text-lg shadow-sm"
           >
             &#128133; {t('checkin.browseServices')}
           </button>
         </div>
+
+        <style>{`
+          @keyframes float {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-22px) scale(1.05); }
+          }
+        `}</style>
       </div>
     );
   }
@@ -307,27 +329,27 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
 
     return (
       <div
-        className="min-h-screen bg-black text-white flex flex-col overflow-hidden"
+        className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col overflow-hidden"
         onPointerDown={resetIdleTimer}
       >
         {/* Header */}
-        <div className="p-6 flex items-center gap-4 border-b border-slate-800">
+        <div className="p-6 flex items-center gap-4 border-b border-slate-200 bg-white/70 backdrop-blur-sm">
           <button
             onClick={() => { setStep('welcome'); setPhoneDigits(''); setPhoneResults(null); }}
-            className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-lg"
+            className="px-4 py-2 rounded-lg bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-700 text-lg shadow-sm transition-colors"
           >
             &#8592; {t('checkin.back')}
           </button>
-          <h2 className="text-2xl font-semibold text-slate-200">{t('checkin.phoneSearch')}</h2>
+          <h2 className="text-2xl font-semibold text-slate-900">{t('checkin.phoneSearch')}</h2>
         </div>
 
         <div className="flex-1 flex gap-6 p-6">
           {/* Keypad */}
           <div className="w-80 shrink-0">
             {/* Display */}
-            <div className="mb-4 px-6 py-4 bg-slate-900 border-2 border-slate-700 rounded-xl text-center">
-              <span className="text-3xl font-mono tracking-wider">
-                {phoneDigits || t('checkin.phonePlaceholder')}
+            <div className="mb-4 px-6 py-4 bg-white border-2 border-slate-200 rounded-xl text-center shadow-sm">
+              <span className="text-3xl font-mono tracking-wider text-slate-900">
+                {phoneDigits || <span className="text-slate-400">{t('checkin.phonePlaceholder')}</span>}
               </span>
             </div>
 
@@ -340,7 +362,7 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
                     <button
                       key="del"
                       onClick={handlePhoneBackspace}
-                      className="py-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-xl font-semibold active:scale-95 transition-all"
+                      className="py-4 rounded-xl bg-white border border-slate-200 hover:border-brand-300 hover:bg-brand-50/60 text-slate-700 text-xl font-semibold active:scale-95 transition-all shadow-sm"
                     >
                       &#9003;
                     </button>
@@ -350,7 +372,7 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
                   <button
                     key={key}
                     onClick={() => handlePhoneDigit(key)}
-                    className="py-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-2xl font-semibold active:scale-95 transition-all"
+                    className="py-4 rounded-xl bg-white border border-slate-200 hover:border-brand-300 hover:bg-brand-50/60 text-slate-800 text-2xl font-semibold active:scale-95 transition-all shadow-sm"
                   >
                     {key}
                   </button>
@@ -361,7 +383,7 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
             {/* Continue as walk-in */}
             <button
               onClick={() => { setStep('walkin'); }}
-              className="w-full mt-4 py-3 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 text-slate-400 hover:text-white text-base transition-all"
+              className="w-full mt-4 py-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-brand-600 text-base transition-all"
             >
               {t('checkin.continueAsWalkIn')}
             </button>
@@ -370,12 +392,12 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
           {/* Results */}
           <div className="flex-1 overflow-y-auto">
             {phoneLoading && (
-              <div className="text-center py-12 text-slate-500">
-                <div className="inline-block w-8 h-8 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+              <div className="text-center py-12 text-slate-400">
+                <div className="inline-block w-8 h-8 border-2 border-brand-300 border-t-brand-600 rounded-full animate-spin" />
               </div>
             )}
             {!phoneLoading && phoneDigits.length >= 4 && matchedBookings.length === 0 && (
-              <div className="text-center py-12 text-slate-500 text-xl">
+              <div className="text-center py-12 text-slate-400 text-xl">
                 {t('checkin.noPhoneMatch')}
               </div>
             )}
@@ -384,20 +406,20 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
                 {matchedBookings.map((b: any) => (
                   <div
                     key={b.id}
-                    className="flex items-center gap-4 p-5 bg-slate-900/80 border border-slate-800 rounded-xl hover:border-blue-600/50 transition-colors"
+                    className="flex items-center gap-4 p-5 bg-white border border-slate-200 hover:border-brand-300 rounded-xl shadow-sm transition-colors"
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="text-xl font-semibold truncate">{b.customerName}</div>
-                      <div className="text-base text-slate-400 mt-1 truncate">
+                      <div className="text-xl font-semibold text-slate-900 truncate">{b.customerName}</div>
+                      <div className="text-base text-slate-600 mt-1 truncate">
                         {b.serviceName} &middot; {b.staffName}
                       </div>
-                      <div className="text-sm text-slate-500 mt-1">
+                      <div className="text-sm text-slate-400 mt-1">
                         {formatTime(b.from)} - {formatTime(b.till)}
                       </div>
                     </div>
                     <button
                       onClick={() => handlePhoneBookingCheckIn(b, phoneDigits)}
-                      className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-semibold text-lg active:scale-95 transition-all shrink-0"
+                      className="px-6 py-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-lg active:scale-95 transition-all shrink-0 shadow-sm"
                     >
                       {t('checkin.imHere')}
                     </button>
@@ -415,18 +437,18 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
   if (step === 'booking-search') {
     return (
       <div
-        className="min-h-screen bg-black text-white flex flex-col overflow-hidden"
+        className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col overflow-hidden"
         onPointerDown={resetIdleTimer}
       >
         {/* Header */}
-        <div className="p-6 flex items-center gap-4 border-b border-slate-800">
+        <div className="p-6 flex items-center gap-4 border-b border-slate-200 bg-white/70 backdrop-blur-sm">
           <button
             onClick={() => { setStep('welcome'); setSearchQuery(''); }}
-            className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-lg"
+            className="px-4 py-2 rounded-lg bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-700 text-lg shadow-sm transition-colors"
           >
             &#8592; {t('checkin.back')}
           </button>
-          <h2 className="text-2xl font-semibold text-slate-200">{t('checkin.searchName')}</h2>
+          <h2 className="text-2xl font-semibold text-slate-900">{t('checkin.searchName')}</h2>
         </div>
 
         {/* Search input */}
@@ -437,19 +459,19 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
             onChange={(e) => { setSearchQuery(e.target.value); resetIdleTimer(); }}
             placeholder={t('checkin.searchPlaceholder')}
             autoFocus
-            className="w-full px-6 py-5 text-2xl bg-slate-900 border-2 border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+            className="w-full px-6 py-5 text-2xl bg-white border-2 border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:border-brand-400 transition-colors shadow-sm"
           />
         </div>
 
         {/* Results */}
         <div className="flex-1 overflow-y-auto px-6 pb-6">
           {loading ? (
-            <div className="text-center py-12 text-slate-500 text-xl">
-              <div className="inline-block w-8 h-8 border-2 border-slate-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <div className="text-center py-12 text-slate-400 text-xl">
+              <div className="inline-block w-8 h-8 border-2 border-brand-300 border-t-brand-600 rounded-full animate-spin mb-4" />
               <p>{t('pos.loading') || 'Loading...'}</p>
             </div>
           ) : filteredBookings.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 text-xl">
+            <div className="text-center py-12 text-slate-400 text-xl">
               {t('checkin.noResults')}
             </div>
           ) : (
@@ -457,20 +479,20 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
               {filteredBookings.map((b) => (
                 <div
                   key={b.id}
-                  className="flex items-center gap-4 p-5 bg-slate-900/80 border border-slate-800 rounded-xl hover:border-purple-600/50 transition-colors"
+                  className="flex items-center gap-4 p-5 bg-white border border-slate-200 hover:border-brand-300 rounded-xl shadow-sm transition-colors"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-xl font-semibold truncate">{b.customerName}</div>
-                    <div className="text-base text-slate-400 mt-1 truncate">
+                    <div className="text-xl font-semibold text-slate-900 truncate">{b.customerName}</div>
+                    <div className="text-base text-slate-600 mt-1 truncate">
                       {b.serviceName} &middot; {b.staffName}
                     </div>
-                    <div className="text-sm text-slate-500 mt-1">
+                    <div className="text-sm text-slate-400 mt-1">
                       {formatTime(b.from)} - {formatTime(b.till)}
                     </div>
                   </div>
                   <button
                     onClick={() => handleBookingCheckIn(b)}
-                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 text-white font-semibold text-lg active:scale-95 transition-all shrink-0"
+                    className="px-6 py-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-lg active:scale-95 transition-all shrink-0 shadow-sm"
                   >
                     {t('checkin.imHere')}
                   </button>
@@ -487,19 +509,19 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
   if (step === 'walkin') {
     return (
       <div
-        className="min-h-screen bg-black text-white flex flex-col items-center justify-center overflow-hidden"
+        className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col items-center justify-center overflow-hidden"
         onPointerDown={resetIdleTimer}
       >
         <div className="w-full max-w-xl px-8">
           {/* Back button */}
           <button
             onClick={() => { setStep('welcome'); setWalkInName(''); }}
-            className="mb-8 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-lg"
+            className="mb-8 px-4 py-2 rounded-lg bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-700 text-lg shadow-sm transition-colors"
           >
             &#8592; {t('checkin.back')}
           </button>
 
-          <h2 className="text-3xl font-semibold text-slate-200 mb-8 text-center">
+          <h2 className="text-3xl font-semibold text-slate-900 mb-8 text-center">
             {t('checkin.walkInName')}
           </h2>
 
@@ -509,13 +531,13 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
             onChange={(e) => { setWalkInName(e.target.value); resetIdleTimer(); }}
             placeholder={t('checkin.walkInPlaceholder')}
             autoFocus
-            className="w-full px-6 py-5 text-2xl bg-slate-900 border-2 border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors mb-6"
+            className="w-full px-6 py-5 text-2xl bg-white border-2 border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-400 transition-colors mb-6 shadow-sm"
           />
 
           <button
             onClick={handleWalkInCheckIn}
             disabled={!walkInName.trim()}
-            className="w-full py-5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xl active:scale-95 transition-all"
+            className="w-full py-5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xl active:scale-95 transition-all shadow-sm"
           >
             {t('checkin.checkInButton')}
           </button>
@@ -528,21 +550,22 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
   if (step === 'upsell' && upsellItems && upsellItems.length > 0) {
     return (
       <div
-        className="min-h-screen bg-black text-white flex flex-col items-center justify-center overflow-hidden relative"
+        className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col items-center justify-center overflow-hidden relative"
         onPointerDown={resetIdleTimer}
       >
+        {/* Soft pastel glow */}
         <div
-          className="absolute inset-0 opacity-10 pointer-events-none"
+          className="absolute inset-0 pointer-events-none opacity-50"
           style={{
-            background: 'linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)',
+            background: 'radial-gradient(circle at 50% 30%, rgba(253,186,116,0.18) 0%, transparent 60%)',
           }}
         />
 
         <div className="relative z-10 w-full max-w-3xl px-8">
-          <h2 className="text-3xl font-bold text-center mb-2 text-slate-200">
+          <h2 className="text-3xl font-bold text-center mb-2 text-slate-900">
             {t('checkin.upsellTitle')}
           </h2>
-          <p className="text-lg text-slate-400 text-center mb-8">
+          <p className="text-lg text-slate-500 text-center mb-8">
             {confirmedData?.customerName}
           </p>
 
@@ -554,10 +577,10 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
                 <button
                   key={item.id}
                   onClick={() => toggleUpsell(item.id)}
-                  className={`p-6 rounded-2xl border-2 text-left transition-all active:scale-95 ${
+                  className={`p-6 rounded-2xl border-2 text-left transition-all active:scale-95 shadow-sm ${
                     isSelected
-                      ? 'border-purple-500 bg-purple-900/40'
-                      : 'border-slate-700 bg-slate-900/60 hover:border-slate-500'
+                      ? 'border-brand-500 bg-brand-50'
+                      : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/40'
                   }`}
                 >
                   {item.imageUrl && (
@@ -567,12 +590,12 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
                       className="w-full h-24 object-cover rounded-lg mb-3"
                     />
                   )}
-                  <div className="text-lg font-semibold truncate">{item.name}</div>
-                  <div className="text-base text-purple-400 mt-1">
+                  <div className="text-lg font-semibold truncate text-slate-900">{item.name}</div>
+                  <div className="text-base text-brand-600 mt-1 font-semibold">
                     {formatPrice(item.price)} PLN
                   </div>
                   {isSelected && (
-                    <div className="mt-2 text-sm text-purple-300 font-medium">
+                    <div className="mt-2 text-sm text-brand-600 font-medium">
                       {t('checkin.upsellAdded')}
                     </div>
                   )}
@@ -585,14 +608,14 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
           <div className="flex gap-4 justify-center">
             <button
               onClick={finishCheckIn}
-              className="px-8 py-4 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white text-lg transition-all"
+              className="px-8 py-4 rounded-xl bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-600 hover:text-brand-600 text-lg transition-all shadow-sm"
             >
               {t('checkin.upsellSkip')}
             </button>
             {selectedUpsells.length > 0 && (
               <button
                 onClick={finishCheckIn}
-                className="px-8 py-4 rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 text-white font-semibold text-lg active:scale-95 transition-all"
+                className="px-8 py-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-lg active:scale-95 transition-all shadow-sm"
               >
                 {t('checkin.checkInButton')} ({selectedUpsells.length})
               </button>
@@ -606,19 +629,19 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
   // Step 3: Confirmation
   if (step === 'confirmed' && confirmedData) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center overflow-hidden relative">
-        {/* Success gradient background */}
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex items-center justify-center overflow-hidden relative">
+        {/* Success glow */}
         <div
-          className="absolute inset-0 opacity-20 pointer-events-none"
+          className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'radial-gradient(circle at center, #059669 0%, transparent 70%)',
+            background: 'radial-gradient(circle at center, rgba(16,185,129,0.12) 0%, transparent 65%)',
           }}
         />
 
         <div className="relative z-10 text-center px-8">
           {/* Animated checkmark */}
           <div
-            className="w-28 h-28 mx-auto mb-8 rounded-full bg-emerald-500/20 border-4 border-emerald-400 flex items-center justify-center"
+            className="w-28 h-28 mx-auto mb-8 rounded-full bg-emerald-50 border-4 border-emerald-400 flex items-center justify-center shadow-sm"
             style={{ animation: 'scaleIn 0.4s ease-out' }}
           >
             <svg
@@ -630,24 +653,24 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
               strokeWidth="3"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="text-emerald-400"
+              className="text-emerald-500"
               style={{ animation: 'drawCheck 0.5s ease-out 0.2s both' }}
             >
               <polyline points="20 6 9 17 4 12" />
             </svg>
           </div>
 
-          <h1 className="text-5xl font-bold text-emerald-400 mb-4">
+          <h1 className="text-5xl font-bold text-emerald-600 mb-4">
             {t('checkin.confirmed')}
           </h1>
 
-          <p className="text-2xl text-slate-300 mb-6">
+          <p className="text-2xl text-slate-700 mb-6">
             {confirmedData.customerName}
           </p>
 
           {/* Booking details */}
           {confirmedData.serviceName && (
-            <p className="text-xl text-slate-400 mb-2">
+            <p className="text-xl text-slate-600 mb-2">
               {confirmedData.serviceName}
             </p>
           )}
@@ -662,7 +685,7 @@ export default function CheckInView({ t, salonName, upsellItems, onBrowseService
             </p>
           )}
 
-          <p className="text-xl text-slate-400 mt-8">
+          <p className="text-xl text-slate-500 mt-8">
             {t('checkin.pleaseWait')}
           </p>
         </div>

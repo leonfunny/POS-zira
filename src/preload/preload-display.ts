@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     searchByPhone: (phone: string) => ipcRenderer.invoke('display:search-by-phone', phone),
     // Staff intentional exit — bypasses kiosk lock
     close: () => ipcRenderer.invoke('display:close'),
+    // Fire-and-forget debug log forwarder (renderer → main → combined.log).
+    // Used by CustomerApp to prove pointer events fire across the IPC boundary,
+    // since rlog only writes to the renderer DevTools console.
+    debugLog: (msg: string) => ipcRenderer.send('display:debug-log', msg),
   },
 });
 

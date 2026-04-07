@@ -47,7 +47,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
   const safeIndex = currentIndex < stableImages.length ? currentIndex : 0;
 
   return (
-    <div className="w-full h-screen bg-black relative overflow-hidden">
+    <div className="w-full h-screen bg-gradient-to-br from-white via-rose-50 to-amber-50 relative overflow-hidden">
       <img
         key={safeIndex}
         src={stableImages[safeIndex]}
@@ -64,7 +64,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
             <div
               key={i}
               className={`w-2.5 h-2.5 rounded-full transition-colors duration-300 ${
-                i === safeIndex ? 'bg-white' : 'bg-white/30'
+                i === safeIndex ? 'bg-brand-500' : 'bg-slate-300'
               }`}
             />
           ))}

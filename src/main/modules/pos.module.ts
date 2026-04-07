@@ -77,11 +77,27 @@ export class PosModule extends BaseModule {
 
   registerIpcHandlers(): void {
     // State & dispatch
-    ipcMain.handle('pos:get-state', () => this.posStore?.getState());
+    ipcMain.handle('pos:get-state', (e) => {
+      const state = this.posStore?.getState();
+      logger.info(`[PosModule] IPC pos:get-state from window="${e.sender.getTitle?.() ?? 'unknown'}" → mode=${state?.display?.mode}`);
+      return state;
+    });
     ipcMain.handle('pos:dispatch', (_e, action) => { this.posStore?.dispatch(action); return { success: true }; });
 
     // Customer display touch
-    ipcMain.handle('display:touch', () => { this.posStore?.handleTouch(); return { success: true }; });
+    ipcMain.handle('display:touch', (e) => {
+      logger.info(`[PosModule] IPC display:touch from window="${e.sender.getTitle?.() ?? 'unknown'}"`);
+      this.posStore?.handleTouch();
+      return { success: true };
+    });
+
+    // Renderer-side debug log forwarder for the customer display window.
+    // Fire-and-forget (ipcRenderer.send → ipcMain.on), no response required.
+    // This is the only way we can see renderer-level events in combined.log,
+    // because rlog (src/renderer/utils/logger.ts) only writes to devtools console.
+    ipcMain.on('display:debug-log', (e, msg: string) => {
+      logger.info(`[CustomerDisplay-Renderer] (${e.sender.getTitle?.() ?? 'unknown'}) ${msg}`);
+    });
 
     // Customer display: service request
     ipcMain.handle('display:request-service', (_e, serviceId: string) => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType } from '../../shared/types';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
@@ -51,9 +51,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [name, setName] = useState(config?.name || 'Zira AI');
   const [autoStart, setAutoStart] = useState(config?.autoStart ?? true);
   const [copied, setCopied] = useState(false);
-  const [savedBanner, setSavedBanner] = useState(false);
   const [showChangeSalonConfirm, setShowChangeSalonConfirm] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
 
   // API Key connection state
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -91,6 +89,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [customerDisplayEnabled, setCustomerDisplayEnabled] = useState(config?.customerDisplayEnabled ?? false);
   const [customerDisplayMonitor, setCustomerDisplayMonitor] = useState(config?.customerDisplayMonitor ?? 0);
+  const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useState(config?.customerDisplayForceKiosk ?? true);
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
   const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
   const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
@@ -219,6 +218,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosLanguage(config.posLanguage || '');
       setCustomerDisplayEnabled(config.customerDisplayEnabled ?? false);
       setCustomerDisplayMonitor(config.customerDisplayMonitor ?? 0);
+      setCustomerDisplayForceKiosk(config.customerDisplayForceKiosk ?? true);
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
@@ -240,56 +240,73 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   }, [config]);
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    await window.electronAPI.setAutoStart(autoStart);
+  // ─── Auto-save: debounced save on any config state change ─────────────────
+  const configSyncedRef = useRef(false);  // true once initial config has been synced to state
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Mark config as synced after the config→state useEffect runs
+  useEffect(() => {
+    if (config) {
+      // Defer so the setState batch from the sync effect settles first
+      const id = setTimeout(() => { configSyncedRef.current = true; }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [config]);
+
+  const buildConfigPayload = useCallback((): Partial<AgentConfig> => {
     const posConfig = {
       posEnabled,
       posMode,
       posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
       customerDisplayEnabled,
       customerDisplayMonitor,
+      customerDisplayForceKiosk,
       customerDisplayPromoFolder: promoFolder,
       customerDisplayPromoInterval: promoInterval,
       customerDisplayIdleTimeout: idleTimeout,
     };
 
     if (multiPrinterMode) {
-      // Multi-printer mode config (use new dictionary)
-      onConfigChange({
-        name,
-        autoStart,
-        language,
+      return {
+        name, autoStart, language,
         ...posConfig,
-        printers,  // NEW: Use dictionary
-        // Clear legacy multi-printer settings
+        printers,
         receiptPrinter: { ...defaultPrinterConfig, enabled: false },
         labelPrinter: { ...defaultPrinterConfig, enabled: false },
-      });
-    } else {
-      // Legacy single printer config
-      onConfigChange({
-        name,
-        printerPort: selectedPort,
-        printerProtocol: protocol,
-        printerBaudRate: baudRate,
-        zebraPrinter,
-        labelWidth,
-        labelHeight,
-        autoStart,
-        language,
-        ...posConfig,
-        // Clear multi-printer settings when using legacy mode
-        printers: {},  // Clear dictionary
-        receiptPrinter: { ...defaultPrinterConfig, enabled: false },
-        labelPrinter: { ...defaultPrinterConfig, enabled: false },
-      });
+      };
     }
-    setIsSaving(false);
-    setSavedBanner(true);
-    setTimeout(() => setSavedBanner(false), 3000);
-  };
+    return {
+      name,
+      printerPort: selectedPort,
+      printerProtocol: protocol,
+      printerBaudRate: baudRate,
+      zebraPrinter, labelWidth, labelHeight,
+      autoStart, language,
+      ...posConfig,
+      printers: {},
+      receiptPrinter: { ...defaultPrinterConfig, enabled: false },
+      labelPrinter: { ...defaultPrinterConfig, enabled: false },
+    };
+  }, [
+    name, autoStart, language, multiPrinterMode, printers,
+    selectedPort, protocol, baudRate, zebraPrinter, labelWidth, labelHeight,
+    posEnabled, posMode, posLanguage,
+    customerDisplayEnabled, customerDisplayMonitor, customerDisplayForceKiosk,
+    promoFolder, promoInterval, idleTimeout,
+  ]);
+
+  // Debounced auto-save whenever config-bearing state changes
+  useEffect(() => {
+    if (!configSyncedRef.current) return;  // skip initial config→state sync
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      const payload = buildConfigPayload();
+      onConfigChange(payload);
+      window.electronAPI.setAutoStart(autoStart).catch(() => {});
+    }, 600);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [buildConfigPayload, autoStart, onConfigChange]);
+  // ─── End auto-save ───────────────────────────────────────────────────────────
 
   // Helper functions for updating printer configs (legacy)
   const updateReceiptPrinter = (updates: Partial<PrinterConfig>) => {
@@ -317,13 +334,21 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   };
 
   const handleRefreshPorts = async () => {
-    const availablePorts = await window.electronAPI.listPorts();
-    setPorts(availablePorts);
+    try {
+      const availablePorts = await window.electronAPI.listPorts();
+      setPorts(availablePorts);
+    } catch (err) {
+      console.error('Failed to refresh ports:', err);
+    }
   };
 
   const handleRefreshWindowsPrinters = async () => {
-    const printers = await window.electronAPI.listWindowsPrinters();
-    setWindowsPrinters(printers);
+    try {
+      const printers = await window.electronAPI.listWindowsPrinters();
+      setWindowsPrinters(printers);
+    } catch (err) {
+      console.error('Failed to refresh Windows printers:', err);
+    }
   };
 
   const handleCopyMachineId = async () => {
@@ -749,21 +774,23 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               <p className="text-xs text-slate-400">No printers detected — connect a printer and try again</p>
             )}
             {posnetStatus.devices.map((dev, i) => {
-              const isPosnet = dev.brand === 'POSNET' || dev.vid === '1424';
-              const isZebra = dev.brand === 'Zebra' || dev.vid === '0A5F';
-              const isDymo = dev.brand === 'DYMO';
-              const isBusy = settingUpDevice === `${dev.brand}-${i}`;
-              const model = (dev.model || '').toLowerCase();
+              const brand = dev.brand || 'Unknown';
+              const model = dev.model || 'Unknown';
+              const isPosnet = brand === 'POSNET' || dev.vid === '1424';
+              const isZebra = brand === 'Zebra' || dev.vid === '0A5F';
+              const isDymo = brand === 'DYMO';
+              const isBusy = settingUpDevice === `${brand}-${i}`;
+              const modelLower = model.toLowerCase();
 
               // Smart type classification (mirrors backend classifyPrinterCategory)
               const isLabelPrinter = isZebra || isDymo ||
-                ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => model.includes(p));
+                ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => modelLower.includes(p));
               const isThermalReceipt = !isPosnet && !isLabelPrinter && (
-                ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(dev.brand) ||
-                ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => model.includes(p))
+                ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(brand) ||
+                ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => modelLower.includes(p))
               );
               const isA4Printer = !isPosnet && !isLabelPrinter && !isThermalReceipt &&
-                ['HP', 'Canon', 'Samsung'].includes(dev.brand) && dev.connectionType !== 'SERIAL';
+                ['HP', 'Canon', 'Samsung'].includes(brand) && dev.connectionType !== 'SERIAL';
 
               // Determine target type
               const targetType: PrinterTypeValue = isPosnet ? 'RECEIPT' :
@@ -781,9 +808,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               );
 
               return (
-                <div key={i} className="bg-slate-50 rounded-lg px-3 py-2 text-xs space-y-1.5">
+                <div key={`${dev.vid || brand}-${dev.comPort || dev.windowsPrinterName || dev.portName || i}`} className="bg-slate-50 rounded-lg px-3 py-2 text-xs space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <div className="font-medium text-slate-700">{dev.brand} — {dev.model}</div>
+                    <div className="font-medium text-slate-700">{brand} — {model}</div>
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                       dev.connectionType === 'USB' ? 'bg-blue-100 text-blue-700' :
                       dev.connectionType === 'SERIAL' ? 'bg-purple-100 text-purple-700' :
@@ -808,7 +835,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
                   {/* Per-device actions */}
                   {(() => {
-                    const devKey = `${dev.brand}-${dev.model}-${i}`;
+                    const devKey = `${brand}-${model}-${i}`;
                     const isRefreshing = refreshingDevice === devKey;
                     const refreshMsg = refreshDeviceResult?.key === devKey ? refreshDeviceResult : null;
                     return (
@@ -1624,6 +1651,33 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               </div>
             )}
 
+            {/* Force Fullscreen Kiosk */}
+            {customerDisplayEnabled && (
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-600">
+                    {t('settings.customerDisplayForceKiosk')}
+                  </label>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {t('settings.customerDisplayForceKioskDesc')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerDisplayForceKiosk(!customerDisplayForceKiosk)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 mt-1 ${
+                    customerDisplayForceKiosk ? 'bg-brand-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      customerDisplayForceKiosk ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
+
             {/* Promo Images Folder */}
             {customerDisplayEnabled && (
               <div>
@@ -2224,30 +2278,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         </div>
       </div>
 
-      {/* Save Banner */}
-      {savedBanner && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-          <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          {t('settings.saved')}
-        </div>
-      )}
-
-      {/* Save Button */}
-      <button
-        onClick={handleSave}
-        disabled={isSaving}
-        className="w-full px-4 py-3 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-      >
-        {isSaving && (
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-        )}
-        {t('settings.save')}
-      </button>
+      {/* Auto-save indicator */}
+      <p className="text-center text-xs text-slate-400">{t('settings.autoSaveHint')}</p>
     </div>
   );
 }

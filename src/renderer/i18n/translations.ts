@@ -89,6 +89,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Save Settings',
     'settings.saved': 'Settings saved!',
+    'settings.autoSaveHint': 'Changes are saved automatically',
     'settings.navigationTabs': 'Navigation Tabs',
     'settings.navigationTabsDesc': 'Choose which tabs appear in the sidebar',
     'update.title': 'App Updates',
@@ -111,6 +112,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Open Customer Display',
     'settings.customerDisplayMonitor': 'Display Monitor',
     'settings.customerDisplayMonitorDesc': 'Select which monitor to use for the customer display',
+    'settings.customerDisplayForceKiosk': 'Force fullscreen kiosk',
+    'settings.customerDisplayForceKioskDesc': 'Open the customer display as true fullscreen kiosk even on a single monitor (hides taskbar, locks the window). Press Esc or 3-finger swipe-down from the top to exit.',
     'settings.monitorPrimary': 'Primary monitor',
     'settings.monitorSecondary': 'Monitor',
 
@@ -1006,6 +1009,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Lưu cài đặt',
     'settings.saved': 'Đã lưu cài đặt!',
+    'settings.autoSaveHint': 'Thay đổi được lưu tự động',
     'settings.navigationTabs': 'Thanh điều hướng',
     'settings.navigationTabsDesc': 'Chọn tab hiển thị trong thanh bên',
     'update.title': 'Cập nhật ứng dụng',
@@ -1028,6 +1032,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Mở màn hình khách hàng',
     'settings.customerDisplayMonitor': 'Màn hình hiển thị',
     'settings.customerDisplayMonitorDesc': 'Chọn màn hình để hiển thị cho khách hàng',
+    'settings.customerDisplayForceKiosk': 'Bắt buộc fullscreen kiosk',
+    'settings.customerDisplayForceKioskDesc': 'Mở màn hình khách dạng fullscreen kiosk thật sự ngay cả khi chỉ có 1 màn hình (ẩn taskbar, khoá cửa sổ). Nhấn Esc hoặc vuốt 3 ngón từ trên xuống để thoát.',
     'settings.monitorPrimary': 'Màn hình chính',
     'settings.monitorSecondary': 'Màn hình',
 
@@ -1898,6 +1904,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Ayarları Kaydet',
     'settings.saved': 'Ayarlar kaydedildi!',
+    'settings.autoSaveHint': 'Değişiklikler otomatik olarak kaydedilir',
     'settings.navigationTabs': 'Gezinme Sekmeleri',
     'settings.navigationTabsDesc': 'Kenar çubuğunda hangi sekmelerin görüneceğini seçin',
     'update.title': 'Uygulama Güncellemeleri',
@@ -1920,6 +1927,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Müşteri Ekranını Aç',
     'settings.customerDisplayMonitor': 'Ekran Monitörü',
     'settings.customerDisplayMonitorDesc': 'Müşteri ekranı için hangi monitörün kullanılacağını seçin',
+    'settings.customerDisplayForceKiosk': 'Tam ekran kiosk\'u zorla',
+    'settings.customerDisplayForceKioskDesc': 'Tek monitörlü sistemlerde bile müşteri ekranını gerçek tam ekran kiosk olarak açar (görev çubuğunu gizler, pencereyi kilitler). Çıkmak için Esc veya yukarıdan aşağı 3 parmak kaydırma kullanın.',
     'settings.monitorPrimary': 'Ana monitör',
     'settings.monitorSecondary': 'Monitör',
 
@@ -2790,6 +2799,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': '保存设置',
     'settings.saved': '设置已保存！',
+    'settings.autoSaveHint': '更改会自动保存',
     'settings.navigationTabs': '导航标签',
     'settings.navigationTabsDesc': '选择侧边栏显示的标签',
     'update.title': '应用更新',
@@ -2812,6 +2822,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': '打开客户显示屏',
     'settings.customerDisplayMonitor': '显示器',
     'settings.customerDisplayMonitorDesc': '选择用于客户显示的监视器',
+    'settings.customerDisplayForceKiosk': '强制全屏 Kiosk 模式',
+    'settings.customerDisplayForceKioskDesc': '即使只有一台显示器,也以真正的全屏 Kiosk 模式打开客户显示屏(隐藏任务栏并锁定窗口)。按 Esc 或从顶部三指下滑可退出。',
     'settings.monitorPrimary': '主显示器',
     'settings.monitorSecondary': '显示器',
 
@@ -3682,6 +3694,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Зберегти налаштування',
     'settings.saved': 'Налаштування збережено!',
+    'settings.autoSaveHint': 'Зміни зберігаються автоматично',
     'settings.navigationTabs': 'Навігаційні вкладки',
     'settings.navigationTabsDesc': 'Виберіть вкладки для відображення на бічній панелі',
     'update.title': 'Оновлення застосунку',
@@ -3704,6 +3717,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Відкрити дисплей клієнта',
     'settings.customerDisplayMonitor': 'Монітор дисплея',
     'settings.customerDisplayMonitorDesc': 'Виберіть монітор для дисплея клієнта',
+    'settings.customerDisplayForceKiosk': 'Примусовий повноекранний кіоск',
+    'settings.customerDisplayForceKioskDesc': 'Відкривати дисплей клієнта як справжній повноекранний кіоск навіть на одному моніторі (приховує панель задач, блокує вікно). Натисніть Esc або проведіть трьома пальцями зверху вниз для виходу.',
     'settings.monitorPrimary': 'Основний монітор',
     'settings.monitorSecondary': 'Монітор',
 
@@ -4574,6 +4589,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Сохранить настройки',
     'settings.saved': 'Настройки сохранены!',
+    'settings.autoSaveHint': 'Изменения сохраняются автоматически',
     'settings.navigationTabs': 'Навигационные вкладки',
     'settings.navigationTabsDesc': 'Выберите вкладки для отображения на боковой панели',
     'update.title': 'Обновления приложения',
@@ -4596,6 +4612,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Открыть дисплей покупателя',
     'settings.customerDisplayMonitor': 'Монитор дисплея',
     'settings.customerDisplayMonitorDesc': 'Выберите монитор для дисплея покупателя',
+    'settings.customerDisplayForceKiosk': 'Принудительный полноэкранный киоск',
+    'settings.customerDisplayForceKioskDesc': 'Открывать дисплей покупателя как настоящий полноэкранный киоск даже на одном мониторе (скрывает панель задач, блокирует окно). Нажмите Esc или проведите тремя пальцами сверху вниз для выхода.',
     'settings.monitorPrimary': 'Основной монитор',
     'settings.monitorSecondary': 'Монитор',
 
@@ -5466,6 +5484,7 @@ export const translations: Record<Language, Record<string, string>> = {
     // Save
     'settings.save': 'Zapisz ustawienia',
     'settings.saved': 'Ustawienia zapisane!',
+    'settings.autoSaveHint': 'Zmiany są zapisywane automatycznie',
     'settings.navigationTabs': 'Zakładki nawigacji',
     'settings.navigationTabsDesc': 'Wybierz zakładki widoczne na pasku bocznym',
     'update.title': 'Aktualizacje aplikacji',
@@ -5488,6 +5507,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.openCustomerDisplay': 'Otwórz ekran klienta',
     'settings.customerDisplayMonitor': 'Monitor ekranu',
     'settings.customerDisplayMonitorDesc': 'Wybierz monitor do wyświetlania ekranu klienta',
+    'settings.customerDisplayForceKiosk': 'Wymuś tryb kiosku pełnoekranowego',
+    'settings.customerDisplayForceKioskDesc': 'Otwiera ekran klienta jako prawdziwy pełnoekranowy kiosk nawet przy jednym monitorze (ukrywa pasek zadań, blokuje okno). Naciśnij Esc lub przesuń trzema palcami z góry na dół, aby wyjść.',
     'settings.monitorPrimary': 'Monitor główny',
     'settings.monitorSecondary': 'Monitor',
 

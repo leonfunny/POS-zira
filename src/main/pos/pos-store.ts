@@ -190,7 +190,15 @@ function posReducer(state: PosState, action: PosAction): PosState {
       } else {
         items = [...state.cart.items, p];
       }
-      return { ...state, cart: recalcCart({ ...state.cart, items }), display: { ...state.display, mode: 'cart' } };
+      // Don't yank the customer display out of an active self-service flow.
+      // If the customer is in checkin/interactive on the second screen, leave
+      // them there — the cart preview only appears once they're idle/promo or
+      // already viewing the cart.
+      const currentMode = state.display.mode;
+      const nextMode = currentMode === 'checkin' || currentMode === 'interactive'
+        ? currentMode
+        : 'cart';
+      return { ...state, cart: recalcCart({ ...state.cart, items }), display: { ...state.display, mode: nextMode } };
     }
 
     case 'cart/removeItem': {
@@ -319,7 +327,11 @@ export class PosStore {
   }
 
   dispatch(action: PosAction): void {
-    logger.debug(`[PosStore] Dispatch: ${action.type}`);
+    logger.info(`[PosStore] Dispatch: ${action.type}`);
+    // Invalidate any in-flight async transitions (e.g. transitionToPromoOrIdle)
+    // so they don't clobber the state we're about to set. Without this, an idle
+    // timer that fires mid-dispatch can overwrite a freshly-added cart with idle.
+    this.transitionVersion++;
     this.state = posReducer(this.state, action);
     this.broadcast();
 
@@ -375,10 +387,12 @@ export class PosStore {
     this.loadServiceCategories();
 
     // If salon mode (has salon name or service categories), go to checkin first
-    const hasSalonData = !!(this.state.display.salonName || (this.state.display.serviceCategories?.length ?? 0) > 0);
+    const salonName = this.state.display.salonName;
+    const categoryCount = this.state.display.serviceCategories?.length ?? 0;
+    const hasSalonData = !!(salonName || categoryCount > 0);
     const targetMode = hasSalonData ? 'checkin' : 'interactive';
 
-    logger.info(`[PosStore] Customer touch detected, entering ${targetMode} mode`);
+    logger.info(`[PosStore] Customer touch detected → ${targetMode} (salonName=${salonName ?? '∅'}, serviceCategories=${categoryCount}). If both are empty, salon-mode sync may be missing.`);
     this.state = {
       ...this.state,
       display: { ...this.state.display, mode: targetMode },
@@ -548,7 +562,9 @@ export class PosStore {
   registerWindow(win: BrowserWindow): void {
     if (!this.windows.includes(win)) {
       this.windows.push(win);
-      logger.info(`[PosStore] Window registered (total: ${this.windows.length})`);
+      let title = '(unknown)';
+      try { title = win.getTitle(); } catch {}
+      logger.info(`[PosStore] Window registered: title="${title}" (total: ${this.windows.length})`);
     }
     this.resetIdleTimer();
   }
@@ -577,6 +593,7 @@ export class PosStore {
   }
 
   private broadcast(): void {
+    logger.info(`[PosStore] broadcast() → ${this.windows.length} windows, mode=${this.state.display.mode}, cartItems=${this.state.cart.items.length}`);
     for (const win of this.windows) {
       if (!win.isDestroyed()) {
         win.webContents.send('pos:state-changed', this.state);

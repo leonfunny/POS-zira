@@ -1,6 +1,37 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-07 (session 35 — printer detection hardening + health-check UI + reinit resilience) | Read this file at the start of every new session.
+> Last updated: 2026-04-07 (session 38 — customer display force-kiosk on single monitor + cart auto-jump fix + salon-data diagnostic log, BUILT, awaiting user test) | Read this file at the start of every new session.
+
+## Session 38 — Customer display: true kiosk + restored flow visibility
+
+**User report:** "What is Display On for? Before, the customer display had phone entry / services / payment like check-in. Now it only shows payment. Also it isn't truly fullscreen — I can drag it with one finger and the taskbar is still visible."
+
+**Diagnosis (with file refs):**
+- The customer window was a fully-formed state machine (idle/promo/checkin/interactive/cart/thankyou) — see `src/renderer/windows/customer/CustomerApp.tsx` and `src/main/pos/pos-store.ts`. It is the **customer-facing twin** of the main check-in tab, intended for a second monitor.
+- `pos-store.ts` `cart/addItem` reducer was forcing `display.mode = 'cart'` unconditionally — so the moment the operator added an item, the customer window jumped past idle/checkin/interactive into the cart view. The pre-cart flow was effectively unreachable in the operator's normal workflow.
+- `window-manager.ts:147-189` had a deliberate single-monitor fallback that disabled `kiosk`, `fullscreen`, `alwaysOnTop`, and made the customer window movable+resizable. On the user's single-monitor dev box this matched the screenshot exactly.
+
+**Changes:**
+- `src/main/config/store.ts:178` — added `customerDisplayForceKiosk: boolean` config (default `true`)
+- `src/shared/types.ts:218` — added the field to `AgentConfig`
+- `src/main/windows/window-manager.ts:147-189` — replaced `hasMultipleDisplays` gating with `useKiosk = isCustomer && (hasMultipleDisplays || forceKiosk)`. Customer display is now true kiosk + fullscreen + alwaysOnTop + frameless + non-movable + non-resizable on single monitor when the flag is on. Esc and 3-finger swipe-down still exit (existing handlers in `CustomerApp.tsx:69-104` and `window-manager.ts:225-246`).
+- `src/main/pos/pos-store.ts:193` — `cart/addItem` no longer yanks the customer display out of `checkin`/`interactive`. Cart view only auto-shows from `idle`/`promo`/`cart`.
+- `src/main/pos/pos-store.ts:381-389` — `handleTouch` now logs `salonName` and `serviceCategories.length` so we can see at runtime whether salon-mode data is being synced (when both are empty, the customer falls back to the static welcome card instead of the check-in flow).
+- `src/renderer/components/Settings.tsx:1620+` — added "Force fullscreen kiosk" toggle in the Customer Display section (state, load, save, dependency wire-up).
+- `src/renderer/i18n/translations.ts` — added `settings.customerDisplayForceKiosk` + description in all 7 languages (en/vi/tr/zh/uk/ru/pl).
+- `src/renderer/windows/customer/CustomerApp.tsx:1-15` — added a 14-line header comment explaining the state machine and dual-screen intent.
+
+**Build status:** `npm run build:main` clean, `npx tsc -p tsconfig.renderer.json --noEmit` clean.
+
+**Pending verification (user must run live):**
+1. Settings → "Force fullscreen kiosk" ON (default) → click Open Customer Display → expect window covers entire screen, taskbar hidden, can't drag with one finger
+2. Press Esc → window closes (escape hatch works)
+3. Reopen → 3-finger swipe-down from top → window closes (staff exit gesture works)
+4. Toggle "Force kiosk" OFF → reopen → expect old windowed (legacy fallback still works for dev machines)
+5. With salon-mode synced (salonName + service categories), tap idle screen → expect CheckInView; tap "Browse services" → expect SalonInteractiveView; ring up an item from POS while customer is in interactive → customer should stay in interactive (not jump to cart)
+6. Tail combined.log on touch → see new diagnostic log showing salon-data values
+
+
 
 ---
 
@@ -49,7 +80,7 @@ Auto-activation rules in `CLAUDE.md`. Key triggers: UI → `ui-ux-pro-max` | Aut
 
 ---
 
-## Build History (compacted, sessions 1–32)
+## Build History (compacted, sessions 1–35)
 
 | Sessions | Area | Summary |
 |----------|------|---------|
@@ -63,78 +94,224 @@ Auto-activation rules in `CLAUDE.md`. Key triggers: UI → `ui-ux-pro-max` | Aut
 | 21–22 | Audit | Full app audit (`AUDIT_REPORT.md`); see Carried Forward Issues |
 | 28 | Security | DPAPI encryption for credentials via safeStorage; dedicated IPC handlers; SET_CONFIG blocks sensitive fields |
 | 29 | POS rework | Pill-button category nav, live clock + lang picker in POS header, hidden HID barcode capture, Z-report blik/transfer totals |
-| 30 | Universal printer detection | New `src/main/hardware/detection/` module — `UniversalDeviceRegistry` (11 brands, persists to `printer-registry.json`), `UniversalDetectionService` (`detectAll/rescanKnown/recoverDevice`), per-driver `recoverPrinter()`, `runHealthCheck()`, 4 IPC channels |
-| 31 | Detection optimization | Dynamic VID list from BRAND_PATTERNS, shared `probeEscPosPort()` in port-utils, exponential health-check backoff, backend `classifyPrinterCategory()` for UI, batched PowerShell, stable `usb:VID_PID` IDs, `RecoverableDriver` interface, recovery race-condition + dead-code fixes |
-| 32 | 11-bug printer fix pass | True presence detection (`Get-PnpDevice -PresentOnly`), driver `connect()` requires hardware verify, `printRaw()` pre/post-flight queue check, `ALLOWED_PROTOCOLS_BY_TYPE` matrix, A4 path uses `Out-Printer` instead of ESC/POS, per-device "Refresh" button. NOT shipped — ghost printers still appeared in test |
-| 33 | Ghost filter v3 | Switched Section 1 from CSV to PRT/PNP line-prefix parser; added `PNPDeviceID` lookup against `Get-PnpDevice -PresentOnly` hashset. Caught most ghosts but Section 2 still resurrected dropped names via HP USB hub PnP hits, and the dropdown bypassed the filter entirely |
+| 30 | Universal detection | New `src/main/hardware/detection/` module — UniversalDeviceRegistry (11 brands), UniversalDetectionService, per-driver recovery, health-check, 4 IPC channels |
+| 31 | Detection optimization | Dynamic VID list, shared `probeEscPosPort()`, exponential health-check backoff, `classifyPrinterCategory()`, `RecoverableDriver` interface |
+| 32–34 | Ghost-printer filter v1→v4 | Iterative fix: true presence via `Get-PnpDevice -PresentOnly`, `ALLOWED_PROTOCOLS_BY_TYPE` matrix, per-device Refresh, Section 2 class allowlist, ghost-name memory, dropdown sources from filtered query, `listSerialPorts()` PnP+Service+WMI intersection |
+| 35 | Detection hardening | ACPI COM1 motherboard filter, `LIST_WINDOWS_PRINTERS` no-fallthrough on empty, `reinitializePrinter()` always-register (fix check-in print regression), `onDeviceStatus` auto-refresh listener |
 
-### Session 35 — printer detection hardening + health-check UI + reinit resilience (2026-04-07)
+### Session 36 — printer system audit + settings auto-save (2026-04-07)
 
-**User tested all 5 printers through full plug/unplug/swap cycle. Phases 1–4 passed. Phase 5 (health-check auto-recovery) and a check-in print regression found.**
+**1. Printer bug verification:** All 12 bugs from `printerbug.md` verified against codebase — 11/12 confirmed fixed in sessions 32–35. Bug #12 (duplicate Zebra printer names from driver reinstall) was partially unfixed.
 
-**Three bugs fixed:**
+**2. Dedup fix for variant printer names (driver-installer.ts):**
+- Initial attempt keyed on `(brand, port)` — wrong, because "ZDesigner GK420d (1)" on LPT1: has a different port than "ZDesigner GK420d" on USB001
+- Second attempt keyed on `(brand, baseName)` — wrong, would falsely dedup two identical-model printers on different COM ports
+- Final fix: only dedup when at least one entry has a `(N)` suffix (Windows reinstall artifact). Two identical-model printers on different ports are preserved. Prefers USB > SERIAL > NETWORK > LPT port quality.
 
-1. **`LIST_WINDOWS_PRINTERS` fallthrough to ghosts (hardware.module.ts)** — When `getPosnetDriverStatus()` returned 0 present devices (correct — nothing plugged in), the IPC handler fell through to the legacy unfiltered `listWindowsPrintersDetailed()`, resurrecting ghost printers in the dropdown. **Fix:** Return empty list directly when the filtered query succeeds but finds 0 devices. Legacy fallback only triggers if `getPosnetDriverStatus()` throws.
+**3. Deep audit (3 parallel agents, ~63 issues found):** Fixed the 6 real bugs:
 
-2. **COM1 motherboard phantom (port-utils.ts)** — `listSerialPorts()` v2's PnP+Service+WMI intersection still passed COM1 because it's a real ACPI motherboard serial header (`ACPI\PNP0501\1`) with `Service=Serial` and a `Win32_SerialPort` row. The port appears "present" even with nothing connected. **Fix:** PowerShell now also emits each port's `InstanceId`. JS filter drops any port whose InstanceId starts with `ACPI\` (motherboard headers). Only USB-connected ports are kept. Log: `Dropped phantom COM port(s): COM1(acpi-motherboard)`.
+| Fix | File | Issue |
+|-----|------|-------|
+| `flushStuckPrintJobs()` removed "Spooling" from stuck-status regex | port-utils.ts | Was deleting active in-progress print jobs |
+| `reconnect()` now verifies hardware presence | zebra-driver.ts, thermal-driver.ts | Was blindly setting `connected=true` without checking |
+| `RecoverableDriver` interface updated | detection/types.ts | `reconnect()` signature: `void → void \| Promise<void>` |
+| React `key={i}` → stable identity key | Settings.tsx | Ghost renders on device list reorder |
+| Null-safe `dev.brand`/`dev.model` | Settings.tsx | Prevented "null — undefined" display |
+| try-catch on `handleRefreshPorts/Printers` | Settings.tsx | Unhandled IPC errors crashed component |
 
-3. **`reinitializePrinter()` silently lost drivers on transient connect failure (hardware.module.ts)** — When a config save (e.g., changing label dimensions) triggered `reinitializePrinter()`, if `connect()` failed (printer briefly unavailable, PowerShell timeout, etc.), the driver was never added to `this.printers`. The health check couldn't recover it since it only monitors registered drivers. Test print still worked because `testPrinterByConfig` creates a fresh driver. **Root cause of "check-in print stopped after label size change".** **Fix:** Driver is now always registered in `this.printers` regardless of `connect()` result. Health check (30s) detects when the printer becomes available and marks it connected.
+**4. Auto-rescan on port change (hardware.module.ts):**
+- `LIST_PORTS` handler now compares with `lastKnownPorts` and triggers background `rescanKnown()` when ports change (USB plug/unplug)
 
-4. **Settings UI didn't reflect health-check changes (Settings.tsx)** — Health check ran correctly in backend, sent `DEVICE_STATUS` events, but Settings.tsx never listened. Printer lists only refreshed on manual "Detect Printers" click. **Fix:** Added `onDeviceStatus` listener that auto-refreshes COM ports, Windows printers, and detection status whenever the health check detects a change.
+**5. Settings auto-save (Settings.tsx):**
+- Removed Save button and "Settings saved!" banner
+- Added debounced auto-save (600ms) via `useEffect` + `useCallback` watching all config state
+- Uses `configSyncedRef` to skip initial config→state hydration (prevents save-on-mount)
+- Settings that already auto-saved (SSH, remote access, AI, tabs) are unchanged — they fire immediately via inline `onConfigChange()`
+- Added `settings.autoSaveHint` translation ("Changes are saved automatically") in all 7 languages
+- Subtle footer text replaces the Save button
 
-**Files changed:**
-- `src/main/modules/hardware.module.ts` — `LIST_WINDOWS_PRINTERS` no-fallthrough + `reinitializePrinter()` always-register
-- `src/main/hardware/port-utils.ts` — `listSerialPorts()` v3: ACPI filter via InstanceId
-- `src/renderer/components/Settings.tsx` — `onDeviceStatus` auto-refresh listener
+**Files changed in s36:**
+- `src/main/hardware/driver-installer.ts` — dedup variant printer names
+- `src/main/hardware/port-utils.ts` — remove "Spooling" from flush regex
+- `src/main/hardware/zebra/zebra-driver.ts` — `reconnect()` verifies presence
+- `src/main/hardware/thermal/thermal-driver.ts` — `reconnect()` verifies presence
+- `src/main/hardware/detection/types.ts` — `RecoverableDriver.reconnect()` signature
+- `src/main/modules/hardware.module.ts` — `lastKnownPorts` + auto-rescan
+- `src/renderer/components/Settings.tsx` — auto-save, React keys, null safety, error handling
+- `src/renderer/i18n/translations.ts` — `settings.autoSaveHint` (7 languages)
 
-**Build:** `npx tsc -p tsconfig.main.json` ✅, `npx tsc -p tsconfig.renderer.json --noEmit` ✅
-**Status:** NOT COMMITTED. User confirmed all features working after restart.
+**Build:** `tsc main` ✅, `tsc renderer` ✅, `vite build:renderer` ✅
+**Status:** NOT COMMITTED. Ready for user testing.
 
-### Session 34 — ghost-printer filter v4 + dropdown filter + COM phantom guard (2026-04-07)
+### Session 37 — Customer Display sync fix + light theme redesign (2026-04-07, IN PROGRESS, NOT TESTED, NOT COMMITTED) [updated: CheckInView + SalonInteractiveView redesigned, builds clean] [REOPENED: race fixes were NOT root cause — see "Debug findings" below]
 
-**User reported after rebooting + testing v3:**
-- Detect Printers card still showed `HP — USB2.1 Hub` with Windows name `HP LaserJet Pro MFP M426-M427 PCL 6` (a ghost reanimated as a USB hub)
-- Labels/A4 Windows Printer dropdown still listed `ZDesigner GK420d`, `OneNote`, `HP M426`, `HP M402d`, `Fax` — none physically attached
-- COM Port dropdown still defaulted/listed `COM1`
+**User report:** POS tab (Retail mode) → click **Display On** → customer window opens but stuck at Welcome/Idle. Adding a product does NOT switch it to Cart. Previously worked, broke recently. Also wants UI redesigned to light/rose/pastel matching POS main.
 
-**Three root causes found in v3:**
+**Setup:** 1 monitor (dev), Retail mode. Main window renders POSLayout inside POS tab (App.tsx:386), uses preload.ts (not preload-pos.ts).
 
-1. **Section 2 ghost resurrection (driver-installer.ts)** — `getPosnetDriverStatus()` Section 2 scans `Get-PnpDevice -PresentOnly` for any device whose VID matches a printer brand. HP's VID `03F0` covers HP keyboards, USB hubs, composite devices — NOT just printers. The PowerShell scan emitted every match (including a HP USB hub with bus desc `USB2.1 Hub`), then `findPrinterForVid` happily attached it to the still-listed-but-just-filtered HP LaserJet spooler ghost, creating a "real" device card with `model="USB2.1 Hub"` and `windowsPrinterName="HP LaserJet Pro MFP M426-M427 PCL 6"`. **Fix:**
-   - PowerShell now restricts Section 2 to `Class -in (Ports, Printer, USBPRINT)` plus `Class=USB` ONLY when bus desc matches printer keywords. HP keyboards/hubs are dropped at the source.
-   - JS now tracks every spooler printer name in `allSpoolerNames`, and every dropped one in `ghostSpoolerNames`. Section 2 refuses any PnP hit whose `findPrinterForVid` match is in `ghostSpoolerNames` (resurrection guard) and refuses any non-POSNET PnP hit that has no spooler match at all.
+**Plan file:** `C:\Users\pc\.claude\plans\quizzical-spinning-newell.md`
 
-2. **`LIST_WINDOWS_PRINTERS` IPC bypassed the filter (hardware.module.ts)** — the dropdown was hitting raw `listWindowsPrintersDetailed()`, which is an unfiltered `Get-Printer` dump. Now the IPC handler calls `getPosnetDriverStatus()` first and returns only `windowsPrinterName` values from devices it kept (i.e. v4-filtered). Falls back to the legacy raw list (with extra virtual-name regex) only if the filtered query returns 0.
+**Investigation summary:** IPC chain looks correct on paper — POSLayout dispatch → `window.electronAPI.pos.dispatch` → `ipcMain.handle('pos:dispatch')` → `posStore.dispatch(action)` → reducer sets `display.mode='cart'` → `broadcast()` → `webContents.send('pos:state-changed')` to both main window and customer window. All channel strings match. Main window registered in orchestrator.ts:408, customer in window-manager.ts:222. Single posStore instance in container.
 
-3. **`listSerialPorts()` could leak phantom COM1 (port-utils.ts)** — `Get-PnpDevice -PresentOnly -Class Ports` on some Win10 installs returns the legacy COM1 entry as "present" even when no hardware backs it (Service field empty). v2 of the function now requires BOTH (a) the PnP entry has a non-empty `Service` field AND (b) the port also appears in `Get-CimInstance Win32_SerialPort` (sourced from the live hardware tree, not the SERIALCOMM registry). Phantoms drop out of the intersection. Loud log line `Dropped phantom COM port(s): COM1(svc=none,wmi=false)` so we can confirm what was filtered.
+**Two real races identified and fixed:**
 
-**Files changed in s34:**
-- `src/main/hardware/driver-installer.ts` — PS Section 2 class allowlist + ghost-name memory + 3 resurrection guards in JS Section 2 (`KEEPING/FILTERED/REFUSING/dropping` log markers)
-- `src/main/modules/hardware.module.ts` — `LIST_WINDOWS_PRINTERS` handler now sources from `getPosnetDriverStatus()` first
-- `src/main/hardware/port-utils.ts` — `listSerialPorts()` v2: PnP+Service intersected with `Win32_SerialPort`
+1. **`dispatch()` clobbered by in-flight `transitionToPromoOrIdle()`** — `pos-store.ts:321-338`. The idle timer (120s default) fires `transitionToPromoOrIdle()` which is async (awaits `promoLoader.getImages()`). If a user-dispatch fires during that await, reducer sets `display.mode='cart'`, broadcasts, BUT the in-flight promise then resolves, sees `token === this.transitionVersion` (nothing bumped it), and overwrites state to `{ mode: 'idle' }` — clobbering the cart. Fix: `dispatch()` now does `this.transitionVersion++` at the top, invalidating any in-flight async transitions.
 
-**Build status:** `npx tsc -p tsconfig.main.json` ✅. Verified in `dist/main/...`:
-- `filter v4` marker ✅
-- `REFUSING PnP hit` / `Section 2: dropping` guards ✅
-- `Dropped phantom COM` ✅
-- `filtered via getPosnetDriverStatus` ✅
+2. **CustomerApp initial state overwrites fresher broadcast** — `CustomerApp.tsx:125-135`. Original code called `getState().then(setState)` BEFORE `onStateChanged(setState)`. If broadcast arrives between the two, listener fires setState(new), then getState's promise resolves and calls setState(initial) — stale initial wins. **This is the most likely root cause of "stuck at welcome" because it matches the exact symptom: first broadcast after mount gets lost.** Fix: attach listener FIRST, then getState uses functional setState (`prev ?? s`) so it only applies if nothing newer already arrived.
 
-**Status:** NOT COMMITTED. User to restart Electron and re-test. Discord screenshots requested after.
+**Diagnostic logs added (still in place, remove after verification):**
+- `pos-store.ts` `broadcast()` → logs window count + mode + cart items
+- `pos-store.ts` `registerWindow()` → logs window title
+- `pos-store.ts` `dispatch()` → promoted from `logger.debug` to `logger.info` so it appears in combined.log regardless of NODE_ENV
+- `CustomerApp.tsx` useEffect → logs mount, initial state, each state change
 
-**If anything still leaks:**
-- Look for log line `Result: N real device(s); M ghost(s) filtered out of K spooler entries` — confirms s34 code path is hit
-- Look for `Section 2: REFUSING PnP hit` lines — confirms resurrection guard fired
-- Look for `Dropped phantom COM port(s)` — confirms intersection guard fired
-- If COM1 STILL appears: PnP+WMI both return COM1, meaning the user's machine genuinely has a real COM1 (probably motherboard built-in or virtual COM driver service like vSPE/com0com). Not a code bug.
+**Important log config finding:** Logger is `level: 'debug'` only when `NODE_ENV === 'development'`. `npm run start` doesn't set NODE_ENV, so production logger filters debug. That's why combined.log never shows Dispatch lines. Anything you want to see during runtime must be `logger.info` or higher.
 
-### Sessions 32–34 — ghost-printer filter v1→v4 (compacted, 2026-04-07)
+**UI redesign — Light/rose/pastel (partial):**
 
-Iterative fix for ghost/phantom printers appearing in Settings. Key milestones:
-- **v1 (s32):** True presence detection via `Get-PnpDevice -PresentOnly`, `ALLOWED_PROTOCOLS_BY_TYPE` matrix, per-device Refresh button. Ghosts still leaked.
-- **v2 (s33):** Rewrote filter decision tree by port type. CSV header bug found. HP VID too coarse.
-- **v3 (s33):** Eliminated CSV → line-prefix parser. PNPDeviceID lookup against `Get-PnpDevice -PresentOnly` hashset. Dropdown and Section 2 resurrection still leaked.
-- **v4 (s34):** Section 2 class allowlist (`Ports,Printer,USBPRINT`), ghost-name memory, `LIST_WINDOWS_PRINTERS` IPC sources from `getPosnetDriverStatus()`, `listSerialPorts()` v2 (PnP+Service+WMI intersection).
+| File | Status | Notes |
+|---|---|---|
+| `IdleView.tsx` | ✅ DONE | `bg-gradient-to-br from-rose-50 via-white to-amber-50`, pastel floating shapes (rose/amber/pink), salon name `text-brand-600`, clock tabular-nums slate-400, subtle divider accent |
+| `CartView.tsx` | ✅ DONE | White bg inherited, item rows `border-b border-slate-100`, prices `text-slate-900`, total `text-brand-600 text-6xl`, upsell cards white with brand-500 buttons, `text-brand-500` header label uppercase tracking |
+| `ThankYouView.tsx` | ✅ DONE | Emerald check circle (was `✓` text), total `text-brand-600`, QR code in white rounded card with shadow |
+| `PromoView.tsx` | ✅ DONE | Bg gradient; dot indicators `bg-brand-500`/`bg-slate-300` |
+| `CustomerApp.tsx` | ✅ DONE | Root `bg-gradient-to-br from-white via-rose-50 to-amber-50`, payment status bar `bg-brand-50 border-t border-brand-200 text-brand-700`, ErrorBoundary fallback light theme, interactive fallback light theme |
+| `CheckInView.tsx` | ✅ DONE | All 6 steps repainted: welcome (3 white-card action buttons — brand/sky/emerald accents, pastel shapes + brand-400 divider), phone-search (white keypad buttons, brand-400 focus, white result cards), booking-search (white input, brand focus, white result cards), walkin (white input, emerald-400 focus, emerald-500 submit), upsell (white cards with brand-500 selected state + brand-50 bg), confirmed (rose-amber bg, emerald-50 check circle, emerald-600 heading). Back buttons all white/border-slate-200/shadow-sm. |
+| `SalonInteractiveView.tsx` | ✅ DONE | Category grid: white cards `bg-white border-slate-200 hover:border-brand-300`, heading `text-brand-600`, arrow slate-300 → brand-500 on hover. Service list: white cards with `bg-rose-50` image placeholder, price `text-brand-600`, "Requested!" state emerald-50/emerald-600/border-emerald-200, active buttons brand-500. Header has white/70 backdrop-blur. |
 
-All superseded by s35 fixes (ACPI COM1 filter, no-fallthrough empty list, reinit resilience).
+**Brand color tokens:** Verified `brand-*` palette is rose-tone in `tailwind.config.js` / `index.css`. Safe to use `brand-500/600/700` + `rose-50` + `amber-50` + `slate-*` without introducing new palette.
+
+**Builds:** `npm run build:main` ✅, `npm run build:renderer` ✅. 1859 modules, 6.54s. No TS errors after CheckInView + SalonInteractiveView rewrites.
+
+**Not done / next session TODO:**
+1. **TEST the fix** — `scripts/kill-electron.ps1` → `npm run dev` → `npm run start` → login → POS tab → Retail mode → Display On → add product → customer window MUST switch to CartView. Watch logs for `[PosStore] broadcast() → 2 windows, mode=cart` and `[CustomerApp] state changed mode= cart items= 1`.
+2. If test confirms fix, **remove all diagnostic logs** added this session:
+   - `pos-store.ts` `broadcast()` — the `logger.info('[PosStore] broadcast() → ...')` line
+   - `pos-store.ts` `registerWindow()` — the `logger.info('[PosStore] registerWindow: ...')` line
+   - `pos-store.ts` `dispatch()` — revert `logger.info` → `logger.debug` on the Dispatch line
+   - `CustomerApp.tsx` useEffect — 3 `rlog.info('[CustomerApp] ...')` lines (mount, initial state, state changed)
+3. Screenshot all customer display modes (idle, checkin welcome/phone/walkin/upsell/confirmed, interactive category grid + service list, cart, thankyou, promo). **User said NO Discord send this session** — local save only to `C:\Users\pc\Pictures\zira-screenshots\`.
+4. Commit everything as one atomic feat commit referencing s37.
+
+**Design tokens used in s37 redesign (reference for future customer-display work):**
+- Root bg: `bg-gradient-to-br from-rose-50 via-white to-amber-50` (amber/rose pastel, matches POS tab)
+- Cards: `bg-white border border-slate-200 hover:border-brand-300 rounded-xl shadow-sm`
+- Primary buttons: `bg-brand-500 hover:bg-brand-600 text-white shadow-sm`
+- Inputs: `bg-white border-2 border-slate-200 focus:border-brand-400 placeholder-slate-400`
+- Headings: `text-brand-600 tracking-tight` (brand is terracotta #da7756 — NOT pink/rose despite name in prior handoff)
+- Dividers/accent: `bg-gradient-to-r from-transparent via-brand-400 to-transparent` (hairline w-20 h-1)
+- Semantic colors kept: emerald for success/walk-in, sky for phone (hover accent only), rose-50 for image placeholders
+- Spinners: `border-brand-300 border-t-brand-600` (replaces `border-slate-500 border-t-transparent`)
+- Header bars: `border-b border-slate-200 bg-white/70 backdrop-blur-sm`
+
+**Brand palette finding:** `tailwind.config.js` defines `brand-*` AND `purple-*` as the SAME terracotta palette (#da7756 base). So class names like `text-purple-400` in legacy code would also render terracotta. Custom `slate-*` is a warm stone-gray, not the default Tailwind blue-gray.
+
+**Known side-finding (out of scope):** Only RetailTemplate has Customer Display button via `<QuickActions>`. SalonTemplate / B2BTemplate / RestaurantTemplate do NOT. This is a real regression but user didn't ask to fix it this session — ask before touching.
+
+**Files modified s37 (uncommitted):**
+- `src/main/pos/pos-store.ts` — transitionVersion++ in dispatch, diagnostic logs in broadcast/registerWindow, dispatch log bumped to INFO
+- `src/main/modules/pos.module.ts` — IPC trace logs on `pos:get-state` and `display:touch` handlers + new `display:debug-log` ipcMain.on listener (renderer→main log forwarder). **BUILT.**
+- `src/preload/preload-display.ts` — added `display.debugLog(msg)` fire-and-forget forwarder via `ipcRenderer.send('display:debug-log', ...)`. **BUILT → dist/preload/preload-display.js is 2132 bytes, verified contains `debugLog`.**
+- `src/shared/electron.d.ts` — added optional `display.debugLog?(msg)` type declaration.
+- `src/renderer/windows/customer/CustomerApp.tsx` — listener-before-getState race fix, functional setState, light theme root + error boundary + interactive fallback. Added `debugLog` calls on mount (reports electronAPI + display keys), on every state change, on initial getState, and on handleScreenTouch (with typeof(display.touch) + promise resolve/reject logging). **BUILT.**
+- `src/renderer/windows/customer/views/IdleView.tsx` — full light repaint
+- `src/renderer/windows/customer/views/CartView.tsx` — full light repaint
+- `src/renderer/windows/customer/views/ThankYouView.tsx` — full light repaint
+- `src/renderer/windows/customer/views/PromoView.tsx` — bg + dot indicator colors
+- `src/renderer/windows/customer/views/CheckInView.tsx` — full light repaint across all 6 steps (welcome, phone-search, booking-search, walkin, upsell, confirmed)
+- `src/renderer/windows/customer/views/SalonInteractiveView.tsx` — full light repaint (category grid + service list)
+
+---
+
+#### s37 REOPENED — Debug findings after user test (2026-04-07 ~16:30)
+
+User tested s37 build, sent screenshot: customer window opens, shows light-theme IdleView correctly (redesign confirmed working), BUT tapping the customer display does NOT promote out of idle, and adding products in POS tab does NOT switch the customer display to cart. The two "race fixes" were NOT the root cause.
+
+**Evidence read from `%APPDATA%/zira-ai/logs/combined.log`:**
+
+```
+16:27:25 Window registered: Customer Display (total: 2)
+16:27:31 Escape pressed — window unregistered (total: 1)
+16:27:40 Dispatch: display/setMode   ← Display On button works
+16:27:40 broadcast → 1 windows, mode=promo
+16:27:40 broadcast → 1 windows, mode=idle   ← transitionToPromoOrIdle fallback
+...
+16:29:05 Customer Display registered (total: 2)   ← window opens
+16:29:26 unregistered (total: 1)                  ← user escaped
+16:29:30 Dispatch: display/setMode ×3 (3 rapid clicks of Display On)
+16:29:36 Customer Display registered (total: 2)   ← reopens 6s later
+16:29:46 unregistered                             ← user closed
+```
+
+**Finding #1 — `display:touch` IPC is NEVER reaching main:**
+No `[PosStore] Customer touch detected` entries appear in combined.log at any time — that log line lives inside `PosStore.handleTouch()` (pos-store.ts:385). This means either:
+  (a) the renderer's `onPointerDown={handleScreenTouch}` never fires, OR
+  (b) `window.electronAPI.display?.touch?.()` is undefined / no-op on the customer window, OR
+  (c) IPC invoke is reaching main but hitting an early return.
+We cannot tell (a) vs (b) vs (c) without main-side logging on the handler itself — which is why IPC trace logs were added to pos.module.ts (see next finding).
+
+**Finding #2 — Renderer logger does NOT forward to combined.log:**
+`src/renderer/utils/logger.ts` is a plain `console.info/debug/warn/error` wrapper. It has NO IPC bridge to main. So all `rlog.info('[CustomerApp] ...')` lines in CustomerApp.tsx only appear in the customer window's DevTools console — which is invisible to remote debugging. Those diagnostic lines were dead code for our purposes. Either (a) rewrite rlog to forward via `ipcRenderer.send('renderer-log', ...)` + add a main listener that appends to combined.log, or (b) do all cross-process debugging from main-side logs only. **Chose (b) for this investigation** via the new IPC trace logs.
+
+**Finding #3 — Preload IS built correctly:**
+Checked `dist/preload/preload-display.js` (1812 bytes, built 16:21) exists. `window-manager.ts:41` loads `preload-display.js` for the customer window. `preload-display.ts:24` exposes `display.touch: () => ipcRenderer.invoke('display:touch')`. Channel strings match. On paper, the chain should work. So the failure is either in the renderer click path or in the IPC invoke failing silently.
+
+**Finding #4 — `cart/addItem` dispatch never fires (secondary mystery):**
+Between 16:21:57 and 16:31:36 (the full app run), the ONLY Dispatch entries are `display/setMode` (from the Display On button). NOT ONE `cart/addItem` dispatch. Yet user claimed to "add products". Possible explanations:
+- User was in Salon mode, not Retail — Salon product click might go through a different path (e.g. requires staff selection first) and never reach the store dispatch
+- User didn't actually add products during testing (just opened Display On and tapped the customer screen)
+- Product clicks in the active template are bound to a local handler that was recently refactored and lost the `dispatch` prop
+- Worth checking `SalonTemplate.tsx:110` (has `cart/addItem`), `RetailTemplate.tsx:106` (has it), `RestaurantTemplate.tsx:99`, `B2BTemplate.tsx:99` — verify the onClick path actually reaches `handleAddProduct` and that `handleAddProduct` actually calls the `dispatch` prop from POSLayout's `usePosStore()` hook.
+
+**Finding #5 — PosStore is NOT being instantiated twice:**
+Only one `[PosStore] Initialized` log entry per app start. Single store, single state. Not a container / DI issue.
+
+**IPC trace logs added (pos.module.ts:80-88, NOT REBUILT):**
+```ts
+ipcMain.handle('pos:get-state', (e) => {
+  const state = this.posStore?.getState();
+  logger.info(`[PosModule] IPC pos:get-state from window="${e.sender.getTitle?.() ?? 'unknown'}" → mode=${state?.display?.mode}`);
+  return state;
+});
+...
+ipcMain.handle('display:touch', (e) => {
+  logger.info(`[PosModule] IPC display:touch from window="${e.sender.getTitle?.() ?? 'unknown'}"`);
+  this.posStore?.handleTouch();
+  return { success: true };
+});
+```
+
+**Next-session TODO (DO NOT SKIP — this is the active debug flow):**
+
+0. **ALREADY DONE (mid-session):** `npm run build:main` ✅, `npm run build:renderer` ✅ — both the IPC trace logs and the renderer→main debug forwarder are compiled into dist/. No rebuild needed unless you change code.
+1. `scripts/kill-electron.ps1` → `npm run dev` → `npm run start` (or just `npm run start` if dev is running)
+2. User test steps:
+   a. Login → POS tab → Retail mode (or whichever they tested last time — confirm via Settings)
+   b. Click Display On → customer window opens
+   c. **Tap the customer display screen (click anywhere on "Welcome!" area)** — this is the failing interaction
+   d. Go to POS tab → click any product to add to cart — this is the secondary failing interaction
+   e. Close app or Escape customer window
+3. Read `%APPDATA%/zira-ai/logs/combined.log` — look for these lines (new log prefixes this round):
+   - `[CustomerDisplay-Renderer] (Customer Display) mount — electronAPI keys=[...] display keys=[...]` → proves preload loaded AND lists every exposed method. If `display keys` doesn't contain `touch` → preload bug. If entire line missing → preload didn't load at all.
+   - `[CustomerDisplay-Renderer] (Customer Display) state changed mode=... items=...` → proves onStateChanged listener is firing in the customer window.
+   - `[CustomerDisplay-Renderer] (Customer Display) handleScreenTouch fired mode=idle typeof(display.touch)=function` → proves the pointerdown event fired AND display.touch is a function (not undefined).
+   - `[PosModule] IPC display:touch from window="Customer Display"` → proves the IPC reached the main process.
+   - `[CustomerDisplay-Renderer] (Customer Display) display.touch() invoke resolved` → proves the invoke completed.
+   - `[PosStore] Customer touch detected, entering checkin/interactive mode` → proves handleTouch did NOT early-return on the mode guard.
+   - `[PosStore] Dispatch: cart/addItem` → proves POS tab product click reaches the store (only appears if user clicked a product in POS tab).
+4. Diagnose based on which logs appear / don't appear (decision tree, top to bottom):
+   - NO `mount — electronAPI keys` line at all → preload-display.js not loaded. Check dist/preload/preload-display.js exists, check window-manager.ts preload path.
+   - `mount` line appears BUT `display keys` doesn't contain `touch` → preload export mismatch. Grep preload-display.ts for `touch:`.
+   - `mount` line OK but NO `handleScreenTouch fired` when user taps → React pointer handler not bound. Check z-index / pointer-events on IdleView. Maybe the wrap div collapses to 0 size.
+   - `handleScreenTouch fired` but `typeof(display.touch)=undefined` → preload contextBridge truncated the object; somehow display.touch got stripped.
+   - `handleScreenTouch fired typeof=function` but NO `IPC display:touch` reaches main → sandbox error, contextIsolation issue, or main IPC handler not registered. Check for `invoke rejected` log.
+   - `IPC display:touch` reaches main but NO `Customer touch detected` → handleTouch early-returned on mode guard. State mode is NOT idle/promo when tap arrives. Check logged mode in preceding broadcast.
+   - `Customer touch detected` appears but customer window still shows idle → onStateChanged listener not firing. Check for `state changed mode=` log with new mode after the touch.
+   - No `cart/addItem` ever appears → user didn't actually click a product in POS tab during test, OR they were in Salon mode (click path also dispatches, just verify they tested this).
+6. **Do NOT revert the two race fixes** (transitionVersion++ in pos-store.ts, listener-before-getState in CustomerApp.tsx) — they are defensive against a real but rare race and don't cause harm. Leave them.
+7. **Do NOT remove the IPC trace logs until the bug is understood.** They are cheap (info level, one line per IPC call) and essential for remote debugging.
+
+**Reminder for next session:** Discord-only operator, so all status must be sent via `mcp__plugin_discord_discord__reply` (chat_id `1488850360742182922`). No terminal output reaches the user.
 
 ### Test scripts
 - `scripts/test-print-label-electron.js` — real print test: `npx electron scripts/test-print-label-electron.js`
@@ -142,9 +319,6 @@ All superseded by s35 fixes (ACPI COM1 filter, no-fallthrough empty list, reinit
 ---
 
 ## Carried Forward Issues
-
-### Settings — unfixed
-- **Inconsistent save behavior** — some settings instant-save (tab visibility, check-in toggles, AI, remote, SSH), others require Save button (language, printer config, POS). UX inconsistency, needs design decision.
 
 ### From AUDIT_REPORT.md (sessions 21-22)
 - **Remove/redesign `run_command` AI tool** — `zira-ai.ts:1131` — Full RCE
@@ -160,6 +334,11 @@ All superseded by s35 fixes (ACPI COM1 filter, no-fallthrough empty list, reinit
 - **P2 #10:** Auto-updater missing error handling
 - **P3 #12:** Hooks returning unvalidated `unsub`
 - **P4:** No linting, `asar: false`, no code signing, stale files in repo
+
+### From session 36 audit (not fixed — low priority)
+- **Dedup edge case:** If user connects two physically identical printers (same brand, same model, neither has `(N)` suffix), dedup won't catch them — but they're genuinely separate devices, so this is correct
+- **`detectPaperSize()` reads DEVMODE** — Returns Windows driver cached value, not actual calibration result. Needs ZPL status query to fix properly.
+- **No offline/ghost badge in UI** — Backend tracks device status but Settings doesn't render visual indicator. Moot since ghosts are now filtered out entirely.
 
 ### Environment issues (not code fixes)
 - Python security deps not installed

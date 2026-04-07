@@ -43,36 +43,37 @@ export default function SalonInteractiveView({
   // Category grid view
   if (!selectedCategory) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-900 to-black text-white flex flex-col">
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col">
         {/* Header */}
-        <div className="pt-8 pb-4 text-center">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-400 via-fuchsia-400 to-pink-400 bg-clip-text text-transparent">
+        <div className="pt-10 pb-6 text-center">
+          <h1 className="text-5xl font-bold text-brand-600 tracking-tight">
             {salonName || t('customer.brandName')}
           </h1>
-          <p className="text-xl text-slate-400 mt-2">
+          <div className="w-20 h-1 mx-auto bg-gradient-to-r from-transparent via-brand-400 to-transparent mt-4 mb-4 rounded-full" />
+          <p className="text-xl text-slate-600 font-light">
             {t('customer.explore') || 'Explore our services'}
           </p>
         </div>
 
         {/* Category grid */}
-        <div className="flex-1 px-8 pb-8 overflow-y-auto">
-          <div className="grid grid-cols-2 gap-4 max-w-3xl mx-auto">
+        <div className="flex-1 px-8 pb-10 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-5 max-w-3xl mx-auto">
             {categories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat)}
-                className="group relative bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 hover:border-purple-500/40 rounded-2xl p-6 text-left transition-all duration-200 active:scale-[0.98]"
+                className="group relative bg-white border border-slate-200 hover:border-brand-300 hover:bg-brand-50/40 rounded-2xl p-6 text-left transition-all duration-200 active:scale-[0.98] shadow-sm"
               >
-                <div className="text-4xl mb-3">
+                <div className="text-5xl mb-3">
                   {getCategoryEmoji(cat.name)}
                 </div>
-                <h3 className="text-xl font-semibold text-white group-hover:text-purple-300 transition-colors">
+                <h3 className="text-xl font-semibold text-slate-900 group-hover:text-brand-600 transition-colors">
                   {cat.name}
                 </h3>
                 <p className="text-sm text-slate-500 mt-1">
                   {cat.services.length} {cat.services.length === 1 ? 'service' : 'services'}
                 </p>
-                <div className="absolute top-4 right-4 text-slate-600 group-hover:text-purple-400 transition-colors text-xl">
+                <div className="absolute top-4 right-4 text-slate-300 group-hover:text-brand-500 transition-colors text-xl">
                   →
                 </div>
               </button>
@@ -85,37 +86,37 @@ export default function SalonInteractiveView({
 
   // Service list view for selected category
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 to-black text-white flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex flex-col">
       {/* Header with back button */}
-      <div className="pt-6 pb-4 px-8 flex items-center gap-4">
+      <div className="pt-6 pb-4 px-8 flex items-center gap-4 border-b border-slate-200 bg-white/70 backdrop-blur-sm">
         <button
           onClick={() => setSelectedCategory(null)}
-          className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+          className="p-2 rounded-lg bg-white border border-slate-200 hover:border-brand-300 hover:bg-slate-50 text-slate-600 hover:text-brand-600 transition-colors shadow-sm"
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
         <div>
-          <h2 className="text-2xl font-bold text-white">{selectedCategory.name}</h2>
-          <p className="text-sm text-slate-500">
+          <h2 className="text-2xl font-bold text-slate-900">{selectedCategory.name}</h2>
+          <p className="text-sm text-slate-400">
             {t('customer.back') || 'Back'} · {t('customer.categories') || 'Categories'}
           </p>
         </div>
       </div>
 
       {/* Service list */}
-      <div className="flex-1 px-8 pb-8 overflow-y-auto">
+      <div className="flex-1 px-8 pb-10 pt-6 overflow-y-auto">
         <div className="max-w-3xl mx-auto space-y-3">
           {selectedCategory.services.map((svc) => {
             const isRequested = requested.has(svc.id);
             return (
               <div
                 key={svc.id}
-                className="bg-slate-800/60 border border-white/10 rounded-xl p-4 flex items-center gap-4"
+                className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4 shadow-sm"
               >
                 {/* Image or placeholder */}
-                <div className="w-16 h-16 rounded-lg overflow-hidden bg-slate-700 flex items-center justify-center shrink-0">
+                <div className="w-16 h-16 rounded-lg overflow-hidden bg-rose-50 flex items-center justify-center shrink-0">
                   {svc.imageUrl ? (
                     <img src={svc.imageUrl} alt="" className="w-full h-full object-cover" draggable={false} />
                   ) : (
@@ -125,13 +126,13 @@ export default function SalonInteractiveView({
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-medium text-white truncate">{svc.name}</h3>
+                  <h3 className="text-lg font-medium text-slate-900 truncate">{svc.name}</h3>
                   <div className="flex items-center gap-3 mt-1">
-                    <span className="text-lg font-semibold text-purple-300">
+                    <span className="text-lg font-semibold text-brand-600 tabular-nums">
                       {(svc.price / 100).toFixed(2)} zł
                     </span>
                     {svc.duration > 0 && (
-                      <span className="text-sm text-slate-500">
+                      <span className="text-sm text-slate-400">
                         {formatDuration(svc.duration)}
                       </span>
                     )}
@@ -142,10 +143,10 @@ export default function SalonInteractiveView({
                 <button
                   onClick={() => handleRequest(svc.id)}
                   disabled={isRequested}
-                  className={`px-4 py-2.5 rounded-lg text-sm font-medium shrink-0 transition-all ${
+                  className={`px-4 py-2.5 rounded-lg text-sm font-medium shrink-0 transition-all shadow-sm ${
                     isRequested
-                      ? 'bg-green-600/40 text-green-300 cursor-default'
-                      : 'bg-purple-600 hover:bg-purple-500 text-white active:scale-95'
+                      ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 cursor-default'
+                      : 'bg-brand-500 hover:bg-brand-600 text-white active:scale-95'
                   }`}
                 >
                   {isRequested
