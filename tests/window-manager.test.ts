@@ -1,0 +1,316 @@
+import { EventEmitter } from 'events';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+type DisplayLike = {
+  id: number;
+  label: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+};
+
+const screenListeners = new Map<string, Set<(...args: any[]) => void>>();
+const ipcHandlers = new Map<string, (...args: any[]) => unknown>();
+const ipcListeners = new Map<string, Set<(...args: any[]) => void>>();
+const createdWindows: MockBrowserWindow[] = [];
+
+let displays: DisplayLike[] = [];
+let primaryDisplay: DisplayLike;
+let configValues: Record<string, any> = {};
+
+class MockWebContents extends EventEmitter {
+  owner: MockBrowserWindow;
+  sentMessages: Array<{ channel: string; payload: any }> = [];
+
+  constructor(owner: MockBrowserWindow) {
+    super();
+    this.owner = owner;
+  }
+
+  setWindowOpenHandler = vi.fn();
+  toggleDevTools = vi.fn();
+
+  send(channel: string, payload?: any) {
+    this.sentMessages.push({ channel, payload });
+  }
+}
+
+class MockBrowserWindow extends EventEmitter {
+  static fromWebContents(webContents: MockWebContents) {
+    return webContents?.owner ?? null;
+  }
+
+  options: Record<string, any>;
+  webContents: MockWebContents;
+  destroyed = false;
+  currentBounds: { x: number; y: number; width: number; height: number };
+  kiosk = false;
+  fullscreen = false;
+  boundsHistory: Array<{ x: number; y: number; width: number; height: number }> = [];
+  kioskHistory: boolean[] = [];
+  fullscreenHistory: boolean[] = [];
+  alwaysOnTopHistory: Array<{ flag: boolean; level?: string }> = [];
+  menuBarVisibilityHistory: boolean[] = [];
+  autoHideMenuBarHistory: boolean[] = [];
+
+  constructor(options: Record<string, any>) {
+    super();
+    this.options = options;
+    this.webContents = new MockWebContents(this);
+    this.currentBounds = {
+      x: options.x,
+      y: options.y,
+      width: options.width,
+      height: options.height,
+    };
+    this.kiosk = !!options.kiosk;
+    this.fullscreen = !!options.fullscreen;
+    this.boundsHistory.push(this.currentBounds);
+    this.kioskHistory.push(this.kiosk);
+    this.fullscreenHistory.push(this.fullscreen);
+    this.alwaysOnTopHistory.push({ flag: !!options.alwaysOnTop });
+    createdWindows.push(this);
+  }
+
+  show = vi.fn();
+  focus = vi.fn();
+  loadURL = vi.fn();
+  loadFile = vi.fn();
+
+  setBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    this.currentBounds = bounds;
+    this.boundsHistory.push(bounds);
+  }
+
+  setKiosk(flag: boolean) {
+    this.kiosk = flag;
+    this.kioskHistory.push(flag);
+  }
+
+  isKiosk() {
+    return this.kiosk;
+  }
+
+  setFullScreen(flag: boolean) {
+    this.fullscreen = flag;
+    this.fullscreenHistory.push(flag);
+  }
+
+  setAlwaysOnTop(flag: boolean, level?: string) {
+    this.alwaysOnTopHistory.push({ flag, level });
+  }
+
+  setMenuBarVisibility(flag: boolean) {
+    this.menuBarVisibilityHistory.push(flag);
+  }
+
+  setAutoHideMenuBar(flag: boolean) {
+    this.autoHideMenuBarHistory.push(flag);
+  }
+
+  isDestroyed() {
+    return this.destroyed;
+  }
+
+  destroy() {
+    this.destroyed = true;
+    this.emit('closed');
+  }
+
+  getTitle() {
+    return this.options.title;
+  }
+}
+
+const mockScreen = {
+  getAllDisplays: vi.fn(() => displays as any),
+  getPrimaryDisplay: vi.fn(() => primaryDisplay as any),
+  on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+    if (!screenListeners.has(event)) {
+      screenListeners.set(event, new Set());
+    }
+    screenListeners.get(event)!.add(listener);
+  }),
+  removeListener: vi.fn((event: string, listener: (...args: any[]) => void) => {
+    screenListeners.get(event)?.delete(listener);
+  }),
+};
+
+const mockIpcMain = {
+  handle: vi.fn((channel: string, handler: (...args: any[]) => unknown) => {
+    ipcHandlers.set(channel, handler);
+  }),
+  on: vi.fn((channel: string, listener: (...args: any[]) => void) => {
+    if (!ipcListeners.has(channel)) {
+      ipcListeners.set(channel, new Set());
+    }
+    ipcListeners.get(channel)!.add(listener);
+  }),
+  removeListener: vi.fn((channel: string, listener: (...args: any[]) => void) => {
+    ipcListeners.get(channel)?.delete(listener);
+  }),
+  removeHandler: vi.fn((channel: string) => {
+    ipcHandlers.delete(channel);
+  }),
+};
+
+const mockShell = {
+  openExternal: vi.fn(),
+};
+
+const execFileMock = vi.fn((...args: any[]) => {
+  const callback = args.at(-1);
+  if (typeof callback === 'function') {
+    callback(null, '', '');
+  }
+});
+
+vi.mock('electron', () => ({
+  BrowserWindow: MockBrowserWindow,
+  screen: mockScreen,
+  ipcMain: mockIpcMain,
+  shell: mockShell,
+}));
+
+vi.mock('child_process', () => ({
+  execFile: execFileMock,
+}));
+
+vi.mock('../src/main/logger', () => ({
+  default: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('../src/main/config/store', () => ({
+  getConfigValue: vi.fn((key: string) => configValues[key]),
+}));
+
+function emitScreenEvent(event: string) {
+  for (const listener of screenListeners.get(event) ?? []) {
+    listener();
+  }
+}
+
+function makeDisplay(id: number, x: number, y: number, width: number, height: number, workHeight = height - 40): DisplayLike {
+  return {
+    id,
+    label: `Display ${id}`,
+    bounds: { x, y, width, height },
+    workArea: { x, y, width, height: workHeight },
+  };
+}
+
+describe('WindowManager customer display behavior', () => {
+  let WindowManager: typeof import('../src/main/windows/window-manager').WindowManager;
+  const posStore = {
+    registerWindow: vi.fn(),
+    unregisterWindow: vi.fn(),
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+
+    displays = [makeDisplay(1, 0, 0, 1920, 1080)];
+    primaryDisplay = displays[0];
+    configValues = {
+      posEnabled: true,
+      customerDisplayEnabled: true,
+      customerDisplayMonitor: 0,
+    };
+
+    createdWindows.length = 0;
+    screenListeners.clear();
+    ipcHandlers.clear();
+    ipcListeners.clear();
+
+    mockScreen.getAllDisplays.mockClear();
+    mockScreen.getPrimaryDisplay.mockClear();
+    mockScreen.on.mockClear();
+    mockScreen.removeListener.mockClear();
+    mockIpcMain.handle.mockClear();
+    mockIpcMain.on.mockClear();
+    mockIpcMain.removeListener.mockClear();
+    mockIpcMain.removeHandler.mockClear();
+    mockShell.openExternal.mockClear();
+    execFileMock.mockClear();
+    posStore.registerWindow.mockClear();
+    posStore.unregisterWindow.mockClear();
+
+    const mod = await import('../src/main/windows/window-manager');
+    WindowManager = mod.WindowManager;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('defaults missing customerDisplayForceKiosk to true and uses display bounds with screen-saver always-on-top', () => {
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('customer') as unknown as MockBrowserWindow;
+
+    expect(win).toBeTruthy();
+    expect(win.options.width).toBe(1920);
+    expect(win.options.height).toBe(1080);
+    expect(win.options.kiosk).toBe(true);
+    expect(win.options.fullscreen).toBe(true);
+    expect(win.boundsHistory.at(-1)).toEqual(primaryDisplay.bounds);
+    expect(win.alwaysOnTopHistory).toContainEqual({ flag: true, level: 'screen-saver' });
+
+    manager.destroy();
+  });
+
+  it('keeps the legacy windowed fallback when customerDisplayForceKiosk is false', () => {
+    configValues.customerDisplayForceKiosk = false;
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('customer') as unknown as MockBrowserWindow;
+
+    expect(win.options.kiosk).toBe(false);
+    expect(win.options.fullscreen).toBe(false);
+    expect(win.boundsHistory.at(-1)).toEqual({
+      x: 448,
+      y: 136,
+      width: 1024,
+      height: 768,
+    });
+    expect(win.alwaysOnTopHistory.some((entry) => entry.flag && entry.level === 'screen-saver')).toBe(false);
+
+    manager.destroy();
+  });
+
+  it('reapplies bounds-based customer display layout when displays are added or removed', () => {
+    configValues.customerDisplayForceKiosk = true;
+    configValues.customerDisplayMonitor = 1;
+    displays = [
+      makeDisplay(1, 0, 0, 1920, 1080),
+      makeDisplay(2, 1920, 0, 1280, 1024),
+    ];
+    primaryDisplay = displays[0];
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('customer') as unknown as MockBrowserWindow;
+
+    expect(win.boundsHistory.at(-1)).toEqual(displays[1].bounds);
+
+    displays = [primaryDisplay];
+    emitScreenEvent('display-removed');
+
+    expect(win.boundsHistory.at(-1)).toEqual(primaryDisplay.bounds);
+    expect(win.kioskHistory.at(-1)).toBe(true);
+
+    displays = [
+      primaryDisplay,
+      makeDisplay(2, 1920, 0, 1280, 1024),
+    ];
+    emitScreenEvent('display-added');
+
+    expect(win.boundsHistory.at(-1)).toEqual(displays[1].bounds);
+    expect(win.alwaysOnTopHistory.at(-1)).toEqual({ flag: true, level: 'screen-saver' });
+
+    manager.destroy();
+  });
+});

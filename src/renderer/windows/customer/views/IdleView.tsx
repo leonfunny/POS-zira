@@ -26,7 +26,7 @@ export default function IdleView({ t, salonName }: IdleViewProps) {
   const displayName = salonName || translate('customer.brandName');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900 flex items-center justify-center overflow-hidden relative">
+    <div className="relative flex h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900">
       {/* Soft pastel floating shapes */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div

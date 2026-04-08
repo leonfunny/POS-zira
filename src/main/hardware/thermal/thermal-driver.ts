@@ -144,16 +144,20 @@ export class ThermalDriver {
     let stillAvailable: boolean;
 
     if (this.connectionType === 'USB') {
-      const printers = cachedPrinters ?? await listWindowsPrinters();
-      const inSpooler = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
-      if (inSpooler) {
-        try {
-          stillAvailable = await isWindowsPrinterPresent(this.printerNameOrPort);
-        } catch {
-          stillAvailable = inSpooler;
-        }
+      if (cachedPrinters) {
+        stillAvailable = cachedPrinters.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
       } else {
-        stillAvailable = false;
+        const printers = await listWindowsPrinters();
+        const inSpooler = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
+        if (inSpooler) {
+          try {
+            stillAvailable = await isWindowsPrinterPresent(this.printerNameOrPort);
+          } catch {
+            stillAvailable = inSpooler;
+          }
+        } else {
+          stillAvailable = false;
+        }
       }
     } else {
       const ports = cachedPorts ?? await listSerialPorts();

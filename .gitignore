@@ -34,6 +34,7 @@ logs/
 # Local AI / Claude config
 .claude/
 .superpowers/
+.codex/
 
 # Cloudflare Wrangler
 .wrangler/

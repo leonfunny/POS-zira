@@ -25,6 +25,7 @@ import { checkinRepo } from '../database/repos/checkin-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
 import { getConfig } from '../config/store';
+import type { SelectedService } from '../../shared/types';
 import { PrinterType } from '../../shared/types';
 import logger from '../logger';
 
@@ -117,19 +118,26 @@ export class PosModule extends BaseModule {
 
     // Customer display: check-in
     ipcMain.handle('display:check-in', (_e, data: any) => {
-      this.posStore?.handleCheckIn(data);
+      const services = normalizeSelectedServices(data.services);
+      const normalizedData = {
+        ...data,
+        services,
+        serviceName: data.serviceName?.trim() || deriveLegacyServiceName(services),
+      };
+
+      this.posStore?.handleCheckIn(normalizedData);
       // Persist to checkins table
       try {
         checkinRepo.create({
           id: `ci-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          customer_name: data.customerName,
-          customer_phone: data.customerPhone,
-          customer_email: data.customerEmail,
-          service_name: data.serviceName,
-          staff_name: data.staffName,
-          booking_id: data.bookingId?.toString(),
-          booking_source: data.bookingId ? 'booksy' : undefined,
-          is_walkin: data.isWalkIn ? 1 : 0,
+          customer_name: normalizedData.customerName,
+          customer_phone: normalizedData.customerPhone,
+          customer_email: normalizedData.customerEmail,
+          service_name: normalizedData.serviceName,
+          staff_name: normalizedData.staffName,
+          booking_id: normalizedData.bookingId?.toString(),
+          booking_source: normalizedData.bookingId ? 'booksy' : undefined,
+          is_walkin: normalizedData.isWalkIn ? 1 : 0,
         });
         database.save();
       } catch (e) {
@@ -162,7 +170,7 @@ export class PosModule extends BaseModule {
       // Notify POS window
       const posWindow = this.windowManager?.getWindow('pos');
       if (posWindow && !posWindow.isDestroyed()) {
-        posWindow.webContents.send('pos:customer-checkin', data);
+        posWindow.webContents.send('pos:customer-checkin', normalizedData);
       }
       return { success: true };
     });
@@ -426,6 +434,27 @@ export class PosModule extends BaseModule {
   }
 
   async destroy(): Promise<void> { this.setState(ModuleState.STOPPED); }
+}
+
+function normalizeSelectedServices(services?: SelectedService[]): SelectedService[] | undefined {
+  const normalized = (services || [])
+    .map((service) => ({
+      id: service.id,
+      name: service.name,
+      price: service.price,
+      duration: service.duration,
+    }))
+    .filter((service) => service.id && service.name);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function deriveLegacyServiceName(services?: SelectedService[]): string | undefined {
+  const names = (services || [])
+    .map((service) => service.name?.trim())
+    .filter((name): name is string => !!name);
+
+  return names.length > 0 ? names.join(', ') : undefined;
 }
 
 

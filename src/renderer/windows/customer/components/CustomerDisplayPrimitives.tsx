@@ -1,13 +1,14 @@
 import React from 'react';
 
-interface PanelProps {
+interface PanelProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
   className?: string;
 }
 
-export function Panel({ children, className = '' }: PanelProps) {
+export function Panel({ children, className = '', ...props }: PanelProps) {
   return (
     <div
+      {...props}
       className={`rounded-[28px] border border-white/80 bg-white/88 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur ${className}`.trim()}
     >
       {children}

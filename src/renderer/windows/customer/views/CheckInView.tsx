@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Language } from '../../../i18n/translations';
+import TouchKeyboard from '../../../components/shared/TouchKeyboard';
 import CustomerDisplayShell from '../components/CustomerDisplayShell';
 import CustomerBookingCard from '../components/CustomerBookingCard';
 import {
@@ -16,9 +17,14 @@ import {
   filterVisibleBookings,
   formatPhoneDigitsForDisplay,
   formatDisplayCurrency,
+  formatDisplayTime,
   summarizeServiceCategories,
   sanitizePhoneDigits,
 } from '../customer-display-model';
+import {
+  getCustomerTouchKeyboardInset as getSharedCustomerTouchKeyboardInset,
+  shouldDismissCustomerTouchKeyboard as shouldDismissSharedCustomerTouchKeyboard,
+} from '../customer-touch-keyboard';
 
 interface UpsellItem {
   id: string;
@@ -30,14 +36,19 @@ interface UpsellItem {
 
 type Step = 'hub' | 'booking' | 'phone' | 'walkin' | 'upsell' | 'confirmed';
 type WalkInStage = 'identity' | 'service';
+export type CustomerTouchKeyboardTarget = 'bookingSearch' | 'walkInName' | 'walkInServiceSearch' | null;
 
 interface CheckInPayload {
   bookingId?: number;
   customerName: string;
   customerPhone?: string;
   serviceName?: string;
+  serviceLabel?: string;
+  services?: CustomerDisplayServiceItem[];
   staffName?: string;
   bookingTime?: string;
+  totalPrice?: number;
+  approxDurationMinutes?: number;
   isWalkIn: boolean;
 }
 
@@ -55,6 +66,22 @@ interface CheckInViewProps {
 const INTERACTION_TIMEOUT_MS = 30_000;
 const CONFIRMATION_TIMEOUT_MS = 8_000;
 const UPSELL_TIMEOUT_MS = 15_000;
+export function getAutoOpenCustomerKeyboardTarget(
+  step: Step,
+  walkInStage: WalkInStage,
+): CustomerTouchKeyboardTarget {
+  if (step === 'booking') return 'bookingSearch';
+  if (step === 'walkin' && walkInStage === 'identity') return 'walkInName';
+  return null;
+}
+
+export function shouldDismissCustomerTouchKeyboard(target: Element | null): boolean {
+  return shouldDismissSharedCustomerTouchKeyboard(target);
+}
+
+export function getCustomerTouchKeyboardInset(target: CustomerTouchKeyboardTarget): number {
+  return getSharedCustomerTouchKeyboardInset(target);
+}
 
 export default function CheckInView({
   t,
@@ -75,19 +102,29 @@ export default function CheckInView({
   const [phoneLoading, setPhoneLoading] = useState(false);
   const [phoneResults, setPhoneResults] = useState<{ customers: any[]; bookings: CustomerDisplayBooking[] } | null>(null);
   const [walkInName, setWalkInName] = useState('');
-  const [selectedWalkInService, setSelectedWalkInService] = useState<CustomerDisplayServiceItem | null>(null);
+  const [selectedWalkInServices, setSelectedWalkInServices] = useState<CustomerDisplayServiceItem[]>([]);
+  const [walkInSelectedCategoryId, setWalkInSelectedCategoryId] = useState(categories[0]?.id || '');
+  const [walkInServiceSearchQuery, setWalkInServiceSearchQuery] = useState('');
+  const [walkInCategoryMenuOpen, setWalkInCategoryMenuOpen] = useState(false);
+  const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
+  const [selectedPhoneBookingId, setSelectedPhoneBookingId] = useState<number | null>(null);
   const [pendingCheckIn, setPendingCheckIn] = useState<CheckInPayload | null>(null);
   const [confirmedCheckIn, setConfirmedCheckIn] = useState<CheckInPayload | null>(null);
   const [selectedUpsells, setSelectedUpsells] = useState<string[]>([]);
+  const [hubActionsHeight, setHubActionsHeight] = useState<number | null>(null);
+  const [keyboardTarget, setKeyboardTarget] = useState<CustomerTouchKeyboardTarget>(null);
 
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const upsellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phoneRequestRef = useRef(0);
   const selectedUpsellsRef = useRef<string[]>([]);
+  const hubActionsRef = useRef<HTMLDivElement | null>(null);
+  const bookingQueryRef = useRef<HTMLInputElement | null>(null);
+  const walkInNameRef = useRef<HTMLInputElement | null>(null);
 
   const categorySummaries = useMemo(
-    () => summarizeServiceCategories(categories).slice(0, 4),
+    () => summarizeServiceCategories(categories),
     [categories],
   );
   const visibleBookings = useMemo(
@@ -106,6 +143,30 @@ export default function CheckInView({
     () => formatPhoneDigitsForDisplay(normalizedPhoneDigits),
     [normalizedPhoneDigits],
   );
+  const selectedBooking = useMemo(
+    () => visibleBookings.find((booking) => booking.id === selectedBookingId) || null,
+    [selectedBookingId, visibleBookings],
+  );
+  const selectedPhoneBooking = useMemo(
+    () => phoneMatches.find((booking) => booking.id === selectedPhoneBookingId) || null,
+    [phoneMatches, selectedPhoneBookingId],
+  );
+  const selectedWalkInServiceIds = useMemo(
+    () => selectedWalkInServices.map((service) => service.id),
+    [selectedWalkInServices],
+  );
+  const selectedWalkInServiceLabel = useMemo(
+    () => selectedWalkInServices.map((service) => service.name.trim()).filter(Boolean).join(', '),
+    [selectedWalkInServices],
+  );
+  const selectedWalkInTotalPrice = useMemo(
+    () => selectedWalkInServices.reduce((total, service) => total + service.price, 0),
+    [selectedWalkInServices],
+  );
+  const selectedWalkInDuration = useMemo(
+    () => selectedWalkInServices.reduce((total, service) => total + service.duration, 0),
+    [selectedWalkInServices],
+  );
   const formatServiceCount = useCallback(
     (count: number) => t('customer.serviceCount').replace('{count}', String(count)),
     [t],
@@ -113,6 +174,10 @@ export default function CheckInView({
   const formatStartingPrice = useCallback(
     (amount: number) => t('customer.fromPrice').replace('{price}', formatDisplayCurrency(amount, language)),
     [language, t],
+  );
+  const formatApproximateTime = useCallback(
+    (minutes: number) => `~${t('customer.duration').replace('{min}', String(minutes))}`,
+    [t],
   );
 
   const resetIdleTimer = useCallback(() => {
@@ -148,6 +213,67 @@ export default function CheckInView({
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
     };
   }, [onBack, step]);
+
+  useEffect(() => {
+    if (step !== 'hub') {
+      setHubActionsHeight(null);
+      return undefined;
+    }
+
+    const element = hubActionsRef.current;
+    if (!element) return undefined;
+
+    const syncHeight = () => {
+      const nextHeight = Math.ceil(element.getBoundingClientRect().height);
+      setHubActionsHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+
+    syncHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', syncHeight);
+      return () => window.removeEventListener('resize', syncHeight);
+    }
+
+    const observer = new ResizeObserver(() => {
+      syncHeight();
+    });
+
+    observer.observe(element);
+    window.addEventListener('resize', syncHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', syncHeight);
+    };
+  }, [step]);
+
+  useEffect(() => {
+    if (!walkInSelectedCategoryId && categories[0]?.id) {
+      setWalkInSelectedCategoryId(categories[0].id);
+      return;
+    }
+
+    if (walkInSelectedCategoryId && !categories.some((category) => category.id === walkInSelectedCategoryId)) {
+      setWalkInSelectedCategoryId(categories[0]?.id || '');
+    }
+  }, [categories, walkInSelectedCategoryId]);
+
+  useEffect(() => {
+    const nextKeyboardTarget = getAutoOpenCustomerKeyboardTarget(step, walkInStage);
+    setKeyboardTarget(nextKeyboardTarget);
+
+    if (!nextKeyboardTarget) return undefined;
+
+    const nextInput = nextKeyboardTarget === 'bookingSearch'
+      ? bookingQueryRef.current
+      : walkInNameRef.current;
+    const timer = window.setTimeout(() => {
+      nextInput?.focus();
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [step, walkInStage]);
 
   const submitCheckIn = useCallback(async (
     payload: CheckInPayload,
@@ -216,10 +342,41 @@ export default function CheckInView({
     return () => window.clearTimeout(timer);
   }, [normalizedPhoneDigits, step]);
 
+  useEffect(() => {
+    if (step !== 'booking') return;
+
+    if (!visibleBookings.length) {
+      setSelectedBookingId(null);
+      return;
+    }
+
+    setSelectedBookingId((current) =>
+      visibleBookings.some((booking) => booking.id === current)
+        ? current
+        : visibleBookings[0].id,
+    );
+  }, [step, visibleBookings]);
+
+  useEffect(() => {
+    if (step !== 'phone') return;
+
+    if (!phoneMatches.length) {
+      setSelectedPhoneBookingId(null);
+      return;
+    }
+
+    setSelectedPhoneBookingId((current) =>
+      phoneMatches.some((booking) => booking.id === current)
+        ? current
+        : phoneMatches[0].id,
+    );
+  }, [phoneMatches, step]);
+
   const startBookingLookup = useCallback(async () => {
     resetIdleTimer();
     setStep('booking');
     setBookingLoading(true);
+    setSelectedBookingId(null);
 
     try {
       const data = await window.electronAPI.display.getBookings();
@@ -236,6 +393,7 @@ export default function CheckInView({
     setPhoneDigits('');
     setPhoneResults(null);
     setPhoneLoading(false);
+    setSelectedPhoneBookingId(null);
     setStep('phone');
   }, [resetIdleTimer]);
 
@@ -243,9 +401,12 @@ export default function CheckInView({
     resetIdleTimer();
     setWalkInStage('identity');
     setWalkInName('');
-    setSelectedWalkInService(null);
+    setSelectedWalkInServices([]);
+    setWalkInSelectedCategoryId(categories[0]?.id || '');
+    setWalkInServiceSearchQuery('');
+    setWalkInCategoryMenuOpen(false);
     setStep('walkin');
-  }, [resetIdleTimer]);
+  }, [categories, resetIdleTimer]);
 
   const queueCheckIn = useCallback(async (payload: CheckInPayload) => {
     if (upsellItems.length > 0) {
@@ -263,6 +424,7 @@ export default function CheckInView({
       bookingId: booking.id,
       customerName: booking.customerName,
       serviceName: booking.serviceName,
+      serviceLabel: booking.serviceName,
       staffName: booking.staffName,
       bookingTime: booking.from,
       isWalkIn: false,
@@ -275,22 +437,61 @@ export default function CheckInView({
       customerName: booking.customerName,
       customerPhone: normalizedPhoneDigits,
       serviceName: booking.serviceName,
+      serviceLabel: booking.serviceName,
       staffName: booking.staffName,
       bookingTime: booking.from,
       isWalkIn: false,
     });
   }, [normalizedPhoneDigits, queueCheckIn]);
 
+  const toggleSelectedWalkInService = useCallback((service: CustomerDisplayServiceItem) => {
+    resetIdleTimer();
+    setSelectedWalkInServices((current) => {
+      const alreadySelected = current.some((entry) => entry.id === service.id);
+      if (alreadySelected) {
+        return current.filter((entry) => entry.id !== service.id);
+      }
+
+      return [...current, service];
+    });
+  }, [resetIdleTimer]);
+
+  const selectWalkInCategory = useCallback((categoryId: string) => {
+    resetIdleTimer();
+    setWalkInSelectedCategoryId(categoryId);
+    setWalkInServiceSearchQuery('');
+    setWalkInCategoryMenuOpen(false);
+  }, [resetIdleTimer]);
+
+  const openWalkInServiceStage = useCallback(() => {
+    resetIdleTimer();
+    setWalkInServiceSearchQuery('');
+    setWalkInCategoryMenuOpen(false);
+    setWalkInStage('service');
+  }, [resetIdleTimer]);
+
   const handleWalkInSubmit = useCallback(async () => {
     if (!walkInName.trim()) return;
-    if (categories.length > 0 && !selectedWalkInService) return;
+    if (categories.length > 0 && selectedWalkInServices.length === 0) return;
 
     await queueCheckIn({
       customerName: walkInName.trim(),
-      serviceName: selectedWalkInService?.name,
+      serviceName: selectedWalkInServiceLabel || undefined,
+      serviceLabel: selectedWalkInServiceLabel || undefined,
+      services: selectedWalkInServices,
+      totalPrice: selectedWalkInTotalPrice,
+      approxDurationMinutes: selectedWalkInDuration > 0 ? selectedWalkInDuration : undefined,
       isWalkIn: true,
     });
-  }, [categories.length, queueCheckIn, selectedWalkInService, walkInName]);
+  }, [
+    categories.length,
+    queueCheckIn,
+    selectedWalkInDuration,
+    selectedWalkInServiceLabel,
+    selectedWalkInServices,
+    selectedWalkInTotalPrice,
+    walkInName,
+  ]);
 
   const toggleUpsell = useCallback((id: string) => {
     resetIdleTimer();
@@ -311,6 +512,8 @@ export default function CheckInView({
     resetIdleTimer();
 
     if (step === 'walkin' && walkInStage === 'service') {
+      setWalkInServiceSearchQuery('');
+      setWalkInCategoryMenuOpen(false);
       setWalkInStage('identity');
       return;
     }
@@ -322,6 +525,84 @@ export default function CheckInView({
 
     setStep('hub');
   }, [resetIdleTimer, step, walkInStage]);
+
+  const showTouchKeyboardFor = useCallback((target: Exclude<CustomerTouchKeyboardTarget, null>) => {
+    resetIdleTimer();
+    setKeyboardTarget(target);
+  }, [resetIdleTimer]);
+
+  const dismissTouchKeyboard = useCallback(() => {
+    setKeyboardTarget(null);
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }, []);
+
+  const toggleWalkInCategoryMenu = useCallback(() => {
+    resetIdleTimer();
+    if (keyboardTarget) {
+      dismissTouchKeyboard();
+    }
+    setWalkInCategoryMenuOpen((current) => !current);
+  }, [dismissTouchKeyboard, keyboardTarget, resetIdleTimer]);
+
+  const handleTouchKeyboardKey = useCallback((key: string) => {
+    resetIdleTimer();
+
+    if (keyboardTarget === 'bookingSearch') {
+      setBookingQuery((current) => current + key);
+      return;
+    }
+
+    if (keyboardTarget === 'walkInServiceSearch') {
+      setWalkInServiceSearchQuery((current) => current + key);
+      return;
+    }
+
+    if (keyboardTarget === 'walkInName') {
+      setWalkInName((current) => current + key);
+    }
+  }, [keyboardTarget, resetIdleTimer]);
+
+  const handleTouchKeyboardBackspace = useCallback(() => {
+    resetIdleTimer();
+
+    if (keyboardTarget === 'bookingSearch') {
+      setBookingQuery((current) => current.slice(0, -1));
+      return;
+    }
+
+    if (keyboardTarget === 'walkInServiceSearch') {
+      setWalkInServiceSearchQuery((current) => current.slice(0, -1));
+      return;
+    }
+
+    if (keyboardTarget === 'walkInName') {
+      setWalkInName((current) => current.slice(0, -1));
+    }
+  }, [keyboardTarget, resetIdleTimer]);
+
+  const handleTouchKeyboardDone = useCallback(() => {
+    resetIdleTimer();
+    dismissTouchKeyboard();
+  }, [dismissTouchKeyboard, resetIdleTimer]);
+
+  const handleCustomerDisplayPointerDown = useCallback((event: React.PointerEvent) => {
+    const target = event.target as Element | null;
+    if (
+      walkInCategoryMenuOpen
+      && target
+      && !target.closest('[data-customer-display-checkin-walkin-category-menu="true"]')
+      && !target.closest('[data-customer-display-checkin-walkin-category-trigger="true"]')
+    ) {
+      setWalkInCategoryMenuOpen(false);
+    }
+
+    if (!keyboardTarget) return;
+    if (!shouldDismissCustomerTouchKeyboard(target)) return;
+
+    dismissTouchKeyboard();
+  }, [dismissTouchKeyboard, keyboardTarget, walkInCategoryMenuOpen]);
 
   const screenTitle = step === 'hub'
     ? t('checkin.welcome')
@@ -346,10 +627,26 @@ export default function CheckInView({
         : step === 'walkin'
           ? walkInStage === 'identity'
             ? t('checkin.walkInPlaceholder')
-            : walkInName.trim()
+            : formatServiceCount(selectedWalkInServices.length)
           : step === 'upsell'
             ? pendingCheckIn?.customerName
             : confirmedCheckIn?.customerName;
+  const hubCategoryPanelStyle = hubActionsHeight
+    ? ({ '--hub-actions-height': `${hubActionsHeight}px` } as React.CSSProperties)
+    : undefined;
+  const keyboardInset = getCustomerTouchKeyboardInset(keyboardTarget);
+  const confirmedServices = confirmedCheckIn?.services || [];
+  const confirmedServiceCount = confirmedServices.length > 0
+    ? confirmedServices.length
+    : confirmedCheckIn?.serviceLabel || confirmedCheckIn?.serviceName
+      ? 1
+      : 0;
+  const confirmedTotalValue = confirmedCheckIn?.totalPrice != null
+    ? formatDisplayCurrency(confirmedCheckIn.totalPrice, language)
+    : '-';
+  const confirmedApproxTimeValue = confirmedCheckIn?.approxDurationMinutes
+    ? formatApproximateTime(confirmedCheckIn.approxDurationMinutes)
+    : '-';
 
   return (
     <CustomerDisplayShell
@@ -362,44 +659,61 @@ export default function CheckInView({
       title={screenTitle}
       subtitle={screenSubtitle}
     >
-      {step === 'hub' && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1.15fr)_380px]">
-          <Panel className="p-6 lg:p-8">
-            <div className="grid gap-5 md:grid-cols-2">
-              <ActionCard
-                title={t('checkin.phoneSearch')}
-                subtitle={t('checkinTab.searchPhone')}
-                accent="brand"
-                layout="primary"
-                icon={<PhoneActionIcon />}
-                onClick={startPhoneLookup}
-              />
-              <ActionCard
-                title={t('checkin.iHaveBooking')}
-                subtitle={t('wizard.searchBooking')}
-                accent="amber"
-                layout="primary"
-                icon={<BookingActionIcon />}
-                onClick={() => { void startBookingLookup(); }}
-              />
-              <ActionCard
-                title={t('checkin.walkIn')}
-                subtitle={t('checkin.walkInPlaceholder')}
-                accent="slate"
-                icon={<WalkInActionIcon />}
-                onClick={startWalkIn}
-              />
-              <ActionCard
-                title={t('checkin.browseServices')}
-                subtitle={t('priceList.subtitle')}
-                accent="brand"
-                icon={<BrowseActionIcon />}
-                onClick={onBrowseServices}
-              />
-            </div>
-          </Panel>
+      <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden" onPointerDown={handleCustomerDisplayPointerDown}>
+        <div
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          style={{
+            paddingBottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined,
+            transition: 'padding-bottom 0.3s ease',
+          }}
+        >
+          {step === 'hub' && (
+            <div
+              className="grid min-h-0 flex-1 gap-6 lg:items-start lg:grid-cols-[minmax(0,1.15fr)_380px]"
+              data-customer-display-hub="hub"
+            >
+          <div ref={hubActionsRef} data-customer-display-hub-actions="actions">
+            <Panel className="p-6 lg:p-8">
+              <div className="grid gap-5 md:grid-cols-2">
+                <ActionCard
+                  title={t('checkin.phoneSearch')}
+                  subtitle={t('checkinTab.searchPhone')}
+                  accent="brand"
+                  layout="primary"
+                  icon={<PhoneActionIcon />}
+                  onClick={startPhoneLookup}
+                />
+                <ActionCard
+                  title={t('checkin.iHaveBooking')}
+                  subtitle={t('wizard.searchBooking')}
+                  accent="amber"
+                  layout="primary"
+                  icon={<BookingActionIcon />}
+                  onClick={() => { void startBookingLookup(); }}
+                />
+                <ActionCard
+                  title={t('checkin.walkIn')}
+                  subtitle={t('checkin.walkInPlaceholder')}
+                  accent="slate"
+                  icon={<WalkInActionIcon />}
+                  onClick={startWalkIn}
+                />
+                <ActionCard
+                  title={t('checkin.browseServices')}
+                  subtitle={t('priceList.subtitle')}
+                  accent="brand"
+                  icon={<BrowseActionIcon />}
+                  onClick={onBrowseServices}
+                />
+              </div>
+            </Panel>
+          </div>
 
-          <Panel className="flex flex-col p-6">
+          <Panel
+            className="flex flex-col overflow-hidden p-6 lg:h-[var(--hub-actions-height)] lg:max-h-[var(--hub-actions-height)]"
+            style={hubCategoryPanelStyle}
+            data-customer-display-hub-categories="panel"
+          >
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                 {t('priceList.title')}
@@ -417,7 +731,10 @@ export default function CheckInView({
               </div>
             </div>
 
-            <div className="mt-6 space-y-3">
+            <div
+              className="mt-6 space-y-3 pr-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
+              data-customer-display-hub-category-list="scroll"
+            >
               {categorySummaries.length > 0 ? categorySummaries.map((category) => (
                 <div
                   key={category.id}
@@ -438,197 +755,280 @@ export default function CheckInView({
               )}
             </div>
           </Panel>
-        </div>
-      )}
+            </div>
+          )}
 
-      {step === 'booking' && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <Panel className="flex min-h-0 flex-col p-6">
-            <label className="block">
-              <span className="sr-only">{t('wizard.searchBooking')}</span>
-              <input
-                value={bookingQuery}
-                onChange={(event) => setBookingQuery(event.target.value)}
-                placeholder={t('wizard.searchBooking')}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-5 py-4 text-lg text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-300 focus:bg-white"
-              />
-            </label>
+          {step === 'booking' && (
+            <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <Panel className="flex min-h-0 flex-col p-6">
+                <label className="block">
+                  <span className="sr-only">{t('wizard.searchBooking')}</span>
+                  <input
+                    ref={bookingQueryRef}
+                    value={bookingQuery}
+                    readOnly
+                    onFocus={() => showTouchKeyboardFor('bookingSearch')}
+                    onPointerDown={() => showTouchKeyboardFor('bookingSearch')}
+                    data-customer-display-text-input="true"
+                    placeholder={t('wizard.searchBooking')}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-5 py-4 text-lg text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-300 focus:bg-white"
+                  />
+                </label>
 
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              {bookingLoading ? (
-                <div className="grid gap-3">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <div key={index} className="h-28 animate-pulse rounded-[28px] bg-white/80" />
-                  ))}
-                </div>
-              ) : visibleBookings.length > 0 ? (
-                <div className="grid gap-4">
-                  {visibleBookings.map((booking) => (
-                    <CustomerBookingCard
-                      key={booking.id}
-                      booking={booking}
-                      language={language}
-                      actionLabel={t('checkin.imHere')}
-                      onAction={() => { void handleBookingCheckIn(booking); }}
+                <div
+                  className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
+                  data-customer-display-checkin-booking-list="true"
+                >
+                  {bookingLoading ? (
+                    <div className="grid gap-3">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div key={index} className="h-28 animate-pulse rounded-[28px] bg-white/80" />
+                      ))}
+                    </div>
+                  ) : visibleBookings.length > 0 ? (
+                    <div className="grid gap-4">
+                      {visibleBookings.map((booking) => (
+                        <CustomerBookingCard
+                          key={booking.id}
+                          booking={booking}
+                          language={language}
+                          selected={booking.id === selectedBooking?.id}
+                          selectedLabel={t('wizard.selected')}
+                          idleLabel={t('wizard.selectBooking')}
+                          onSelect={() => setSelectedBookingId(booking.id)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title={t('checkin.noResults')}
+                      action={(
+                        <button
+                          onClick={startWalkIn}
+                          className="rounded-2xl border border-brand-200 bg-brand-50 px-5 py-3 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+                        >
+                          {t('wizard.continueWalkIn')}
+                        </button>
+                      )}
                     />
-                  ))}
+                  )}
                 </div>
-              ) : (
-                <EmptyState
-                  title={t('checkin.noResults')}
-                  action={(
+              </Panel>
+
+              <Panel
+                className="flex min-h-0 flex-col p-6"
+                data-customer-display-checkin-booking-review="true"
+              >
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  {t('wizard.bookingDetail')}
+                </div>
+                <div className="mt-2 text-4xl font-semibold tracking-tight text-slate-900">
+                  {selectedBooking ? formatDisplayTime(selectedBooking.from, language) : visibleBookings.length}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">{t('checkin.iHaveBooking')}</div>
+
+                {selectedBooking ? (
+                  <>
+                    <div className="mt-6 rounded-[28px] border border-slate-100 bg-slate-50/80 p-5">
+                      <div className="text-2xl font-semibold tracking-tight text-slate-900">
+                        {selectedBooking.customerName}
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        <DetailRow label={t('wizard.service')} value={selectedBooking.serviceName} />
+                        <DetailRow label={t('wizard.staff')} value={selectedBooking.staffName || '-'} />
+                        <DetailRow
+                          label={t('wizard.time')}
+                          value={formatDisplayTime(selectedBooking.from, language) || '-'}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => { void handleBookingCheckIn(selectedBooking); }}
+                      className="mt-auto rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700"
+                    >
+                      {t('checkin.checkInButton')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-6 rounded-[28px] border border-slate-100 bg-slate-50/80 p-5 text-sm leading-6 text-slate-500">
+                      {visibleBookings.length > 0 ? t('wizard.selectBooking') : t('checkin.noResults')}
+                    </div>
+
                     <button
                       onClick={startWalkIn}
-                      className="rounded-2xl border border-brand-200 bg-brand-50 px-5 py-3 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+                      className="mt-auto rounded-2xl border border-slate-200 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:text-brand-700"
                     >
                       {t('wizard.continueWalkIn')}
                     </button>
-                  )}
-                />
-              )}
+                  </>
+                )}
+              </Panel>
             </div>
-          </Panel>
+          )}
 
-          <Panel className="p-6">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {t('wizard.selectBooking')}
-            </div>
-            <div className="mt-3 text-4xl font-semibold tracking-tight text-slate-900">
-              {visibleBookings.length}
-            </div>
-            <div className="mt-1 text-sm text-slate-500">{t('checkin.iHaveBooking')}</div>
-
-            <div className="mt-6 space-y-2">
-              <DetailRow label={t('checkin.phoneSearch')} value={t('checkinTab.searchPhone')} />
-              <DetailRow label={t('checkin.walkIn')} value={t('wizard.continueWalkIn')} />
-            </div>
-
-            <button
-              onClick={startWalkIn}
-              className="mt-8 w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:text-brand-700"
-            >
-              {t('wizard.continueWalkIn')}
-            </button>
-          </Panel>
-        </div>
-      )}
-
-      {step === 'phone' && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <Panel className="p-6">
-            <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5 text-center">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                {t('checkin.phoneSearch')}
-              </div>
-              <div
-                className={`mt-3 text-3xl font-semibold tracking-[0.18em] ${
-                  normalizedPhoneDigits ? 'text-slate-900' : 'text-slate-300'
-                }`}
-              >
-                {formattedPhoneDigits || '123 456 789'}
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-3 gap-3">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'].map((key) => {
-                if (!key) return <div key="empty" />;
-
-                if (key === 'del') {
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => setPhoneDigits((current) => current.slice(0, -1))}
-                      className="rounded-3xl border border-slate-200 bg-white py-5 text-lg font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:text-brand-700"
-                    >
-                      Del
-                    </button>
-                  );
-                }
-
-                return (
-                  <button
-                    key={key}
-                    onClick={() => setPhoneDigits((current) => `${sanitizePhoneDigits(current)}${key}`.slice(0, 9))}
-                    className="rounded-3xl border border-slate-200 bg-white py-5 text-2xl font-semibold text-slate-900 transition-colors hover:border-brand-200 hover:bg-brand-50"
+          {step === 'phone' && (
+            <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+              <Panel className="p-6">
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5 text-center">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {t('checkin.phoneSearch')}
+                  </div>
+                  <div
+                    className={`mt-3 text-3xl font-semibold tracking-[0.18em] ${
+                      normalizedPhoneDigits ? 'text-slate-900' : 'text-slate-300'
+                    }`}
                   >
-                    {key}
-                  </button>
-                );
-              })}
-            </div>
+                    {formattedPhoneDigits || '123 456 789'}
+                  </div>
+                </div>
 
-            <button
-              onClick={startWalkIn}
-              className="mt-5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-600 transition-colors hover:border-brand-200 hover:text-brand-700"
-            >
-              {t('checkin.continueAsWalkIn')}
-            </button>
-          </Panel>
+                <div className="mt-5 grid grid-cols-3 gap-3">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'].map((key) => {
+                    if (!key) return <div key="empty" />;
 
-          <Panel className="flex min-h-0 flex-col p-6">
-            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {t('checkin.phoneSearch')}
-                </div>
-                <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
-                  {normalizedPhoneDigits.length >= 3 ? phoneMatches.length : 0}
-                </div>
-              </div>
-              {phoneLoading && (
-                <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  {t('pos.loading')}
-                </div>
-              )}
-            </div>
+                    if (key === 'del') {
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => setPhoneDigits((current) => current.slice(0, -1))}
+                          className="rounded-3xl border border-slate-200 bg-white py-5 text-lg font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:text-brand-700"
+                        >
+                          Del
+                        </button>
+                      );
+                    }
 
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              {normalizedPhoneDigits.length < 3 ? (
-                <EmptyState title={t('checkin.phonePlaceholder')} />
-              ) : phoneMatches.length > 0 ? (
-                <div className="grid gap-4">
-                  {phoneMatches.map((booking) => (
-                    <CustomerBookingCard
-                      key={booking.id}
-                      booking={booking}
-                      language={language}
-                      actionLabel={t('checkin.imHere')}
-                      onAction={() => { void handlePhoneCheckIn(booking); }}
-                    />
-                  ))}
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setPhoneDigits((current) => `${sanitizePhoneDigits(current)}${key}`.slice(0, 9))}
+                        className="rounded-3xl border border-slate-200 bg-white py-5 text-2xl font-semibold text-slate-900 transition-colors hover:border-brand-200 hover:bg-brand-50"
+                      >
+                        {key}
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : !phoneLoading ? (
-                <EmptyState
-                  title={t('checkin.noPhoneMatch')}
-                  action={(
-                    <button
-                      onClick={startWalkIn}
-                      className="rounded-2xl border border-brand-200 bg-brand-50 px-5 py-3 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100"
-                    >
-                      {t('checkin.continueAsWalkIn')}
-                    </button>
+
+                <button
+                  onClick={startWalkIn}
+                  className="mt-5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-600 transition-colors hover:border-brand-200 hover:text-brand-700"
+                >
+                  {t('checkin.continueAsWalkIn')}
+                </button>
+              </Panel>
+
+              <Panel
+                className="flex min-h-0 flex-col p-6"
+                data-customer-display-checkin-phone-selection="true"
+              >
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {t('checkin.phoneSearch')}
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
+                      {normalizedPhoneDigits.length >= 3 ? phoneMatches.length : 0}
+                    </div>
+                  </div>
+                  {phoneLoading && (
+                    <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      {t('pos.loading')}
+                    </div>
                   )}
-                />
-              ) : null}
-            </div>
-          </Panel>
-        </div>
-      )}
+                </div>
 
-      {step === 'walkin' && walkInStage === 'identity' && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <Panel className="p-6 lg:p-8">
+                {normalizedPhoneDigits.length < 3 ? (
+                  <div className="mt-5 min-h-0 flex-1">
+                    <EmptyState title={t('checkin.phonePlaceholder')} />
+                  </div>
+                ) : phoneMatches.length > 0 ? (
+                  <>
+                    <div
+                      className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
+                      data-customer-display-checkin-phone-list="true"
+                    >
+                      <div className="grid gap-4">
+                        {phoneMatches.map((booking) => (
+                          <CustomerBookingCard
+                            key={booking.id}
+                            booking={booking}
+                            language={language}
+                            selected={booking.id === selectedPhoneBooking?.id}
+                            selectedLabel={t('wizard.selected')}
+                            idleLabel={t('wizard.selectBooking')}
+                            onSelect={() => setSelectedPhoneBookingId(booking.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-[28px] border border-slate-100 bg-slate-50/80 p-5">
+                      {selectedPhoneBooking ? (
+                        <>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                            {t('wizard.bookingDetail')}
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                            {selectedPhoneBooking.customerName}
+                          </div>
+                          <div className="mt-4 space-y-2">
+                            <DetailRow label={t('wizard.service')} value={selectedPhoneBooking.serviceName} />
+                            <DetailRow label={t('wizard.staff')} value={selectedPhoneBooking.staffName || '-'} />
+                            <DetailRow
+                              label={t('wizard.time')}
+                              value={formatDisplayTime(selectedPhoneBooking.from, language) || '-'}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-sm leading-6 text-slate-500">
+                          {t('wizard.selectBooking')}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        if (selectedPhoneBooking) {
+                          void handlePhoneCheckIn(selectedPhoneBooking);
+                        }
+                      }}
+                      disabled={!selectedPhoneBooking}
+                      className="mt-6 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {t('checkin.checkInButton')}
+                    </button>
+                  </>
+                ) : !phoneLoading ? (
+                  <div className="mt-5 min-h-0 flex-1">
+                    <EmptyState title={t('checkin.noPhoneMatch')} />
+                  </div>
+                ) : null}
+              </Panel>
+            </div>
+          )}
+
+          {step === 'walkin' && walkInStage === 'identity' && (
+            <div className="grid min-h-0 flex-1 gap-6 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
+              <Panel className="min-h-0 p-6 lg:p-8">
             <div className="max-w-2xl">
               <div className="text-sm font-medium text-slate-500">{t('checkin.walkInName')}</div>
               <input
+                ref={walkInNameRef}
                 value={walkInName}
-                onChange={(event) => setWalkInName(event.target.value)}
+                readOnly
+                onFocus={() => showTouchKeyboardFor('walkInName')}
+                onPointerDown={() => showTouchKeyboardFor('walkInName')}
+                data-customer-display-text-input="true"
                 placeholder={t('checkin.walkInPlaceholder')}
                 className="mt-4 w-full rounded-[24px] border border-slate-200 bg-slate-50/80 px-6 py-5 text-2xl text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-300 focus:bg-white"
               />
 
               <button
-                onClick={() => setWalkInStage('service')}
+                onClick={openWalkInServiceStage}
                 disabled={!walkInName.trim()}
                 className="mt-6 inline-flex rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
@@ -637,11 +1037,11 @@ export default function CheckInView({
             </div>
           </Panel>
 
-          <Panel className="p-6">
+              <Panel className="flex min-h-0 flex-col p-6">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
               {t('priceList.title')}
             </div>
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
               {categorySummaries.map((category) => (
                 <div key={category.id} className="rounded-3xl border border-slate-100 bg-slate-50/80 px-4 py-4">
                   <div className="text-lg font-semibold text-slate-900">{category.name}</div>
@@ -652,53 +1052,105 @@ export default function CheckInView({
                 </div>
               ))}
             </div>
-          </Panel>
-        </div>
-      )}
-
-      {step === 'walkin' && walkInStage === 'service' && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-h-0">
-            <WalkInServicePicker
-              categories={categories}
-              language={language}
-              t={t}
-              selectedServiceId={selectedWalkInService?.id}
-              onSelectService={setSelectedWalkInService}
-            />
-          </div>
-
-          <Panel className="flex flex-col p-6">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {t('checkin.walkIn')}
+              </Panel>
             </div>
-            <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
-              {walkInName}
-            </div>
+          )}
 
-            <div className="mt-6 space-y-2">
-              <DetailRow label={t('checkin.walkIn')} value={walkInName} />
-              {selectedWalkInService && (
-                <DetailRow
-                  label={t('wizard.selectServices')}
-                  value={selectedWalkInService.name}
+          {step === 'walkin' && walkInStage === 'service' && (
+            <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="min-h-0">
+                <WalkInServicePicker
+                  categories={categories}
+                  language={language}
+                  t={t}
+                  selectedCategoryId={walkInSelectedCategoryId}
+                  searchQuery={walkInServiceSearchQuery}
+                  categoryMenuOpen={walkInCategoryMenuOpen}
+                  selectedServiceIds={selectedWalkInServiceIds}
+                  onSelectCategory={selectWalkInCategory}
+                  onToggleCategoryMenu={toggleWalkInCategoryMenu}
+                  onSearchFocus={() => setKeyboardTarget('walkInServiceSearch')}
+                  onToggleService={toggleSelectedWalkInService}
                 />
-              )}
+              </div>
+
+              <Panel
+                className="flex min-h-0 flex-col p-6"
+                data-customer-display-checkin-walkin-summary="true"
+              >
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  {t('checkin.walkIn')}
+                </div>
+                <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+                  {walkInName}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {formatServiceCount(selectedWalkInServices.length)}
+                </div>
+
+                <div className="mt-6 space-y-2">
+                  <DetailRow label={t('checkin.walkInName')} value={walkInName || '-'} />
+                  <DetailRow label={t('customer.selectedServices')} value={formatServiceCount(selectedWalkInServices.length)} />
+                  <DetailRow
+                    label={t('customer.approxTime')}
+                    value={selectedWalkInDuration > 0 ? formatApproximateTime(selectedWalkInDuration) : '-'}
+                  />
+                </div>
+
+                <div className="mt-6 flex min-h-0 flex-1 flex-col rounded-[28px] border border-slate-100 bg-slate-50/80 p-5">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {t('customer.selectedServices')}
+                  </div>
+
+                  <div
+                    className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+                    data-customer-display-checkin-walkin-basket="true"
+                  >
+                    {selectedWalkInServices.length > 0 ? selectedWalkInServices.map((service) => (
+                      <div
+                        key={service.id}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-base font-semibold tracking-tight text-slate-900">
+                            {service.name}
+                          </div>
+                          {service.duration > 0 && (
+                            <div className="mt-1 text-xs font-medium text-slate-500">
+                              {t('customer.duration').replace('{min}', String(service.duration))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-sm font-semibold text-slate-600">
+                          {formatDisplayCurrency(service.price, language)}
+                        </div>
+                      </div>
+                    )) : (
+                      <EmptyState title={t('wizard.selectServices')} />
+                    )}
+                  </div>
+
+                  <div className="mt-4 border-t border-slate-100 pt-4">
+                    <DetailRow
+                      label={t('wizard.total')}
+                      value={formatDisplayCurrency(selectedWalkInTotalPrice, language)}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => { void handleWalkInSubmit(); }}
+                  disabled={categories.length > 0 && selectedWalkInServices.length === 0}
+                  className="mt-6 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {t('checkin.checkInButton')}
+                </button>
+              </Panel>
             </div>
+          )}
 
-            <button
-              onClick={() => { void handleWalkInSubmit(); }}
-              disabled={categories.length > 0 && !selectedWalkInService}
-              className="mt-auto rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              {t('checkin.checkInButton')}
-            </button>
-          </Panel>
-        </div>
-      )}
-
-      {step === 'upsell' && pendingCheckIn && (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+          {step === 'upsell' && pendingCheckIn && (
+            <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Panel className="min-h-0 p-6">
             <div className="grid gap-4 md:grid-cols-2">
               {upsellItems.map((item) => {
@@ -742,8 +1194,30 @@ export default function CheckInView({
             </div>
 
             <div className="mt-6 space-y-2">
-              {pendingCheckIn.serviceName && (
-                <DetailRow label={t('wizard.selectServices')} value={pendingCheckIn.serviceName} />
+              {pendingCheckIn.services?.length ? (
+                <>
+                  <DetailRow
+                    label={t('customer.selectedServices')}
+                    value={formatServiceCount(pendingCheckIn.services.length)}
+                  />
+                  <DetailRow
+                    label={t('wizard.total')}
+                    value={pendingCheckIn.totalPrice != null ? formatDisplayCurrency(pendingCheckIn.totalPrice, language) : '-'}
+                  />
+                </>
+              ) : pendingCheckIn.serviceLabel ? (
+                <DetailRow label={t('wizard.service')} value={pendingCheckIn.serviceLabel} />
+              ) : pendingCheckIn.serviceName ? (
+                <DetailRow label={t('wizard.service')} value={pendingCheckIn.serviceName} />
+              ) : null}
+              {pendingCheckIn.approxDurationMinutes ? (
+                <DetailRow
+                  label={t('customer.approxTime')}
+                  value={formatApproximateTime(pendingCheckIn.approxDurationMinutes)}
+                />
+              ) : null}
+              {pendingCheckIn.staffName && (
+                <DetailRow label={t('wizard.staff')} value={pendingCheckIn.staffName} />
               )}
               <DetailRow label={t('checkin.upsellTitle')} value={String(selectedUpsells.length)} />
             </div>
@@ -766,38 +1240,210 @@ export default function CheckInView({
               </button>
             </div>
           </Panel>
-        </div>
-      )}
+            </div>
+          )}
 
-      {step === 'confirmed' && confirmedCheckIn && (
-        <div className="flex flex-1 items-center justify-center">
-          <Panel className="w-full max-w-3xl px-8 py-10 text-center">
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-brand-50 text-brand-600">
-              <ConfirmedIcon />
-            </div>
-            <div className="mt-6 text-4xl font-semibold tracking-tight text-slate-900">
-              {t('checkin.confirmed')}
-            </div>
-            <div className="mt-3 text-lg text-slate-500">{t('checkin.pleaseWait')}</div>
+          {step === 'confirmed' && confirmedCheckIn && (
+            <div className="min-h-0 flex-1">
+              <Panel className="h-full overflow-hidden p-0">
+                <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1.35fr)_340px]">
+                  <div
+                    className="relative min-h-0 overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(253,230,230,0.9),_transparent_42%),linear-gradient(135deg,rgba(255,250,250,0.96),rgba(255,247,239,0.94)_56%,rgba(255,244,210,0.9))] p-8 lg:p-10"
+                    data-customer-display-checkin-confirmed-receipt="true"
+                  >
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/55 to-transparent" />
+                    <div className="relative flex h-full min-h-0 flex-col">
+                      <div className="inline-flex items-center gap-3 self-start rounded-full border border-white/80 bg-white/76 px-4 py-2 shadow-sm">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-b from-rose-50 to-orange-50 text-brand-600">
+                          <ConfirmedIcon />
+                        </div>
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-500">
+                            {t('checkin.confirmed')}
+                          </div>
+                          <div className="text-sm font-medium text-slate-500">
+                            {t('checkin.pleaseWait')}
+                          </div>
+                        </div>
+                      </div>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700">
-                {confirmedCheckIn.customerName}
-              </span>
-              {confirmedCheckIn.serviceName && (
-                <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700">
-                  {confirmedCheckIn.serviceName}
-                </span>
-              )}
-              {confirmedCheckIn.staffName && (
-                <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700">
-                  {t('checkin.withStaff').replace('{name}', confirmedCheckIn.staffName)}
-                </span>
-              )}
+                      <div className="mt-8">
+                        <div className="text-5xl font-semibold tracking-tight text-slate-900">
+                          {confirmedCheckIn.customerName}
+                        </div>
+                        <div className="mt-3 max-w-2xl text-lg leading-7 text-slate-500">
+                          {t('checkin.pleaseWait')}
+                        </div>
+                      </div>
+
+                      <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                        <ReceiptMetric
+                          label={t('customer.selectedServices')}
+                          value={String(confirmedServiceCount)}
+                        />
+                        <ReceiptMetric
+                          label={t('wizard.total')}
+                          value={confirmedTotalValue}
+                        />
+                        <ReceiptMetric
+                          label={t('customer.approxTime')}
+                          value={confirmedApproxTimeValue}
+                        />
+                      </div>
+
+                      <div className="mt-8 flex min-h-0 flex-1 flex-col rounded-[30px] border border-white/85 bg-white/72 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                              {confirmedServices.length > 0 ? t('customer.selectedServices') : t('wizard.bookingDetail')}
+                            </div>
+                            <div className="mt-2 text-sm text-slate-500">
+                              {confirmedServices.length > 0 ? t('checkin.pleaseWait') : t('checkin.confirmed')}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
+                          data-customer-display-checkin-confirmed-detail-scroll="true"
+                        >
+                          {confirmedServices.length > 0 ? (
+                            <div className="space-y-2">
+                              {confirmedServices.map((service) => (
+                                <div
+                                  key={service.id}
+                                  className="flex items-center justify-between gap-4 rounded-2xl border border-slate-100 bg-white/88 px-4 py-3"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-slate-900">{service.name}</div>
+                                    {service.duration > 0 && (
+                                      <div className="mt-1 text-xs font-medium text-slate-500">
+                                        {t('customer.duration').replace('{min}', String(service.duration))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="shrink-0 text-sm font-semibold text-slate-600">
+                                    {formatDisplayCurrency(service.price, language)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="rounded-[28px] border border-slate-100 bg-white/88 p-5">
+                              <div className="space-y-2">
+                                {confirmedCheckIn.serviceLabel && (
+                                  <DetailRow label={t('wizard.service')} value={confirmedCheckIn.serviceLabel} />
+                                )}
+                                {!confirmedCheckIn.serviceLabel && confirmedCheckIn.serviceName && (
+                                  <DetailRow label={t('wizard.service')} value={confirmedCheckIn.serviceName} />
+                                )}
+                                {confirmedCheckIn.staffName && (
+                                  <DetailRow label={t('wizard.staff')} value={confirmedCheckIn.staffName} />
+                                )}
+                                {confirmedCheckIn.bookingTime && (
+                                  <DetailRow
+                                    label={t('wizard.time')}
+                                    value={formatDisplayTime(confirmedCheckIn.bookingTime, language) || '-'}
+                                  />
+                                )}
+                                {confirmedCheckIn.customerPhone && (
+                                  <DetailRow
+                                    label={t('wizard.phone')}
+                                    value={formatPhoneDigitsForDisplay(confirmedCheckIn.customerPhone)}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-5 border-t border-slate-100 pt-4">
+                          <div className="space-y-2">
+                            <DetailRow
+                              label={t('customer.selectedServices')}
+                              value={formatServiceCount(confirmedServiceCount)}
+                            />
+                            <DetailRow
+                              label={t('customer.approxTime')}
+                              value={confirmedApproxTimeValue}
+                            />
+                            <DetailRow
+                              label={t('wizard.total')}
+                              value={confirmedTotalValue}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="flex min-h-0 flex-col justify-between border-l border-white/70 bg-white/72 p-6 lg:p-8"
+                    data-customer-display-checkin-confirmed-summary="true"
+                    data-customer-display-checkin-receipt-sticky-summary="true"
+                  >
+                    <div>
+                      <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-gradient-to-br from-rose-50 via-white to-amber-50 text-brand-600 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+                        <ConfirmedIcon />
+                      </div>
+                      <div className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        {confirmedCheckIn.isWalkIn ? t('checkin.walkIn') : t('wizard.bookingDetail')}
+                      </div>
+                      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                        {t('checkin.confirmed')}
+                      </div>
+                      <div className="mt-3 text-sm leading-6 text-slate-500">
+                        {t('checkin.pleaseWait')}
+                      </div>
+                    </div>
+
+                    <div className="mt-8 space-y-4">
+                      <StatusCard
+                        title={t('checkin.walkInName')}
+                        value={confirmedCheckIn.customerName}
+                      />
+                      <StatusCard
+                        title={t('customer.selectedServices')}
+                        value={formatServiceCount(confirmedServiceCount)}
+                      />
+                      <StatusCard
+                        title={confirmedCheckIn.totalPrice != null ? t('wizard.total') : t('wizard.time')}
+                        value={
+                          confirmedCheckIn.totalPrice != null
+                            ? confirmedTotalValue
+                            : confirmedCheckIn.bookingTime
+                              ? formatDisplayTime(confirmedCheckIn.bookingTime, language) || '-'
+                              : '-'
+                        }
+                      />
+                    </div>
+
+                    <div className="mt-8 rounded-[24px] border border-amber-100 bg-gradient-to-br from-amber-50/90 to-white px-5 py-4">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                        {t('checkin.confirmed')}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-600">
+                        {confirmedCheckIn.staffName
+                          ? t('checkin.withStaff').replace('{name}', confirmedCheckIn.staffName)
+                          : t('checkin.pleaseWait')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Panel>
             </div>
-          </Panel>
+          )}
         </div>
-      )}
+        <div className="absolute bottom-0 left-0 right-0 z-20" data-customer-display-touch-keyboard="true">
+          <TouchKeyboard
+            visible={keyboardTarget !== null}
+            mode="alpha"
+            onKey={handleTouchKeyboardKey}
+            onBackspace={handleTouchKeyboardBackspace}
+            onDone={handleTouchKeyboardDone}
+          />
+        </div>
+      </div>
     </CustomerDisplayShell>
   );
 }
@@ -849,5 +1495,23 @@ function ConfirmedIcon() {
     <svg className="h-9 w-9" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
     </svg>
+  );
+}
+
+function ReceiptMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[24px] border border-white/80 bg-white/78 px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</div>
+      <div className="mt-2 text-xl font-semibold tracking-tight text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function StatusCard({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-[24px] border border-slate-100 bg-white/82 px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{title}</div>
+      <div className="mt-2 text-lg font-semibold text-slate-900">{value}</div>
+    </div>
   );
 }

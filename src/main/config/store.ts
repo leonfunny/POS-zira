@@ -26,6 +26,7 @@ const defaultConfig: AgentConfig = {
   name: 'Zira AI',
   printerProtocol: 'THERMAL',
   printerBaudRate: 9600,
+  multiPrinterMode: false,
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
     : 'https://api.enail.pro',
@@ -137,6 +138,7 @@ const store = new Store<AgentConfig>({
     apiKey: { type: 'string' },
     // Multi-printer dictionary config (NEW)
     printers: printersConfigSchema,
+    multiPrinterMode: { type: 'boolean', default: false },
     // Legacy multi-printer config
     receiptPrinter: printerConfigSchema,
     labelPrinter: printerConfigSchema,
@@ -253,6 +255,18 @@ const store = new Store<AgentConfig>({
     checkinShowQueue: { type: 'boolean', default: true },
   } as any,
 });
+
+function inferMultiPrinterMode(config: Partial<AgentConfig>): boolean {
+  return !!(
+    (config.printers && Object.keys(config.printers).length > 0) ||
+    config.receiptPrinter?.enabled ||
+    config.labelPrinter?.enabled
+  );
+}
+
+if (!store.has('multiPrinterMode')) {
+  store.set('multiPrinterMode', inferMultiPrinterMode(store.store));
+}
 
 /**
  * Get configuration

@@ -38,7 +38,7 @@ class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
+        <div className="flex h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
           <div className="text-center">
             <h1 className="mb-4 text-4xl font-bold text-slate-900">Display Error</h1>
             <p className="mb-6 text-slate-500">{this.state.error?.message}</p>
@@ -241,7 +241,7 @@ export default function CustomerApp() {
     }
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900">
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-rose-50 via-white to-amber-50 text-slate-900">
         <div className="px-8 text-center">
           <h1 className="mb-6 text-6xl font-bold text-brand-600">
             {display?.salonName || t('customer.brandName')}
@@ -256,7 +256,7 @@ export default function CustomerApp() {
 
   return (
     <ErrorBoundary>
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
         {displayMode === 'cart' && state?.cart && (
           <>
             <CartView

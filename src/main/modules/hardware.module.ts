@@ -21,7 +21,7 @@ import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/
 import { printLabelToDevice, cleanupOldLabels, getMaxServicesPerLabel } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
-import { listSerialPorts, listWindowsPrinters, listWindowsPrintersDetailed } from '../hardware/port-utils';
+import { listSerialPorts, listWindowsPrintersDetailed } from '../hardware/port-utils';
 import {
   IPC_CHANNELS,
   PrinterType,
@@ -173,21 +173,10 @@ export class HardwareModule extends BaseModule {
       //   2. Electron printer API (no port info available).
       try {
         const status = await getPosnetDriverStatus();
-        const filteredNames = new Map<string, string>(); // name -> port
-        for (const dev of status.devices) {
-          const name = dev.windowsPrinterName;
-          if (!name) continue;
-          if (dev.connectionType === 'VIRTUAL') continue;
-          // Prefer the windows port name if available; otherwise comPort
-          const port = dev.portName || dev.comPort || '';
-          if (!filteredNames.has(name)) filteredNames.set(name, port);
-        }
-        // getPosnetDriverStatus() succeeded — trust its result even if empty.
-        // Empty means 0 printers physically connected; do NOT fall through to
-        // unfiltered legacy listing (that resurrects ghost printers).
-        const result = Array.from(filteredNames, ([name, port]) => ({ name, port }));
-        logger.info(`[HardwareModule] LIST_WINDOWS_PRINTERS — returning ${result.length} physically-present printer(s) (filtered via getPosnetDriverStatus)`);
-        return result;
+        logger.info(
+          `[HardwareModule] LIST_WINDOWS_PRINTERS returning ${status.windowsPrinters.length} printer(s) from detection snapshot`
+        );
+        return status.windowsPrinters;
       } catch (err) {
         logger.warn('[HardwareModule] LIST_WINDOWS_PRINTERS — filtered query failed, using legacy listing:', err);
       }
@@ -417,7 +406,7 @@ export class HardwareModule extends BaseModule {
     // Re-initialize printers when config changes
     bus.on('config:changed', async (payload) => {
       try {
-        const printerKeys = ['printers', 'printerPort', 'printerProtocol', 'printerBaudRate', 'zebraPrinter', 'receiptPrinter', 'labelPrinter'];
+        const printerKeys = ['printers', 'multiPrinterMode', 'printerPort', 'printerProtocol', 'printerBaudRate', 'zebraPrinter', 'receiptPrinter', 'labelPrinter'];
         if (payload.changedKeys.some(k => printerKeys.includes(k))) {
           logger.info('[HardwareModule] Printer config changed, reinitializing...');
           await this.reinitializePrinter();
@@ -516,6 +505,10 @@ export class HardwareModule extends BaseModule {
 
   // ─── Public accessors (used by other modules) ─────────────────
 
+  private isMultiPrinterModeEnabled(config = getConfig()): boolean {
+    return !!config.multiPrinterMode;
+  }
+
   getPrinterForType(printerType: PrinterType): PrinterDriver | null {
     if (this.printers[printerType]) return this.printers[printerType]!;
     if (printerType === PrinterType.LABEL && this.labelPrinter) return this.labelPrinter;
@@ -527,15 +520,15 @@ export class HardwareModule extends BaseModule {
 
   getDeviceStatus(): DeviceStatus {
     const config = getConfig();
-    const hasPrintersDict = config.printers && Object.keys(config.printers).length > 0;
+    const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
     const hasLegacyMultiPrinter = config.receiptPrinter?.enabled || config.labelPrinter?.enabled;
 
     let printerConnected = false;
     let printerPort: string | null = null;
 
-    if (hasPrintersDict && config.printers) {
+    if (multiPrinterMode) {
       const connectedPrinters: string[] = [];
-      for (const [pt, pc] of Object.entries(config.printers)) {
+      for (const [pt, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
         const driver = this.printers[pt as PrinterType];
         if (driver?.isConnected()) {
@@ -568,9 +561,10 @@ export class HardwareModule extends BaseModule {
   getPrintersStatus(): Array<{ type: string; connected: boolean; protocol?: string; address?: string }> {
     const config = getConfig();
     const result: Array<{ type: string; connected: boolean; protocol?: string; address?: string }> = [];
+    const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
 
-    if (config.printers && Object.keys(config.printers).length > 0) {
-      for (const [pt, pc] of Object.entries(config.printers)) {
+    if (multiPrinterMode) {
+      for (const [pt, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
         result.push({
           type: pt,
@@ -581,7 +575,7 @@ export class HardwareModule extends BaseModule {
       }
     }
 
-    if (result.length === 0) {
+    if (!multiPrinterMode && result.length === 0) {
       if (config.receiptPrinter?.enabled) {
         result.push({ type: 'RECEIPT', connected: this.receiptPrinter?.isConnected() || false, protocol: config.receiptPrinter.protocol, address: config.receiptPrinter.windowsPrinter || config.receiptPrinter.port });
       }
@@ -688,6 +682,14 @@ export class HardwareModule extends BaseModule {
   async autoSetupPrinter(printerType: string = 'RECEIPT', device?: DetectedDevice): Promise<{ success: boolean; port?: string; windowsPrinter?: string; message: string; action?: string }> {
     // If device info provided, use smart routing based on brand
     if (device) {
+      if (device.autoSetupEligible === false) {
+        return {
+          success: false,
+          message: `${device.brand} ${device.model} requires manual configuration. Select the COM port and slot in Settings instead of auto-setup.`,
+          action: 'manual_required',
+        };
+      }
+
       const classification = classifyPrinterCategory(device);
       const effectiveType = printerType || classification.targetType;
       const protocol = classification.protocol;
@@ -736,7 +738,7 @@ export class HardwareModule extends BaseModule {
       port,
       baudRate: 9600,
     };
-    setConfig({ printers: currentPrinters });
+    setConfig({ multiPrinterMode: true, printers: currentPrinters });
 
     // Step 4: Reinitialize
     await this.reinitializePrinter();
@@ -811,7 +813,7 @@ export class HardwareModule extends BaseModule {
     }
 
     currentPrinters[printerType as PrinterType] = printerConfig;
-    setConfig({ printers: currentPrinters });
+    setConfig({ multiPrinterMode: true, printers: currentPrinters });
 
     // Step 4: Reinitialize
     await this.reinitializePrinter();
@@ -899,7 +901,7 @@ export class HardwareModule extends BaseModule {
         pc.windowsPrinter = actualIdentifier;
       }
       currentPrinters[pt] = pc;
-      setConfig({ printers: currentPrinters });
+      setConfig({ multiPrinterMode: true, printers: currentPrinters });
       logger.info(`[HardwareModule] ${pt} config updated: ${isPort ? 'port' : 'windowsPrinter'}="${actualIdentifier}"`);
       return true;
     }
@@ -915,10 +917,10 @@ export class HardwareModule extends BaseModule {
     this.printers = {};
     for (const p of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { p?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on reinit failed:', err?.message); } }
 
-    const hasPrintersDict = config.printers && Object.keys(config.printers).length > 0;
+    const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
 
-    if (hasPrintersDict && config.printers) {
-      for (const [ptStr, pc] of Object.entries(config.printers)) {
+    if (multiPrinterMode) {
+      for (const [ptStr, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
         const pt = ptStr as PrinterType;
         const driver = this.createPrinterFromConfig(pc, pt);
@@ -1074,7 +1076,7 @@ export class HardwareModule extends BaseModule {
         pc.windowsPrinter = newIdentifier;
       }
       currentPrinters[pt] = pc;
-      setConfig({ printers: currentPrinters });
+      setConfig({ multiPrinterMode: true, printers: currentPrinters });
     }
 
     logger.info(`[HardwareModule] ${pt} recovered → ${newIdentifier}`);
@@ -1085,12 +1087,15 @@ export class HardwareModule extends BaseModule {
     this.healthCheckTick++;
     let changed = false;
 
-    // Fetch printer and port lists once for the entire health check cycle
-    // This avoids each driver spawning its own PowerShell process
-    const [cachedPrinters, cachedPorts] = await Promise.all([
-      listWindowsPrinters(),
-      listSerialPorts(),
-    ]);
+    // Fetch a single detection snapshot per cycle so drivers do not each spawn
+    // their own presence-check PowerShell queries.
+    const statusSnapshot = await getPosnetDriverStatus();
+    const cachedPrinters = Array.from(new Set(
+      statusSnapshot.devices
+        .filter((device) => device.windowsPrinterName && device.connectionType !== 'VIRTUAL')
+        .map((device) => device.windowsPrinterName as string)
+    ));
+    const cachedPorts = statusSnapshot.serialPorts;
 
     // Check all drivers in the printers map
     for (const [pt, driver] of Object.entries(this.printers)) {

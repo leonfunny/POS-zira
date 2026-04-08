@@ -174,6 +174,18 @@ if ($doc.PrinterSettings.IsValid) {
    * Used by periodic health checks.
    */
   async healthCheck(cachedPrinters?: string[]): Promise<boolean> {
+    if (cachedPrinters) {
+      const stillAvailable = cachedPrinters.some(p => p.toLowerCase() === this.printerName.toLowerCase());
+      if (this.connected && !stillAvailable) {
+        logger.warn(`[ZebraDriver] Health check: "${this.printerName}" gone (snapshot) â€” marking disconnected`);
+        this.connected = false;
+      } else if (!this.connected && stillAvailable) {
+        logger.info(`[ZebraDriver] Health check: "${this.printerName}" present again (snapshot) â€” marking connected`);
+        this.connected = true;
+      }
+      return this.connected;
+    }
+
     const printers = cachedPrinters ?? await listWindowsPrinters();
     const inSpooler = printers.some(p => p.toLowerCase() === this.printerName.toLowerCase());
 

@@ -284,7 +284,7 @@ interface ElectronAPI {
     touch: () => Promise<{ success: boolean }>;
     requestService: (serviceId: string) => Promise<{ success: boolean }>;
     getBookings: () => Promise<BooksyBookingSummary[]>;
-    checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
+    checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
       Promise<{ success: boolean }>;
     browseServices: () => Promise<{ success: boolean }>;
     backToCheckin: () => Promise<{ success: boolean }>;
@@ -517,7 +517,7 @@ interface ElectronAPI {
     };
     onCustomerDisplayStatus: (callback: (data: { responsive: boolean }) => void) => () => void;
     onCustomerRequest: (callback: (data: { id: string; serviceName: string }) => void) => () => void;
-    onCustomerCheckIn: (callback: (data: { bookingId?: number; customerName: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean }) => void) => () => void;
+    onCustomerCheckIn: (callback: (data: { bookingId?: number; customerName: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean }) => void) => () => void;
     onDbSaveError: (callback: (data: { consecutiveFailures: number; dbPath: string }) => void) => () => void;
   };
 

@@ -67,6 +67,11 @@ describe('IPC channel contracts - display preload', () => {
   it('exposes display.touch', () => {
     expect(preloadDisplay).toContain('touch');
   });
+
+  it('keeps multi-service browse check-in payload in sync across preload and declarations', () => {
+    expect(preloadDisplay).toContain('services');
+    expect(electronDts).toContain('services');
+  });
 });
 
 describe('Type consistency', () => {

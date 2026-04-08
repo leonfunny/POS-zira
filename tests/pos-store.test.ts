@@ -265,6 +265,29 @@ describe('Display state transitions', () => {
     expect(store.getState().display.mode).toBe('cart');
     store.destroy();
   });
+
+  it('stores selected services and derives legacy serviceName for multi-service walk-ins', () => {
+    const store = new PosStore();
+    store.handleCheckIn({
+      customerName: 'Anna Kowalska',
+      isWalkIn: true,
+      services: [
+        { id: 'svc-1', name: 'Express manicure', price: 4500, duration: 30 },
+        { id: 'svc-2', name: 'Spa pedicure', price: 6500, duration: 45 },
+      ],
+    } as any);
+
+    expect(store.getState().display.lastCheckIn).toMatchObject({
+      customerName: 'Anna Kowalska',
+      isWalkIn: true,
+      serviceName: 'Express manicure, Spa pedicure',
+      services: [
+        { id: 'svc-1', name: 'Express manicure', price: 4500, duration: 30 },
+        { id: 'svc-2', name: 'Spa pedicure', price: 6500, duration: 45 },
+      ],
+    });
+    store.destroy();
+  });
 });
 
 describe('Table and customer selection', () => {

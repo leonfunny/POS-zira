@@ -10,9 +10,8 @@
     "resolveJsonModule": true,
     "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["./src/shared/*"]
     },
     "declaration": false
   },

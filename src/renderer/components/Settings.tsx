@@ -7,7 +7,7 @@ import { ShoppingCart, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, 
 
 interface SettingsProps {
   config: AgentConfig | null;
-  onConfigChange: (config: Partial<AgentConfig>) => void;
+  onConfigChange: (config: Partial<AgentConfig>) => void | Promise<any>;
 }
 
 // Printer types - defined locally for Vite compatibility
@@ -26,6 +26,68 @@ const defaultPrinterConfig: PrinterConfig = {
   supportsCut: true,
   supportsCashDrawer: false,
 };
+
+interface DetectedPrinterDevice {
+  vid: string;
+  brand: string;
+  model: string;
+  windowsPrinterName: string | null;
+  comPort: string | null;
+  portName: string | null;
+  connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL';
+  driverInstalled: boolean;
+  targetType?: string;
+  recommendedProtocol?: string;
+  autoSetupEligible?: boolean;
+}
+
+interface PrinterDetectionStatus {
+  devices: DetectedPrinterDevice[];
+  posnetPresent: boolean;
+  posnetComPort: string | null;
+  posnetDriverInstalled: boolean;
+  serialPorts?: string[];
+  windowsPrinters?: Array<{ name: string; port: string }>;
+}
+
+function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
+  if (!config) return false;
+  if (typeof config.multiPrinterMode === 'boolean') return config.multiPrinterMode;
+  return !!(
+    (config.printers && Object.keys(config.printers).length > 0) ||
+    config.receiptPrinter?.enabled ||
+    config.labelPrinter?.enabled
+  );
+}
+
+function buildPrinterPayloadFromConfig(config: AgentConfig | null | undefined): Partial<AgentConfig> {
+  const multiPrinterMode = deriveMultiPrinterMode(config);
+  if (multiPrinterMode) {
+    return {
+      multiPrinterMode: true,
+      printers: config?.printers || {},
+      receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
+      labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
+    };
+  }
+
+  return {
+    multiPrinterMode: false,
+    printerPort: config?.printerPort || '',
+    printerProtocol: config?.printerProtocol || 'THERMAL',
+    printerBaudRate: config?.printerBaudRate || 9600,
+    zebraPrinter: config?.zebraPrinter || '',
+    labelWidth: config?.labelWidth || 100,
+    labelHeight: config?.labelHeight || 50,
+    printers: {},
+    receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
+    labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
+  };
+}
+
+function getPrinterPayloadSignature(payload: Partial<AgentConfig>): string {
+  return JSON.stringify(payload);
+}
 
 const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
   { tab: 'pos',       label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
@@ -73,7 +135,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [calibrateResult, setCalibrateResult] = useState<{ printerType: string; success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } } | null>(null);
 
   // Printer detection state
-  const [posnetStatus, setPosnetStatus] = useState<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean } | null>(null);
+  const [posnetStatus, setPosnetStatus] = useState<PrinterDetectionStatus | null>(null);
   const [posnetChecking, setPosnetChecking] = useState(false);
   const [posnetInstalling, setPosnetInstalling] = useState(false);
   const [posnetInstallResult, setPosnetInstallResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -121,42 +183,108 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   // Auto-update state
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [appVersion, setAppVersion] = useState('1.0.0');
+  const [savingPrinterChanges, setSavingPrinterChanges] = useState(false);
+  const [printerSaveResult, setPrinterSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Multi-printer mode (new dictionary style)
-  const [multiPrinterMode, setMultiPrinterMode] = useState(
-    !!(config?.printers && Object.keys(config.printers).length > 0) ||
-    !!(config?.receiptPrinter?.enabled || config?.labelPrinter?.enabled)
-  );
+  const [multiPrinterMode, setMultiPrinterMode] = useState(deriveMultiPrinterMode(config));
   const [printers, setPrinters] = useState<PrintersConfig>(
     config?.printers || {}
   );
+  const deviceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const printerSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const printerAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const printerSaveInFlightRef = useRef(false);
+  const pendingPrinterSaveRef = useRef(false);
+  const failedPrinterSignatureRef = useRef<string | null>(null);
+  const syncedPrinterSignatureRef = useRef(getPrinterPayloadSignature(buildPrinterPayloadFromConfig(config)));
+  const latestPrinterPayloadRef = useRef(buildPrinterPayloadFromConfig(config));
+  const latestPrinterSignatureRef = useRef(getPrinterPayloadSignature(latestPrinterPayloadRef.current));
+  const componentMountedRef = useRef(true);
 
-  // Legacy multi-printer (for backward compatibility)
-  const [receiptPrinter, setReceiptPrinter] = useState<PrinterConfig>(
-    config?.receiptPrinter || { ...defaultPrinterConfig }
-  );
-  const [labelPrinter, setLabelPrinter] = useState<PrinterConfig>(
-    config?.labelPrinter || { ...defaultPrinterConfig }
-  );
+  const buildGeneralConfigPayload = useCallback((): Partial<AgentConfig> => ({
+    name,
+    autoStart,
+    language,
+    posEnabled,
+    posMode,
+    posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
+    customerDisplayEnabled,
+    customerDisplayMonitor,
+    customerDisplayForceKiosk,
+    customerDisplayPromoFolder: promoFolder,
+    customerDisplayPromoInterval: promoInterval,
+    customerDisplayIdleTimeout: idleTimeout,
+  }), [
+    name, autoStart, language,
+    posEnabled, posMode, posLanguage,
+    customerDisplayEnabled, customerDisplayMonitor, customerDisplayForceKiosk,
+    promoFolder, promoInterval, idleTimeout,
+  ]);
+
+  const buildPrinterConfigPayload = useCallback((): Partial<AgentConfig> => {
+    if (multiPrinterMode) {
+      return {
+        multiPrinterMode: true,
+        printers,
+        receiptPrinter: { ...defaultPrinterConfig, enabled: false },
+        labelPrinter: { ...defaultPrinterConfig, enabled: false },
+      };
+    }
+
+    return {
+      multiPrinterMode: false,
+      printerPort: selectedPort,
+      printerProtocol: protocol,
+      printerBaudRate: baudRate,
+      zebraPrinter,
+      labelWidth,
+      labelHeight,
+      printers: {},
+      receiptPrinter: { ...defaultPrinterConfig, enabled: false },
+      labelPrinter: { ...defaultPrinterConfig, enabled: false },
+    };
+  }, [
+    multiPrinterMode, printers,
+    selectedPort, protocol, baudRate, zebraPrinter, labelWidth, labelHeight,
+  ]);
+
+  const currentPrinterPayload = buildPrinterConfigPayload();
+  const currentPrinterPayloadSignature = getPrinterPayloadSignature(currentPrinterPayload);
+  latestPrinterPayloadRef.current = currentPrinterPayload;
+  latestPrinterSignatureRef.current = currentPrinterPayloadSignature;
+
+  const clearPrinterSaveResultLater = useCallback(() => {
+    if (printerSaveStatusTimerRef.current) {
+      clearTimeout(printerSaveStatusTimerRef.current);
+    }
+    printerSaveStatusTimerRef.current = setTimeout(() => {
+      if (componentMountedRef.current) {
+        setPrinterSaveResult(null);
+      }
+    }, 4000);
+  }, []);
+
+  const refreshPrinterDiscovery = useCallback(async () => {
+    const status = await window.electronAPI.getPosnetDriverStatus() as PrinterDetectionStatus;
+    setPosnetStatus(status);
+    setPorts(status.serialPorts || []);
+    setWindowsPrinters(status.windowsPrinters || []);
+    return status;
+  }, []);
+
+  const schedulePrinterDiscoveryRefresh = useCallback((delayMs = 500) => {
+    if (deviceRefreshTimerRef.current) clearTimeout(deviceRefreshTimerRef.current);
+    deviceRefreshTimerRef.current = setTimeout(() => {
+      refreshPrinterDiscovery().catch(() => {});
+    }, delayMs);
+  }, [refreshPrinterDiscovery]);
 
   // Load available ports and Windows printers
   useEffect(() => {
     let mounted = true;
-
-    async function loadPorts() {
-      try {
-        const availablePorts = await window.electronAPI.listPorts();
-        if (mounted) setPorts(availablePorts);
-      } catch { /* ignore */ }
-    }
-    async function loadWindowsPrinters() {
-      try {
-        const printers = await window.electronAPI.listWindowsPrinters();
-        if (mounted) setWindowsPrinters(printers);
-      } catch { /* ignore */ }
-    }
-    loadPorts();
-    loadWindowsPrinters();
+    componentMountedRef.current = true;
+    refreshPrinterDiscovery().catch(() => {});
 
     // Load connected displays
     async function loadDisplays() {
@@ -181,9 +309,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     // when the backend detects a plug/unplug event
     const unsubDevice = window.electronAPI.onDeviceStatus(() => {
       if (!mounted) return;
-      window.electronAPI.listPorts().then(p => { if (mounted) setPorts(p); }).catch(() => {});
-      window.electronAPI.listWindowsPrinters().then(p => { if (mounted) setWindowsPrinters(p); }).catch(() => {});
-      window.electronAPI.getPosnetDriverStatus().then(s => { if (mounted) setPosnetStatus(s); }).catch(() => {});
+      schedulePrinterDiscoveryRefresh(500);
     });
 
     // Get app version
@@ -193,23 +319,21 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
     return () => {
       mounted = false;
+      componentMountedRef.current = false;
       unsubSsh?.();
       unsubUpdate?.();
       unsubDevice?.();
+      if (deviceRefreshTimerRef.current) clearTimeout(deviceRefreshTimerRef.current);
+      if (printerSaveStatusTimerRef.current) clearTimeout(printerSaveStatusTimerRef.current);
     };
-  }, []);
+  }, [refreshPrinterDiscovery, schedulePrinterDiscoveryRefresh]);
 
   // Update state when config changes
   useEffect(() => {
     if (config) {
-      setSelectedPort(config.printerPort || '');
-      setProtocol(config.printerProtocol || 'THERMAL');
-      setBaudRate(config.printerBaudRate || 9600);
+      const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(config));
       setServerUrl(config.serverUrl || 'https://api.enail.pro');
       setName(config.name || 'Zira AI');
-      setZebraPrinter(config.zebraPrinter || '');
-      setLabelWidth(config.labelWidth || 100);
-      setLabelHeight(config.labelHeight || 50);
       setAutoStart(config.autoStart ?? true);
       setLanguage(config.language || 'en');
       // POS settings
@@ -222,14 +346,6 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
-      // Multi-printer settings (new dictionary)
-      const hasPrintersDict = config.printers && Object.keys(config.printers).length > 0;
-      const hasLegacyMulti = config.receiptPrinter?.enabled || config.labelPrinter?.enabled;
-      setMultiPrinterMode(!!(hasPrintersDict || hasLegacyMulti));
-      setPrinters(config.printers || {});
-      // Legacy multi-printer settings
-      setReceiptPrinter(config.receiptPrinter || { ...defaultPrinterConfig });
-      setLabelPrinter(config.labelPrinter || { ...defaultPrinterConfig });
       // AI settings
       setAiEnabled((config as any).aiEnabled ?? false);
       setAiLocalMode((config as any).aiLocalMode ?? false);
@@ -237,6 +353,18 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       // Unattended Remote Access
       setRemoteAccessEnabled(config.remoteAccessEnabled ?? false);
       setRemoteAccessPin(config.remoteAccessPin || '');
+
+      if (incomingPrinterSignature !== syncedPrinterSignatureRef.current) {
+        setSelectedPort(config.printerPort || '');
+        setProtocol(config.printerProtocol || 'THERMAL');
+        setBaudRate(config.printerBaudRate || 9600);
+        setZebraPrinter(config.zebraPrinter || '');
+        setLabelWidth(config.labelWidth || 100);
+        setLabelHeight(config.labelHeight || 50);
+        setMultiPrinterMode(deriveMultiPrinterMode(config));
+        setPrinters(config.printers || {});
+        syncedPrinterSignatureRef.current = incomingPrinterSignature;
+      }
     }
   }, [config]);
 
@@ -253,69 +381,98 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   }, [config]);
 
-  const buildConfigPayload = useCallback((): Partial<AgentConfig> => {
-    const posConfig = {
-      posEnabled,
-      posMode,
-      posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
-      customerDisplayEnabled,
-      customerDisplayMonitor,
-      customerDisplayForceKiosk,
-      customerDisplayPromoFolder: promoFolder,
-      customerDisplayPromoInterval: promoInterval,
-      customerDisplayIdleTimeout: idleTimeout,
-    };
-
-    if (multiPrinterMode) {
-      return {
-        name, autoStart, language,
-        ...posConfig,
-        printers,
-        receiptPrinter: { ...defaultPrinterConfig, enabled: false },
-        labelPrinter: { ...defaultPrinterConfig, enabled: false },
-      };
-    }
-    return {
-      name,
-      printerPort: selectedPort,
-      printerProtocol: protocol,
-      printerBaudRate: baudRate,
-      zebraPrinter, labelWidth, labelHeight,
-      autoStart, language,
-      ...posConfig,
-      printers: {},
-      receiptPrinter: { ...defaultPrinterConfig, enabled: false },
-      labelPrinter: { ...defaultPrinterConfig, enabled: false },
-    };
-  }, [
-    name, autoStart, language, multiPrinterMode, printers,
-    selectedPort, protocol, baudRate, zebraPrinter, labelWidth, labelHeight,
-    posEnabled, posMode, posLanguage,
-    customerDisplayEnabled, customerDisplayMonitor, customerDisplayForceKiosk,
-    promoFolder, promoInterval, idleTimeout,
-  ]);
-
   // Debounced auto-save whenever config-bearing state changes
   useEffect(() => {
     if (!configSyncedRef.current) return;  // skip initial config→state sync
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
-      const payload = buildConfigPayload();
+      const payload = buildGeneralConfigPayload();
       onConfigChange(payload);
       window.electronAPI.setAutoStart(autoStart).catch(() => {});
     }, 600);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [buildConfigPayload, autoStart, onConfigChange]);
+  }, [buildGeneralConfigPayload, autoStart, onConfigChange]);
   // ─── End auto-save ───────────────────────────────────────────────────────────
+  const persistPrinterChanges = useCallback(async (
+    payload: Partial<AgentConfig> = latestPrinterPayloadRef.current,
+    options: { silent?: boolean } = {},
+  ) => {
+    const signature = getPrinterPayloadSignature(payload);
+    if (signature === syncedPrinterSignatureRef.current) return;
 
-  // Helper functions for updating printer configs (legacy)
-  const updateReceiptPrinter = (updates: Partial<PrinterConfig>) => {
-    setReceiptPrinter(prev => ({ ...prev, ...updates }));
-  };
+    if (printerSaveInFlightRef.current) {
+      pendingPrinterSaveRef.current = true;
+      return;
+    }
 
-  const updateLabelPrinter = (updates: Partial<PrinterConfig>) => {
-    setLabelPrinter(prev => ({ ...prev, ...updates }));
-  };
+    printerSaveInFlightRef.current = true;
+    if (!options.silent && componentMountedRef.current) {
+      if (printerSaveStatusTimerRef.current) {
+        clearTimeout(printerSaveStatusTimerRef.current);
+      }
+      setSavingPrinterChanges(true);
+      setPrinterSaveResult(null);
+    }
+
+    try {
+      await Promise.resolve(onConfigChange(payload));
+      syncedPrinterSignatureRef.current = signature;
+      failedPrinterSignatureRef.current = null;
+
+      if (!options.silent && componentMountedRef.current) {
+        setPrinterSaveResult({ success: true, message: 'Printer settings saved' });
+      }
+    } catch (error: any) {
+      failedPrinterSignatureRef.current = signature;
+      if (!options.silent && componentMountedRef.current) {
+        setPrinterSaveResult({
+          success: false,
+          message: error?.message || 'Failed to save printer settings',
+        });
+      }
+    } finally {
+      printerSaveInFlightRef.current = false;
+
+      if (!options.silent && componentMountedRef.current) {
+        setSavingPrinterChanges(false);
+        clearPrinterSaveResultLater();
+      }
+
+      if (pendingPrinterSaveRef.current) {
+        pendingPrinterSaveRef.current = false;
+        if (latestPrinterSignatureRef.current !== syncedPrinterSignatureRef.current) {
+          void persistPrinterChanges(
+            latestPrinterPayloadRef.current,
+            { silent: !componentMountedRef.current },
+          );
+        }
+      }
+    }
+  }, [clearPrinterSaveResultLater, onConfigChange]);
+
+  useEffect(() => {
+    if (!configSyncedRef.current) return;
+    if (currentPrinterPayloadSignature === syncedPrinterSignatureRef.current) return;
+    if (currentPrinterPayloadSignature === failedPrinterSignatureRef.current) return;
+
+    if (printerAutoSaveTimerRef.current) clearTimeout(printerAutoSaveTimerRef.current);
+    printerAutoSaveTimerRef.current = setTimeout(() => {
+      void persistPrinterChanges(latestPrinterPayloadRef.current);
+    }, 600);
+
+    return () => {
+      if (printerAutoSaveTimerRef.current) clearTimeout(printerAutoSaveTimerRef.current);
+    };
+  }, [currentPrinterPayloadSignature, persistPrinterChanges]);
+
+  useEffect(() => {
+    return () => {
+      if (printerAutoSaveTimerRef.current) clearTimeout(printerAutoSaveTimerRef.current);
+      if (latestPrinterSignatureRef.current !== syncedPrinterSignatureRef.current) {
+        void persistPrinterChanges(latestPrinterPayloadRef.current, { silent: true });
+      }
+    };
+  }, [persistPrinterChanges]);
 
   // Helper function for updating printers dictionary
   const updatePrinter = (printerType: PrinterTypeValue, updates: Partial<PrinterConfig>) => {
@@ -335,8 +492,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   const handleRefreshPorts = async () => {
     try {
-      const availablePorts = await window.electronAPI.listPorts();
-      setPorts(availablePorts);
+      await refreshPrinterDiscovery();
     } catch (err) {
       console.error('Failed to refresh ports:', err);
     }
@@ -344,8 +500,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   const handleRefreshWindowsPrinters = async () => {
     try {
-      const printers = await window.electronAPI.listWindowsPrinters();
-      setWindowsPrinters(printers);
+      await refreshPrinterDiscovery();
     } catch (err) {
       console.error('Failed to refresh Windows printers:', err);
     }
@@ -422,14 +577,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     setPosnetInstallResult(null);
     setAutoSetupResult(null);
     try {
-      const status = await window.electronAPI.getPosnetDriverStatus();
-      setPosnetStatus(status);
+      const status = await refreshPrinterDiscovery();
 
       // Auto-fill detected COM port into any POSNET-protocol printer that has no port or a wrong port
       if (status.posnetComPort) {
         const detectedPort = status.posnetComPort;
-        const availablePorts = await window.electronAPI.listPorts();
-        setPorts(availablePorts);
 
         setPrinters(prev => {
           const updated = { ...prev };
@@ -461,6 +613,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
       // Second pass: auto-setup unconfigured devices
       for (const dev of status.devices) {
+        if (dev.autoSetupEligible === false) continue;
         if (!dev.driverInstalled && !dev.comPort) continue;
 
         const targetType = dev.targetType || 'RECEIPT';
@@ -483,12 +636,18 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           message: `Auto-configured: ${configured.join(', ')}`,
         });
         // Refresh status after setup
-        const freshStatus = await window.electronAPI.getPosnetDriverStatus();
-        setPosnetStatus(freshStatus);
-        const newPorts = await window.electronAPI.listPorts();
-        setPorts(newPorts);
-        const newPrintersList = await window.electronAPI.listWindowsPrinters();
-        setWindowsPrinters(newPrintersList);
+        await refreshPrinterDiscovery();
+        const updatedConfig = await window.electronAPI.getConfig();
+        const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
+        setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
+        setPrinters(updatedConfig?.printers || {});
+        setSelectedPort(updatedConfig?.printerPort || '');
+        setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
+        setBaudRate(updatedConfig?.printerBaudRate || 9600);
+        setZebraPrinter(updatedConfig?.zebraPrinter || '');
+        setLabelWidth(updatedConfig?.labelWidth || 100);
+        setLabelHeight(updatedConfig?.labelHeight || 50);
+        syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
     } finally {
       setPosnetChecking(false);
@@ -503,11 +662,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       const result = await window.electronAPI.installPosnetDriver();
       setPosnetInstallResult(result);
       if (result.success) {
-        // Re-check status and refresh COM ports after install
-        const status = await window.electronAPI.getPosnetDriverStatus();
-        setPosnetStatus(status);
-        const newPorts = await window.electronAPI.listPorts();
-        setPorts(newPorts);
+        await refreshPrinterDiscovery();
       }
     } finally {
       setPosnetInstalling(false);
@@ -557,12 +712,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       }
 
       // Step 4: Refresh posnetStatus + ports + Windows printers
-      const status = await window.electronAPI.getPosnetDriverStatus();
-      setPosnetStatus(status);
-      const newPorts = await window.electronAPI.listPorts();
-      setPorts(newPorts);
-      const newPrinters = await window.electronAPI.listWindowsPrinters();
-      setWindowsPrinters(newPrinters);
+      const status = await refreshPrinterDiscovery();
 
       // Recompute presence from fresh scan: did our device come back?
       const stillThere = status.devices.some((d: any) =>
@@ -596,16 +746,19 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       const result = await window.electronAPI.autoSetupPrinter(targetType || 'RECEIPT', device);
       setAutoSetupResult(result);
       if (result.success) {
-        // Refresh status + ports + printer config from backend
-        const status = await window.electronAPI.getPosnetDriverStatus();
-        setPosnetStatus(status);
-        const newPorts = await window.electronAPI.listPorts();
-        setPorts(newPorts);
-        const newPrinters = await window.electronAPI.listWindowsPrinters();
-        setWindowsPrinters(newPrinters);
+        await refreshPrinterDiscovery();
         // Refresh printer config so Save doesn't overwrite auto-setup results
         const updatedConfig = await window.electronAPI.getConfig();
-        if (updatedConfig?.printers) setPrinters(updatedConfig.printers);
+        const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
+        setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
+        setPrinters(updatedConfig?.printers || {});
+        setSelectedPort(updatedConfig?.printerPort || '');
+        setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
+        setBaudRate(updatedConfig?.printerBaudRate || 9600);
+        setZebraPrinter(updatedConfig?.zebraPrinter || '');
+        setLabelWidth(updatedConfig?.labelWidth || 100);
+        setLabelHeight(updatedConfig?.labelHeight || 50);
+        syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
     } finally {
       setAutoSettingUp(false);
@@ -620,9 +773,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       const result = await window.electronAPI.scanForDriver();
       setPosnetInstallResult(result);
       if (result.success) {
-        // Re-detect to see if driver was found
-        const status = await window.electronAPI.getPosnetDriverStatus();
-        setPosnetStatus(status);
+        await refreshPrinterDiscovery();
       }
     } finally {
       setPosnetInstalling(false);
@@ -793,18 +944,20 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 ['HP', 'Canon', 'Samsung'].includes(brand) && dev.connectionType !== 'SERIAL';
 
               // Determine target type
-              const targetType: PrinterTypeValue = isPosnet ? 'RECEIPT' :
+              const fallbackTargetType: PrinterTypeValue = isPosnet ? 'RECEIPT' :
                 isLabelPrinter ? 'LABEL' :
                 isA4Printer ? 'A4' : 'RECEIPT';
-              const targetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
+              const fallbackTargetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
                 isZebra ? 'ZEBRA' :
                 isA4Printer ? 'WINDOWS' : 'THERMAL';
+              const targetType = (dev.targetType as PrinterTypeValue) || fallbackTargetType;
+              const targetProtocol = (dev.recommendedProtocol as PrinterProtocol) || fallbackTargetProtocol;
 
               // Check if this device is already configured in the target slot
               const currentConfig = getPrinterConfig(targetType);
               const isAlreadyConfigured = currentConfig.enabled && (
-                (isPosnet && currentConfig.protocol === 'POSNET' && currentConfig.port === dev.comPort) ||
-                (!isPosnet && currentConfig.windowsPrinter === dev.windowsPrinterName)
+                (targetProtocol === 'POSNET' && currentConfig.protocol === 'POSNET' && currentConfig.port === dev.comPort) ||
+                (targetProtocol !== 'POSNET' && currentConfig.windowsPrinter === dev.windowsPrinterName)
               );
 
               return (
@@ -831,6 +984,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   )}
                   {dev.comPort && (
                     <div className="text-green-600">● COM port: <strong>{dev.comPort}</strong></div>
+                  )}
+
+                  {dev.autoSetupEligible === false && (
+                    <div className="text-amber-600">Manual configuration required â€” choose the COM port and printer slot below.</div>
                   )}
 
                   {/* Per-device actions */}
@@ -887,7 +1044,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       )}
 
                       {/* Any brand with driver or COM port: auto setup */}
-                      {(dev.driverInstalled || dev.comPort) && (
+                      {(dev.driverInstalled || dev.comPort) && dev.autoSetupEligible !== false && (
                         <button
                           onClick={() => handleAutoSetup(targetType, dev)}
                           disabled={autoSettingUp || isBusy}
@@ -1514,6 +1671,22 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             </div>
           </div>
         )}
+
+        <div className="mt-4 pt-4 border-t border-slate-200 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <p className="text-xs text-slate-500">
+            Printer changes save automatically. Leaving this tab keeps detected printers, assignments, and label dimensions.
+          </p>
+          <div className="flex items-center gap-2">
+            {savingPrinterChanges && (
+              <span className="text-xs text-slate-500">Saving printer settings...</span>
+            )}
+            {!savingPrinterChanges && printerSaveResult && (
+              <span className={`text-xs ${printerSaveResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                {printerSaveResult.message}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* POS Settings */}

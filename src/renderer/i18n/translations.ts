@@ -542,6 +542,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': '{count} services',
     'customer.fromPrice': 'From {price}',
     'customer.duration': '{min} min',
+    'customer.approxTime': 'Approx. time',
+    'customer.selectedServices': 'Selected Services',
     'customer.back': 'Back',
 
     // Check-in
@@ -1439,6 +1441,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': '{count} dịch vụ',
     'customer.fromPrice': 'Từ {price}',
     'customer.duration': '{min} phút',
+    'customer.approxTime': 'Thời gian ước tính',
+    'customer.selectedServices': 'Dịch vụ đã chọn',
     'customer.back': 'Quay lại',
 
     // Check-in
@@ -2336,6 +2340,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': '{count} hizmet',
     'customer.fromPrice': '{price} başlangıç',
     'customer.duration': '{min} dk',
+    'customer.approxTime': 'Tahmini süre',
+    'customer.selectedServices': 'Seçilen Hizmetler',
     'customer.back': 'Geri',
 
     // Check-in
@@ -3233,6 +3239,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': '{count} 项服务',
     'customer.fromPrice': '{price} 起',
     'customer.duration': '{min} 分钟',
+    'customer.approxTime': '预计时长',
+    'customer.selectedServices': '已选服务',
     'customer.back': '返回',
 
     // Check-in
@@ -4130,6 +4138,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': 'Послуг: {count}',
     'customer.fromPrice': 'Від {price}',
     'customer.duration': '{min} хв',
+    'customer.approxTime': 'Орієнтовний час',
+    'customer.selectedServices': 'Обрані послуги',
     'customer.back': 'Назад',
 
     // Check-in
@@ -5027,6 +5037,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': 'Услуг: {count}',
     'customer.fromPrice': 'От {price}',
     'customer.duration': '{min} мин',
+    'customer.approxTime': 'Примерное время',
+    'customer.selectedServices': 'Выбранные услуги',
     'customer.back': 'Назад',
 
     // Check-in
@@ -5944,6 +5956,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'customer.serviceCount': '{count} usług',
     'customer.fromPrice': 'Od {price}',
     'customer.duration': '{min} min',
+    'customer.approxTime': 'Przybliżony czas',
+    'customer.selectedServices': 'Wybrane usługi',
     'customer.back': 'Wróć',
 
     // Check-in

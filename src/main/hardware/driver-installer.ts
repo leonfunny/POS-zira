@@ -31,6 +31,8 @@ export interface DetectedDevice {
   targetType?: string;
   /** Recommended protocol (POSNET, ZEBRA, THERMAL, WINDOWS). Set by classifyPrinterCategory(). */
   recommendedProtocol?: string;
+  /** When false, show the device but require manual slot selection instead of auto-setup. */
+  autoSetupEligible?: boolean;
 }
 
 export interface HardwareStatus {
@@ -38,6 +40,8 @@ export interface HardwareStatus {
   posnetPresent: boolean;
   posnetComPort: string | null;
   posnetDriverInstalled: boolean;
+  serialPorts: string[];
+  windowsPrinters: Array<{ name: string; port: string }>;
 }
 
 export interface DriverInstallResult {
@@ -65,6 +69,18 @@ export function getPosnetInfPath(): string {
 export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
   const devices: DetectedDevice[] = [];
   const seenPrinterNames = new Set<string>();
+  let serialPorts: string[] = [];
+
+  interface SpoolerPrinter {
+    name: string;
+    port: string;
+    driver: string;
+    workOffline: boolean;
+    printerStatus: string;
+    pnpId: string;
+    pnpPresent: 'true' | 'false' | 'unknown';
+  }
+  const installedPrinters: SpoolerPrinter[] = [];
 
   logger.info('[DriverInstaller] getPosnetDriverStatus() called — running with ghost-printer filter v4 (PNPDeviceID + Section-2 class allowlist + ghost-name memory)');
 
@@ -179,16 +195,6 @@ foreach ($vid in $vids) {
     // --- Parse output ---
     // We use line-prefix parsing instead of section markers + CSV. This is
     // immune to CSV header parsing bugs (no headers at all).
-    interface SpoolerPrinter {
-      name: string;
-      port: string;
-      driver: string;
-      workOffline: boolean;
-      printerStatus: string;
-      pnpId: string;
-      pnpPresent: 'true' | 'false' | 'unknown';
-    }
-    const installedPrinters: SpoolerPrinter[] = [];
     interface PnpHit {
       vid: string;
       instanceId: string;
@@ -240,8 +246,8 @@ foreach ($vid in $vids) {
     // spooler printers attached to a serial port.
     let presentComPorts: Set<string>;
     try {
-      const pcs = await listSerialPorts();
-      presentComPorts = new Set(pcs.map(p => p.toUpperCase()));
+      serialPorts = await listSerialPorts();
+      presentComPorts = new Set(serialPorts.map(p => p.toUpperCase()));
     } catch {
       presentComPorts = new Set();
     }
@@ -314,6 +320,7 @@ foreach ($vid in $vids) {
           portName: printer.port,
           connectionType: connType2,
           driverInstalled: true,
+          autoSetupEligible: true,
         });
         continue;
       }
@@ -367,6 +374,7 @@ foreach ($vid in $vids) {
         portName: printer.port,
         connectionType: connType,
         driverInstalled: true,
+        autoSetupEligible: true,
       });
     }
 
@@ -396,6 +404,9 @@ foreach ($vid in $vids) {
         hit.vid,
         hit.model,
       );
+      const matchedSpooler = matchedPrinter
+        ? installedPrinters.find((printer) => printer.name === matchedPrinter)
+        : undefined;
 
       // Guard (1): already represented as a kept Section 1 device
       if (matchedPrinter && seenPrinterNames.has(matchedPrinter.toLowerCase())) {
@@ -416,6 +427,25 @@ foreach ($vid in $vids) {
       // a card so the user could install drivers — but the new "Detect Printers"
       // UI auto-runs Windows driver scan, so it's safer to drop than risk
       // showing a phantom card.
+      if (!isPosnet && !matchedPrinter && hit.comPort) {
+        logger.info(
+          `[DriverInstaller] Section 2: exposing manual-only generic serial candidate on ${hit.comPort} (${hit.model})`
+        );
+        devices.push({
+          vid: hit.vid,
+          pid: (hit.instanceId.match(/PID_([0-9A-F]+)/i) || [])[1] || '',
+          brand: 'Generic Serial',
+          model: hit.model || hit.comPort,
+          windowsPrinterName: null,
+          comPort: hit.comPort,
+          portName: hit.comPort,
+          connectionType: 'SERIAL',
+          driverInstalled: true,
+          autoSetupEligible: false,
+        });
+        continue;
+      }
+
       if (!isPosnet && !matchedPrinter) {
         logger.info(`[DriverInstaller] Section 2: dropping ${brand}/${hit.model} (class=${hit.devClass}) — no live spooler entry`);
         continue;
@@ -436,9 +466,10 @@ foreach ($vid in $vids) {
         model: hit.model,
         windowsPrinterName: matchedPrinter || null,
         comPort: hit.comPort,
-        portName: hit.comPort,
+        portName: matchedSpooler?.port || hit.comPort,
         connectionType: hit.comPort ? 'SERIAL' : 'USB',
         driverInstalled,
+        autoSetupEligible: isPosnet || matchedPrinter != null,
       });
     }
 
@@ -517,15 +548,44 @@ foreach ($vid in $vids) {
     const classification = classifyPrinterCategory(dev);
     dev.targetType = classification.targetType;
     dev.recommendedProtocol = classification.protocol;
+    if (dev.autoSetupEligible === undefined) {
+      dev.autoSetupEligible = dev.brand !== 'Generic Serial';
+    }
+  }
+
+  if (serialPorts.length === 0) {
+    serialPorts = Array.from(new Set(devices.map((dev) => dev.comPort).filter((port): port is string => !!port)));
   }
 
   const posnetDevice = devices.find(d => d.vid === POSNET_VID || d.brand === 'POSNET');
+  const filteredWindowsPrinters = dedupeWindowsPrinters(
+    devices
+      .filter((dev) => dev.windowsPrinterName && dev.connectionType !== 'VIRTUAL')
+      .map((dev) => ({
+        name: dev.windowsPrinterName as string,
+        port: dev.portName || dev.comPort || '',
+      })),
+  );
+  const fallbackWindowsPrinters = dedupeWindowsPrinters(
+    installedPrinters
+      .filter((printer) => isRealSpoolerPrinter(printer.name, printer.port))
+      .map((printer) => ({ name: printer.name, port: printer.port })),
+  );
+  const windowsPrinters = filteredWindowsPrinters.length > 0 ? filteredWindowsPrinters : fallbackWindowsPrinters;
+
+  if (filteredWindowsPrinters.length === 0 && fallbackWindowsPrinters.length > 0) {
+    logger.warn(
+      `[DriverInstaller] Filtered printer list is empty; falling back to ${fallbackWindowsPrinters.length} raw spooler printer(s)`
+    );
+  }
 
   return {
     devices,
     posnetPresent: !!posnetDevice,
     posnetComPort: posnetDevice?.comPort || null,
     posnetDriverInstalled: posnetDevice?.driverInstalled || false,
+    serialPorts,
+    windowsPrinters,
   };
 }
 
@@ -537,8 +597,32 @@ function classifyConnection(port: string): 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTU
   if (p.match(/^USB\d+$/)) return 'USB';
   if (p.match(/^(WSD|TCPIP|IP_)/i) || p.includes('\\\\')) return 'NETWORK';
   // Virtual/software printers: PDF, XPS, Fax, OneNote, PORTPROMPT
-  if (p.includes('PORTPROMPT') || p.includes('SHRFAX') || p.includes('MICROSOFT') || p.includes('NUL')) return 'VIRTUAL';
+  if (
+    p.includes('PORTPROMPT') ||
+    p.includes('SHRFAX') ||
+    p.includes('MICROSOFT') ||
+    p.includes('NUL') ||
+    p.match(/^FILE:/i) ||
+    p.match(/^TS\d+/i) ||
+    p.match(/^LPT\d+/i)
+  ) return 'VIRTUAL';
   return 'USB'; // default assumption for unknown port types
+}
+
+function isRealSpoolerPrinter(name: string, port: string): boolean {
+  if (classifyConnection(port) === 'VIRTUAL') return false;
+  return !/(OneNote|Fax|Microsoft Print to PDF|Microsoft XPS Document Writer|Send To OneNote)/i.test(name);
+}
+
+function dedupeWindowsPrinters(printers: Array<{ name: string; port: string }>): Array<{ name: string; port: string }> {
+  const seen = new Map<string, { name: string; port: string }>();
+  for (const printer of printers) {
+    if (!printer.name) continue;
+    if (!seen.has(printer.name)) {
+      seen.set(printer.name, printer);
+    }
+  }
+  return Array.from(seen.values());
 }
 
 /** Detect brand from printer name or driver string using shared BRAND_PATTERNS */

@@ -54,7 +54,7 @@ export default function CustomerDisplayShell({
 
   return (
     <div
-      className="relative min-h-screen overflow-hidden bg-gradient-to-br from-rose-50 via-[#fffdfa] to-amber-50 text-slate-900"
+      className="relative h-screen overflow-hidden bg-gradient-to-br from-rose-50 via-[#fffdfa] to-amber-50 text-slate-900"
       onPointerDown={onInteract}
     >
       <div className="pointer-events-none absolute inset-0">
@@ -63,7 +63,7 @@ export default function CustomerDisplayShell({
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.5)_1px,transparent_1px)] bg-[size:40px_40px] opacity-30" />
       </div>
 
-      <div className="relative z-10 flex min-h-screen flex-col">
+      <div className="relative z-10 flex h-full flex-col overflow-hidden">
         <header className="relative z-30 border-b border-white/70 bg-white/80 px-8 py-5 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-6">
             <div className="flex min-w-0 items-center gap-3">
@@ -156,8 +156,11 @@ export default function CustomerDisplayShell({
           </div>
         </header>
 
-        <main className="relative z-10 flex-1 px-8 py-8">
-          <div className="mx-auto flex h-full w-full max-w-[1440px] flex-col">
+        <main
+          className="relative z-10 flex min-h-0 flex-1 overflow-hidden px-8 py-8"
+          data-customer-display-main="content"
+        >
+          <div className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-hidden">
             {children}
           </div>
         </main>

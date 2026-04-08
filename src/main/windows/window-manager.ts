@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, ipcMain, shell } from 'electron';
+import { BrowserWindow, screen, ipcMain, shell, type Display, type Rectangle } from 'electron';
 import { join } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -22,6 +22,14 @@ interface WindowConfig {
   alwaysOnTop?: boolean;
   fullscreen?: boolean;
   targetDisplay?: 'primary' | 'secondary';
+}
+
+interface CustomerDisplayBehavior {
+  forceKiosk: boolean;
+  hasMultipleDisplays: boolean;
+  monitorIndex: number;
+  targetDisplay: Display;
+  useKiosk: boolean;
 }
 
 const WINDOW_CONFIGS: Record<string, WindowConfig> = {
@@ -53,7 +61,7 @@ export class WindowManager {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private missedPongs = 0;
   private customerResponsive = true;
-  // Flag set when staff intentionally closes the customer display — suppresses the kiosk-restore handler
+  // Flag set when staff intentionally closes the customer display; suppresses the kiosk-restore handler
   private customerExitRequested = false;
   // Store listener refs for cleanup
   private pongListener: (() => void) | null = null;
@@ -71,7 +79,7 @@ export class WindowManager {
   /**
    * Disable Windows 10/11 edge-swipe gestures that can pull the customer display
    * out of fullscreen/kiosk mode. Sets registry keys under HKCU (no admin needed).
-   * Also disables the "−" (minimize) affordance that appears on touch drag from top edge.
+   * Also disables the minimize affordance that appears on touch drag from top edge.
    */
   private async disableEdgeSwipeGestures(): Promise<void> {
     const regKeys = [
@@ -93,6 +101,85 @@ export class WindowManager {
         logger.warn(`[WindowManager] Failed to set registry key ${key.name}: ${err.message}`);
       }
     }
+  }
+
+  private resolveCustomerDisplayBehavior(
+    displays = screen.getAllDisplays(),
+    primaryDisplay = screen.getPrimaryDisplay(),
+    logSelection: boolean = false,
+  ): CustomerDisplayBehavior {
+    const monitorIndex = getConfigValue('customerDisplayMonitor') ?? 0;
+    let targetDisplay = primaryDisplay;
+
+    if (monitorIndex > 0 && monitorIndex < displays.length) {
+      targetDisplay = displays[monitorIndex];
+      if (logSelection) {
+        logger.info(`[WindowManager] Customer display -> monitor ${monitorIndex} (${targetDisplay.bounds.width}x${targetDisplay.bounds.height})`);
+      }
+    } else if (monitorIndex > 0) {
+      if (logSelection) {
+        logger.warn(`[WindowManager] Configured monitor index ${monitorIndex} unavailable (${displays.length} displays). Falling back to primary.`);
+      }
+    } else if (logSelection) {
+      logger.info('[WindowManager] Customer display -> primary monitor');
+    }
+
+    const hasMultipleDisplays = displays.length > 1;
+    const forceKiosk = getConfigValue('customerDisplayForceKiosk') ?? true;
+
+    return {
+      forceKiosk,
+      hasMultipleDisplays,
+      monitorIndex,
+      targetDisplay,
+      useKiosk: hasMultipleDisplays || forceKiosk,
+    };
+  }
+
+  private getCustomerDisplayBounds(behavior: CustomerDisplayBehavior): Rectangle {
+    if (behavior.useKiosk) {
+      return {
+        x: behavior.targetDisplay.bounds.x,
+        y: behavior.targetDisplay.bounds.y,
+        width: behavior.targetDisplay.bounds.width,
+        height: behavior.targetDisplay.bounds.height,
+      };
+    }
+
+    const workArea = behavior.targetDisplay.workArea;
+    const config = WINDOW_CONFIGS.customer;
+
+    return {
+      x: workArea.x + Math.max(0, Math.floor((workArea.width - config.width) / 2)),
+      y: workArea.y + Math.max(0, Math.floor((workArea.height - config.height) / 2)),
+      width: config.width,
+      height: config.height,
+    };
+  }
+
+  private applyCustomerDisplayPresentation(
+    win: BrowserWindow,
+    behavior: CustomerDisplayBehavior,
+  ): void {
+    if (win.isDestroyed()) return;
+
+    const bounds = this.getCustomerDisplayBounds(behavior);
+
+    if (behavior.useKiosk) {
+      win.setBounds(bounds);
+      win.setMenuBarVisibility(false);
+      win.setAutoHideMenuBar(true);
+      win.setAlwaysOnTop(true, 'screen-saver');
+      win.setKiosk(true);
+      return;
+    }
+
+    if (win.isKiosk()) {
+      win.setKiosk(false);
+    }
+    win.setFullScreen(false);
+    win.setAlwaysOnTop(false);
+    win.setBounds(bounds);
   }
 
   getWindow(id: string): BrowserWindow | null {
@@ -125,39 +212,32 @@ export class WindowManager {
 
     const displays = screen.getAllDisplays();
     const primaryDisplay = screen.getPrimaryDisplay();
+    const isCustomer = id === 'customer';
+    const customerBehavior = isCustomer
+      ? this.resolveCustomerDisplayBehavior(displays, primaryDisplay, true)
+      : null;
+    const customerBounds = customerBehavior ? this.getCustomerDisplayBounds(customerBehavior) : null;
 
     let targetDisplay = primaryDisplay;
-    if (id === 'customer') {
-      // Use configured monitor index for customer display
-      // index 0 = primary, index N = exact display index
-      const monitorIndex = getConfigValue('customerDisplayMonitor') ?? 0;
-      if (monitorIndex > 0 && monitorIndex < displays.length) {
-        targetDisplay = displays[monitorIndex];
-        logger.info(`[WindowManager] Customer display → monitor ${monitorIndex} (${targetDisplay.bounds.width}x${targetDisplay.bounds.height})`);
-      } else if (monitorIndex > 0) {
-        // User selected a monitor that doesn't exist — stay on primary, log warning
-        logger.warn(`[WindowManager] Configured monitor index ${monitorIndex} unavailable (${displays.length} displays). Falling back to primary.`);
-      } else {
-        logger.info(`[WindowManager] Customer display → primary monitor`);
-      }
+    if (customerBehavior) {
+      targetDisplay = customerBehavior.targetDisplay;
     } else if (config.targetDisplay === 'secondary' && displays.length > 1) {
       targetDisplay = displays.find((d) => d.id !== primaryDisplay.id) || primaryDisplay;
     }
 
-    const isCustomer = id === 'customer';
-    const hasMultipleDisplays = displays.length > 1;
+    const hasMultipleDisplays = customerBehavior?.hasMultipleDisplays ?? displays.length > 1;
     // Force kiosk flag (default true): when set, customer display goes true-fullscreen kiosk
     // even on single-monitor machines. Toggle it off in Settings on dev machines that need
     // the old windowed fallback. Esc and 3-finger swipe-down (CustomerApp.tsx) still exit.
-    const forceKiosk = !!getConfigValue('customerDisplayForceKiosk');
-    const useKiosk = isCustomer && (hasMultipleDisplays || forceKiosk);
+    const forceKiosk = customerBehavior?.forceKiosk ?? false;
+    const useKiosk = customerBehavior?.useKiosk ?? false;
     const useAlwaysOnTop = useKiosk;
 
     if (isCustomer && !hasMultipleDisplays) {
       if (forceKiosk) {
-        logger.warn('[WindowManager] Single monitor + force kiosk ON — customer display will cover this screen. Press Esc or 3-finger swipe-down from the top to exit.');
+        logger.warn('[WindowManager] Single monitor + force kiosk ON - customer display will cover this screen. Press Esc or 3-finger swipe-down from the top to exit.');
       } else {
-        logger.warn('[WindowManager] Single monitor + force kiosk OFF — customer display opens windowed (legacy fallback)');
+        logger.warn('[WindowManager] Single monitor + force kiosk OFF - customer display opens windowed (legacy fallback)');
       }
     }
 
@@ -167,16 +247,16 @@ export class WindowManager {
     }
 
     const win = new BrowserWindow({
-      width: config.fullscreen ? targetDisplay.workAreaSize.width : config.width,
-      height: config.fullscreen ? targetDisplay.workAreaSize.height : config.height,
-      x: targetDisplay.bounds.x,
-      y: targetDisplay.bounds.y,
+      width: customerBounds?.width ?? (config.fullscreen ? targetDisplay.bounds.width : config.width),
+      height: customerBounds?.height ?? (config.fullscreen ? targetDisplay.bounds.height : config.height),
+      x: customerBounds?.x ?? targetDisplay.bounds.x,
+      y: customerBounds?.y ?? targetDisplay.bounds.y,
       minWidth: config.minWidth,
       minHeight: config.minHeight,
       fullscreen: isCustomer ? useKiosk : (config.fullscreen || false),
       alwaysOnTop: useAlwaysOnTop,
       kiosk: useKiosk,
-      frame: isCustomer ? false : true, // Frameless removes the "−" bar on customer display
+      frame: isCustomer ? false : true, // Frameless removes the top bar on customer display
       closable: isCustomer ? !useKiosk : true,
       minimizable: !isCustomer,
       maximizable: !isCustomer,
@@ -195,6 +275,10 @@ export class WindowManager {
       title: id === 'pos' ? 'Zira AI POS' : 'Customer Display',
     });
 
+    if (customerBehavior) {
+      this.applyCustomerDisplayPresentation(win, customerBehavior);
+    }
+
     // Load HTML
     const isDev = process.env.NODE_ENV === 'development';
     if (isDev) {
@@ -207,10 +291,10 @@ export class WindowManager {
       win.loadFile(join(__dirname, `../../renderer/${config.htmlFile}`));
     }
 
-    // SECURITY: Navigation guards — prevent redirects to malicious pages
+    // SECURITY: Navigation guards - prevent redirects to malicious pages
     win.webContents.on('will-navigate', (event, navigationUrl) => {
       const allowed = isDev
-        ? [`http://localhost:3100`]
+        ? ['http://localhost:3100']
         : ['file://'];
       if (!allowed.some(prefix => navigationUrl.startsWith(prefix))) {
         logger.warn(`[WindowManager] Blocked navigation to: ${navigationUrl}`);
@@ -238,7 +322,7 @@ export class WindowManager {
         }
         // Escape closes customer display (safety exit on single monitor)
         if (input.key === 'Escape') {
-          logger.info('[WindowManager] Escape pressed on customer display — closing');
+          logger.info('[WindowManager] Escape pressed on customer display - closing');
           win.destroy();
           return;
         }
@@ -260,21 +344,17 @@ export class WindowManager {
     if (isCustomer) {
       win.on('leave-full-screen', () => {
         if (this.customerExitRequested) return;
-        logger.info('[WindowManager] Customer display left fullscreen unexpectedly — restoring');
+        logger.info('[WindowManager] Customer display left fullscreen unexpectedly - restoring');
         const restoreTimer = setTimeout(() => {
           if (win.isDestroyed() || this.customerExitRequested) return;
-          if (win.isKiosk()) return; // already back
-          if (useKiosk) {
-            win.setKiosk(true);
-          } else {
-            win.setFullScreen(true);
-          }
+          if (win.isKiosk()) return;
+          this.applyCustomerDisplayPresentation(win, this.resolveCustomerDisplayBehavior());
           logger.info('[WindowManager] Customer display kiosk/fullscreen restored');
         }, 50);
         win.once('closed', () => clearTimeout(restoreTimer));
       });
 
-      // Prevent OS from stealing focus via swipe gestures — immediately reclaim
+      // Prevent OS from stealing focus via swipe gestures - immediately reclaim
       win.on('blur', () => {
         if (this.customerExitRequested || win.isDestroyed()) return;
         setTimeout(() => {
@@ -307,7 +387,7 @@ export class WindowManager {
   }
 
   private setupIpcHandlers(): void {
-    // Staff intentional close — bypasses the kiosk-restore lock
+    // Staff intentional close - bypasses the kiosk-restore lock
     ipcMain.handle('display:close', () => {
       const customerWin = this.getWindow('customer');
       if (customerWin && !customerWin.isDestroyed()) {
@@ -377,19 +457,12 @@ export class WindowManager {
       const customerWin = this.getWindow('customer');
       if (customerWin) {
         const displays = screen.getAllDisplays();
-        const monitorIndex = getConfigValue('customerDisplayMonitor') ?? 0;
-        if (monitorIndex > 0 && monitorIndex < displays.length) {
-          const target = displays[monitorIndex];
-          logger.info(`[WindowManager] Moving customer display to monitor ${monitorIndex}`);
-          customerWin.setBounds({
-            x: target.bounds.x,
-            y: target.bounds.y,
-            width: target.workAreaSize.width,
-            height: target.workAreaSize.height,
-          });
-        } else if (monitorIndex > 0) {
-          logger.warn(`[WindowManager] Configured monitor ${monitorIndex} still unavailable after display-added (${displays.length} displays)`);
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const behavior = this.resolveCustomerDisplayBehavior(displays, primaryDisplay, true);
+        if (behavior.monitorIndex > 0 && behavior.monitorIndex < displays.length) {
+          logger.info(`[WindowManager] Moving customer display to monitor ${behavior.monitorIndex}`);
         }
+        this.applyCustomerDisplayPresentation(customerWin, behavior);
       }
     };
 
@@ -397,14 +470,12 @@ export class WindowManager {
       logger.info('[WindowManager] Display removed');
       const customerWin = this.getWindow('customer');
       if (customerWin) {
-        const primary = screen.getPrimaryDisplay();
-        customerWin.setBounds({
-          x: primary.bounds.x,
-          y: primary.bounds.y,
-          width: 800,
-          height: 600,
-        });
-        customerWin.setFullScreen(false);
+        const displays = screen.getAllDisplays();
+        const primaryDisplay = screen.getPrimaryDisplay();
+        this.applyCustomerDisplayPresentation(
+          customerWin,
+          this.resolveCustomerDisplayBehavior(displays, primaryDisplay, true),
+        );
       }
     };
 
@@ -427,7 +498,7 @@ export class WindowManager {
     // Ping customer display every 10 seconds
     this.heartbeatInterval = setInterval(() => {
       const customerWin = this.getWindow('customer');
-      if (!customerWin) return; // No customer window open, skip
+      if (!customerWin) return;
 
       try {
         customerWin.webContents.send('display:ping');

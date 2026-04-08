@@ -3,6 +3,7 @@ import logger from '../logger';
 import { PromoLoader } from './promo-loader';
 import { getConfigValue } from '../config/store';
 import { productRepo } from '../database/repos/product-repo';
+import type { SelectedService } from '../../shared/types';
 
 // === State interfaces ===
 
@@ -65,6 +66,7 @@ export interface CheckInData {
   customerPhone?: string;
   customerEmail?: string;
   serviceName?: string;
+  services?: SelectedService[];
   staffName?: string;
   bookingTime?: string;
   isWalkIn: boolean;
@@ -402,7 +404,9 @@ export class PosStore {
   }
 
   /** Called when customer checks in from the display */
-  handleCheckIn(data: { bookingId?: number; customerName: string; customerPhone?: string; customerEmail?: string; serviceName?: string; staffName?: string; bookingTime?: string; isWalkIn: boolean; upsellsAdded?: string[] }): void {
+  handleCheckIn(data: { bookingId?: number; customerName: string; customerPhone?: string; customerEmail?: string; serviceName?: string; services?: SelectedService[]; staffName?: string; bookingTime?: string; isWalkIn: boolean; upsellsAdded?: string[] }): void {
+    const services = normalizeSelectedServices(data.services);
+    const serviceName = data.serviceName?.trim() || deriveLegacyServiceName(services);
     logger.info(`[PosStore] Customer check-in: ${data.customerName} (walk-in: ${data.isWalkIn})`);
     this.state = {
       ...this.state,
@@ -412,7 +416,8 @@ export class PosStore {
           customerName: data.customerName,
           customerPhone: data.customerPhone,
           customerEmail: data.customerEmail,
-          serviceName: data.serviceName,
+          serviceName,
+          services,
           staffName: data.staffName,
           bookingTime: data.bookingTime,
           isWalkIn: data.isWalkIn,
@@ -612,4 +617,25 @@ export class PosStore {
       }
     }
   }
+}
+
+function normalizeSelectedServices(services?: SelectedService[]): SelectedService[] | undefined {
+  const normalized = (services || [])
+    .map((service) => ({
+      id: service.id,
+      name: service.name,
+      price: service.price,
+      duration: service.duration,
+    }))
+    .filter((service) => service.id && service.name);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function deriveLegacyServiceName(services?: SelectedService[]): string | undefined {
+  const names = (services || [])
+    .map((service) => service.name?.trim())
+    .filter((name): name is string => !!name);
+
+  return names.length > 0 ? names.join(', ') : undefined;
 }

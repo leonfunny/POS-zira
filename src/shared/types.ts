@@ -161,6 +161,7 @@ export interface AgentConfig {
 
   // Multi-printer settings - dictionary by PrinterType
   printers?: PrintersConfig;
+  multiPrinterMode?: boolean;
 
   // Legacy multi-printer settings (for backward compatibility)
   receiptPrinter?: PrinterConfig;   // For RECEIPT, INVOICE
@@ -1932,6 +1933,7 @@ export interface CheckinRecord {
   customerPhone?: string;
   customerEmail?: string;
   serviceName?: string;
+  services?: SelectedService[];
   staffName?: string;
   bookingId?: string;
   bookingSource?: 'booksy' | 'backend';

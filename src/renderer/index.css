@@ -17,6 +17,15 @@
   --warning: #d4a853;
 }
 
+html.customer-display-root,
+html.customer-display-root body,
+html.customer-display-root body #root,
+body.customer-display-root,
+body.customer-display-root #root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", Tahoma, sans-serif;

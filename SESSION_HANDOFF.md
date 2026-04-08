@@ -1,6 +1,76 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-07 (session 39 - Display On concierge redesign + scoped customer-display cleanup, BUILT/TESTED, merged to main) | Read this file at the start of every new session.
+> Last updated: 2026-04-08 (session 40 - printer regression fix + printer settings persistence, BUILT/TESTED, NOT COMMITTED) | Read this file at the start of every new session.
+
+## Session 40 - printer regression fix + printer settings persistence
+
+**User report (phase 1):**
+- App started idle but burned CPU / made the machine lag
+- Settings -> `Multi-printer` toggle immediately flipped itself back off
+- `Detect Printers` returned no devices even with 2 printers connected
+
+**Root causes found (phase 1):**
+- `multiPrinter` mode was not persisted as its own flag; it was inferred from `printers/receiptPrinter/labelPrinter`, so enabling the toggle with an empty printer map got pulled back to `false` on the next config sync
+- Printer fields were included in the generic Settings auto-save payload, so unrelated setting changes emitted printer-related `config:changed` events and reinitialized hardware
+- Settings detection work was doing multiple heavy IPC calls per refresh / device-status event
+- The new detection pipeline was over-filtering: it trusted strict COM filtering too much, trusted filtered-empty spooler results too much, and hid serial-only thermal devices that had no Windows spooler entry
+
+**Main code changes (phase 1):**
+- Added persisted `multiPrinterMode` to config types + store schema + migration
+- `HardwareModule` now uses `multiPrinterMode` as the source of truth instead of inferring mode from whether `printers` is empty
+- `listSerialPorts()` now falls back to raw registry COM ports when strict PnP/WMI filtering returns empty even though Windows still sees serial hardware
+- `getPosnetDriverStatus()` now returns `serialPorts` + `windowsPrinters`, exposes serial-only devices as `Generic Serial`, and marks manual-only devices with `autoSetupEligible: false`
+- `LIST_WINDOWS_PRINTERS` now returns the filtered detection snapshot, with raw spooler fallback only when the filtered path is unusable
+- Health checks now use one cached detection snapshot per cycle instead of repeated per-printer PowerShell presence probes
+- Settings printer detection was collapsed into one unified refresh path instead of separate `listPorts + listWindowsPrinters + getPosnetDriverStatus` bursts
+
+**User report (phase 2, after phase-1 fix):**
+- Detect printers and printer setup started working again
+- But printer state was not persisted: leaving the Settings tab reset printer assignments, detected devices, and calibrated label size back to defaults
+
+**Root cause found (phase 2):**
+- The earlier Settings refactor removed printer state from the generic auto-save path but only left manual local state in `Settings.tsx`
+- `Settings` unmounts when the user leaves the Settings tab, so unsaved printer state died with the component
+
+**Main code changes (phase 2):**
+- Replaced the manual "Apply printer changes" flow with a dedicated printer auto-save pipeline in `Settings.tsx`
+- Printer config now auto-saves on its own debounce, separate from general settings auto-save
+- Added final flush on `Settings` unmount so switching tabs does not lose pending printer edits
+- Added in-flight / pending-save guards so printer saves do not race each other
+- Added a failed-signature guard so a failed save does not loop forever on every render
+- Updated the footer copy to reflect the real behavior: printer changes now save automatically
+
+**Files changed in this session:**
+- `src/shared/types.ts`
+- `src/main/config/store.ts`
+- `src/main/hardware/port-utils.ts`
+- `src/main/hardware/driver-installer.ts`
+- `src/main/hardware/thermal/thermal-driver.ts`
+- `src/main/hardware/zebra/zebra-driver.ts`
+- `src/main/modules/hardware.module.ts`
+- `src/renderer/components/Settings.tsx`
+
+**Verification run in this session:**
+- `npm run build` -> passed
+- `npx vitest run --exclude tests/e2e/**` -> passed (`98 passed`)
+
+**User-confirmed runtime status at end of session:**
+- Printer detection is working again
+- Multi-printer behavior is stable
+- Leaving the Settings tab no longer resets printer setup or label dimensions
+
+**Git/process status:**
+- NOT committed
+- NOT pushed
+- Keep changes local until the user explicitly asks for commit/push
+
+**Dirty worktree note for next session:**
+- There are unrelated existing changes outside the printer work:
+  - `src/main/windows/window-manager.ts`
+  - `src/renderer/windows/customer/views/CheckInView.tsx`
+  - `tests/checkin-view.test.ts`
+  - `tests/window-manager.test.ts`
+- Do not casually revert those; they were not part of this printer session
 
 ## Session 39 - Display On concierge redesign + scoped cleanup
 

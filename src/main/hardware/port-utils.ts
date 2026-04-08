@@ -134,11 +134,34 @@ export async function listSerialPorts(): Promise<string[]> {
     }
     logger.info(`[PortUtils] Found ${real.length} present COM port(s): ${real.join(', ') || 'none'}`);
 
-    // Edge case: if both PnP and WMI returned nothing but PnP query itself
-    // succeeded, we genuinely have no serial hardware. Don't fall through to
-    // the registry fallback in that case (it would resurrect phantoms).
-    if (real.length > 0 || pnpPorts.size > 0 || wmiPorts.size > 0) {
+    // Happy path: the strict filter found at least one live COM port.
+    if (real.length > 0) {
       return real;
+    }
+
+    // Strict filtering can be too aggressive on some Windows driver stacks:
+    // a real USB-serial printer may appear in the raw SerialPort registry
+    // list, but miss either Service or Win32_SerialPort. In that case prefer
+    // showing the raw COM names instead of incorrectly returning [].
+    if (pnpPorts.size > 0 || wmiPorts.size > 0) {
+      try {
+        const stdout = await runPowerShell('[System.IO.Ports.SerialPort]::getportnames()');
+        const rawPorts = stdout
+          .split('\n')
+          .map((l) => l.trim().toUpperCase())
+          .filter((l) => COM_PORT_RE.test(l))
+          .sort();
+        if (rawPorts.length > 0) {
+          logger.warn(
+            `[PortUtils] Strict COM filter returned none; falling back to raw registry ports: ${rawPorts.join(', ')}`
+          );
+          return rawPorts;
+        }
+      } catch (fallbackErr) {
+        logger.warn('[PortUtils] Raw COM fallback after strict-empty failed:', fallbackErr);
+      }
+
+      return [];
     }
 
     // Both queries returned 0 rows — could indicate they failed silently. Try

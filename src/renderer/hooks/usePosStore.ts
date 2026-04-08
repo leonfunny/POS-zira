@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 
+interface SelectedService {
+  id: string;
+  name: string;
+  price?: number;
+  duration?: number;
+}
+
 interface CartItem {
   id: string;
   variantId: string;
@@ -53,6 +60,7 @@ interface DisplayState {
   lastCheckIn?: {
     customerName: string;
     serviceName?: string;
+    services?: SelectedService[];
     staffName?: string;
     bookingTime?: string;
     isWalkIn: boolean;
