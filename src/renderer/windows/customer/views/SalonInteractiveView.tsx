@@ -496,48 +496,50 @@ export default function SalonInteractiveView({
                 </div>
               </Panel>
 
-              <Panel className="flex min-h-0 flex-col p-6">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {selectedCategory?.name}
-                </div>
-                <div className="mt-2 text-4xl font-semibold tracking-tight text-slate-900">
-                  {selectedServices.length}
-                </div>
-                <div className="mt-1 text-sm text-slate-500">{t('customer.selectedServices')}</div>
-
-                <div className="mt-6 space-y-2">
-                  <DetailRow label={t('priceList.title')} value={selectedCategory?.name || '-'} />
-                  <DetailRow label={t('customer.categories')} value={String(categorySummaries.length)} />
-                </div>
-
-                <div className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {t('customer.selectedServices')}
-                </div>
-
+              <Panel className="flex min-h-0 flex-col overflow-hidden p-6">
                 <div
-                  className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1"
+                  className="min-h-0 flex-1 overflow-y-auto pr-1"
                   data-customer-display-basket-summary-scroll="true"
                 >
-                  {selectedServices.length > 0 ? (
-                    <div className="space-y-2">
-                      {selectedServices.map((service) => (
-                        <div
-                          key={service.id}
-                          className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3"
-                        >
-                          <div className="min-w-0 text-sm font-medium text-slate-900">{service.name}</div>
-                          <div className="shrink-0 text-sm font-semibold text-slate-600">
-                            {formatDisplayCurrency(service.price, language)}
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {selectedCategory?.name}
+                  </div>
+                  <div className="mt-2 text-4xl font-semibold tracking-tight text-slate-900">
+                    {selectedServices.length}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">{t('customer.selectedServices')}</div>
+
+                  <div className="mt-6 space-y-2">
+                    <DetailRow label={t('priceList.title')} value={selectedCategory?.name || '-'} />
+                    <DetailRow label={t('customer.categories')} value={String(categorySummaries.length)} />
+                  </div>
+
+                  <div className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {t('customer.selectedServices')}
+                  </div>
+
+                  <div className="mt-4">
+                    {selectedServices.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedServices.map((service) => (
+                          <div
+                            key={service.id}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3"
+                          >
+                            <div className="min-w-0 text-sm font-medium text-slate-900">{service.name}</div>
+                            <div className="shrink-0 text-sm font-semibold text-slate-600">
+                              {formatDisplayCurrency(service.price, language)}
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState title={t('wizard.selectServices')} />
-                  )}
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState title={t('wizard.selectServices')} />
+                    )}
+                  </div>
                 </div>
 
-                <div className="mt-4 border-t border-slate-100 pt-4">
+                <div className="mt-4 shrink-0 border-t border-slate-100 pt-4">
                   <DetailRow
                     label={t('wizard.total')}
                     value={formatDisplayCurrency(selectedServicesTotal, language)}
@@ -547,7 +549,7 @@ export default function SalonInteractiveView({
                 <button
                   onClick={continueToWalkInHandoff}
                   disabled={selectedServices.length === 0}
-                  className="mt-6 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="mt-6 shrink-0 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {t('checkin.continueAsWalkIn')}
                 </button>

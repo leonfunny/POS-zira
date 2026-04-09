@@ -192,7 +192,7 @@ export default function CustomerApp() {
 
   if (displayMode === 'promo') {
     return (
-      <div onPointerDown={handleScreenTouch}>
+      <div onClick={handleScreenTouch}>
         <PromoView
           images={display?.promoImages || []}
           intervalMs={display?.promoIntervalMs || 5000}
@@ -203,7 +203,7 @@ export default function CustomerApp() {
 
   if (displayMode === 'idle') {
     return (
-      <div onPointerDown={handleScreenTouch}>
+      <div onClick={handleScreenTouch}>
         <IdleView t={t} salonName={display?.salonName} />
       </div>
     );

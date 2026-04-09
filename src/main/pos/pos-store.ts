@@ -531,8 +531,10 @@ export class PosStore {
       this.interactionTimer = null;
     }
     if (this.state.display.mode === 'interactive' || this.state.display.mode === 'checkin') {
-      // Return to promo/idle after 30 seconds of inactivity
-      const timeoutMs = 30000;
+      // Return to promo/idle after 90 seconds of inactivity.
+      // Must stay in sync with INTERACTION_TIMEOUT_MS in CheckInView.tsx —
+      // 30s was too short for customers browsing/reading service lists.
+      const timeoutMs = 90000;
       this.interactionTimer = setTimeout(() => {
         logger.info('[PosStore] Interaction timeout, returning to promo/idle');
         this.transitionToPromoOrIdle();

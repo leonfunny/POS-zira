@@ -1,6 +1,60 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-08 (session 40 - printer regression fix + printer settings persistence, BUILT/TESTED, NOT COMMITTED) | Read this file at the start of every new session.
+> Last updated: 2026-04-09 (session 41 - customer display select-services fixes, BUILT, NOT COMMITTED) | Read this file at the start of every new session.
+
+## Session 41 - Customer Display Select Services: idle timeout + cramped basket
+
+**User report:**
+- In the Customer Display "Select Services" step (walk-in flow), the display sometimes auto-jumps back to the Idle banner carousel while the customer is still choosing services — very annoying.
+- The "Selected Services" box in the right summary panel is too small: with 2 chosen services the list only shows ~1 row and the customer has to scroll to see the rest.
+
+**Root causes:**
+1. **Idle timeout too short.** Two independent 30s timers fire `transitionToPromoOrIdle()` / `onBack()` if no pointerdown happens:
+   - Frontend `INTERACTION_TIMEOUT_MS = 30_000` at `src/renderer/windows/customer/views/CheckInView.tsx:66`
+   - Backend `timeoutMs = 30000` in `resetInteractionTimer()` at `src/main/pos/pos-store.ts:535`
+   - `CustomerDisplayShell.tsx:58` already wraps the whole DOM in `onPointerDown={onInteract}` so every tap resets the timer — the event coverage is fine. The problem was simply that 30s is too short for a customer reading names/prices/durations across several categories.
+2. **Selected Services box cramped.** Right column was `340px`, the scrollable list had only `min-h-0 flex-1`, the summary panel had a duplicate `DetailRow` showing "Selected Services: N services" that repeated the subtitle, and row padding/font were small.
+
+**Changes:**
+- `src/renderer/windows/customer/views/CheckInView.tsx`
+  - `INTERACTION_TIMEOUT_MS`: `30_000` → `90_000`
+  - Walk-in service step grid: right column `340px` → `400px`
+  - Removed the duplicate "Selected Services" `DetailRow` (subtitle already shows count)
+  - Selected Services card: `p-5` → `p-6`, `space-y-2` → `space-y-3`
+  - Scrollable list: `min-h-0` → `min-h-[240px]` so ≥3 rows always visible
+  - Service rows: `px-4 py-3` → `px-5 py-4`, name `text-base` → `text-lg` + `truncate`, duration `text-xs` → `text-sm`, price `text-sm` → `text-base` / `text-slate-700`
+- `src/main/pos/pos-store.ts`
+  - `resetInteractionTimer()` hardcoded `30000` → `90000`, with a comment that it must stay in sync with `INTERACTION_TIMEOUT_MS` in `CheckInView.tsx`.
+
+**Additional fixes later in the same session (after operator feedback):**
+
+**Fix 3 — Selected Services box was too big and overflowed the Panel border.** First iteration added `min-h-[240px]` + large font + nested card wrapper — when keyboard was closed it looked OK but row count + total price bled outside the rounded Panel border. Rewrote the summary box to match the Browse services pattern exactly (`SalonInteractiveView.tsx:499-554`): no nested card wrapper, no forced `min-h`, rows use `text-sm font-medium` + `px-4 py-3` + `bg-slate-50/80`, right column width stays `340px`. Duration text removed from rows (Browse doesn't show it either).
+
+**Fix 4 — Services list in "Select Services" didn't scroll.** The `WalkInServicePicker` component already had `mt-5 min-h-0 flex-1 overflow-y-auto pr-1` (identical to `SalonInteractiveView.tsx:452`), but in `CheckInView.tsx` the picker was wrapped in a plain `<div className="min-h-0">` without `flex`/`h-full`. That broke the height chain: Panel stretched to grid cell height, but the wrapper didn't stretch the Panel inside it, so the inner `flex-1 min-h-0` had nothing to shrink against → list grew with content and never scrolled. Fix: removed the wrapper div entirely, let `<WalkInServicePicker>` (which renders `<Panel>`) sit directly in the grid like Browse services does (`SalonInteractiveView.tsx:378-379`).
+
+**Fix 5 — Keyboard opening pushed total price outside the Panel border (both Select Services AND Browse services).** When `keyboardInset > 0`, the outer wrapper gets `paddingBottom`, which shrinks the grid. The right summary Panel's `flex-1 min-h-0` list does shrink, but the sum of fixed siblings (header + 3xl name + count + 2 DetailRows + section label + total row + button) still exceeded the available Panel height. Because `Panel` has no `overflow-hidden`, the total row bled visually below the rounded border onto the page background. Fix (applied to BOTH `CheckInView.tsx` walk-in summary AND `SalonInteractiveView.tsx` browse summary):
+  - Added `overflow-hidden` to the Panel
+  - Wrapped header + details + SELECTED SERVICES label + list into a SINGLE scroll container (`min-h-0 flex-1 overflow-y-auto pr-1`) — these now scroll as one block when space is tight
+  - Added `shrink-0` to the total row and primary button — pinned to the bottom of the Panel, always visible inside the border regardless of keyboard state
+  - Removed the now-redundant inner `flex-1 min-h-0 overflow-y-auto` on the list itself
+
+**Fix 6 — Click-through from Idle/Promo to Welcome hub.** When the customer tapped the idle screen, `onPointerDown` on the wrapper fired `handleScreenTouch()` → IPC → backend mode change → React re-render into `CheckInView` hub — BUT the same physical tap's `pointerup` + `click` events then landed on whatever element was at that coordinate in the newly-rendered view, often hitting "I have booking" and auto-advancing into the booking lookup flow. Fix: `src/renderer/windows/customer/CustomerApp.tsx:195,206` — changed `onPointerDown={handleScreenTouch}` → `onClick={handleScreenTouch}` on BOTH the promo and idle wrappers. `click` only fires after `pointerup` completes on the original element, so the event dispatch finishes before React re-renders the new view. No ghost click.
+
+**Partial refactor started (NOT committed, reverted):** Began extracting a shared `ConfirmedReceiptView` component to deduplicate the "confirmed" screen between `CheckInView.tsx` (walk-in + booking cases) and `SalonInteractiveView.tsx` (browse → walk-in case). Created `src/renderer/windows/customer/components/ConfirmedReceiptView.tsx` and added the import to `CheckInView.tsx`, then ran out of context before replacing the inline JSX (~180 lines in each file) and removing the duplicated `ConfirmedIcon`/`ReceiptMetric`/`StatusCard` helpers. Both changes were reverted (file deleted, import removed) to keep the commit clean. **TODO next session**: Recreate `ConfirmedReceiptView.tsx` with props covering both walk-in (services array + totalPrice) and booking (serviceLabel/staffName/bookingTime/customerPhone) cases, then swap it into both view files. Use `SalonInteractiveView.tsx:650-798` as the canonical layout (operator confirmed it "đẹp và ổn hơn") with CheckInView's booking-details fallback appended for the empty-services case.
+
+**Verification run in this session:**
+- `npm run build:main` → passed
+- `npm run build:renderer` → passed (1865 modules, no errors) — rerun after every fix above
+- Operator confirmed visually: Select Services scrolls, box layout matches Browse services, keyboard no longer breaks totals, idle click-through no longer bleeds into hub buttons.
+- Runtime timeout test still pending operator confirmation on real hardware.
+
+**Files changed in this session (final):**
+- `src/renderer/windows/customer/views/CheckInView.tsx` — timeout bump, select-services grid wrapper removed, summary Panel restructured (overflow-hidden + single scroll area + pinned total/button)
+- `src/renderer/windows/customer/views/SalonInteractiveView.tsx` — summary Panel restructured same way (shared layout convergence)
+- `src/renderer/windows/customer/CustomerApp.tsx` — idle/promo click-through fix (pointerdown → click)
+- `src/main/pos/pos-store.ts` — backend interaction timer 30s → 90s
+
+---
 
 ## Session 40 - printer regression fix + printer settings persistence
 

@@ -63,7 +63,7 @@ interface CheckInViewProps {
   onLanguageChange: (language: Language) => void;
 }
 
-const INTERACTION_TIMEOUT_MS = 30_000;
+const INTERACTION_TIMEOUT_MS = 90_000;
 const CONFIRMATION_TIMEOUT_MS = 8_000;
 const UPSELL_TIMEOUT_MS = 15_000;
 export function getAutoOpenCustomerKeyboardTarget(
@@ -1058,90 +1058,84 @@ export default function CheckInView({
 
           {step === 'walkin' && walkInStage === 'service' && (
             <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-              <div className="min-h-0">
-                <WalkInServicePicker
-                  categories={categories}
-                  language={language}
-                  t={t}
-                  selectedCategoryId={walkInSelectedCategoryId}
-                  searchQuery={walkInServiceSearchQuery}
-                  categoryMenuOpen={walkInCategoryMenuOpen}
-                  selectedServiceIds={selectedWalkInServiceIds}
-                  onSelectCategory={selectWalkInCategory}
-                  onToggleCategoryMenu={toggleWalkInCategoryMenu}
-                  onSearchFocus={() => setKeyboardTarget('walkInServiceSearch')}
-                  onToggleService={toggleSelectedWalkInService}
-                />
-              </div>
+              <WalkInServicePicker
+                categories={categories}
+                language={language}
+                t={t}
+                selectedCategoryId={walkInSelectedCategoryId}
+                searchQuery={walkInServiceSearchQuery}
+                categoryMenuOpen={walkInCategoryMenuOpen}
+                selectedServiceIds={selectedWalkInServiceIds}
+                onSelectCategory={selectWalkInCategory}
+                onToggleCategoryMenu={toggleWalkInCategoryMenu}
+                onSearchFocus={() => setKeyboardTarget('walkInServiceSearch')}
+                onToggleService={toggleSelectedWalkInService}
+              />
 
               <Panel
-                className="flex min-h-0 flex-col p-6"
+                className="flex min-h-0 flex-col overflow-hidden p-6"
                 data-customer-display-checkin-walkin-summary="true"
               >
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {t('checkin.walkIn')}
-                </div>
-                <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
-                  {walkInName}
-                </div>
-                <div className="mt-1 text-sm text-slate-500">
-                  {formatServiceCount(selectedWalkInServices.length)}
-                </div>
-
-                <div className="mt-6 space-y-2">
-                  <DetailRow label={t('checkin.walkInName')} value={walkInName || '-'} />
-                  <DetailRow label={t('customer.selectedServices')} value={formatServiceCount(selectedWalkInServices.length)} />
-                  <DetailRow
-                    label={t('customer.approxTime')}
-                    value={selectedWalkInDuration > 0 ? formatApproximateTime(selectedWalkInDuration) : '-'}
-                  />
-                </div>
-
-                <div className="mt-6 flex min-h-0 flex-1 flex-col rounded-[28px] border border-slate-100 bg-slate-50/80 p-5">
+                <div
+                  className="min-h-0 flex-1 overflow-y-auto pr-1"
+                  data-customer-display-checkin-walkin-basket="true"
+                >
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {t('checkin.walkIn')}
+                  </div>
+                  <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+                    {walkInName}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {formatServiceCount(selectedWalkInServices.length)}
+                  </div>
+
+                  <div className="mt-6 space-y-2">
+                    <DetailRow label={t('checkin.walkInName')} value={walkInName || '-'} />
+                    <DetailRow
+                      label={t('customer.approxTime')}
+                      value={selectedWalkInDuration > 0 ? formatApproximateTime(selectedWalkInDuration) : '-'}
+                    />
+                  </div>
+
+                  <div className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                     {t('customer.selectedServices')}
                   </div>
 
-                  <div
-                    className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
-                    data-customer-display-checkin-walkin-basket="true"
-                  >
-                    {selectedWalkInServices.length > 0 ? selectedWalkInServices.map((service) => (
-                      <div
-                        key={service.id}
-                        className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-base font-semibold tracking-tight text-slate-900">
-                            {service.name}
-                          </div>
-                          {service.duration > 0 && (
-                            <div className="mt-1 text-xs font-medium text-slate-500">
-                              {t('customer.duration').replace('{min}', String(service.duration))}
+                  <div className="mt-4">
+                    {selectedWalkInServices.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedWalkInServices.map((service) => (
+                          <div
+                            key={service.id}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3"
+                          >
+                            <div className="min-w-0 truncate text-sm font-medium text-slate-900">
+                              {service.name}
                             </div>
-                          )}
-                        </div>
-                        <div className="shrink-0 text-sm font-semibold text-slate-600">
-                          {formatDisplayCurrency(service.price, language)}
-                        </div>
+                            <div className="shrink-0 text-sm font-semibold text-slate-600">
+                              {formatDisplayCurrency(service.price, language)}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    )) : (
+                    ) : (
                       <EmptyState title={t('wizard.selectServices')} />
                     )}
                   </div>
+                </div>
 
-                  <div className="mt-4 border-t border-slate-100 pt-4">
-                    <DetailRow
-                      label={t('wizard.total')}
-                      value={formatDisplayCurrency(selectedWalkInTotalPrice, language)}
-                    />
-                  </div>
+                <div className="mt-4 shrink-0 border-t border-slate-100 pt-4">
+                  <DetailRow
+                    label={t('wizard.total')}
+                    value={formatDisplayCurrency(selectedWalkInTotalPrice, language)}
+                  />
                 </div>
 
                 <button
                   onClick={() => { void handleWalkInSubmit(); }}
                   disabled={categories.length > 0 && selectedWalkInServices.length === 0}
-                  className="mt-6 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="mt-6 shrink-0 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {t('checkin.checkInButton')}
                 </button>
