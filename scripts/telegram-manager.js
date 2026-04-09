@@ -17,8 +17,11 @@ const path = require('path');
 const os   = require('os');
 
 // ── Cấu hình ─────────────────────────────────────────────────────────────────
-const TG_TOKEN  = process.env.TELEGRAM_BOT_TOKEN
-               || '8627112890:AAFyWzEm_KZJHUetqI4l5CZkywkYVsiMZ80';
+const TG_TOKEN  = process.env.TELEGRAM_BOT_TOKEN;
+if (!TG_TOKEN) {
+  console.error('[Manager] TELEGRAM_BOT_TOKEN env var is required.');
+  process.exit(1);
+}
 
 const TG_STATE  = path.join(os.homedir(), '.claude', 'channels', 'telegram');
 const DC_STATE  = path.join(os.homedir(), '.claude', 'channels', 'discord');
