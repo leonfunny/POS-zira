@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Language } from '../../../i18n/translations';
 import {
   CustomerDisplayServiceCategory,
@@ -44,6 +44,11 @@ export default function WalkInServicePicker({
     if (!query) return services;
     return services.filter((service) => service.name.toLowerCase().includes(query));
   }, [searchQuery, selectedCategory]);
+
+  const serviceListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    serviceListRef.current?.scrollTo(0, 0);
+  }, [selectedCategoryId]);
 
   if (!categories.length) {
     return (
@@ -123,6 +128,7 @@ export default function WalkInServicePicker({
       </div>
 
       <div
+        ref={serviceListRef}
         className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
         data-customer-display-checkin-walkin-service-list="true"
       >

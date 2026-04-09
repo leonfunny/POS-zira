@@ -39,6 +39,11 @@ button, input, select {
   -webkit-app-region: no-drag;
 }
 
+/* Customer display needs full click interaction — disable drag region */
+body.customer-display-root {
+  -webkit-app-region: no-drag;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePosStore } from '../../hooks/usePosStore';
 import { useConfig } from '../../hooks/useConfig';
+import { useKeyboardManager } from '../../hooks/useKeyboardManager';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import ShiftModal from './ShiftModal';
 import ShiftReportModal from './ShiftReport';
+import TouchKeyboard from '../shared/TouchKeyboard';
 import RetailTemplate from './templates/retail/RetailTemplate';
 import SalonTemplate from './templates/salon/SalonTemplate';
 import B2BTemplate from './templates/b2b/B2BTemplate';
@@ -44,6 +46,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
   const clock = useLiveClock();
+  const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
   // Stays focused, captures rapid keystrokes ending with Enter, looks up product.
@@ -280,10 +283,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       </div>
 
       {/* Mode-specific layout */}
-      {posMode === 'retail' && <RetailTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-      {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-      {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-      {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {posMode === 'retail' && <RetailTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+      </div>
 
       {/* Shift modals - shared */}
       {showShiftModal === 'open' && (
@@ -310,6 +315,15 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           t={t}
         />
       )}
+
+      {/* Touch keyboard for fullscreen mode */}
+      <TouchKeyboard
+        visible={keyboardVisible}
+        mode={keyboardMode}
+        onKey={onKey}
+        onBackspace={onBackspace}
+        onDone={onDone}
+      />
     </div>
   );
 }

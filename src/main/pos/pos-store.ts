@@ -219,8 +219,10 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return { ...state, cart: recalcCart({ ...state.cart, items }), display };
     }
 
-    case 'cart/clear':
-      return { ...state, cart: createInitialState().cart, tip: 0 };
+    case 'cart/clear': {
+      const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
+      return { ...state, cart: createInitialState().cart, tip: 0, display };
+    }
 
     case 'cart/applyDiscount': {
       const discount = Math.min(action.payload.amount, state.cart.subtotal);

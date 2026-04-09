@@ -29,7 +29,7 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
   const canSubmit = !saving && (mode === 'close' || staffName.trim().length > 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/50" onClick={onClose}>
       <div
         className="bg-white rounded-2xl w-full max-w-sm mx-4 shadow-2xl border border-gray-200"
         onClick={(e) => e.stopPropagation()}

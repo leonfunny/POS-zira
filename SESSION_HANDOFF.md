@@ -1,6 +1,50 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-09 (session 41 - customer display select-services fixes, BUILT, NOT COMMITTED) | Read this file at the start of every new session.
+> Last updated: 2026-04-09 (session 42 - customer display UX polish + idle timer fix, BUILT, NOT COMMITTED) | Read this file at the start of every new session.
+
+## Session 42 - Customer display: ConfirmedReceiptView refactor + UX polish + idle timer fix
+
+### 1. Extract shared ConfirmedReceiptView component
+- Created `src/renderer/windows/customer/components/ConfirmedReceiptView.tsx` — shared confirmed receipt for walk-in (services[]) and booking (detail fallback) cases.
+- Swapped into both `CheckInView.tsx` and `SalonInteractiveView.tsx`, removed duplicate `ConfirmedIcon`/`ReceiptMetric`/`StatusCard` helpers from both.
+
+### 2. Redesign confirmed receipt — eliminate repetition
+- Old layout had `t('checkin.pleaseWait')` 4×, metrics 3×, and a redundant right sidebar.
+- New 2-column layout: **left** = badge + name + 3 metrics + "next step" banner, **right** = scrollable services list (or booking detail rows). Each fact exactly once.
+- Deleted `StatusCard` component entirely.
+
+### 3. Fix booking step duplicate UI
+- `CheckInView.tsx` booking step: removed duplicate "Search by name..." from header subtitle (already in input placeholder), removed duplicate "No bookings found" and "Continue as walk-in" from right panel empty state.
+- Right panel now 3 states: walk-in CTA (no results), "Select a booking" prompt (results exist), detail+check-in (selected).
+
+### 4. Scroll-to-top on category change
+- `WalkInServicePicker.tsx`: added `serviceListRef` + `useEffect` to scroll service list to top when `selectedCategoryId` changes.
+- `SalonInteractiveView.tsx`: same pattern with `browseServiceListRef`.
+
+### 5. Idle timer bug fix (intermittent jump to idle while actively using)
+**Root causes found:**
+1. `SalonInteractiveView.tsx:32` still had `INTERACTION_TIMEOUT_MS = 30_000` — session 41 only updated CheckInView (90s) and backend (90s), forgot SalonInteractiveView.
+2. `CustomerDisplayShell.tsx` only had `onPointerDown` — long scroll sessions without lifting finger never reset the timer.
+
+**Fixes:**
+- `SalonInteractiveView.tsx`: `INTERACTION_TIMEOUT_MS` 30s → 90s (synced with CheckInView + backend)
+- `CustomerDisplayShell.tsx`: added throttled `onPointerMove` (5s interval) so scrolling resets both frontend and backend timers.
+
+### Files changed
+- `src/renderer/windows/customer/components/ConfirmedReceiptView.tsx` (NEW, then redesigned)
+- `src/renderer/windows/customer/components/WalkInServicePicker.tsx` (scroll-to-top)
+- `src/renderer/windows/customer/components/CustomerDisplayShell.tsx` (onPointerMove throttle)
+- `src/renderer/windows/customer/views/CheckInView.tsx` (refactor + booking dedup)
+- `src/renderer/windows/customer/views/SalonInteractiveView.tsx` (refactor + scroll-to-top + timer fix)
+
+### Verification
+- `npm run build:renderer` → passed (1866 modules)
+- `npm run build:main` → passed
+- Operator confirmed: confirmed receipt clean, booking step clean, category scroll resets, idle timer no longer fires during active use.
+
+**Git status:** NOT committed, NOT pushed.
+
+---
 
 ## Session 41 - Customer Display Select Services: idle timeout + cramped basket
 

@@ -3,6 +3,7 @@ import type { Language } from '../../../i18n/translations';
 import TouchKeyboard from '../../../components/shared/TouchKeyboard';
 import CustomerDisplayShell from '../components/CustomerDisplayShell';
 import { DetailRow, EmptyState, Panel } from '../components/CustomerDisplayPrimitives';
+import ConfirmedReceiptView from '../components/ConfirmedReceiptView';
 import {
   CustomerDisplayServiceCategory,
   CustomerDisplayServiceItem,
@@ -28,7 +29,7 @@ interface SalonInteractiveViewProps {
   onLanguageChange: (language: Language) => void;
 }
 
-const INTERACTION_TIMEOUT_MS = 30_000;
+const INTERACTION_TIMEOUT_MS = 90_000;
 const CONFIRMATION_TIMEOUT_MS = 8_000;
 
 function getAutoOpenInteractiveKeyboardTarget(view: BrowseView): InteractiveTouchKeyboardTarget {
@@ -55,6 +56,7 @@ export default function SalonInteractiveView({
   const [keyboardTarget, setKeyboardTarget] = useState<InteractiveTouchKeyboardTarget>(null);
 
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const browseServiceListRef = useRef<HTMLDivElement>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const walkInNameRef = useRef<HTMLInputElement | null>(null);
@@ -124,6 +126,10 @@ export default function SalonInteractiveView({
       setSelectedCategoryId(categories[0].id);
     }
   }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    browseServiceListRef.current?.scrollTo(0, 0);
+  }, [selectedCategoryId]);
 
   useEffect(() => {
     const nextKeyboardTarget = getAutoOpenInteractiveKeyboardTarget(view);
@@ -449,7 +455,7 @@ export default function SalonInteractiveView({
                   />
                 </div>
 
-                <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+                <div ref={browseServiceListRef} className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
                   {visibleServices.length > 0 ? (
                     <div className="grid gap-4">
                       {visibleServices.map((service) => {
@@ -648,153 +654,17 @@ export default function SalonInteractiveView({
           )}
 
           {view === 'confirmed' && selectedServices.length > 0 && (
-            <div className="min-h-0 flex-1">
-              <Panel className="h-full w-full overflow-hidden p-0">
-                <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1.35fr)_340px]">
-                  <div
-                    className="relative overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(253,230,230,0.9),_transparent_42%),linear-gradient(135deg,rgba(255,250,250,0.96),rgba(255,247,239,0.94)_56%,rgba(255,244,210,0.9))] p-8 lg:p-10"
-                    data-customer-display-confirmed-receipt="true"
-                  >
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/55 to-transparent" />
-                    <div className="relative flex h-full min-h-0 flex-col">
-                      <div className="inline-flex items-center gap-3 self-start rounded-full border border-white/80 bg-white/76 px-4 py-2 shadow-sm">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-b from-rose-50 to-orange-50 text-brand-600">
-                          <ConfirmedIcon />
-                        </div>
-                        <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-500">
-                            {t('checkin.confirmed')}
-                          </div>
-                          <div className="text-sm font-medium text-slate-500">
-                            {t('checkin.pleaseWait')}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-8">
-                        <div className="text-5xl font-semibold tracking-tight text-slate-900">
-                          {walkInName.trim() || t('checkin.walkIn')}
-                        </div>
-                        <div className="mt-3 max-w-2xl text-lg leading-7 text-slate-500">
-                          Your request has been received. The front desk can now see your selected services and total.
-                        </div>
-                      </div>
-
-                      <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                        <ReceiptMetric
-                          label={t('customer.selectedServices')}
-                          value={String(selectedServices.length)}
-                        />
-                        <ReceiptMetric
-                          label={t('wizard.total')}
-                          value={formatDisplayCurrency(selectedServicesTotal, language)}
-                        />
-                        <ReceiptMetric
-                          label={t('customer.approxTime')}
-                          value={approximateTimeValue}
-                        />
-                      </div>
-
-                      <div className="mt-8 flex min-h-0 flex-1 flex-col rounded-[30px] border border-white/85 bg-white/72 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-sm">
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                              {t('customer.selectedServices')}
-                            </div>
-                            <div className="mt-2 text-sm text-slate-500">
-                              Review of the services included in this walk-in.
-                            </div>
-                          </div>
-                        </div>
-
-                        <div
-                          className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
-                          data-customer-display-confirmed-services-scroll="true"
-                        >
-                          <div className="space-y-2">
-                            {selectedServices.map((service) => (
-                              <div
-                                key={service.id}
-                                className="flex items-center justify-between gap-4 rounded-2xl border border-slate-100 bg-white/88 px-4 py-3"
-                              >
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-slate-900">{service.name}</div>
-                                  {service.duration > 0 && (
-                                    <div className="mt-1 text-xs font-medium text-slate-500">
-                                      {t('customer.duration').replace('{min}', String(service.duration))}
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="shrink-0 text-sm font-semibold text-slate-600">
-                                  {formatDisplayCurrency(service.price, language)}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="mt-5 border-t border-slate-100 pt-4">
-                          <div className="space-y-2">
-                            <DetailRow
-                              label={t('wizard.total')}
-                              value={formatDisplayCurrency(selectedServicesTotal, language)}
-                            />
-                            <DetailRow
-                              label={t('customer.approxTime')}
-                              value={approximateTimeValue}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="flex flex-col justify-between border-l border-white/70 bg-white/72 p-6 lg:p-8"
-                    data-customer-display-confirmed-metrics="true"
-                  >
-                    <div>
-                      <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-gradient-to-br from-rose-50 via-white to-amber-50 text-brand-600 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
-                        <ConfirmedIcon />
-                      </div>
-                      <div className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                        Walk-in receipt
-                      </div>
-                      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
-                        {t('checkin.confirmed')}
-                      </div>
-                      <div className="mt-3 text-sm leading-6 text-slate-500">
-                        Please stay nearby. Staff will call you when your station is ready.
-                      </div>
-                    </div>
-
-                    <div className="mt-8 space-y-4">
-                      <StatusCard
-                        title={t('customer.selectedServices')}
-                        value={formatServiceCount(selectedServices.length)}
-                      />
-                      <StatusCard
-                        title={t('customer.approxTime')}
-                        value={approximateTimeValue}
-                      />
-                      <StatusCard
-                        title={t('wizard.total')}
-                        value={formatDisplayCurrency(selectedServicesTotal, language)}
-                      />
-                    </div>
-
-                    <div className="mt-8 rounded-[24px] border border-amber-100 bg-gradient-to-br from-amber-50/90 to-white px-5 py-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
-                        Next step
-                      </div>
-                      <div className="mt-2 text-sm leading-6 text-slate-600">
-                        Relax in the waiting area. Your service list and request total have already been sent.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Panel>
-            </div>
+            <ConfirmedReceiptView
+              t={t}
+              language={language}
+              customerName={walkInName.trim() || t('checkin.walkIn')}
+              services={selectedServices}
+              totalPrice={selectedServicesTotal}
+              approxDurationMinutes={selectedServicesDuration > 0 ? selectedServicesDuration : null}
+              rootAttr="data-customer-display-confirmed-receipt"
+              summaryAttr="data-customer-display-confirmed-metrics"
+              scrollAttr="data-customer-display-confirmed-services-scroll"
+            />
           )}
         </div>
 
@@ -820,14 +690,6 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ConfirmedIcon() {
-  return (
-    <svg className="h-9 w-9" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
-
 function RemoveIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -845,20 +707,3 @@ function ChevronDownIcon() {
   );
 }
 
-function ReceiptMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[24px] border border-white/80 bg-white/78 px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</div>
-      <div className="mt-2 text-xl font-semibold tracking-tight text-slate-900">{value}</div>
-    </div>
-  );
-}
-
-function StatusCard({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-[24px] border border-slate-100 bg-white/82 px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{title}</div>
-      <div className="mt-2 text-lg font-semibold text-slate-900">{value}</div>
-    </div>
-  );
-}

@@ -132,7 +132,7 @@ export class WindowManager {
       hasMultipleDisplays,
       monitorIndex,
       targetDisplay,
-      useKiosk: hasMultipleDisplays || forceKiosk,
+      useKiosk: forceKiosk,
     };
   }
 
@@ -262,7 +262,7 @@ export class WindowManager {
       maximizable: !isCustomer,
       movable: isCustomer ? !useKiosk : true,
       resizable: isCustomer ? !useKiosk : true,
-      skipTaskbar: isCustomer,
+      skipTaskbar: isCustomer && useKiosk,
       webPreferences: {
         preload: join(__dirname, `../../preload/${config.preload}`),
         contextIsolation: true,
@@ -341,7 +341,7 @@ export class WindowManager {
     // Kiosk lock: if the customer display exits fullscreen unexpectedly (OS touch gesture,
     // Win+D, etc.) re-enter kiosk/fullscreen immediately so customers can't escape.
     // Only skipped when staff intentionally closes via the display:close IPC channel.
-    if (isCustomer) {
+    if (isCustomer && useKiosk) {
       win.on('leave-full-screen', () => {
         if (this.customerExitRequested) return;
         logger.info('[WindowManager] Customer display left fullscreen unexpectedly - restoring');
@@ -364,7 +364,9 @@ export class WindowManager {
         }, 100);
       });
 
-      logger.info(`[WindowManager] Customer display kiosk=${useKiosk}, frameless=true, blur-refocus=on`);
+      logger.info(`[WindowManager] Customer display kiosk=true, frameless=true, blur-refocus=on`);
+    } else if (isCustomer) {
+      logger.info(`[WindowManager] Customer display kiosk=false, frameless=true, windowed mode`);
     }
 
     win.on('closed', () => {

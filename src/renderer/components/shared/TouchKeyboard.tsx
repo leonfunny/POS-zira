@@ -37,6 +37,7 @@ export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDon
       className={`
         w-full bg-slate-100 border-t border-slate-300 px-3 pt-2 pb-3
         transition-all duration-300 ease-in-out overflow-hidden
+        relative z-[60]
         ${visible ? 'max-h-[440px] opacity-100' : 'max-h-0 opacity-0 py-0 pt-0 pb-0 border-t-0'}
       `}
     >

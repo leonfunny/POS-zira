@@ -241,6 +241,21 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
             t={t}
             resetScrollKey={activeCategoryId ?? 'all'}
           />
+          <div className="-mx-3 -mb-3 shrink-0">
+            <QuickActions
+              dispatch={dispatch}
+              hasItems={cart.items.length > 0}
+              onOpenCustomerDisplay={handleOpenCustomerDisplay}
+              onCloseCustomerDisplay={handleCloseCustomerDisplay}
+              isCustomerDisplayOpen={isCustomerDisplayOpen}
+              displayMode={state.display?.mode || 'idle'}
+              t={t}
+              heldCarts={heldCarts}
+              onHold={handleHoldCart}
+              onRecall={handleRecallCart}
+              onDiscardHeld={handleDiscardHeld}
+            />
+          </div>
         </div>
 
         {/* Right: Cart sidebar */}
@@ -254,21 +269,6 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
           />
         </div>
       </div>
-
-      {/* Quick actions bar — includes Hold/Recall */}
-      <QuickActions
-        dispatch={dispatch}
-        hasItems={cart.items.length > 0}
-        onOpenCustomerDisplay={handleOpenCustomerDisplay}
-        onCloseCustomerDisplay={handleCloseCustomerDisplay}
-        isCustomerDisplayOpen={isCustomerDisplayOpen}
-        displayMode={state.display?.mode || 'idle'}
-        t={t}
-        heldCarts={heldCarts}
-        onHold={handleHoldCart}
-        onRecall={handleRecallCart}
-        onDiscardHeld={handleDiscardHeld}
-      />
 
       {/* Payment modal */}
       {showPayment && (

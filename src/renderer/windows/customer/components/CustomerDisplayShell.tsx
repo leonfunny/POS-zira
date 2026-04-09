@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Language, languageNames } from '../../../i18n/translations';
 import { formatDisplayDate, formatDisplayTime } from '../customer-display-model';
 
@@ -41,6 +41,14 @@ export default function CustomerDisplayShell({
   const now = useLiveClock();
   const [languageOpen, setLanguageOpen] = useState(false);
 
+  const lastMoveRef = useRef(0);
+  const throttledInteract = useCallback(() => {
+    const now = Date.now();
+    if (now - lastMoveRef.current < 5000) return;
+    lastMoveRef.current = now;
+    onInteract?.();
+  }, [onInteract]);
+
   useEffect(() => {
     if (!languageOpen) return undefined;
 
@@ -56,6 +64,7 @@ export default function CustomerDisplayShell({
     <div
       className="relative h-screen overflow-hidden bg-gradient-to-br from-rose-50 via-[#fffdfa] to-amber-50 text-slate-900"
       onPointerDown={onInteract}
+      onPointerMove={throttledInteract}
     >
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -left-20 top-20 h-72 w-72 rounded-full bg-brand-200/30 blur-3xl" />
