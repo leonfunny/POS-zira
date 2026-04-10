@@ -18,7 +18,7 @@ import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registr
 import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
-import { printLabelToDevice, cleanupOldLabels, getMaxServicesPerLabel } from '../hardware/pdf/pdf-printer';
+import { printLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { listSerialPorts, listWindowsPrintersDetailed } from '../hardware/port-utils';
@@ -343,7 +343,9 @@ export class HardwareModule extends BaseModule {
       const printerName = (driver as ZebraDriver).getPrinterName();
       const salonName = config.salonName || config.name || '';
 
-      const maxPerLabel = getMaxServicesPerLabel(heightMm);
+      // Always 1 service per label: each service prints on its own physical slip so that
+      // multi-service check-ins produce N labels (with QR on the last one).
+      const maxPerLabel = 1;
 
       if (data.services.length <= maxPerLabel) {
         const htmlPath = await printLabelToDevice({

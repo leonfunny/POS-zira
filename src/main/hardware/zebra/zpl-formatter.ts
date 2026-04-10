@@ -238,37 +238,30 @@ export class ZplFormatter {
   }
 
   /**
-   * How many services fit on a single check-in label.
-   */
-  getMaxServicesPerLabel(): number {
-    return this.labelHeight <= 25 ? 2 : this.labelHeight <= 35 ? 3 : this.labelHeight <= 50 ? 4 : 6;
-  }
-
-  /**
-   * Format check-in confirmation label(s).
+   * Format check-in confirmation label(s): one service per physical label.
    * Omits ^LL so the printer uses its auto-calibrated label length.
-   * If services exceed one label, outputs multiple ^XA…^XZ blocks
-   * that the printer processes as sequential labels.
+   * Outputs multiple ^XA…^XZ blocks printed in reverse so the first page ends up on top.
    */
   formatCheckinConfirmation(data: CheckinConfirmationData): string {
-    const maxPerLabel = this.getMaxServicesPerLabel();
+    const services = data.services.length > 0 ? data.services : [{ name: '', price: 0 }];
+    const total = services.length;
 
-    if (data.services.length <= maxPerLabel) {
-      // Single label — all services fit
-      return this.buildCheckinLabel(data, data.services, 1, 1);
+    if (total === 1) {
+      return this.buildCheckinLabel(data, services, 1, 1);
     }
 
-    // Multi-label: split services into chunks
-    const chunks: typeof data.services[] = [];
-    for (let i = 0; i < data.services.length; i += maxPerLabel) {
-      chunks.push(data.services.slice(i, i + maxPerLabel));
-    }
+    return services
+      .map((svc, idx) => this.buildCheckinLabel(data, [svc], idx + 1, total))
+      .reverse()
+      .join('\n');
+  }
 
-    // Print in reverse order: summary page first, CHECK-IN header last.
-    // Last printed label ends up on top of the stack → customer sees header first.
-    return chunks.map((chunk, idx) =>
-      this.buildCheckinLabel(data, chunk, idx + 1, chunks.length)
-    ).reverse().join('\n');
+  /** Pipe-separated QR payload for booking lookup: ZIRA|<booking>|<phone>|<iso-timestamp> */
+  private buildQrPayload(data: CheckinConfirmationData): string {
+    const phone = (data.customerPhone || '').replace(/\|/g, '');
+    const ts = data.checkinTime || new Date().toISOString();
+    const booking = (data.bookingNumber || '').replace(/\|/g, '');
+    return `ZIRA|${booking}|${phone}|${ts}`;
   }
 
   /**
@@ -333,15 +326,31 @@ export class ZplFormatter {
       y += this.mmToDots(2);
     }
 
-    // Services for this page
+    // Services for this page (1 service/label in the new model, but loop still supports N)
     for (const svc of services) {
       lines.push(`^FO${margin},${y}`);
       lines.push(`^A0,${bodyFont},${bodyFont}`);
       lines.push(`^FD- ${this.sanitizeText(svc.name, 28)}^FS`);
+      if (svc.price && svc.price > 0) {
+        const priceText = `${(svc.price / 100).toFixed(2)} zl`;
+        lines.push(`^FO${this.mmToDots(this.labelWidth - 18)},${y}`);
+        lines.push(`^A0,${bodyFont},${bodyFont}`);
+        lines.push(`^FD${priceText}^FS`);
+      }
       y += lineStep;
     }
 
     if (isLastPage) {
+      // Grand total across all services
+      const grandTotal = data.services.reduce((sum, s) => sum + (s.price || 0), 0);
+      if (grandTotal > 0) {
+        const totalText = `TOTAL: ${(grandTotal / 100).toFixed(2)} zl`;
+        lines.push(`^FO${margin},${y}`);
+        lines.push(`^A0,${bodyFont},${bodyFont}`);
+        lines.push(`^FD${totalText}^FS`);
+        y += lineStep;
+      }
+
       // Staff
       if (data.staffName) {
         lines.push(`^FO${margin},${y}`);
@@ -350,11 +359,11 @@ export class ZplFormatter {
         y += lineStep;
       }
 
-      // Customer notes
+      // Customer notes (truncated)
       if (data.customerNotes) {
         lines.push(`^FO${margin},${y}`);
         lines.push(`^A0,${bodyFont},${bodyFont}`);
-        lines.push(`^FD${this.sanitizeText(data.customerNotes, 35)}^FS`);
+        lines.push(`^FD${this.sanitizeText(data.customerNotes, 32)}^FS`);
         y += lineStep;
       }
 
@@ -365,14 +374,17 @@ export class ZplFormatter {
       lines.push(`^FO${margin},${y}`);
       lines.push(`^A0,${bodyFont},${bodyFont}`);
       lines.push(`^FD${dateStr} ${timeStr}^FS`);
-      y += lineStep;
 
-      // Bottom separator + Welcome
-      lines.push(`^FO${margin},${y}^GB${contentWidth},1,1^FS`);
-      y += this.mmToDots(2);
-      lines.push(`^FO${margin},${y}`);
-      lines.push(`^A0,${bodyFont},${bodyFont}`);
-      lines.push('^FDWelcome! Please wait.^FS');
+      // QR code bottom-right — size & magnification scale with configured label dimensions.
+      const qrMm = Math.max(7, Math.min(14, this.labelHeight * 0.36, this.labelWidth * 0.24));
+      const qrMarginMm = 1.5;
+      // ^BQ magnification: each module rendered as N×N dots. Derive so QR stays ~qrMm physical.
+      // At 203 DPI: 1mm ≈ 8 dots. For ~21 modules (short payloads): mag = qrMm*8/21.
+      const qrMagnification = Math.max(2, Math.min(8, Math.round((qrMm * this.dotsPerMm) / 24)));
+      const qrX = this.mmToDots(this.labelWidth - qrMm - qrMarginMm);
+      const qrY = this.mmToDots(this.labelHeight - qrMm - qrMarginMm);
+      const qrPayload = this.buildQrPayload(data);
+      lines.push(`^FO${qrX},${qrY}^BQN,2,${qrMagnification}^FDLA,${qrPayload}^FS`);
     } else {
       // "continued" indicator
       lines.push(`^FO${margin},${y}`);

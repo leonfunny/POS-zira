@@ -1,6 +1,42 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-10 (session 43 — investigations only, no code changes, 2 decisions pending) | Read this file at the start of every new session.
+> Last updated: 2026-04-10 (session 44 — check-in label redesign: 1 service/label + QR on last page) | Read this file at the start of every new session.
+
+---
+
+## Session 44 — Check-in receipt: 1 service per label + QR on last page
+
+**Status:** ✅ SHIPPED (code + typecheck + visual verification done). Needs real-printer smoke test on Zebra hardware.
+
+### What changed
+- **Model A (linked multi-label set)**: each service now prints on its OWN 50×30mm label instead of packing up to 3/label.
+- **QR code (10×10mm, bottom-right)** added to last label only. Payload = pipe-separated `ZIRA|<bookingNumber>|<phone>|<checkinTime>` — parse via `.split('|')`.
+- **Single-service check-in** renders first+last on 1 label: header CHECK-IN + salon + customer + booking# + service + price + TOTAL + staff + 📝 notes + datetime footer + QR.
+- **Middle labels** (page 2..N-1) show customer name (small) + page tag + service + "▶ continued... k/N" + NO QR.
+- **Label height constraint**: 50×30mm is FIXED — máy in đang dùng giấy này, không đổi.
+- **Notes truncation**: > 40 chars → `notes.slice(0,40)+'…'` để fit trên label 30mm.
+
+### Files touched
+- `src/main/hardware/pdf/pdf-printer.ts` — imported `qrcode`, added `buildQrPayload` + `generateQrDataUrl`, `buildLabelHtml` is now `async`, new `.qr` CSS (absolute bottom-right), new `.staff-line`, `.has-qr` class reserves right-padding. Removed `getMaxServicesPerLabel` (dead). Exported `buildLabelHtml` so the verify script can call it without Electron.
+- `src/main/modules/hardware.module.ts` — `maxPerLabel = 1` hardcoded, removed `getMaxServicesPerLabel` import.
+- `src/main/hardware/zebra/zpl-formatter.ts` — `formatCheckinConfirmation` splits 1 service/label, added `buildQrPayload` private helper, added ZPL `^BQN,2,4` QR command + TOTAL row + price per service on last label. Removed `getMaxServicesPerLabel` method.
+- `tests/e2e/verify-checkin-label.mjs` — NEW headless Chromium renderer that generates 4 test scenarios (single / first-of-3 / middle / last) and saves PNG previews under `tests/e2e/screenshots/checkin-label-*.png`.
+
+### Verification done
+- `npm run build:main` passes (no TS errors).
+- `node tests/e2e/verify-checkin-label.mjs` renders 4 labels in Playwright; all 4 PNGs visually correct:
+  - Single: full header + service + total + staff + notes + QR ✓
+  - Page 1/3: CHECK-IN header + service 1 + "continued 1/3" + no QR ✓
+  - Page 2/3: customer (small) + 2/3 + service 2 + "continued 2/3" + no QR ✓
+  - Page 3/3: customer + 3/3 + service 3 + TOTAL 260 zł (= 80+120+60 ✓) + staff + notes + QR ✓
+
+### Still TODO
+- **Real printer smoke test**: trigger a check-in on the actual Zebra hardware and verify labels physically print + stack correctly (reverse print order means page 1 lands on top).
+- **QR scan test**: phone camera scan of printed QR → verify payload format `ZIRA|001/0410|+48...|2026-04-10T...`. Camera shows raw text (not URL) by design (per user choice: structured context not URL).
+- **ZPL fallback**: only triggered when HTML print fails. Not exercised in this session's verification. Code-reviewed but not runtime-tested.
+
+### Rollback
+- Revert 3 files: `pdf-printer.ts`, `hardware.module.ts`, `zpl-formatter.ts`. No DB migration, no schema change, no new deps (`qrcode` was already in package.json:35).
 
 ---
 
