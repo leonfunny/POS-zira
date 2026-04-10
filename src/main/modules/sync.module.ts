@@ -14,6 +14,7 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { ProductSync } from '../sync/product-sync';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
+import { CheckinSync } from '../sync/checkin-sync';
 import { productRepo } from '../database/repos/product-repo';
 import { billiardResourceRepo } from '../database/repos/billiard-resource-repo';
 import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
@@ -34,6 +35,7 @@ export class SyncModule extends BaseModule {
   private productSync: ProductSync | null = null;
   private orderSync: OrderSync | null = null;
   private billiardSync: BilliardSync | null = null;
+  private checkinSync: CheckinSync | null = null;
   private _syncInProgress = false;
 
   constructor(private container: ServiceContainer) {
@@ -45,9 +47,11 @@ export class SyncModule extends BaseModule {
     this.productSync = new ProductSync();
     this.orderSync = new OrderSync();
     this.billiardSync = new BilliardSync();
+    this.checkinSync = new CheckinSync();
     this.container.set(SERVICE_TOKENS.PRODUCT_SYNC, this.productSync);
     this.container.set(SERVICE_TOKENS.ORDER_SYNC, this.orderSync);
     this.container.set(SERVICE_TOKENS.BILLIARD_SYNC, this.billiardSync);
+    this.container.set(SERVICE_TOKENS.CHECKIN_SYNC, this.checkinSync);
     this.setState(ModuleState.READY);
   }
 
@@ -63,6 +67,14 @@ export class SyncModule extends BaseModule {
       try {
         await this.orderSync?.syncPendingOrders();
         return { success: true };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
+
+    ipcMain.handle('pos:sync:checkins', async () => {
+      try {
+        this.checkinSync?.resetEndpointAvailability();
+        const result = await this.checkinSync?.syncPending();
+        return { success: true, ...result };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -317,6 +329,14 @@ export class SyncModule extends BaseModule {
         this.orderSync?.startPeriodicSync();
         try { await this.orderSync?.syncPendingOrders(); } catch (err: any) { logger.debug('[SyncModule] sync pending orders failed:', err?.message); }
 
+        // Check-in sync (Phase 1 of log-based sync). Resets the endpoint-available
+        // flag so a freshly-deployed server endpoint starts working without an app restart.
+        if (this.checkinSync) {
+          this.checkinSync.resetEndpointAvailability();
+          try { await this.checkinSync.syncPending(); } catch (err: any) { logger.debug('[SyncModule] sync pending checkins failed:', err?.message); }
+          this.checkinSync.startPeriodicSync();
+        }
+
         // Retry unsynced shifts
         const shiftCtrl = this.container.getOptional<ShiftController>(SERVICE_TOKENS.SHIFT_CONTROLLER);
         try { await shiftCtrl?.retryUnsyncedShifts(); } catch (err: any) { logger.debug('[SyncModule] retry unsynced shifts failed:', err?.message); }
@@ -337,6 +357,7 @@ export class SyncModule extends BaseModule {
 
     bus.on('socket:disconnected', () => {
       this.orderSync?.stop();
+      this.checkinSync?.stop();
       if (this.billiardSync) {
         this.billiardSync.setOnline(false);
         this.billiardSync.stopPeriodicDashboardRefresh();
@@ -380,6 +401,7 @@ export class SyncModule extends BaseModule {
 
   async stop(): Promise<void> {
     this.orderSync?.stop();
+    this.checkinSync?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.setState(ModuleState.STOPPED);
   }

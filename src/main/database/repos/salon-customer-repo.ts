@@ -16,6 +16,9 @@ export interface SalonCustomerRow {
   marketing_consent: number;
   created_at: string;
   updated_at: string;
+  // v13 sync fields
+  synced: number;
+  synced_at: string | null;
 }
 
 export interface CustomerServiceHistoryRow {
@@ -149,6 +152,29 @@ export const salonCustomerRepo = {
        LIMIT ?`,
       [customerId, limit],
     );
+  },
+
+  // ── Sync helpers (v13) ──────────────────────────────
+  /** Return customers that still need to be pushed to the server. */
+  getUnsynced(): SalonCustomerRow[] {
+    return database.all<SalonCustomerRow>(
+      'SELECT * FROM salon_customers WHERE synced = 0 ORDER BY created_at ASC',
+    );
+  },
+
+  markSyncing(id: string): void {
+    database.run('UPDATE salon_customers SET synced = 2 WHERE id = ? AND synced = 0', [id]);
+  },
+
+  markSynced(id: string, backendCustomerId: string): void {
+    database.run(
+      "UPDATE salon_customers SET synced = 1, backend_customer_id = ?, synced_at = datetime('now') WHERE id = ?",
+      [backendCustomerId, id],
+    );
+  },
+
+  markSyncFailed(id: string): void {
+    database.run('UPDATE salon_customers SET synced = 0 WHERE id = ? AND synced = 2', [id]);
   },
 
   getRecommendations(customerId: string, limit = 5): ServiceRecommendation[] {

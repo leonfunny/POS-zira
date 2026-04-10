@@ -23,6 +23,10 @@ export interface CheckinRow {
   staff_id: string | null;
   estimated_duration: number | null;
   services_json: string | null;  // JSON array of {id, name, price, duration}
+  // v13 sync fields
+  synced: number;          // 0=pending, 1=synced, 2=in-flight
+  backend_id: string | null;
+  synced_at: string | null;
 }
 
 export interface CheckinCreateData {
@@ -131,6 +135,30 @@ export const checkinRepo = {
 
   updateNotes(id: string, notes: string): void {
     database.run('UPDATE checkins SET notes = ? WHERE id = ?', [notes, id]);
+  },
+
+  // ── Sync helpers (v13) ──────────────────────────────
+  /** Return check-ins that still need to be pushed to the server. */
+  getUnsynced(): CheckinRow[] {
+    return database.all<CheckinRow>('SELECT * FROM checkins WHERE synced = 0 ORDER BY checked_in_at ASC');
+  },
+
+  /** Mark a check-in as currently being sent (prevents double-send). */
+  markSyncing(id: string): void {
+    database.run('UPDATE checkins SET synced = 2 WHERE id = ? AND synced = 0', [id]);
+  },
+
+  /** Mark a check-in as successfully synced, recording the server's backend id. */
+  markSynced(id: string, backendId: string): void {
+    database.run(
+      "UPDATE checkins SET synced = 1, backend_id = ?, synced_at = datetime('now') WHERE id = ?",
+      [backendId, id],
+    );
+  },
+
+  /** Revert a failed sync attempt so it will be retried on the next cycle. */
+  markSyncFailed(id: string): void {
+    database.run('UPDATE checkins SET synced = 0 WHERE id = ? AND synced = 2', [id]);
   },
 
   getStats(date?: string): { total: number; waiting: number; inService: number; completed: number; noShow: number; walkIns: number } {

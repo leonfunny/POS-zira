@@ -1,6 +1,36 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-10 (session 44 — check-in label redesign: 1 service/label + QR on last page) | Read this file at the start of every new session.
+> Last updated: 2026-04-10 (session 45 — Phase 1 log-based sync: client-side check-in + customer sync, dark-launched) | Read this file at the start of every new session.
+
+---
+
+## Session 45 — Phase 1 log-based sync (client-side, dark launch)
+
+**Status:** ✅ SHIPPED client-side, awaiting server endpoints. `npm run build:main` passes clean.
+
+### What changed
+- **Migration v13** (`checkin_sync_fields`): adds `synced/backend_id/synced_at` to `checkins`, `synced/synced_at` to `salon_customers` (reuses existing `backend_customer_id` col). Adds `idx_checkin_synced` + `idx_sc_synced`.
+- **Repo helpers** on `checkin-repo.ts` + `salon-customer-repo.ts`: `getUnsynced() / markSyncing() / markSynced() / markSyncFailed()` — tri-state pattern (0 pending → 2 in-flight → 1 synced) mirroring `order-repo.ts`.
+- **`api-client.ts`**: new `createCheckin()` + `createSalonCustomer()`. Both send `Idempotency-Key: <local_uuid>` and **return `null` on 404/501** (so the sync worker can pause cleanly when server endpoint is not yet deployed).
+- **NEW `src/main/sync/checkin-sync.ts`**: `CheckinSync` class, 30 s periodic loop, customers synced before check-ins (FK dependency), endpoint-availability flag that resets on each `socket:connected`.
+- **`sync.module.ts`**: instantiates `CheckinSync`, wires `pos:sync:checkins` IPC, adds to reconnect chain, stops on disconnect.
+- **`core/tokens.ts`**: new `CHECKIN_SYNC` service token.
+
+### Server contracts the backend team needs to implement
+- `POST /api/v1/print-agent/checkins` — body shape: camelCase check-in with services[]. Headers: `Authorization: Bearer …`, `Idempotency-Key: <uuid>`. Response `{ checkinId }`.
+- `POST /api/v1/print-agent/salon-customers` — body shape: camelCase customer. Same idempotency contract. Response `{ customerId }`.
+
+### Why dark launch
+No user-visible change until server ships the endpoints. Client tries once per reconnect, gets 404, logs a single warn line, pauses. Zero noise. Re-enables automatically when server rolls out.
+
+### Full design context
+All architecture decisions, gap analysis, and future phases live in `C:\Users\pc\.claude\plans\snuggly-exploring-wozniak.md` (the cross-session tracking file for the sync project). Read it at the start of any sync-related session.
+
+### Still TODO
+- Backend team: implement the two endpoints above (separate repo)
+- Phase 2: `booking_number` collision fix for multi-device (currently generates `{count}/DDMM` purely local)
+- Phase 3: server → client change feed / catch-up sync after offline window
+- Pre-existing bug discovered: `database.clearSalonData()` does NOT clear `salon_customers`, `customer_service_history`, `service_popularity` — these survive salon switches today. Not fixed in this session (out of Phase 1 scope).
 
 ---
 

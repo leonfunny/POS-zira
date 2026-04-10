@@ -335,6 +335,69 @@ export class ApiClient {
   }
 
   /**
+   * Push a check-in to the server (Phase 1 of log-based sync).
+   * POST /api/v1/print-agent/checkins
+   *
+   * Returns null if the server endpoint is not deployed yet (404/501) so the
+   * caller can pause retries until the next reconnect. Throws on other errors.
+   */
+  async createCheckin(
+    token: string,
+    checkin: Record<string, any>,
+  ): Promise<{ checkinId: string } | null> {
+    const url = `${this.baseUrl}/api/v1/print-agent/checkins`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': checkin.id,
+      },
+      body: JSON.stringify(checkin),
+    });
+
+    if (response.status === 404 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Push a salon customer to the server.
+   * POST /api/v1/print-agent/salon-customers
+   *
+   * Returns null if the server endpoint is not deployed yet (404/501).
+   */
+  async createSalonCustomer(
+    token: string,
+    customer: Record<string, any>,
+  ): Promise<{ customerId: string } | null> {
+    const url = `${this.baseUrl}/api/v1/print-agent/salon-customers`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': customer.id,
+      },
+      body: JSON.stringify(customer),
+    });
+
+    if (response.status === 404 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
    * Open POS shift
    * POST /api/v1/pos/shifts/open
    */

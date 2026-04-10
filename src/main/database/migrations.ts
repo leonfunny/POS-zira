@@ -741,4 +741,20 @@ export const migrations: Migration[] = [
       ALTER TABLE salon_customers ADD COLUMN marketing_consent INTEGER DEFAULT 0;
     `,
   },
+  {
+    version: 13,
+    name: 'checkin_sync_fields',
+    up: `
+      -- Sync tri-state for check-ins: 0=pending, 1=synced, 2=in-flight
+      ALTER TABLE checkins ADD COLUMN synced INTEGER DEFAULT 0;
+      ALTER TABLE checkins ADD COLUMN backend_id TEXT;
+      ALTER TABLE checkins ADD COLUMN synced_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_checkin_synced ON checkins(synced);
+
+      -- Sync tri-state for salon customers (reuses existing backend_customer_id column)
+      ALTER TABLE salon_customers ADD COLUMN synced INTEGER DEFAULT 0;
+      ALTER TABLE salon_customers ADD COLUMN synced_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_sc_synced ON salon_customers(synced);
+    `,
+  },
 ];
