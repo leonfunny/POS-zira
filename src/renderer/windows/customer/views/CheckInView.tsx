@@ -36,7 +36,7 @@ interface UpsellItem {
 }
 
 type Step = 'hub' | 'booking' | 'phone' | 'walkin' | 'upsell' | 'confirmed';
-type WalkInStage = 'identity' | 'service';
+type WalkInStage = 'identity' | 'service' | 'review';
 export type CustomerTouchKeyboardTarget = 'bookingSearch' | 'walkInName' | 'walkInServiceSearch' | null;
 
 interface CheckInPayload {
@@ -59,7 +59,7 @@ interface CheckInViewProps {
   salonName?: string;
   categories: CustomerDisplayServiceCategory[];
   upsellItems?: UpsellItem[];
-  onBrowseServices: () => void;
+  onBrowseServices: (categoryId?: string) => void;
   onBack: () => void;
   onLanguageChange: (language: Language) => void;
 }
@@ -471,6 +471,12 @@ export default function CheckInView({
     setWalkInStage('service');
   }, [resetIdleTimer]);
 
+  const openWalkInReviewStage = useCallback(() => {
+    resetIdleTimer();
+    setWalkInCategoryMenuOpen(false);
+    setWalkInStage('review');
+  }, [resetIdleTimer]);
+
   const handleWalkInSubmit = useCallback(async () => {
     if (!walkInName.trim()) return;
     if (categories.length > 0 && selectedWalkInServices.length === 0) return;
@@ -511,6 +517,11 @@ export default function CheckInView({
 
   const goBackOneLevel = useCallback(() => {
     resetIdleTimer();
+
+    if (step === 'walkin' && walkInStage === 'review') {
+      setWalkInStage('service');
+      return;
+    }
 
     if (step === 'walkin' && walkInStage === 'service') {
       setWalkInServiceSearchQuery('');
@@ -614,7 +625,9 @@ export default function CheckInView({
         : step === 'walkin'
           ? walkInStage === 'identity'
             ? t('checkin.walkIn')
-            : t('wizard.selectServices')
+            : walkInStage === 'review'
+              ? t('wizard.confirmation')
+              : t('wizard.selectServices')
           : step === 'upsell'
             ? t('checkin.upsellTitle')
             : t('checkin.confirmed');
@@ -693,7 +706,7 @@ export default function CheckInView({
                   subtitle={t('priceList.subtitle')}
                   accent="brand"
                   icon={<BrowseActionIcon />}
-                  onClick={onBrowseServices}
+                  onClick={() => onBrowseServices()}
                 />
               </div>
             </Panel>
@@ -726,20 +739,18 @@ export default function CheckInView({
               data-customer-display-hub-category-list="scroll"
             >
               {categorySummaries.length > 0 ? categorySummaries.map((category) => (
-                <div
+                <button
                   key={category.id}
-                  className="rounded-3xl border border-slate-100 bg-slate-50/80 px-4 py-4"
+                  type="button"
+                  onClick={() => onBrowseServices(category.id)}
+                  className="w-full rounded-3xl border border-slate-100 bg-slate-50/80 px-4 py-4 text-left transition-colors hover:border-brand-200 hover:bg-brand-50/60 active:bg-brand-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
                 >
-                  <div>
-                    <div>
-                      <div className="text-lg font-semibold text-slate-900">{category.name}</div>
-                      <div className="mt-3 space-y-1 text-sm text-slate-500">
-                        <div>{formatServiceCount(category.serviceCount)}</div>
-                        <div>{formatStartingPrice(category.startingPrice)}</div>
-                      </div>
-                    </div>
+                  <div className="text-lg font-semibold text-slate-900">{category.name}</div>
+                  <div className="mt-3 space-y-1 text-sm text-slate-500">
+                    <div>{formatServiceCount(category.serviceCount)}</div>
+                    <div>{formatStartingPrice(category.startingPrice)}</div>
                   </div>
-                </div>
+                </button>
               )) : (
                 <EmptyState title={t('priceList.noServices')} />
               )}
@@ -991,46 +1002,61 @@ export default function CheckInView({
           )}
 
           {step === 'walkin' && walkInStage === 'identity' && (
-            <div className="grid min-h-0 flex-1 gap-6 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
-              <Panel className="min-h-0 p-6 lg:p-8">
-            <div className="max-w-2xl">
-              <div className="text-sm font-medium text-slate-500">{t('checkin.walkInName')}</div>
-              <input
-                ref={walkInNameRef}
-                value={walkInName}
-                readOnly
-                onFocus={() => showTouchKeyboardFor('walkInName')}
-                onPointerDown={() => showTouchKeyboardFor('walkInName')}
-                data-customer-display-text-input="true"
-                placeholder={t('checkin.walkInPlaceholder')}
-                className="mt-4 w-full rounded-[24px] border border-slate-200 bg-slate-50/80 px-6 py-5 text-2xl text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-300 focus:bg-white"
-              />
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <Panel className="w-full max-w-[640px] p-8 lg:p-12">
+                <div className="flex flex-col items-center text-center">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-brand-100 to-brand-50 text-brand-600 shadow-sm">
+                    <WalkInActionIcon />
+                  </div>
 
-              <button
-                onClick={openWalkInServiceStage}
-                disabled={!walkInName.trim()}
-                className="mt-6 inline-flex rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                {t('wizard.continue')}
-              </button>
-            </div>
-          </Panel>
+                  <h2 className="mt-6 text-4xl font-semibold tracking-tight text-slate-900">
+                    {t('checkin.welcome')}
+                  </h2>
+                  <p className="mt-3 text-lg text-slate-500">
+                    {t('checkin.walkInPlaceholder')}
+                  </p>
 
-              <Panel className="flex min-h-0 flex-col p-6">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {t('priceList.title')}
-            </div>
-            <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
-              {categorySummaries.map((category) => (
-                <div key={category.id} className="rounded-3xl border border-slate-100 bg-slate-50/80 px-4 py-4">
-                  <div className="text-lg font-semibold text-slate-900">{category.name}</div>
-                  <div className="mt-3 space-y-1 text-sm text-slate-500">
-                    <div>{formatServiceCount(category.serviceCount)}</div>
-                    <div>{formatStartingPrice(category.startingPrice)}</div>
+                  <div className="mt-8 w-full">
+                    <label className="mb-3 block text-left text-sm font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      {t('checkin.walkInName')}
+                    </label>
+                    <input
+                      ref={walkInNameRef}
+                      value={walkInName}
+                      readOnly
+                      onFocus={() => showTouchKeyboardFor('walkInName')}
+                      onPointerDown={() => showTouchKeyboardFor('walkInName')}
+                      data-customer-display-text-input="true"
+                      placeholder={t('checkin.walkInPlaceholder')}
+                      className="w-full rounded-[24px] border border-slate-200 bg-slate-50/80 px-6 py-5 text-center text-2xl font-medium text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-brand-300 focus:bg-white"
+                    />
+                  </div>
+
+                  <button
+                    onClick={openWalkInServiceStage}
+                    disabled={!walkInName.trim()}
+                    className="mt-6 w-full rounded-2xl bg-brand-600 px-6 py-4 text-lg font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition-all hover:bg-brand-700 hover:shadow-[0_16px_40px_rgba(236,72,153,0.3)] active:translate-y-0.5 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:shadow-none"
+                  >
+                    {t('wizard.continue')}
+                  </button>
+
+                  <div className="mt-8 flex items-center gap-2 text-sm">
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">1</span>
+                      <span className="font-semibold text-slate-700">{t('checkin.walkInName')}</span>
+                    </span>
+                    <span className="text-slate-300">———</span>
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-500">2</span>
+                      <span className="text-slate-400">{t('wizard.selectServices')}</span>
+                    </span>
+                    <span className="text-slate-300">———</span>
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-500">3</span>
+                      <span className="text-slate-400">{t('checkin.confirmed')}</span>
+                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
               </Panel>
             </div>
           )}
@@ -1087,14 +1113,22 @@ export default function CheckInView({
                         {selectedWalkInServices.map((service) => (
                           <div
                             key={service.id}
-                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3"
+                            className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-3 py-3"
                           >
-                            <div className="min-w-0 truncate text-sm font-medium text-slate-900">
+                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
                               {service.name}
                             </div>
                             <div className="shrink-0 text-sm font-semibold text-slate-600">
                               {formatDisplayCurrency(service.price, language)}
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleSelectedWalkInService(service)}
+                              aria-label={t('common.remove')}
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-95"
+                            >
+                              <CheckinRemoveIcon />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1112,8 +1146,87 @@ export default function CheckInView({
                 </div>
 
                 <button
-                  onClick={() => { void handleWalkInSubmit(); }}
+                  onClick={openWalkInReviewStage}
                   disabled={categories.length > 0 && selectedWalkInServices.length === 0}
+                  className="mt-6 shrink-0 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {t('wizard.continue')}
+                </button>
+              </Panel>
+            </div>
+          )}
+
+          {step === 'walkin' && walkInStage === 'review' && (
+            <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <Panel className="flex min-h-0 flex-col p-6 lg:p-8">
+                <div className="flex min-h-0 max-w-2xl flex-1 flex-col">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    {t('checkin.walkInName')}
+                  </div>
+                  <div className="mt-3 rounded-[24px] border border-slate-200 bg-slate-50/80 px-6 py-5 text-2xl font-medium text-slate-900">
+                    {walkInName.trim() || '-'}
+                  </div>
+
+                  <div className="mt-8 flex min-h-0 flex-1 flex-col rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {t('customer.selectedServices')}
+                    </div>
+                    <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                      {selectedWalkInServices.length > 0 ? (
+                        selectedWalkInServices.map((service) => (
+                          <div
+                            key={service.id}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                          >
+                            <div className="min-w-0 flex-1 truncate text-base font-semibold text-slate-900">
+                              {service.name}
+                            </div>
+                            <div className="shrink-0 text-sm font-semibold text-slate-600">
+                              {formatDisplayCurrency(service.price, language)}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <EmptyState title={t('wizard.selectServices')} />
+                      )}
+                    </div>
+                    <div className="mt-4 border-t border-slate-100 pt-4">
+                      <DetailRow
+                        label={t('wizard.total')}
+                        value={formatDisplayCurrency(selectedWalkInTotalPrice, language)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+
+              <Panel className="flex min-h-0 flex-col p-6">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  {t('checkin.walkIn')}
+                </div>
+                <div className="mt-2 text-4xl font-semibold tracking-tight text-slate-900">
+                  {selectedWalkInServices.length}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">{t('customer.selectedServices')}</div>
+
+                <div className="mt-6 space-y-2">
+                  <DetailRow label={t('checkin.walkInName')} value={walkInName.trim() || '-'} />
+                  <DetailRow
+                    label={t('customer.approxTime')}
+                    value={selectedWalkInDuration > 0 ? formatApproximateTime(selectedWalkInDuration) : '-'}
+                  />
+                </div>
+
+                <div className="mt-auto shrink-0 border-t border-slate-100 pt-4">
+                  <DetailRow
+                    label={t('wizard.total')}
+                    value={formatDisplayCurrency(selectedWalkInTotalPrice, language)}
+                  />
+                </div>
+
+                <button
+                  onClick={() => { void handleWalkInSubmit(); }}
+                  disabled={!walkInName.trim() || (categories.length > 0 && selectedWalkInServices.length === 0)}
                   className="mt-6 shrink-0 rounded-2xl bg-brand-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {t('checkin.checkInButton')}
@@ -1287,6 +1400,15 @@ function BrowseActionIcon() {
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h10" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 17.5h8" />
       <circle cx="18" cy="17.5" r="2.5" />
+    </svg>
+  );
+}
+
+function CheckinRemoveIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 6L6 18" />
     </svg>
   );
 }

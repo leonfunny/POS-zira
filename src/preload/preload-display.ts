@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBookings: () => ipcRenderer.invoke('display:get-bookings'),
     checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
       ipcRenderer.invoke('display:check-in', data),
-    browseServices: () => ipcRenderer.invoke('display:browse-services'),
+    browseServices: (categoryId?: string) => ipcRenderer.invoke('display:browse-services', categoryId),
     backToCheckin: () => ipcRenderer.invoke('display:back-to-checkin'),
     backToIdle: () => ipcRenderer.invoke('display:back-to-idle'),
     ping: () => ipcRenderer.invoke('display:interaction-ping'),

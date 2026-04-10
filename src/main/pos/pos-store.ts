@@ -86,6 +86,8 @@ export interface DisplayState {
   serviceCategories?: ServiceCategory[];
   customerRequests?: Array<{ id: string; serviceName: string; timestamp: number }>;
   lastCheckIn?: CheckInData;
+  // When browsing services, optionally pre-select a specific category (jump into category view).
+  browseInitialCategoryId?: string;
   // Payment status for customer display (forwarded from Elavon)
   paymentStatus?: string;
 }
@@ -447,19 +449,20 @@ export class PosStore {
     this.loadServiceCategories();
     this.state = {
       ...this.state,
-      display: { ...this.state.display, mode: 'checkin' },
+      display: { ...this.state.display, mode: 'checkin', browseInitialCategoryId: undefined },
     };
     this.broadcast();
     this.resetInteractionTimer();
   }
 
-  /** Switch display from checkin to interactive (browse services) */
-  handleBrowseFromCheckin(): void {
-    logger.info('[PosStore] Customer switching to browse services from checkin');
+  /** Switch display from checkin to interactive (browse services).
+   * If categoryId is provided, SalonInteractiveView will open directly in that category. */
+  handleBrowseFromCheckin(categoryId?: string): void {
+    logger.info(`[PosStore] Customer switching to browse services from checkin${categoryId ? ` (category: ${categoryId})` : ''}`);
     this.loadServiceCategories();
     this.state = {
       ...this.state,
-      display: { ...this.state.display, mode: 'interactive' },
+      display: { ...this.state.display, mode: 'interactive', browseInitialCategoryId: categoryId },
     };
     this.broadcast();
     this.resetInteractionTimer();

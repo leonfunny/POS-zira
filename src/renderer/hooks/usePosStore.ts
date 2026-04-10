@@ -65,6 +65,8 @@ interface DisplayState {
     bookingTime?: string;
     isWalkIn: boolean;
   };
+  // When browsing services, optionally pre-select a specific category (jump into category view).
+  browseInitialCategoryId?: string;
   // Payment status for customer display (forwarded from Elavon)
   paymentStatus?: string;
 }

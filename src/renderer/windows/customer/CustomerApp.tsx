@@ -165,8 +165,8 @@ export default function CustomerApp() {
     }
   }, [displayMode]);
 
-  const handleBrowseServices = useCallback(() => {
-    void window.electronAPI.display?.browseServices?.();
+  const handleBrowseServices = useCallback((categoryId?: string) => {
+    void window.electronAPI.display?.browseServices?.(categoryId);
   }, []);
 
   const handleBackToIdle = useCallback(() => {
@@ -232,6 +232,7 @@ export default function CustomerApp() {
           language={lang}
           categories={display!.serviceCategories!}
           salonName={display?.salonName}
+          initialCategoryId={display?.browseInitialCategoryId}
           onHome={handleBackToIdle}
           onReturnToCheckIn={handleBackToCheckIn}
           onBack={handleBackToIdle}

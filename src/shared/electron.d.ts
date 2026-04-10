@@ -286,7 +286,7 @@ interface ElectronAPI {
     getBookings: () => Promise<BooksyBookingSummary[]>;
     checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
       Promise<{ success: boolean }>;
-    browseServices: () => Promise<{ success: boolean }>;
+    browseServices: (categoryId?: string) => Promise<{ success: boolean }>;
     backToCheckin: () => Promise<{ success: boolean }>;
     backToIdle: () => Promise<{ success: boolean }>;
     ping: () => Promise<{ success: boolean }>;

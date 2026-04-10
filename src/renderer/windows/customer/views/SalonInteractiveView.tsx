@@ -23,6 +23,8 @@ interface SalonInteractiveViewProps {
   language: Language;
   categories: CustomerDisplayServiceCategory[];
   salonName?: string;
+  /** If provided, open directly in 'category' view with this category pre-selected. */
+  initialCategoryId?: string;
   onHome: () => void;
   onReturnToCheckIn: () => void;
   onBack: () => void;
@@ -42,13 +44,21 @@ export default function SalonInteractiveView({
   language,
   categories,
   salonName,
+  initialCategoryId,
   onHome,
   onReturnToCheckIn,
   onBack,
   onLanguageChange,
 }: SalonInteractiveViewProps) {
-  const [view, setView] = useState<BrowseView>('catalog');
-  const [selectedCategoryId, setSelectedCategoryId] = useState(categories[0]?.id || '');
+  // Resolve the initial category: use initialCategoryId if it matches a real category, else fall back to first.
+  const resolvedInitialCategoryId = (initialCategoryId && categories.some((c) => c.id === initialCategoryId))
+    ? initialCategoryId
+    : (categories[0]?.id || '');
+  // If a valid initialCategoryId is given, jump straight into the 'category' view; otherwise start at catalog.
+  const [view, setView] = useState<BrowseView>(
+    initialCategoryId && categories.some((c) => c.id === initialCategoryId) ? 'category' : 'catalog',
+  );
+  const [selectedCategoryId, setSelectedCategoryId] = useState(resolvedInitialCategoryId);
   const [searchQuery, setSearchQuery] = useState('');
   const [walkInName, setWalkInName] = useState('');
   const [selectedServices, setSelectedServices] = useState<CustomerDisplayServiceItem[]>([]);
@@ -530,12 +540,22 @@ export default function SalonInteractiveView({
                         {selectedServices.map((service) => (
                           <div
                             key={service.id}
-                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3"
+                            className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-3 py-3"
                           >
-                            <div className="min-w-0 text-sm font-medium text-slate-900">{service.name}</div>
+                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+                              {service.name}
+                            </div>
                             <div className="shrink-0 text-sm font-semibold text-slate-600">
                               {formatDisplayCurrency(service.price, language)}
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => removeSelectedService(service.id)}
+                              aria-label={t('common.remove')}
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-95"
+                            >
+                              <RemoveIcon />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -593,22 +613,11 @@ export default function SalonInteractiveView({
                           key={service.id}
                           className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3"
                         >
-                          <div className="min-w-0 text-base font-semibold tracking-tight text-slate-900">
+                          <div className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-slate-900">
                             {service.name}
                           </div>
-                          <div className="flex shrink-0 items-center gap-3">
-                            <div className="text-sm font-semibold text-slate-600">
-                              {formatDisplayCurrency(service.price, language)}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => removeSelectedService(service.id)}
-                              aria-label={t('common.remove')}
-                              data-customer-display-selected-service-remove="true"
-                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
-                            >
-                              <RemoveIcon />
-                            </button>
+                          <div className="shrink-0 text-sm font-semibold text-slate-600">
+                            {formatDisplayCurrency(service.price, language)}
                           </div>
                         </div>
                       ))}

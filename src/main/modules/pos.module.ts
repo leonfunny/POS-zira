@@ -127,9 +127,12 @@ export class PosModule extends BaseModule {
 
       this.posStore?.handleCheckIn(normalizedData);
       // Persist to checkins table
+      let bookingNumber: string | undefined;
       try {
+        bookingNumber = checkinRepo.nextBookingNumber();
         checkinRepo.create({
           id: `ci-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          booking_number: bookingNumber,
           customer_name: normalizedData.customerName,
           customer_phone: normalizedData.customerPhone,
           customer_email: normalizedData.customerEmail,
@@ -167,6 +170,24 @@ export class PosModule extends BaseModule {
         }
       }
 
+      // Print check-in confirmation label (fire-and-forget)
+      try {
+        const hw = this.container.getOptional<any>(SERVICE_TOKENS.HARDWARE_MODULE);
+        if (hw?.printCheckinConfirmation) {
+          const printServices = (services || []).map((s: any) => ({ name: s.name, price: s.price || 0 }));
+          hw.printCheckinConfirmation({
+            bookingNumber,
+            customerName: normalizedData.customerName,
+            customerPhone: normalizedData.customerPhone,
+            services: printServices.length > 0 ? printServices : normalizedData.serviceName ? [{ name: normalizedData.serviceName, price: 0 }] : [],
+            staffName: normalizedData.staffName,
+            checkinTime: new Date().toISOString(),
+          }).catch((e: any) => logger.warn('[PosModule] Check-in print failed:', e));
+        }
+      } catch (e) {
+        logger.warn('[PosModule] Check-in print setup failed:', e);
+      }
+
       // Notify POS window
       const posWindow = this.windowManager?.getWindow('pos');
       if (posWindow && !posWindow.isDestroyed()) {
@@ -176,8 +197,9 @@ export class PosModule extends BaseModule {
     });
 
     // Customer display: switch to browse services from checkin
-    ipcMain.handle('display:browse-services', () => {
-      this.posStore?.handleBrowseFromCheckin();
+    // Optional categoryId: if provided, SalonInteractiveView opens directly in that category.
+    ipcMain.handle('display:browse-services', (_e, categoryId?: string) => {
+      this.posStore?.handleBrowseFromCheckin(categoryId);
       return { success: true };
     });
 

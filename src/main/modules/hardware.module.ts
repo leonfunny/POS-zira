@@ -325,70 +325,65 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.CHECKIN_PRINT_CONFIRMATION, async (_, data: CheckinConfirmationData) => {
-      const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
-      if (!driver) return { success: false, error: 'No label printer configured' };
-      if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Check-in print requires Zebra printer' };
-      try {
-        const config = getConfig();
-        const labelConfig = (config as any).printers?.LABEL || {};
-        const widthMm = labelConfig.labelWidth || config.labelWidth || 50;
-        const heightMm = labelConfig.labelHeight || config.labelHeight || 30;
-        const printerName = (driver as ZebraDriver).getPrinterName();
-        const salonName = config.salonName || config.name || '';
-
-        // Calculate how many services fit per label
-        const maxPerLabel = getMaxServicesPerLabel(heightMm);
-
-        if (data.services.length <= maxPerLabel) {
-          // Single label — all services fit
-          const htmlPath = await printLabelToDevice({
-            printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
-            data, salonName,
-          });
-          return { success: true, htmlPath };
-        }
-
-        // Multi-label: split services into chunks
-        const chunks: typeof data.services[] = [];
-        for (let i = 0; i < data.services.length; i += maxPerLabel) {
-          chunks.push(data.services.slice(i, i + maxPerLabel));
-        }
-        logger.info(`[HardwareModule] Check-in has ${data.services.length} services → ${chunks.length} labels (max ${maxPerLabel}/label at ${heightMm}mm height)`);
-
-        // Grand total across ALL services (not per-page)
-        const grandTotal = data.services.reduce((s, v) => s + (v.price || 0), 0);
-
-        // Print in REVERSE order: summary/total page first, CHECK-IN header last.
-        // On a label printer the last printed label ends up on top of the stack,
-        // so the customer sees the CHECK-IN header first when picking up the labels.
-        const htmlPaths: string[] = [];
-        for (let i = chunks.length - 1; i >= 0; i--) {
-          const chunkData = { ...data, services: chunks[i] };
-          const htmlPath = await printLabelToDevice({
-            printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
-            data: chunkData, salonName, grandTotal,
-            pageInfo: { page: i + 1, total: chunks.length },
-          });
-          htmlPaths.push(htmlPath);
-          // Small delay between labels to avoid printer spooler congestion
-          if (i > 0) await new Promise(r => setTimeout(r, 400));
-        }
-
-        return { success: true, htmlPath: htmlPaths[0], totalLabels: chunks.length };
-      } catch (e: any) {
-        logger.error('[HardwareModule] Check-in confirmation print failed:', e);
-        // Fallback to ZPL if HTML print fails (ZPL handles multi-label internally)
-        try {
-          logger.info('[HardwareModule] Falling back to ZPL print...');
-          await (driver as ZebraDriver).printCheckinConfirmation(data);
-          return { success: true, fallback: 'zpl' };
-        } catch (fallbackErr: any) {
-          return { success: false, error: e.message };
-        }
-      }
+      return this.printCheckinConfirmation(data);
     });
 
     logger.info('[HardwareModule] IPC handlers registered');
+  }
+
+  async printCheckinConfirmation(data: CheckinConfirmationData): Promise<{ success: boolean; error?: string; htmlPath?: string; totalLabels?: number; fallback?: string }> {
+    const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
+    if (!driver) return { success: false, error: 'No label printer configured' };
+    if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Check-in print requires Zebra printer' };
+    try {
+      const config = getConfig();
+      const labelConfig = (config as any).printers?.LABEL || {};
+      const widthMm = labelConfig.labelWidth || config.labelWidth || 50;
+      const heightMm = labelConfig.labelHeight || config.labelHeight || 30;
+      const printerName = (driver as ZebraDriver).getPrinterName();
+      const salonName = config.salonName || config.name || '';
+
+      const maxPerLabel = getMaxServicesPerLabel(heightMm);
+
+      if (data.services.length <= maxPerLabel) {
+        const htmlPath = await printLabelToDevice({
+          printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
+          data, salonName,
+        });
+        return { success: true, htmlPath };
+      }
+
+      const chunks: typeof data.services[] = [];
+      for (let i = 0; i < data.services.length; i += maxPerLabel) {
+        chunks.push(data.services.slice(i, i + maxPerLabel));
+      }
+      logger.info(`[HardwareModule] Check-in has ${data.services.length} services → ${chunks.length} labels (max ${maxPerLabel}/label at ${heightMm}mm height)`);
+
+      const grandTotal = data.services.reduce((s, v) => s + (v.price || 0), 0);
+
+      const htmlPaths: string[] = [];
+      for (let i = chunks.length - 1; i >= 0; i--) {
+        const chunkData = { ...data, services: chunks[i] };
+        const htmlPath = await printLabelToDevice({
+          printerName, labelWidthMm: widthMm, labelHeightMm: heightMm,
+          data: chunkData, salonName, grandTotal,
+          pageInfo: { page: i + 1, total: chunks.length },
+        });
+        htmlPaths.push(htmlPath);
+        if (i > 0) await new Promise(r => setTimeout(r, 400));
+      }
+
+      return { success: true, htmlPath: htmlPaths[0], totalLabels: chunks.length };
+    } catch (e: any) {
+      logger.error('[HardwareModule] Check-in confirmation print failed:', e);
+      try {
+        logger.info('[HardwareModule] Falling back to ZPL print...');
+        await (driver as ZebraDriver).printCheckinConfirmation(data);
+        return { success: true, fallback: 'zpl' };
+      } catch (fallbackErr: any) {
+        return { success: false, error: e.message };
+      }
+    }
   }
 
   registerEventHandlers(bus: EventBus): void {
