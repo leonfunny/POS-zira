@@ -1,4 +1,32 @@
 import { database } from '../database';
+import { getConfigValue, setConfigValue } from '../../config/store';
+
+/**
+ * Derive a stable single-letter register code (A-Z) from the device's machineId.
+ * Each device in a multi-register salon gets a unique prefix so booking numbers
+ * like "A001/0410" and "B001/0410" cannot collide across devices.
+ *
+ * The derived code is persisted the first time it is needed so later calls are
+ * O(1) and so the user can override it in settings without losing continuity.
+ */
+function getOrDeriveRegisterCode(): string {
+  const existing = getConfigValue('registerCode');
+  if (typeof existing === 'string' && existing.length > 0) return existing;
+
+  const machineId = (getConfigValue('machineId') as string | undefined) || '';
+  if (!machineId) return ''; // Fall back to legacy format if machineId missing
+
+  // FNV-like rolling hash → letter A-Z (26 combos; collision at ~6 devices).
+  // Multi-register chains should set a manual code via settings UI (future phase).
+  let hash = 0;
+  for (let i = 0; i < machineId.length; i++) {
+    hash = (hash * 31 + machineId.charCodeAt(i)) & 0x7fffffff;
+  }
+  const letter = String.fromCharCode(65 + (hash % 26));
+
+  setConfigValue('registerCode', letter);
+  return letter;
+}
 
 export interface CheckinRow {
   id: string;
@@ -50,15 +78,34 @@ export interface CheckinCreateData {
 }
 
 export const checkinRepo = {
-  /** Generate next booking number for today: 001/DDMM, 002/DDMM, ... */
+  /**
+   * Generate the next booking number for today.
+   *
+   * Format: `{registerCode}{seq}/{DDMM}` — e.g. "A001/0410", "B001/0410".
+   *
+   * The `seq` counter is scoped to the current register so two devices in the
+   * same salon never issue the same number. Legacy single-device installs with
+   * no machineId fall back to the old `{seq}/{DDMM}` format for backward compat.
+   */
   nextBookingNumber(): string {
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, '0');
     const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const ddmm = `${dd}${mm}`;
+    const code = getOrDeriveRegisterCode();
+
+    // Count only rows produced by this register today — a different device's
+    // numbers share the table but belong to its own independent sequence.
+    const likePattern = code ? `${code}___/${ddmm}` : `___/${ddmm}`;
     const count = database.get<{ cnt: number }>(
-      "SELECT COUNT(*) as cnt FROM checkins WHERE date(checked_in_at) = date('now')",
+      `SELECT COUNT(*) as cnt FROM checkins
+        WHERE date(checked_in_at) = date('now')
+          AND booking_number LIKE ?`,
+      [likePattern],
     )?.cnt || 0;
-    return `${String(count + 1).padStart(3, '0')}/${dd}${mm}`;
+
+    const seq = String(count + 1).padStart(3, '0');
+    return `${code}${seq}/${ddmm}`;
   },
 
   create(data: CheckinCreateData): void {

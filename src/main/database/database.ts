@@ -186,6 +186,10 @@ class Database {
       'pos_quickkey_layouts',
       'pos_recommended_items',
       'sequence_counters',
+      // Check-in wizard tables (FK order: history → customers, popularity standalone)
+      'customer_service_history',  // FK to salon_customers
+      'salon_customers',
+      'service_popularity',
       'checkins',
       'sync_queue',
       // Billiard tables (FK-aware order)

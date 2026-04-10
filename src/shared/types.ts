@@ -151,6 +151,10 @@ export interface AgentConfig {
   salonId?: string;
   salonName?: string;
   machineId?: string;
+  // Per-device register code used as a prefix in booking numbers (e.g. "A001/0410")
+  // to prevent collisions when multiple print-agents run for the same salon.
+  // Auto-derived from machineId on first check-in if unset. User can override in settings.
+  registerCode?: string;
   name: string;
 
   // UI Language

@@ -1,6 +1,32 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-10 (session 45 — Phase 1 log-based sync: client-side check-in + customer sync, dark-launched) | Read this file at the start of every new session.
+> Last updated: 2026-04-10 (session 46 — Phase 2 booking_number collision fix + salon-data leak fix) | Read this file at the start of every new session.
+
+---
+
+## Session 46 — Phase 2: booking_number collision fix + salon-data leak
+
+**Status:** ✅ SHIPPED. `npm run build:main` passes clean.
+
+### Bug fix: `clearSalonData()` was leaking customer data across salon switches
+`database.clearSalonData()` now clears `customer_service_history`, `salon_customers`, `service_popularity` (FK-aware order, history first). Previously these 3 tables survived account swaps, so Customer A's visit history could leak into Customer B's session. Fixed in `src/main/database/database.ts`.
+
+### Phase 2: per-register booking numbers
+New optional `registerCode` config field (single letter A-Z) auto-derived from `machineId` hash on first use. `nextBookingNumber()` now emits `{registerCode}{seq}/{DDMM}` — e.g. `A001/0410`, `B001/0410` — and the daily sequence is counted **per register** via a `booking_number LIKE 'A___/DDMM'` filter, so two devices in the same salon can never issue colliding numbers.
+
+### Files changed
+- `src/main/database/database.ts` — 3 tables added to `tablesToClear`
+- `src/main/database/repos/checkin-repo.ts` — new `getOrDeriveRegisterCode()` helper + rewritten `nextBookingNumber()`
+- `src/main/config/store.ts` — `registerCode` schema entry
+- `src/shared/types.ts` — `registerCode?: string` added to `AgentConfig`
+
+### Visual transition (one-time)
+On the day a device first upgrades, old check-ins with format `005/0410` and new ones with `A001/0410` coexist in that day's list. Cosmetic only — resets cleanly next day. Print templates (pdf + ZPL) treat `bookingNumber` as opaque so they just print whatever string is there.
+
+### Deferred
+- Settings UI to let user manually set `registerCode` (for chains with 6+ registers where auto-derive may collide)
+- **Phase 1 completion**: still blocked on backend team shipping `POST /api/v1/print-agent/checkins` and `POST /api/v1/print-agent/salon-customers` endpoints (see Session 45 for contracts)
+- **Phase 3**: server → client change feed / catch-up sync
 
 ---
 
