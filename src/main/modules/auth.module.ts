@@ -432,8 +432,17 @@ export class AuthModule extends BaseModule {
     if (!socket) throw new Error('Socket not initialized');
 
     setSecureApiKey(apiKey);
-    setConfig({ isPaired: true });
-    await socket.connectWithApiKey(config.serverUrl, apiKey);
+
+    // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug
+    try {
+      const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+      await client.connectWithApiKey(apiKey);
+    } catch (err: any) {
+      logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
+      setConfig({ isPaired: true });
+    }
+
+    await socket.connectWithApiKey(config.serverUrl || 'https://api.enail.pro', apiKey);
   }
 
   getToolDefinitions(): ToolDefinition[] { return []; }
