@@ -117,6 +117,10 @@ export class ApiClient {
       agentId: data.agentId,
       salonId: data.salonId,
       salonName: data.salonName,
+      // salonSlug is required by /warehouse/public/products as X-Salon-Slug header.
+      // Backend returns it flat on the connect response alongside salonCode.
+      ...(data.salonSlug && { salonSlug: data.salonSlug }),
+      ...(data.salonCode && { salonCode: data.salonCode }),
       serverUrl: data.serverUrl || this.baseUrl,
       isPaired: true,
       // Apply printer config if provided
