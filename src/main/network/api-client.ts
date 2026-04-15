@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, net } from 'electron';
 import * as os from 'os';
 import logger from '../logger';
 import { ConnectResponse, TelegramLoginTokenResponse, TelegramLoginTokenStatus } from '../../shared/types';
@@ -8,7 +8,9 @@ import { getConfig, setConfig, getConfigValue } from '../config/store';
 const DEFAULT_TIMEOUT = 30000;
 
 /**
- * Fetch with timeout wrapper to prevent hanging requests
+ * Fetch with timeout wrapper using Electron's net.fetch (Chromium network stack).
+ * Unlike Node.js fetch (undici), net.fetch uses the Windows system certificate
+ * store and respects system proxy settings — critical for fresh installs.
  */
 async function fetchWithTimeout(
   url: string,
@@ -19,11 +21,15 @@ async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const response = await fetch(url, {
+    // Use Electron's net.fetch when the app is ready (uses Chromium's network stack
+    // which integrates with Windows system certificates and proxy settings).
+    // Falls back to Node.js fetch during early startup before app is ready.
+    const fetcher = app.isReady() ? net.fetch : globalThis.fetch;
+    const response = await fetcher(url, {
       ...options,
       signal: controller.signal,
-    });
-    return response;
+    } as any);
+    return response as Response;
   } catch (error: any) {
     if (error.name === 'AbortError') {
       throw new Error(`Request timeout after ${timeout}ms: ${url}`);
