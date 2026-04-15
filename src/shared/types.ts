@@ -227,8 +227,9 @@ export interface AgentConfig {
   customerDisplayPromoInterval?: number; // Carousel interval in ms (default 5000)
   customerDisplayIdleTimeout?: number;   // Idle timeout before promo in ms (default 120000)
 
-  // Salon slug (for warehouse public API)
+  // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
+  salonCode?: string;
 
   // Booksy Sync settings
   booksy?: BooksySyncConfig;
@@ -339,6 +340,8 @@ export interface ConnectResponse {
   agentId: string;
   salonId: string;
   salonName: string;
+  salonSlug?: string;
+  salonCode?: string;
   serverUrl: string;
   printerConfig?: {
     port?: string;

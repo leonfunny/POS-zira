@@ -132,6 +132,8 @@ const store = new Store<AgentConfig>({
     agentId: { type: 'string' },
     salonId: { type: 'string' },
     salonName: { type: 'string' },
+    salonSlug: { type: 'string' },
+    salonCode: { type: 'string' },
     machineId: { type: 'string' },
     registerCode: { type: 'string' },
     name: { type: 'string', default: 'Zira AI' },

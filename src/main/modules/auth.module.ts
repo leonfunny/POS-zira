@@ -285,6 +285,9 @@ export class AuthModule extends BaseModule {
             }
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
 
+          // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
+          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: result.salon?.name });
+
           return { success: true, data: { status: 'VERIFIED', user: result.user, salon: result.salon } };
         }
 
@@ -373,6 +376,9 @@ export class AuthModule extends BaseModule {
               if (keyResult?.apiKey) await this.connectWithApiKey(keyResult.apiKey);
             }
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after email login failed:', err?.message); }
+
+          // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
+          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: authUser.id, salonId: authUser.salonId || '', salonName: authUser.salonName });
 
           return { success: true, data: { user: authUser } };
         }
