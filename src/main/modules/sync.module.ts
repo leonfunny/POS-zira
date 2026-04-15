@@ -355,6 +355,19 @@ export class SyncModule extends BaseModule {
       }
     });
 
+    // Re-sync products after login — clearSalonData may have wiped
+    // the DB while the socket was already connected (no re-connect event).
+    bus.on('user:logged-in', async () => {
+      if (!this.productSync) return;
+      try {
+        await this.productSync.deltaSync();
+        const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
+        const posWindow = wm?.getWindow('pos');
+        if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:products-synced');
+        logger.info('[SyncModule] Post-login product sync completed');
+      } catch (err) { logger.warn(`[SyncModule] Post-login product sync failed: ${err}`); }
+    });
+
     bus.on('socket:disconnected', () => {
       this.orderSync?.stop();
       this.checkinSync?.stop();

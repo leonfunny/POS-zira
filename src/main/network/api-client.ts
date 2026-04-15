@@ -121,7 +121,7 @@ export class ApiClient {
       // Backend returns it flat on the connect response alongside salonCode.
       ...(data.salonSlug && { salonSlug: data.salonSlug }),
       ...(data.salonCode && { salonCode: data.salonCode }),
-      serverUrl: data.serverUrl || this.baseUrl,
+      serverUrl: this.baseUrl,
       isPaired: true,
       // Apply printer config if provided
       ...(data.printerConfig?.port && { printerPort: data.printerConfig.port }),
@@ -310,7 +310,43 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    const raw = await response.json();
+    const items: any[] = raw.items ?? raw.products ?? [];
+
+    // Extract unique categories from embedded template.category
+    const categoryMap = new Map<string, any>();
+    for (const item of items) {
+      const cat = item.template?.category;
+      if (cat?.id && cat?.name && !categoryMap.has(cat.id)) {
+        categoryMap.set(cat.id, {
+          id: cat.id,
+          name: cat.name,
+          icon: cat.imageUrl ?? null,
+          color: null,
+          sort_order: cat.displayOrder ?? 0,
+          updated_at: cat.updatedAt ?? null,
+        });
+      }
+    }
+
+    // Map API items to ProductVariantRow shape
+    const products = items.map((item: any) => ({
+      id: item.id,
+      template_id: item.templateId ?? null,
+      name: item.name ?? item.template?.name ?? '',
+      sku: item.sku ?? null,
+      barcode: item.barcode ?? null,
+      // API returns decimal price (e.g. 19.99); DB stores integers (grosze)
+      retail_price: item.retailPrice != null ? Math.round(parseFloat(item.retailPrice) * 100) : 0,
+      category_id: item.template?.categoryId ?? null,
+      image_url: item.imageUrl ?? null,
+      in_stock: item.totalStockQty ?? 0,
+      vat_rate: 23,
+      is_active: item.isActive ? 1 : 0,
+      updated_at: item.updatedAt ?? null,
+    }));
+
+    return { products, categories: Array.from(categoryMap.values()) };
   }
 
   /**
