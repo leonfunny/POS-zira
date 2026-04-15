@@ -52,5 +52,17 @@ scripts/test-output/
 # Generated reports
 AUDIT_REPORT.md
 
+# SSH troubleshooting scripts (temp)
+scripts/*ssh*.ps1
+scripts/*ssh*.log*
+scripts/fix-paul-*.ps1
+scripts/setup-reverse-tunnel.ps1
+scripts/reenable-openssh.ps1
+scripts/open-ssh-firewall.ps1
+scripts/enable-ts-ssh.ps1
+
+# Debug log variants not caught by *.log
+*.log.debug
+
 # Misc temp files
 _nul
