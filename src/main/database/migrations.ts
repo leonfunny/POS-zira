@@ -757,4 +757,48 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_sc_synced ON salon_customers(synced);
     `,
   },
+  {
+    version: 14,
+    name: 'product_enriched_fields',
+    up: `
+      ALTER TABLE product_variants ADD COLUMN available_qty INTEGER DEFAULT 0;
+      ALTER TABLE product_variants ADD COLUMN price_gross INTEGER DEFAULT 0;
+      ALTER TABLE product_variants ADD COLUMN price_net INTEGER DEFAULT 0;
+      ALTER TABLE product_variants ADD COLUMN vat_amount INTEGER DEFAULT 0;
+      ALTER TABLE product_variants ADD COLUMN is_on_sale INTEGER DEFAULT 0;
+      ALTER TABLE product_variants ADD COLUMN thumbnail_url TEXT;
+    `,
+  },
+  {
+    version: 15,
+    name: 'product_sale_unit',
+    up: `
+      ALTER TABLE product_variants ADD COLUMN sale_unit TEXT;
+    `,
+  },
+  {
+    version: 16,
+    name: 'sync_change_feed',
+    up: `
+      -- Change feed cursor: tracks last-consumed server timestamp per entity type
+      CREATE TABLE IF NOT EXISTS change_feed_cursor (
+        entity_type TEXT PRIMARY KEY,
+        last_timestamp TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      -- Invoice sync error tracking (synced + backend_id already exist from v3)
+      ALTER TABLE invoices ADD COLUMN sync_error TEXT;
+
+      -- Staff extended fields from backend
+      ALTER TABLE pos_staff ADD COLUMN role TEXT;
+      ALTER TABLE pos_staff ADD COLUMN backend_synced_at TEXT;
+
+      -- Order server-side status (separate from local status to avoid overwrite)
+      ALTER TABLE orders ADD COLUMN server_status TEXT;
+      ALTER TABLE orders ADD COLUMN refund_amount INTEGER DEFAULT 0;
+      ALTER TABLE orders ADD COLUMN refund_reason TEXT;
+      ALTER TABLE orders ADD COLUMN server_updated_at TEXT;
+    `,
+  },
 ];

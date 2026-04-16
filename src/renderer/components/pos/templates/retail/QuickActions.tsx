@@ -20,21 +20,28 @@ interface QuickActionsProps {
   onHold?: () => void;
   onRecall?: (id: string) => void;
   onDiscardHeld?: (id: string) => void;
+  onHistory?: () => void;
 }
 
 export default function QuickActions({
   dispatch, hasItems, onOpenCustomerDisplay, onCloseCustomerDisplay,
   isCustomerDisplayOpen, displayMode, t,
-  heldCarts = [], onHold, onRecall, onDiscardHeld,
+  heldCarts = [], onHold, onRecall, onDiscardHeld, onHistory,
 }: QuickActionsProps) {
   const [showDiscount, setShowDiscount] = useState(false);
   const [discountValue, setDiscountValue] = useState('');
+  const [discountMode, setDiscountMode] = useState<'fixed' | 'percentage'>('fixed');
   const [showHeld, setShowHeld] = useState(false);
 
   const handleApplyDiscount = () => {
-    const amount = Math.round(parseFloat(discountValue || '0') * 100);
-    if (amount > 0) {
-      dispatch({ type: 'cart/applyDiscount', payload: { amount } });
+    const raw = parseFloat(discountValue || '0');
+    if (raw <= 0) { setDiscountValue(''); setShowDiscount(false); return; }
+    if (discountMode === 'percentage') {
+      const clamped = Math.min(raw, 100);
+      dispatch({ type: 'cart/applyDiscount', payload: { amount: clamped, discountType: 'percentage' } });
+    } else {
+      const amountGrosze = Math.round(raw * 100);
+      dispatch({ type: 'cart/applyDiscount', payload: { amount: amountGrosze, discountType: 'fixed' } });
     }
     setDiscountValue('');
     setShowDiscount(false);
@@ -118,6 +125,16 @@ export default function QuickActions({
           % {t('pos.quickDiscount')}
         </button>
 
+        {/* History */}
+        {onHistory && (
+          <button
+            onClick={onHistory}
+            className="px-3 py-1.5 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors cursor-pointer font-medium"
+          >
+            {tOr('pos.history', 'History')}
+          </button>
+        )}
+
         {/* Customer Display toggle */}
         <button
           onClick={isCustomerDisplayOpen ? onCloseCustomerDisplay : onOpenCustomerDisplay}
@@ -147,17 +164,23 @@ export default function QuickActions({
         {/* Discount input */}
         {showDiscount && (
           <div className="flex items-center gap-1.5 ml-auto">
+            <button
+              onClick={() => setDiscountMode(discountMode === 'fixed' ? 'percentage' : 'fixed')}
+              className="px-2 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer min-w-[32px]"
+              title={discountMode === 'fixed' ? 'Switch to %' : 'Switch to fixed'}
+            >
+              {discountMode === 'fixed' ? t('pos.currency') : '%'}
+            </button>
             <input
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={discountValue}
-              onChange={(e) => setDiscountValue(e.target.value)}
-              placeholder="0.00"
-              step="0.01"
-              className="w-24 px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-900 text-right focus:outline-none focus:border-brand-400 shadow-sm"
+              onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setDiscountValue(e.target.value); }}
+              placeholder={discountMode === 'fixed' ? '0.00' : '10'}
+              className="w-20 px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-900 text-right focus:outline-none focus:border-brand-400 shadow-sm"
               autoFocus
               onKeyDown={(e) => e.key === 'Enter' && handleApplyDiscount()}
             />
-            <span className="text-xs text-gray-400">{t('pos.currency')}</span>
             <button
               onClick={handleApplyDiscount}
               className="px-3 py-1.5 text-xs bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 cursor-pointer"

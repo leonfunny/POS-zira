@@ -27,6 +27,7 @@ import SocketClient from '../network/socket-client';
 import { getConfig } from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType } from '../../shared/types';
+import { seedIfEmpty } from '../database/seed';
 import logger from '../logger';
 
 export class PosModule extends BaseModule {
@@ -84,6 +85,12 @@ export class PosModule extends BaseModule {
       return state;
     });
     ipcMain.handle('pos:dispatch', (_e, action) => { this.posStore?.dispatch(action); return { success: true }; });
+
+    // Seed demo data for offline mode
+    ipcMain.handle('pos:seed-demo', () => {
+      seedIfEmpty();
+      return { success: true };
+    });
 
     // Customer display touch
     ipcMain.handle('display:touch', (e) => {
@@ -235,6 +242,24 @@ export class PosModule extends BaseModule {
     });
     ipcMain.handle('pos:orders:getDailyStats', (_e, date: string) => orderRepo.getDailyStats(date));
 
+    ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => {
+      const limit = filters.limit || 20;
+      const page = filters.page || 1;
+      const offset = (page - 1) * limit;
+      const result = orderRepo.getByDateRange(filters.from, filters.to, limit, offset);
+      let orders = result.orders;
+      if (filters.paymentMethod) orders = orders.filter(o => o.payment_method === filters.paymentMethod);
+      if (filters.staffName) orders = orders.filter(o => o.staff_name === filters.staffName);
+      return { orders, total: result.total, page, limit };
+    });
+
+    ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {
+      const order = orderRepo.getById(orderId);
+      if (!order) return null;
+      const items = orderRepo.getItemsByOrderId(orderId);
+      return { order, items };
+    });
+
     // Tables (restaurant mode)
     ipcMain.handle('pos:tables:getAll', () => tableRepo.getAll());
     ipcMain.handle('pos:tables:getActive', () => tableRepo.getActive());
@@ -333,6 +358,11 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
+    ipcMain.handle('pos:reprint-receipt', async (_e, orderId: string) => {
+      try { const printed = await this.paymentController?.reprintReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
+      catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
+    });
+
     ipcMain.handle('pos:open-cash-drawer', async () => {
       try { await this.paymentController?.openCashDrawer(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
@@ -391,8 +421,12 @@ export class PosModule extends BaseModule {
   }
 
   registerEventHandlers(bus: EventBus): void {
-    // Forward Elavon status updates to POS window
-    // (wired separately in setupSocketHandlers)
+    // Clear cart & shift on logout to prevent data leakage between accounts
+    bus.on('user:logged-out', () => {
+      logger.info('[PosModule] User logged out — clearing POS state');
+      this.posStore?.dispatch({ type: 'cart/clear' });
+      this.posStore?.dispatch({ type: 'session/close' });
+    });
   }
 
   setupSocketHandlers(socket: SocketClient): void {

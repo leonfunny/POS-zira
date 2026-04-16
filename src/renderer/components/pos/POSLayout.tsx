@@ -45,6 +45,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [showShiftModal, setShowShiftModal] = useState<'open' | 'close' | null>(null);
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
+  const [scanToast, setScanToast] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
   const clock = useLiveClock();
   const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
 
@@ -73,6 +74,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   useEffect(() => { focusBarcode(); }, [focusBarcode]);
 
+  const showScanToast = useCallback((text: string, type: 'ok' | 'err') => {
+    setScanToast({ text, type });
+    setTimeout(() => setScanToast(null), 2000);
+  }, []);
+
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -96,13 +102,17 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 vatRate: product.vat_rate,
               },
             });
+            showScanToast(`+ ${product.name}`, 'ok');
+          } else {
+            showScanToast(`Barcode not found: ${code}`, 'err');
           }
         } catch (err) {
           rlog.error('[POSLayout] Barcode lookup failed:', err);
+          showScanToast('Scan failed', 'err');
         }
       }
     }
-  }, [barcodeBuffer, dispatch]);
+  }, [barcodeBuffer, dispatch, showScanToast]);
 
   // Sync language/mode from config
   useEffect(() => {
@@ -189,6 +199,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         tabIndex={-1}
         className="absolute w-0 h-0 opacity-0 pointer-events-none"
       />
+      {/* Barcode scan toast */}
+      {scanToast && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200 ${
+          scanToast.type === 'ok'
+            ? 'bg-emerald-600 text-white'
+            : 'bg-red-600 text-white'
+        }`}>
+          {scanToast.text}
+        </div>
+      )}
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
         <div className="flex items-center gap-3">

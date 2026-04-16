@@ -1,5 +1,6 @@
 import { ReceiptData, PrinterType } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
+import { productRepo } from '../database/repos/product-repo';
 import logger from '../logger';
 
 export interface PaymentResult {
@@ -66,14 +67,19 @@ export class PaymentController {
     const receiptData: ReceiptData = {
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
-      items: items.map((i) => ({
-        name: i.name,
-        quantity: i.quantity,
-        unitPrice: i.price,
-        totalPrice: i.total,
-        vatRate: i.vat_rate,
-        sku: i.sku || undefined,
-      })),
+      items: items.map((i) => {
+        // Look up sale_unit from product catalog
+        const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
+        return {
+          name: i.name,
+          quantity: i.quantity,
+          unitPrice: i.price,
+          totalPrice: i.total,
+          vatRate: i.vat_rate,
+          sku: i.sku || undefined,
+          unit: product?.sale_unit || undefined,
+        };
+      }),
       payment: {
         method: order.payment_method || 'CASH',
         amount: order.payment_amount,
@@ -92,6 +98,63 @@ export class PaymentController {
       return true;
     } catch (err) {
       logger.error(`[Payment] Receipt print failed: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * Reprint receipt for an existing order — marks as KOPIA/REPRINT
+   */
+  async reprintReceipt(orderId: string): Promise<boolean> {
+    const order = orderRepo.getById(orderId);
+    if (!order) {
+      logger.warn(`[Payment] Cannot reprint: order ${orderId} not found`);
+      return false;
+    }
+
+    const items = orderRepo.getItemsByOrderId(orderId);
+    const printer = this.getPrinter(PrinterType.RECEIPT);
+
+    if (!printer || !printer.isConnected()) {
+      logger.warn('[Payment] No receipt printer connected, cannot reprint');
+      return false;
+    }
+
+    const receiptData: ReceiptData = {
+      orderNumber: order.order_number || orderId.substring(0, 8),
+      salonName: this.getSalonName?.(),
+      items: items.map((i) => {
+        const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
+        return {
+          name: i.name,
+          quantity: i.quantity,
+          unitPrice: i.price,
+          totalPrice: i.total,
+          vatRate: i.vat_rate,
+          sku: i.sku || undefined,
+          unit: product?.sale_unit || undefined,
+        };
+      }),
+      payment: {
+        method: order.payment_method || 'CASH',
+        amount: order.payment_amount,
+      },
+      subtotal: order.subtotal,
+      discount: order.discount > 0 ? order.discount : undefined,
+      total: order.total,
+      cashierName: order.staff_name || undefined,
+      customerName: order.customer_name || undefined,
+      customerNip: order.customer_nip || undefined,
+      isReprint: true,
+      originalDate: order.created_at,
+    };
+
+    try {
+      await printer.printReceipt(receiptData);
+      logger.info(`[Payment] Receipt REPRINTED for order ${order.order_number}`);
+      return true;
+    } catch (err) {
+      logger.error(`[Payment] Receipt reprint failed: ${err}`);
       return false;
     }
   }

@@ -328,9 +328,14 @@ export class AuthModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
       try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on logout failed:', err?.message); }
+      const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+      socket?.disconnect();
       clearSecureTokens();
-      // Preserve last salonId so next login can compare correctly
-      setConfig({ authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' }, salonName: '', salonSlug: '', aiEnabled: false });
+      setConfig({
+        authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' },
+        salonName: '', salonSlug: '', salonCode: '', aiEnabled: false,
+        isPaired: false, agentId: '', salonId: '',
+      });
       // Notify other modules (AI clears history, telegram stops, etc.)
       this.eventBus?.emit('user:logged-out', { reason: 'user-logout' });
       return { success: true };

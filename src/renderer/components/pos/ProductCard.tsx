@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
 
 interface ProductCardProps {
@@ -24,23 +24,28 @@ function placeholderColor(name: string): string {
   return PLACEHOLDER_COLORS[Math.abs(hash) % PLACEHOLDER_COLORS.length];
 }
 
-export default function ProductCard({ product, onAdd, t }: ProductCardProps) {
+function ProductCard({ product, onAdd, t }: ProductCardProps) {
+  const [imgError, setImgError] = useState(false);
   const isService = product.category_id === 'cat-5';
-  const lowStock = !isService && product.in_stock <= 5;
+  const stockQty = product.available_qty ?? product.in_stock;
+  const lowStock = !isService && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zł';
   const pieces = t?.('pos.pieces') ?? 'pcs';
   const colorClass = placeholderColor(product.name);
+  const imgSrc = product.thumbnail_url || product.image_url;
+  const showImage = imgSrc && !imgError;
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col p-1.5 h-full">
 
       {/* Top: inset image — fixed proportion, never grows */}
       <div className="relative rounded-lg overflow-hidden bg-slate-50 shrink-0 aspect-[3/2] w-full">
-        {product.image_url ? (
+        {showImage ? (
           <img
-            src={product.image_url}
+            src={imgSrc!}
             alt={product.name}
             loading="lazy"
+            onError={() => setImgError(true)}
             className="w-full h-full object-cover"
           />
         ) : (
@@ -50,7 +55,12 @@ export default function ProductCard({ product, onAdd, t }: ProductCardProps) {
         )}
         {lowStock && (
           <span className="absolute top-1.5 left-1.5 text-[10px] text-amber-600 bg-white/90 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium">
-            {product.in_stock} {pieces}
+            {stockQty} {pieces}
+          </span>
+        )}
+        {product.is_on_sale === 1 && (
+          <span className="absolute top-1.5 right-1.5 text-[10px] text-red-600 bg-white/90 border border-red-200 px-1.5 py-0.5 rounded-full font-medium">
+            SALE
           </span>
         )}
       </div>
@@ -82,3 +92,5 @@ export default function ProductCard({ product, onAdd, t }: ProductCardProps) {
     </div>
   );
 }
+
+export default React.memo(ProductCard);

@@ -86,12 +86,11 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
             </label>
             <div className="flex items-center gap-2">
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={cashAmount}
-                onChange={(e) => setCashAmount(e.target.value)}
+                onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
                 placeholder="0.00"
-                step="0.01"
-                min="0"
                 autoFocus={mode === 'close'}
                 className="flex-1 px-3 py-2.5 bg-slate-50 border border-gray-200 rounded-xl text-xl text-gray-900 text-right font-bold focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
                 onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleSubmit()}

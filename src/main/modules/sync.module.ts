@@ -15,6 +15,9 @@ import { ProductSync } from '../sync/product-sync';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
 import { CheckinSync } from '../sync/checkin-sync';
+import { ChangeFeedSync } from '../sync/change-feed-sync';
+import { InvoiceSync } from '../sync/invoice-sync';
+import { StaffSync } from '../sync/staff-sync';
 import { productRepo } from '../database/repos/product-repo';
 import { billiardResourceRepo } from '../database/repos/billiard-resource-repo';
 import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
@@ -36,6 +39,9 @@ export class SyncModule extends BaseModule {
   private orderSync: OrderSync | null = null;
   private billiardSync: BilliardSync | null = null;
   private checkinSync: CheckinSync | null = null;
+  private changeFeedSync: ChangeFeedSync | null = null;
+  private invoiceSync: InvoiceSync | null = null;
+  private staffSync: StaffSync | null = null;
   private _syncInProgress = false;
 
   constructor(private container: ServiceContainer) {
@@ -48,10 +54,16 @@ export class SyncModule extends BaseModule {
     this.orderSync = new OrderSync();
     this.billiardSync = new BilliardSync();
     this.checkinSync = new CheckinSync();
+    this.changeFeedSync = new ChangeFeedSync();
+    this.invoiceSync = new InvoiceSync();
+    this.staffSync = new StaffSync();
     this.container.set(SERVICE_TOKENS.PRODUCT_SYNC, this.productSync);
     this.container.set(SERVICE_TOKENS.ORDER_SYNC, this.orderSync);
     this.container.set(SERVICE_TOKENS.BILLIARD_SYNC, this.billiardSync);
     this.container.set(SERVICE_TOKENS.CHECKIN_SYNC, this.checkinSync);
+    this.container.set(SERVICE_TOKENS.CHANGE_FEED_SYNC, this.changeFeedSync);
+    this.container.set(SERVICE_TOKENS.INVOICE_SYNC, this.invoiceSync);
+    this.container.set(SERVICE_TOKENS.STAFF_SYNC, this.staffSync);
     this.setState(ModuleState.READY);
   }
 
@@ -350,6 +362,23 @@ export class SyncModule extends BaseModule {
           } catch (err) { logger.warn(`[SyncModule] Billiard sync failed: ${err}`); }
           this.billiardSync.startPeriodicDashboardRefresh();
         }
+
+        // Phase 3: Staff pull + Invoice push + Change feed catch-up
+        try { await this.staffSync?.pullStaff(); }
+        catch (err) { logger.debug('[SyncModule] Staff pull failed:', err); }
+
+        if (this.invoiceSync) {
+          this.invoiceSync.resetEndpointAvailability();
+          try { await this.invoiceSync.syncPending(); } catch (err) { logger.debug('[SyncModule] Invoice sync failed:', err); }
+          this.invoiceSync.startPeriodicSync();
+        }
+
+        // Change feed catch-up runs LAST (after all outbound pushes complete)
+        if (this.changeFeedSync) {
+          this.changeFeedSync.resetEndpointAvailability();
+          try { await this.changeFeedSync.catchUp(); } catch (err) { logger.debug('[SyncModule] Change feed catch-up failed:', err); }
+          this.changeFeedSync.startPeriodicCatchUp();
+        }
       } finally {
         this._syncInProgress = false;
       }
@@ -371,6 +400,8 @@ export class SyncModule extends BaseModule {
     bus.on('socket:disconnected', () => {
       this.orderSync?.stop();
       this.checkinSync?.stop();
+      this.invoiceSync?.stop();
+      this.changeFeedSync?.stop();
       if (this.billiardSync) {
         this.billiardSync.setOnline(false);
         this.billiardSync.stopPeriodicDashboardRefresh();
@@ -404,6 +435,30 @@ export class SyncModule extends BaseModule {
     socket.on('billiard:resource-updated', () => {
       this.billiardSync?.fullSync().catch((e: any) => { logger.debug('[SyncModule] billiard full sync failed:', e?.message); });
     });
+
+    // Phase 3: Server→Client push events
+    socket.on('order:status-changed', (data: any) => {
+      this.changeFeedSync?.processOrderStatusChange({
+        type: 'order', id: data.orderId, event: 'status_changed', data, timestamp: new Date().toISOString(),
+      });
+      const posWindow = wm?.getWindow('pos');
+      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:order-status-changed', data);
+    });
+
+    socket.on('staff:updated', (data: any) => {
+      if (data.changes) {
+        const { staffRepo } = require('../database/repos/staff-repo');
+        staffRepo.upsertMany([data.changes]);
+      }
+      const posWindow = wm?.getWindow('pos');
+      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:staff-updated', data);
+    });
+
+    socket.on('invoice:updated', (data: any) => {
+      this.changeFeedSync?.processInboundInvoice({
+        type: 'invoice', id: data.invoiceId, event: 'updated', data: data.changes, timestamp: new Date().toISOString(),
+      });
+    });
   }
 
   getToolDefinitions(): ToolDefinition[] {
@@ -415,11 +470,15 @@ export class SyncModule extends BaseModule {
   async stop(): Promise<void> {
     this.orderSync?.stop();
     this.checkinSync?.stop();
+    this.invoiceSync?.stop();
+    this.changeFeedSync?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.setState(ModuleState.STOPPED);
   }
 
   async destroy(): Promise<void> {
+    this.invoiceSync?.stop();
+    this.changeFeedSync?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.setState(ModuleState.STOPPED);
   }

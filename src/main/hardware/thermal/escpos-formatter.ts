@@ -96,6 +96,15 @@ export class EscPosFormatter {
 
     // Header
     parts.push(ESCPOS.ALIGN_CENTER);
+
+    // Reprint banner
+    if (data.isReprint) {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text('*** KOPIA / REPRINT ***'));
+      parts.push(ESCPOS.BOLD_OFF);
+      parts.push(this.text(''));
+    }
+
     parts.push(ESCPOS.DOUBLE_SIZE_ON);
     parts.push(this.text(data.salonName || 'Zira AI POS'));
     parts.push(ESCPOS.NORMAL_SIZE);
@@ -108,8 +117,14 @@ export class EscPosFormatter {
       parts.push(ESCPOS.BOLD_OFF);
     }
 
-    // Date/Time
-    parts.push(this.text(new Date().toLocaleString()));
+    // Date/Time — use original date for reprints
+    const receiptDate = data.isReprint && data.originalDate
+      ? new Date(data.originalDate).toLocaleString()
+      : new Date().toLocaleString();
+    parts.push(this.text(receiptDate));
+    if (data.isReprint) {
+      parts.push(this.text(`Reprinted: ${new Date().toLocaleString()}`));
+    }
     parts.push(this.text(''));
 
     // Separator
@@ -193,8 +208,9 @@ export class EscPosFormatter {
     const name = this.truncate(item.name, this.charsPerLine - 15);
     parts.push(this.text(name));
 
-    // Quantity x Price = Total
-    const qty = item.quantity.toString();
+    // Quantity x Price = Total (with unit if available)
+    const unit = item.unit ? ` ${item.unit}` : '';
+    const qty = `${item.quantity}${unit}`;
     const price = this.formatMoney(item.unitPrice);
     const total = this.formatMoney(item.totalPrice);
     const detail = `  ${qty} x ${price} = ${total}`;

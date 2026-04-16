@@ -13,7 +13,19 @@ const SEED_CATEGORIES: CategoryRow[] = [
   { id: 'cat-5', name: 'Usługi', icon: '💆', color: '#10B981', sort_order: 5, updated_at: null },
 ];
 
-const SEED_PRODUCTS: ProductVariantRow[] = [
+// Helper to add enriched field defaults to seed products
+const seedProduct = (p: Omit<ProductVariantRow, 'available_qty' | 'price_gross' | 'price_net' | 'vat_amount' | 'is_on_sale' | 'thumbnail_url' | 'sale_unit'>): ProductVariantRow => ({
+  ...p,
+  available_qty: p.in_stock,
+  price_gross: p.retail_price,
+  price_net: Math.round(p.retail_price * 100 / (100 + p.vat_rate)),
+  vat_amount: p.retail_price - Math.round(p.retail_price * 100 / (100 + p.vat_rate)),
+  is_on_sale: 0,
+  thumbnail_url: null,
+  sale_unit: 'szt.',
+});
+
+const SEED_PRODUCTS: ProductVariantRow[] = ([
   // Paznokcie
   { id: 'v-1', template_id: null, name: 'Lakier hybrydowy Red Passion', sku: 'NAI-001', barcode: '5901234567890', retail_price: 3500, category_id: 'cat-1', image_url: null, in_stock: 50, vat_rate: 23, is_active: 1, updated_at: null },
   { id: 'v-2', template_id: null, name: 'Lakier hybrydowy Nude Blush', sku: 'NAI-002', barcode: '5901234567891', retail_price: 3500, category_id: 'cat-1', image_url: null, in_stock: 35, vat_rate: 23, is_active: 1, updated_at: null },
@@ -59,7 +71,7 @@ const SEED_PRODUCTS: ProductVariantRow[] = [
   { id: 'v-38', template_id: null, name: 'Depilacja woskiem nogi', sku: 'SRV-006', barcode: null, retail_price: 9000, category_id: 'cat-5', image_url: null, in_stock: 999, vat_rate: 23, is_active: 1, updated_at: null },
   { id: 'v-39', template_id: null, name: 'Przedłużanie rzęs 1:1', sku: 'SRV-007', barcode: null, retail_price: 20000, category_id: 'cat-5', image_url: null, in_stock: 999, vat_rate: 23, is_active: 1, updated_at: null },
   { id: 'v-40', template_id: null, name: 'Henna brwi + regulacja', sku: 'SRV-008', barcode: null, retail_price: 6000, category_id: 'cat-5', image_url: null, in_stock: 999, vat_rate: 23, is_active: 1, updated_at: null },
-];
+] as const).map(seedProduct);
 
 const SEED_TABLES: TableRow[] = [
   { id: 'tbl-1', name: 'Stolik 1', zone: 'Sala', capacity: 4, sort_order: 1, is_active: 1, status: 'free', current_order_id: null, covers: 0, opened_at: null },

@@ -1,4 +1,4 @@
-import { app, net } from 'electron';
+import { app } from 'electron';
 import * as os from 'os';
 import logger from '../logger';
 import { ConnectResponse, TelegramLoginTokenResponse, TelegramLoginTokenStatus } from '../../shared/types';
@@ -8,9 +8,7 @@ import { getConfig, setConfig, getConfigValue } from '../config/store';
 const DEFAULT_TIMEOUT = 30000;
 
 /**
- * Fetch with timeout wrapper using Electron's net.fetch (Chromium network stack).
- * Unlike Node.js fetch (undici), net.fetch uses the Windows system certificate
- * store and respects system proxy settings — critical for fresh installs.
+ * Fetch with timeout wrapper using Node.js built-in fetch.
  */
 async function fetchWithTimeout(
   url: string,
@@ -21,15 +19,11 @@ async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    // Use Electron's net.fetch when the app is ready (uses Chromium's network stack
-    // which integrates with Windows system certificates and proxy settings).
-    // Falls back to Node.js fetch during early startup before app is ready.
-    const fetcher = app.isReady() ? net.fetch : globalThis.fetch;
-    const response = await fetcher(url, {
+    const response = await fetch(url, {
       ...options,
       signal: controller.signal,
-    } as any);
-    return response as Response;
+    });
+    return response;
   } catch (error: any) {
     if (error.name === 'AbortError') {
       throw new Error(`Request timeout after ${timeout}ms: ${url}`);
@@ -292,10 +286,9 @@ export class ApiClient {
   async getPosProducts(
     token: string,
     since?: string,
-  ): Promise<{ products: any[]; categories: any[] }> {
-    const params = since ? `?since=${encodeURIComponent(since)}` : '';
-    // Use warehouse public endpoint (the actual backend route)
-    const url = `${this.baseUrl}/api/v1/warehouse/public/products${params}`;
+  ): Promise<{ products: any[]; categories: any[]; nextSince?: string; serverTime?: string; deletedIds?: string[] }> {
+    const baseParams = new URLSearchParams({ limit: '100' });
+    if (since) baseParams.set('since', since);
 
     logger.info(`[ApiClient] Fetching POS products${since ? ` (since ${since})` : ''}...`);
 
@@ -309,15 +302,40 @@ export class ApiClient {
       headers['X-Salon-Slug'] = salonSlug;
     }
 
-    const response = await fetchWithTimeout(url, { headers });
+    // Paginate through all pages (backend default limit=20, max=100)
+    let allItems: any[] = [];
+    let page = 1;
+    let lastNextSince: string | undefined;
+    let lastServerTime: string | undefined;
+    let deletedIds: string[] = [];
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP ${response.status}`);
+    while (true) {
+      baseParams.set('page', String(page));
+      const url = `${this.baseUrl}/api/v1/warehouse/public/products?${baseParams}`;
+
+      const response = await fetchWithTimeout(url, { headers });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `HTTP ${response.status}`);
+      }
+
+      const raw = await response.json();
+      const pageItems: any[] = raw.items ?? raw.products ?? [];
+      allItems = allItems.concat(pageItems);
+      if (raw.nextSince) lastNextSince = raw.nextSince;
+      if (raw.serverTime) lastServerTime = raw.serverTime;
+      if (Array.isArray(raw.deletedIds)) deletedIds = deletedIds.concat(raw.deletedIds);
+
+      // Stop if we got fewer items than the limit (last page) or no items
+      if (pageItems.length < 100 || pageItems.length === 0) break;
+      page++;
+      // Safety cap to prevent infinite loops
+      if (page > 100) break;
     }
 
-    const raw = await response.json();
-    const items: any[] = raw.items ?? raw.products ?? [];
+    const items = allItems;
+    logger.info(`[ApiClient] Fetched ${items.length} products across ${page} page(s)`);
 
     // Extract unique categories from embedded template.category
     const categoryMap = new Map<string, any>();
@@ -328,7 +346,7 @@ export class ApiClient {
           id: cat.id,
           name: cat.name,
           icon: cat.imageUrl ?? null,
-          color: null,
+          color: cat.color ?? null,
           sort_order: cat.displayOrder ?? 0,
           updated_at: cat.updatedAt ?? null,
         });
@@ -336,23 +354,40 @@ export class ApiClient {
     }
 
     // Map API items to ProductVariantRow shape
-    const products = items.map((item: any) => ({
-      id: item.id,
-      template_id: item.templateId ?? null,
-      name: item.name ?? item.template?.name ?? '',
-      sku: item.sku ?? null,
-      barcode: item.barcode ?? null,
-      // API returns decimal price (e.g. 19.99); DB stores integers (grosze)
-      retail_price: item.retailPrice != null ? Math.round(parseFloat(item.retailPrice) * 100) : 0,
-      category_id: item.template?.categoryId ?? null,
-      image_url: item.imageUrl ?? null,
-      in_stock: item.totalStockQty ?? 0,
-      vat_rate: 23,
-      is_active: item.isActive ? 1 : 0,
-      updated_at: item.updatedAt ?? null,
-    }));
+    const toGrosze = (v: any) => v != null ? Math.round(parseFloat(v) * 100) : 0;
+    const products = items.map((item: any) => {
+      const retailGrosze = toGrosze(item.retailPrice);
+      return {
+        id: item.id,
+        template_id: item.templateId ?? null,
+        name: item.name ?? item.template?.name ?? '',
+        sku: item.sku ?? null,
+        barcode: item.barcode ?? null,
+        retail_price: retailGrosze,
+        category_id: item.template?.categoryId ?? null,
+        image_url: item.imageUrl ?? null,
+        in_stock: item.totalStockQty ?? 0,
+        vat_rate: parseFloat(item.template?.taxRate) || 23,
+        is_active: item.isActive ? 1 : 0,
+        updated_at: item.updatedAt ?? null,
+        // Enriched fields (backend v2 — fallback-safe for old backends)
+        available_qty: item.availableQty ?? item.totalStockQty ?? 0,
+        price_gross: toGrosze(item.priceGross) || retailGrosze,
+        price_net: toGrosze(item.priceNet),
+        vat_amount: toGrosze(item.vatAmount),
+        is_on_sale: item.isOnSale ? 1 : 0,
+        thumbnail_url: item.thumbnailUrl ?? null,
+        sale_unit: item.saleUnit ?? item.template?.baseUnit ?? null,
+      };
+    });
 
-    return { products, categories: Array.from(categoryMap.values()) };
+    return {
+      products,
+      categories: Array.from(categoryMap.values()),
+      nextSince: lastNextSince,
+      serverTime: lastServerTime,
+      deletedIds: deletedIds.length > 0 ? deletedIds : undefined,
+    };
   }
 
   /**
@@ -668,6 +703,102 @@ export class ApiClient {
     const data = await response.json();
     logger.info(`[ApiClient] Login successful for: ${email}`);
     return data;
+  }
+
+  // ==========================================
+  // Sync — Phase 3: Change Feed + Staff + Invoice
+  // ==========================================
+
+  /**
+   * Per-entity change feed endpoints (Path A — 3 separate endpoints).
+   * Each returns null if not deployed (404/501) — dark launch safe.
+   */
+  private async getEntityChanges(
+    token: string,
+    entityPath: string,
+    since: string,
+  ): Promise<{ items: any[]; nextSince?: string } | null> {
+    const params = new URLSearchParams({ since });
+    const url = `${this.baseUrl}/api/v1/print-agent/changes/${entityPath}?${params}`;
+
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async getOrderChanges(token: string, since: string) {
+    return this.getEntityChanges(token, 'orders', since);
+  }
+
+  async getStaffChanges(token: string, since: string) {
+    return this.getEntityChanges(token, 'staff', since);
+  }
+
+  async getInvoiceChanges(token: string, since: string) {
+    return this.getEntityChanges(token, 'invoices', since);
+  }
+
+  /**
+   * Push a locally-created invoice to the server.
+   * Returns null if endpoint not deployed (404/501).
+   */
+  async createInvoice(
+    token: string,
+    invoice: Record<string, any>,
+  ): Promise<{ invoiceId: string } | null> {
+    const url = `${this.baseUrl}/api/v1/print-agent/invoices`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': invoice.id,
+      },
+      body: JSON.stringify(invoice),
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (response.status === 409) {
+      // Already exists — treat as success (idempotent)
+      return { invoiceId: invoice.id };
+    }
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Pull staff list from server.
+   * Uses existing public POS endpoint: GET /public/pos/:salonSlug/staff
+   * Falls back to /print-agent/staff if salonSlug unavailable.
+   * Returns null if endpoint not deployed (404/501).
+   */
+  async getStaff(token: string): Promise<any[] | null> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const url = salonSlug
+      ? `${this.baseUrl}/api/v1/public/pos/${encodeURIComponent(salonSlug)}/staff`
+      : `${this.baseUrl}/api/v1/print-agent/staff`;
+
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : data.staff ?? data.items ?? [];
   }
 }
 

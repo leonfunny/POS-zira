@@ -105,6 +105,35 @@ interface PosDailyStats {
   card_total: number;
 }
 
+interface PosOrderRow {
+  id: string;
+  order_number: string | null;
+  status: string;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  payment_method: string | null;
+  payment_amount: number;
+  change_amount: number;
+  staff_id: string | null;
+  staff_name: string | null;
+  shift_id: string | null;
+  created_at: string;
+  mode: string | null;
+}
+
+interface PosOrderItemRow {
+  id: string;
+  order_id: string;
+  name: string;
+  sku: string | null;
+  price: number;
+  quantity: number;
+  total: number;
+  vat_rate: number;
+}
+
 interface PosTable {
   id: string;
   name: string;
@@ -452,6 +481,7 @@ interface ElectronAPI {
   pos: {
     getState: () => Promise<any>;
     dispatch: (action: any) => Promise<void>;
+    seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
 
     products: {
@@ -466,9 +496,12 @@ interface ElectronAPI {
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
       getDailyStats: (date: string) => Promise<PosDailyStats>;
+      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
+      getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
+      reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       openCashDrawer: () => Promise<{ success: boolean }>;
       cardPayment: (data: { amount: number; orderId: string }) => Promise<{ success: boolean; error?: string }>;
       onElavonStatus: (callback: (data: any) => void) => () => void;

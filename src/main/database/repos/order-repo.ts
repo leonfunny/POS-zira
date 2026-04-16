@@ -156,6 +156,19 @@ export const orderRepo = {
     return result ?? { order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 };
   },
 
+  getByDateRange(from: string, to: string, limit = 20, offset = 0): { orders: OrderRow[]; total: number } {
+    // Use date() to normalize format differences (datetime('now') uses space, ISO uses T)
+    const total = database.get<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM orders WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)',
+      [from, to],
+    )?.cnt ?? 0;
+    const orders = database.all<OrderRow>(
+      'SELECT * FROM orders WHERE date(created_at) >= date(?) AND date(created_at) <= date(?) ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [from, to, limit, offset],
+    );
+    return { orders, total };
+  },
+
   generateOrderNumber(): string {
     // Use atomic sequence counter to prevent race conditions
     const dateRow = database.get<{ d: string }>("SELECT strftime('%Y%m%d', 'now') as d");

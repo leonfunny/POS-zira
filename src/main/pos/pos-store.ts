@@ -113,7 +113,7 @@ export type PosAction =
   | { type: 'cart/removeItem'; payload: { id: string } }
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
-  | { type: 'cart/applyDiscount'; payload: { amount: number } }
+  | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
@@ -227,7 +227,10 @@ function posReducer(state: PosState, action: PosAction): PosState {
     }
 
     case 'cart/applyDiscount': {
-      const discount = Math.min(action.payload.amount, state.cart.subtotal);
+      const { amount, discountType } = action.payload;
+      const discount = discountType === 'percentage'
+        ? Math.min(Math.round(state.cart.subtotal * amount / 100), state.cart.subtotal)
+        : Math.min(amount, state.cart.subtotal);
       return { ...state, cart: recalcCart({ ...state.cart, discount }) };
     }
 

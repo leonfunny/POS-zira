@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow from './CartItem';
 
@@ -13,6 +13,7 @@ interface CartProps {
 
 export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, renderItemExtra }: CartProps) {
   const currency = t('pos.currency');
+  const [confirmClear, setConfirmClear] = useState(false);
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -27,10 +28,23 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
           )}
         </h2>
         {cart.items.length > 0 && (
-          <button onClick={() => dispatch({ type: 'cart/clear' })}
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors cursor-pointer px-2 py-1 rounded hover:bg-red-50 font-medium">
-            {t('pos.cart.clear')}
-          </button>
+          confirmClear ? (
+            <span className="flex items-center gap-1">
+              <button onClick={() => { dispatch({ type: 'cart/clear' }); setConfirmClear(false); }}
+                className="text-xs text-red-600 hover:text-red-700 transition-colors cursor-pointer px-2 py-1 rounded bg-red-50 hover:bg-red-100 font-medium">
+                {t('pos.cart.confirmClear') || 'Confirm'}
+              </button>
+              <button onClick={() => setConfirmClear(false)}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer px-2 py-1 rounded hover:bg-gray-100 font-medium">
+                ✕
+              </button>
+            </span>
+          ) : (
+            <button onClick={() => setConfirmClear(true)}
+              className="text-xs text-gray-400 hover:text-red-500 transition-colors cursor-pointer px-2 py-1 rounded hover:bg-red-50 font-medium">
+              {t('pos.cart.clear')}
+            </button>
+          )
         )}
       </div>
 
@@ -76,6 +90,12 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
             <div className="flex justify-between text-sm">
               <span className="text-emerald-500">{t('pos.cart.discount')}</span>
               <span className="text-emerald-500 font-medium">−{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
+            </div>
+          )}
+          {cart.tax > 0 && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
+              <span className="text-gray-400">{(cart.tax / 100).toFixed(2)}&nbsp;{currency}</span>
             </div>
           )}
           <div className="flex justify-between items-center pt-2.5 border-t border-gray-200">

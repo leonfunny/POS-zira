@@ -201,6 +201,8 @@ class Database {
       'billiard_resources',
       'billiard_floor_plans',
       'billiard_mutation_queue',
+      // Sync state
+      'change_feed_cursor',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

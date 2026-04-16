@@ -34,6 +34,9 @@ export const SERVICE_TOKENS = {
   ORDER_SYNC: 'orderSync',
   BILLIARD_SYNC: 'billiardSync',
   CHECKIN_SYNC: 'checkinSync',
+  CHANGE_FEED_SYNC: 'changeFeedSync',
+  INVOICE_SYNC: 'invoiceSync',
+  STAFF_SYNC: 'staffSync',
 
   // AI
   ZIRA_AI: 'ziraAI',

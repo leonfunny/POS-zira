@@ -80,9 +80,14 @@ export default function CartItemRow({
         {/* Grouped quantity stepper */}
         <div className="inline-flex items-center rounded-lg border border-gray-200 bg-slate-50 overflow-hidden">
           <button
-            onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+            onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
+            disabled={item.quantity <= 1}
             aria-label="Decrease quantity"
-            className="w-10 h-10 flex items-center justify-center text-gray-500 hover:bg-gray-100 active:bg-gray-200 font-bold text-base cursor-pointer touch-manipulation transition-colors"
+            className={`w-10 h-10 flex items-center justify-center font-bold text-base touch-manipulation transition-colors ${
+              item.quantity <= 1
+                ? 'text-gray-300 cursor-not-allowed'
+                : 'text-gray-500 hover:bg-gray-100 active:bg-gray-200 cursor-pointer'
+            }`}
           >−</button>
           <span className="px-3 text-center text-sm font-semibold text-gray-800 select-none">{item.quantity}</span>
           <button
@@ -97,9 +102,10 @@ export default function CartItemRow({
       {/* Inline price editor */}
       {editingPrice && (
         <div className="mt-2 flex items-center gap-2">
-          <input type="number" value={priceInput} onChange={(e) => setPriceInput(e.target.value)}
+          <input type="text" inputMode="decimal" value={priceInput}
+            onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setPriceInput(e.target.value); }}
             className="w-24 px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-900 text-right focus:outline-none focus:border-brand-400"
-            step="0.01" min="0" autoFocus />
+            autoFocus />
           <button onClick={handleSavePrice} className="px-3 py-1.5 text-xs rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer">{tOr('pos.ok', 'OK')}</button>
           <button onClick={() => setEditingPrice(false)} className="px-3 py-1.5 text-xs rounded-lg bg-white border border-gray-200 text-gray-500 hover:bg-gray-50 cursor-pointer">{tOr('pos.cancel', '✕')}</button>
         </div>

@@ -226,15 +226,39 @@ export default function App() {
     }
   };
 
+  // Clear renderer-side transient state (held orders, connection status)
+  // Note: per-user cart (pos.activeCart.<userId>) is intentionally preserved
+  // so it restores when the same user logs back in.
+  const clearRendererState = useCallback(() => {
+    try {
+      window.localStorage.removeItem('pos.heldCarts');
+    } catch {}
+    setConnectionStatus({ connected: false });
+    setDeviceStatus(null);
+  }, []);
+
   const handleLogout = async () => {
     try {
+      clearRendererState();
       await logout();
+      // Refresh config so Settings/Status tabs pick up cleared values
+      await refreshConfig();
     } catch (err: any) {
       rlog.error('[App] Failed to logout:', err);
     }
   };
 
-  const handleOfflineMode = () => {
+  const handleOfflineMode = async () => {
+    // Clear any previous salon data to prevent data leakage from prior logins
+    try {
+      clearRendererState();
+      await logout();
+      // Seed demo products/categories so offline mode isn't blank
+      await window.electronAPI.pos.seedDemo();
+      await refreshConfig();
+    } catch (err: any) {
+      rlog.warn('[App] Offline mode setup failed (non-critical):', err);
+    }
     setAuthUser({
       id: 'offline',
       email: 'offline@local',
@@ -253,6 +277,11 @@ export default function App() {
       rlog.error('[App] Failed to save language:', err);
     }
   };
+
+  // Key forces full component tree remount when user identity changes
+  // (e.g., logout → offline mode, or switching accounts), clearing all
+  // in-memory state: cart, products, connection status, etc.
+  const sessionKey = authUser?.id || 'anon';
 
   if (loading) {
     return (
@@ -296,6 +325,7 @@ export default function App() {
   if (isPosFullscreen && activeTab === 'pos' && isFeatureEnabled('pos')) {
     return (
       <div
+        key={sessionKey}
         className="h-screen w-screen flex flex-col select-none"
         onTouchStart={(e) => {
           if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
@@ -321,6 +351,7 @@ export default function App() {
   if (isCheckinFullscreen && isFeatureEnabled('checkin')) {
     return (
       <div
+        key={sessionKey}
         className="h-screen w-screen bg-slate-50 p-4 select-none"
         onTouchStart={(e) => {
           if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
@@ -345,7 +376,7 @@ export default function App() {
   const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden app-shell">
+    <div key={sessionKey} className="h-screen flex flex-col overflow-hidden app-shell">
       {/* Remote Control Indicator */}
       <RemoteIndicator
         remoteState={remoteState}

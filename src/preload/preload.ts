@@ -437,6 +437,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pos: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.POS_GET_STATE),
     dispatch: (action: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_DISPATCH, action),
+    seedDemo: () => ipcRenderer.invoke('pos:seed-demo'),
     onStateChanged: (callback: (state: any) => void) => {
       const listener = (_e: any, state: any) => callback(state);
       ipcRenderer.on(IPC_CHANNELS.POS_STATE_CHANGED, listener);
@@ -454,9 +455,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),
       getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
+      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
+      getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),
+      reprintReceipt: (orderId: string) => ipcRenderer.invoke('pos:reprint-receipt', orderId),
       openCashDrawer: () => ipcRenderer.invoke(IPC_CHANNELS.POS_OPEN_CASH_DRAWER),
       cardPayment: (data: { amount: number; orderId: string }) => ipcRenderer.invoke(IPC_CHANNELS.POS_PAYMENT_CARD, data),
       onElavonStatus: (callback: (data: any) => void) => {

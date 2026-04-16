@@ -14,6 +14,13 @@ export interface Product {
   vat_rate: number;
   is_active: number;
   updated_at: string | null;
+  // Enriched fields (migration v14 — optional for backward compat)
+  available_qty?: number;
+  price_gross?: number;
+  price_net?: number;
+  vat_amount?: number;
+  is_on_sale?: number;
+  thumbnail_url?: string | null;
 }
 
 export interface Category {

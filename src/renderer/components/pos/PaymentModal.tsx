@@ -170,12 +170,19 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
       throw new Error(result.error || 'Failed to save order');
     }
 
-    // Print receipt + open drawer for cash
+    // Order saved successfully — now print receipt + open drawer
+    // These are best-effort: if printing fails, order is still saved
+    try {
+      await window.electronAPI.pos.payment.printReceipt(orderId);
+    } catch (err) {
+      rlog.warn('[PaymentModal] Receipt print failed:', err);
+    }
     if (method === 'CASH') {
-      window.electronAPI.pos.payment.printReceipt(orderId);
-      window.electronAPI.pos.payment.openCashDrawer();
-    } else {
-      window.electronAPI.pos.payment.printReceipt(orderId);
+      try {
+        await window.electronAPI.pos.payment.openCashDrawer();
+      } catch (err) {
+        rlog.warn('[PaymentModal] Cash drawer failed:', err);
+      }
     }
 
     // B2B: increase customer debt when paying by invoice
@@ -187,6 +194,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
       }
     }
 
+    // Only clear cart AFTER order is saved successfully
     dispatch({
       type: 'display/setMode',
       payload: { mode: 'thankyou', lastOrderTotal: cart.total },
@@ -240,9 +248,9 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     !saving && (method !== 'CASH' || cashAmountGrosze >= grandTotal);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={saving ? undefined : onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8 bg-black/50" onClick={saving ? undefined : onClose}>
       <div
-        className="bg-white rounded-2xl w-full max-w-md mx-4 shadow-2xl border border-gray-200"
+        className="bg-white rounded-2xl w-full max-w-md mx-4 mb-[320px] shadow-2xl border border-gray-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -295,12 +303,11 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
                 <label className="text-xs text-gray-500 font-medium block mb-1.5">{t('pos.payment.received')}</label>
                 <input
                   ref={inputRef}
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
+                  onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
                   placeholder={totalZl.toFixed(2)}
-                  step="0.01"
-                  min="0"
                   className="w-full px-4 py-3 bg-slate-50 border border-gray-200 rounded-xl text-xl text-gray-900 text-right font-bold focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
                 />
               </div>

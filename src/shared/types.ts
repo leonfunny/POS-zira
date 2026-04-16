@@ -278,6 +278,7 @@ export interface ReceiptItem {
   totalPrice: number;
   vatRate: number; // 23, 8, 5, 0
   sku?: string;
+  unit?: string; // szt., kg, paczka, usługa
 }
 
 // Receipt payment
@@ -298,6 +299,8 @@ export interface ReceiptData {
   cashierName?: string;
   customerName?: string;
   customerNip?: string;
+  isReprint?: boolean;       // Mark as copy/reprint
+  originalDate?: string;     // Original transaction date (ISO string)
 }
 
 // Document data for A4 printing

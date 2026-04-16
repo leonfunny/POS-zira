@@ -221,9 +221,9 @@ export default function Sidebar({
 
         {/* User + sign out */}
         <div className={`flex items-center gap-2 px-3 py-2 ${collapsed ? 'justify-center' : ''}`}>
-          {!collapsed && authUser && (
+          {!collapsed && (
             <span className="text-xs text-[var(--ink-muted)] truncate flex-1">
-              {authUser.email || authUser.firstName}
+              {authUser?.email || authUser?.firstName || '...'}
             </span>
           )}
           <button
