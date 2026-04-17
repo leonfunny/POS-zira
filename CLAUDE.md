@@ -336,3 +336,15 @@ The following skills are installed globally (`~/.claude/commands/`). Activate th
 | `ecc:database-migration` | Safe DB schema change workflow |
 | `gsd:*` | Planning, execution, debugging, verification (50+ commands) |
 | `test-print-agent` | E2E smoke test for this app specifically |
+
+## Coding Principles (Karpathy Guidelines)
+
+Source: [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills)
+
+1. **Think Before Coding** — Surface hidden assumptions explicitly. State what you assume, ask clarifying questions, and present multiple interpretations rather than proceeding silently. If a request is ambiguous, clarify scope, format, and constraints before writing code.
+
+2. **Simplicity First** — Write the minimal code that solves the stated problem. No speculative features, no unnecessary abstractions, no configurability that wasn't requested. Three similar lines of code is better than a premature abstraction.
+
+3. **Surgical Changes** — Edit only what's necessary. Preserve existing code style, don't "improve" adjacent sections, and only remove dead code that your changes created. When fixing a bug, change only the buggy lines without reformatting unrelated code.
+
+4. **Goal-Driven Execution** — Transform vague requests into verifiable success criteria with defined checkpoints. Instead of "fix authentication," establish: "change password -> verify old session invalidates -> confirm no regression." This enables independent, testable progress.
