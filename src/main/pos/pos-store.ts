@@ -29,6 +29,8 @@ export interface CartState {
   items: CartItem[];
   subtotal: number;
   discount: number;
+  discountType?: 'fixed' | 'percentage';
+  discountPercent?: number;
   tax: number;
   total: number;
 }
@@ -114,6 +116,7 @@ export type PosAction =
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
+  | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
@@ -158,8 +161,10 @@ function createInitialState(): PosState {
 
 function recalcCart(cart: CartState): CartState {
   const subtotal = cart.items.reduce((sum, item) => sum + item.total, 0);
-  // Clamp discount so it never exceeds subtotal
-  const discount = Math.min(cart.discount, subtotal);
+  // Recalculate percentage discounts when cart changes; clamp to subtotal
+  const discount = cart.discountType === 'percentage' && cart.discountPercent
+    ? Math.min(Math.round(subtotal * cart.discountPercent / 100), subtotal)
+    : Math.min(cart.discount, subtotal);
   // Polish tax compliance: round VAT per line item in grosze, then sum.
   // item.total is gross (incl. VAT). VAT = gross - gross / (1 + rate/100)
   const tax = cart.items.reduce((sum, item) => {
@@ -231,7 +236,21 @@ function posReducer(state: PosState, action: PosAction): PosState {
       const discount = discountType === 'percentage'
         ? Math.min(Math.round(state.cart.subtotal * amount / 100), state.cart.subtotal)
         : Math.min(amount, state.cart.subtotal);
-      return { ...state, cart: recalcCart({ ...state.cart, discount }) };
+      return { ...state, cart: recalcCart({
+        ...state.cart,
+        discount,
+        discountType: discountType ?? 'fixed',
+        discountPercent: discountType === 'percentage' ? amount : undefined,
+      }) };
+    }
+
+    case 'cart/clearDiscount': {
+      return { ...state, cart: recalcCart({
+        ...state.cart,
+        discount: 0,
+        discountType: undefined,
+        discountPercent: undefined,
+      }) };
     }
 
     case 'cart/setItemNotes': {

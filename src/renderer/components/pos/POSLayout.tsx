@@ -198,7 +198,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           onKeyDown={handleBarcodeKeyDown}
           inputMode="none"
           data-keyboard="false"
-          aria-hidden="true"
+          aria-label="Barcode scanner"
           tabIndex={-1}
           className="absolute w-0 h-0 opacity-0 pointer-events-none"
         />
@@ -217,7 +217,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         onKeyDown={handleBarcodeKeyDown}
         inputMode="none"
         data-keyboard="false"
-        aria-hidden="true"
+        aria-label="Barcode scanner"
         tabIndex={-1}
         className="absolute w-0 h-0 opacity-0 pointer-events-none"
       />

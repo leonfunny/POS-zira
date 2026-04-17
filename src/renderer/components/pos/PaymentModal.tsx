@@ -23,6 +23,12 @@ interface Tender {
 
 const QUICK_AMOUNTS = [1000, 2000, 5000, 10000, 20000]; // grosze
 
+const KEYPAD_KEYS = [
+  ['7', '8', '9', 'backspace'],
+  ['4', '5', '6', 'clear'],
+  ['1', '2', '3', '.'],
+];
+
 const PM_ICONS: Record<string, React.ReactNode> = {
   CASH: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>,
   CARD: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>,
@@ -35,6 +41,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [cashAmount, setCashAmount] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [cardStatus, setCardStatus] = useState<string | null>(null);
   const [splitMode, setSplitMode] = useState(false);
@@ -105,6 +112,29 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     setSplitAmount('');
   };
 
+  // ─── Numeric keypad ──────────────────────────────────────
+
+  const handleKeypadPress = (key: string) => {
+    const setter = splitMode ? setSplitAmount : setCashAmount;
+
+    if (key === 'backspace') {
+      setter(prev => prev.slice(0, -1));
+    } else if (key === 'clear') {
+      setter('');
+    } else if (key === '.') {
+      setter(prev => prev.includes('.') ? prev : prev + '.');
+    } else if (key === 'exact') {
+      setCashAmount(totalZl.toFixed(2));
+    } else if (key === 'remaining') {
+      if (remaining > 0) setSplitAmount((remaining / 100).toFixed(2));
+    } else {
+      setter(prev => {
+        const next = prev + key;
+        return /^\d*\.?\d*$/.test(next) ? next : prev;
+      });
+    }
+  };
+
   // ─── Save order ───────────────────────────────────────────
 
   const saveOrderAndFinish = async (orderId: string, paymentAmount: number) => {
@@ -167,22 +197,29 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     const result = await window.electronAPI.pos.orders.create(order, items);
     if (result && !result.success) throw new Error(result.error || 'Failed to save order');
 
-    try { await window.electronAPI.pos.payment.printReceipt(orderId); }
-    catch (err) { rlog.warn('[PaymentModal] Receipt print failed:', err); }
-
-    // Open drawer if any tender is cash
     const hasCash = splitMode
       ? tenders.some(t => t.method === 'CASH')
       : method === 'CASH';
-    if (hasCash) {
-      try { await window.electronAPI.pos.payment.openCashDrawer(); }
-      catch (err) { rlog.warn('[PaymentModal] Cash drawer failed:', err); }
-    }
 
     if (method === 'INVOICE' && extraOrderFields?.customer_id) {
       try { await window.electronAPI.pos.customers.increaseDebt(extraOrderFields.customer_id, cart.total); }
       catch (err) { rlog.warn('[PaymentModal] Failed to increase customer debt:', err); }
     }
+
+    // Print receipt + open drawer (parallel, awaited — optimized to ~3-5s)
+    setSavingLabel(t('test.printing') || 'Printing...');
+    try {
+      await Promise.all([
+        window.electronAPI.pos.payment.printReceipt(orderId).catch(
+          (err: unknown) => rlog.warn('[PaymentModal] Receipt print failed:', err),
+        ),
+        hasCash
+          ? window.electronAPI.pos.payment.openCashDrawer().catch(
+              (err: unknown) => rlog.warn('[PaymentModal] Cash drawer failed:', err),
+            )
+          : Promise.resolve(),
+      ]);
+    } catch { /* errors already logged inside each call */ }
 
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
@@ -235,6 +272,58 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
   const splitProgress = grandTotal > 0
     ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
     : 0;
+
+  const renderNumericKeypad = (quickAction: 'exact' | 'remaining') => {
+    const quickLabel = quickAction === 'exact'
+      ? t('pos.payment.exact')
+      : tOr('pos.split.remaining', 'Remaining');
+    const quickDisabled = quickAction === 'remaining' && remaining <= 0;
+
+    return (
+      <div
+        className={`grid grid-cols-4 gap-1.5 ${saving ? 'pointer-events-none opacity-50' : ''}`}
+        role="group"
+        aria-label="Numeric keypad"
+      >
+        {KEYPAD_KEYS.flat().map(key => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => handleKeypadPress(key)}
+            className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+              key === 'backspace' || key === 'clear'
+                ? 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 active:bg-slate-200'
+                : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50 active:bg-slate-100'
+            }`}
+          >
+            {key === 'backspace' ? (
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33z" />
+              </svg>
+            ) : key === 'clear' ? 'C' : key}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => handleKeypadPress('0')}
+          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >0</button>
+        <button
+          type="button"
+          onClick={() => handleKeypadPress('00')}
+          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >00</button>
+        <button
+          type="button"
+          onClick={() => handleKeypadPress(quickAction)}
+          disabled={quickDisabled}
+          className="col-span-2 flex min-h-[44px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {quickLabel}
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -440,6 +529,8 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
                 </div>
               )}
 
+              {!splitComplete && renderNumericKeypad('remaining')}
+
               <div className="rounded-lg border border-slate-200 bg-white">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
                   <p className="text-sm font-semibold text-slate-900">{tOr('pos.split.toggle', 'Split')}</p>
@@ -495,25 +586,22 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
                 />
               </label>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <button
-                  type="button"
-                  onClick={() => setCashAmount(totalZl.toFixed(2))}
-                  className="min-h-[44px] rounded-md border border-brand-300 bg-brand-50 px-3 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-                >
-                  {t('pos.payment.exact')}
-                </button>
-                {QUICK_AMOUNTS.filter(a => a >= grandTotal).slice(0, 3).map(amount => (
-                  <button
-                    key={amount}
-                    type="button"
-                    onClick={() => setCashAmount((amount / 100).toFixed(2))}
-                    className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-400 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-                  >
-                    {money(amount)}
-                  </button>
-                ))}
-              </div>
+              {renderNumericKeypad('exact')}
+
+              {QUICK_AMOUNTS.filter(a => a >= grandTotal).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_AMOUNTS.filter(a => a >= grandTotal).slice(0, 4).map(amount => (
+                    <button
+                      key={amount}
+                      type="button"
+                      onClick={() => setCashAmount((amount / 100).toFixed(2))}
+                      className="min-h-[44px] flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-400 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                    >
+                      {money(amount)}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div aria-live="polite" className={`rounded-lg border p-4 ${
                 cashShortfall > 0
@@ -609,7 +697,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
               disabled={!canComplete}
               className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
             >
-              {saving ? t('pos.payment.saving') : `${t('pos.payment.complete')} ${money(grandTotal)}`}
+              {saving ? (savingLabel || t('pos.payment.saving')) : `${t('pos.payment.complete')} ${money(grandTotal)}`}
             </button>
           </div>
         </div>

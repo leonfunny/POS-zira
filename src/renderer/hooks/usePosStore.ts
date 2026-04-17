@@ -29,6 +29,8 @@ interface CartState {
   items: CartItem[];
   subtotal: number;
   discount: number;
+  discountType?: 'fixed' | 'percentage';
+  discountPercent?: number;
   tax: number;
   total: number;
 }
@@ -86,6 +88,7 @@ type PosAction =
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
+  | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }

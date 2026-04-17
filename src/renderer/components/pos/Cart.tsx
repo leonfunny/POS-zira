@@ -98,15 +98,28 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
             <span className="text-slate-800 font-bold tabular-nums">{(cart.subtotal / 100).toFixed(2)}&nbsp;{currency}</span>
           </div>
           {cart.discount > 0 && (
-            <div className="flex justify-between text-sm">
-              <span className="text-emerald-700 font-medium">{t('pos.cart.discount')}</span>
-              <span className="text-emerald-700 font-bold tabular-nums">-{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-emerald-700 font-medium">
+                {t('pos.cart.discount')}
+                {cart.discountType === 'percentage' && cart.discountPercent ? ` (${cart.discountPercent}%)` : ''}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-emerald-700 font-bold tabular-nums">-{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'cart/clearDiscount' })}
+                  aria-label="Remove discount"
+                  className="flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </span>
             </div>
           )}
           {cart.tax > 0 && (
             <div className="flex justify-between text-xs">
-              <span className="text-slate-500">{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
-              <span className="text-slate-500 tabular-nums">{(cart.tax / 100).toFixed(2)}&nbsp;{currency}</span>
+              <span className="text-slate-400 italic">{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
+              <span className="text-slate-400 italic tabular-nums">({(cart.tax / 100).toFixed(2)}&nbsp;{currency})</span>
             </div>
           )}
           <div className="flex justify-between items-center pt-3 border-t border-slate-200">

@@ -360,6 +360,8 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
           onClose={() => setShowPayment(false)}
           onComplete={() => {
             setShowPayment(false);
+            setSearchQuery('');
+            setActiveCategoryId(null);
             // Clear saved cart after successful payment
             if (cartStorageKey) {
               try { window.localStorage.removeItem(cartStorageKey); } catch {}
