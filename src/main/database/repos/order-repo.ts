@@ -139,6 +139,17 @@ export const orderRepo = {
     database.run('UPDATE orders SET synced = 0 WHERE id = ? AND synced = 2', [id]);
   },
 
+  /**
+   * Mark an order as refunded (full or partial).
+   */
+  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL'): void {
+    const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
+    database.run(
+      "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now') WHERE id = ?",
+      [status, amount, reason, id],
+    );
+  },
+
   getByShift(shiftId: string): OrderRow[] {
     return database.all<OrderRow>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
   },

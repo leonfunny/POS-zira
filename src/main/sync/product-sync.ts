@@ -23,6 +23,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 }
 
 export class ProductSync {
+  /** Remember if delta sync is unsupported — avoids 7s retry waste each connect. */
+  private deltaUnsupported = false;
+
   /**
    * Full sync — download all products + categories from backend
    */
@@ -61,7 +64,8 @@ export class ProductSync {
   }
 
   /**
-   * Delta sync — only changed products since last sync
+   * Delta sync — only changed products since last sync.
+   * Falls back to full sync if no cursor or if backend rejects 'since' param.
    */
   async deltaSync(): Promise<number> {
     const lastSync = database.get<{ value: string }>(
@@ -72,10 +76,28 @@ export class ProductSync {
       return result.productsCount;
     }
 
+    // Skip delta if we already know backend doesn't support it
+    if (this.deltaUnsupported) {
+      const result = await this.fullSync();
+      return result.productsCount;
+    }
+
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
 
-    const data = await withRetry(() => apiClient.getPosProducts(token, lastSync.value));
+    let data;
+    try {
+      data = await withRetry(() => apiClient.getPosProducts(token, lastSync.value));
+    } catch (err: any) {
+      // Backend rejects 'since' param — remember and fall back to full sync
+      if (err.message?.includes('since') || err.message?.includes('should not exist')) {
+        this.deltaUnsupported = true;
+        logger.info('[ProductSync] Delta sync not supported by backend, using full sync (remembered for this session)');
+        const result = await this.fullSync();
+        return result.productsCount;
+      }
+      throw err;
+    }
 
     database.transaction(() => {
       if (data.products.length > 0) {
@@ -84,7 +106,6 @@ export class ProductSync {
       if (data.categories.length > 0) {
         productRepo.upsertCategories(data.categories);
       }
-      // Deactivate products deleted on backend (delta sync only)
       if (data.deletedIds && data.deletedIds.length > 0) {
         productRepo.deactivateByIds(data.deletedIds);
       }
@@ -95,6 +116,9 @@ export class ProductSync {
       );
     });
     database.save();
+
+    // Delta succeeded — reset the flag (backend may have been updated)
+    this.deltaUnsupported = false;
 
     const deletedCount = data.deletedIds?.length ?? 0;
     logger.info(`[ProductSync] Delta sync: ${data.products.length} updated, ${deletedCount} deleted (nextSince=${data.nextSince ?? 'local'})`);

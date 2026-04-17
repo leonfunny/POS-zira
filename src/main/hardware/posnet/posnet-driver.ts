@@ -68,31 +68,57 @@ export class PosnetDriver {
       const ports = await listSerialPorts();
       const portUpper = this.portName.toUpperCase();
       if (ports.includes(portUpper)) {
-        // Port exists — verify a POSNET device is actually on it.
-        // No more "connect anyway" fallback: if the configured port has no
-        // POSNET response, we MUST fail loud (otherwise test prints succeed
-        // silently while the printer is unplugged — exactly the bug report).
+        // Port exists — try to verify a POSNET device is on it via rtcget.
         const verified = await PosnetDriver.verifyPosnetDevice(this.portName);
         if (verified) {
           this.connected = true;
           logger.info(`[PosnetDriver] Connected and verified POSNET on ${this.portName}`);
           return true;
         }
-        logger.warn(`[PosnetDriver] Port ${this.portName} exists but no POSNET responded — trying other ports`);
+        // rtcget got no response — but some POSNET Thermal models (e.g. Thermal XL)
+        // don't reply to rtcget while still being fully functional for printing.
+        // Fall through to VID-based physical presence check below.
+        logger.warn(`[PosnetDriver] Port ${this.portName} exists but no POSNET rtcget response — checking VID`);
       } else {
         logger.warn(`[PosnetDriver] COM port "${this.portName}" not present. Available: ${ports.join(', ') || 'none'}`);
       }
 
-      // Configured port didn't work — scan all VID-1424 candidates to recover.
-      const posnetPort = await PosnetDriver.detectPosnetPort();
-      if (posnetPort && posnetPort.toUpperCase() !== portUpper) {
-        logger.info(`[PosnetDriver] Auto-detected POSNET on ${posnetPort} (was ${this.portName})`);
-        this.portName = posnetPort;
-        this.connected = true;
-        return true;
+      // Check if a POSNET USB device (VID_1424) is physically present.
+      const candidates = await PosnetDriver.findPosnetCandidates();
+      if (candidates.length > 0) {
+        // VID_1424 device found — check if configured port matches a candidate
+        const matchesConfigured = candidates.some(c => c.toUpperCase() === portUpper);
+        if (matchesConfigured) {
+          // The configured port IS a VID_1424 device — trust physical presence
+          // even though rtcget didn't respond. The printer is plugged in.
+          logger.info(`[PosnetDriver] VID_1424 confirmed on ${this.portName} — connecting without rtcget verify`);
+          this.connected = true;
+          return true;
+        }
+        // VID_1424 found but on a different port — switch to that port
+        // Prefer one that responds to rtcget, fall back to first openable
+        for (const port of candidates) {
+          const confirmedPosnet = await PosnetDriver.verifyPosnetDevice(port);
+          if (confirmedPosnet) {
+            logger.info(`[PosnetDriver] Auto-detected POSNET on ${port} (was ${this.portName})`);
+            this.portName = port;
+            this.connected = true;
+            return true;
+          }
+        }
+        // No rtcget response on any candidate, but VID_1424 is present — use first openable
+        for (const port of candidates) {
+          const canOpen = await PosnetDriver.testPortOpen(port);
+          if (canOpen) {
+            logger.info(`[PosnetDriver] VID_1424 device on ${port} (no rtcget) — connecting on physical presence`);
+            this.portName = port;
+            this.connected = true;
+            return true;
+          }
+        }
       }
 
-      // Nothing found
+      // No VID_1424 device found at all — printer is genuinely not connected
       this.connected = false;
       return false;
     } catch (error) {
@@ -318,8 +344,17 @@ export class PosnetDriver {
       );
 
       if (stderr?.trim()) {
-        // Filter out PowerShell CLIXML progress records (e.g. "Preparing modules for first use")
-        const filteredStderr = stderr.replace(/#< CLIXML[\s\S]*?<\/Objs>/g, '').trim();
+        // Filter out ONLY harmless PowerShell CLIXML progress records
+        // (e.g. "Preparing modules for first use"). Keep actual errors.
+        const filteredStderr = stderr.replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
+        // Also check for CLIXML-wrapped errors (Write-Error produces CLIXML that
+        // contains the real error message — don't silently swallow it).
+        const cliXmlError = stderr.match(/<S S="Error">([^<]+)<\/S>/);
+        if (cliXmlError) {
+          const errMsg = cliXmlError[1].replace(/&#xD;&#xA;/g, '').trim();
+          logger.warn(`[PosnetDriver] Serial CLIXML error: ${errMsg}`);
+          throw new Error(`Serial error: ${errMsg}`);
+        }
         if (filteredStderr) {
           logger.warn(`[PosnetDriver] Serial stderr: ${filteredStderr}`);
           throw new Error(`Serial error: ${filteredStderr}`);
@@ -329,6 +364,13 @@ export class PosnetDriver {
 
       const responses = stdout.trim().split('|||');
       logger.info(`[PosnetDriver] Responses: ${JSON.stringify(responses)}`);
+
+      // Empty stdout means PowerShell script hit an exception before producing
+      // any output — the error was likely caught in the PS catch block.
+      // Treat this as a write failure (common when CTS is not asserted).
+      if (!stdout.trim() || (responses.length === 1 && !responses[0])) {
+        throw new Error(`No data returned from printer on ${this.portName} — the printer may not be accepting data (check cable, power, and paper)`);
+      }
 
       // Check for errors in responses
       for (let i = 0; i < responses.length; i++) {
@@ -464,7 +506,7 @@ export class PosnetDriver {
         'try {\n  $p.Open()\n' +
         `  $f = [byte[]]@(${hexArray})\n` +
         '  $p.Write($f, 0, $f.Length)\n' +
-        '  Start-Sleep -Milliseconds 1500\n' +
+        '  Start-Sleep -Milliseconds 2500\n' +
         '  $n = $p.BytesToRead\n' +
         '  if ($n -gt 0) {\n' +
         '    $buf = New-Object byte[] $n\n' +

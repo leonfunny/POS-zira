@@ -11,6 +11,7 @@ import RetailTemplate from './templates/retail/RetailTemplate';
 import SalonTemplate from './templates/salon/SalonTemplate';
 import B2BTemplate from './templates/b2b/B2BTemplate';
 import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
+import SyncConflictBanner from './SyncConflictBanner';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -59,17 +60,26 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const el = barcodeRef.current;
     if (!el) return;
     const active = document.activeElement;
-    // Don't steal focus from visible inputs (search bar, cart qty, etc.)
-    if (active && active !== document.body && active !== el) return;
+    // Only skip if a VISIBLE text input/textarea/select has focus (user is typing).
+    // Buttons, divs, body — always reclaim focus for scanner.
+    if (active && active !== el) {
+      const tag = active.tagName;
+      if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && active !== el) {
+        const type = (active as HTMLInputElement).type;
+        // Allow reclaiming from hidden inputs and non-text inputs (buttons etc.)
+        if (type !== 'hidden' && (active as HTMLElement).offsetParent !== null) return;
+      }
+    }
     el.focus();
   }, []);
 
-  // Re-focus hidden input after clicks, but with enough delay for the
-  // on-screen keyboard to fully dismiss when tapping away from the search bar.
+  // Re-focus hidden input after clicks + periodically (catches focus lost to
+  // buttons, shift-open, tab switches, etc.)
   useEffect(() => {
     const handler = () => setTimeout(focusBarcode, 300);
     document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    const interval = setInterval(focusBarcode, 1000);
+    return () => { document.removeEventListener('click', handler); clearInterval(interval); };
   }, [focusBarcode]);
 
   useEffect(() => { focusBarcode(); }, [focusBarcode]);
@@ -180,6 +190,18 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   if (!state) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-gray-400">
+        {/* Hidden barcode input must exist even during loading so scanner keystrokes are captured */}
+        <input
+          ref={barcodeRef}
+          value={barcodeBuffer}
+          onChange={(e) => setBarcodeBuffer(e.target.value)}
+          onKeyDown={handleBarcodeKeyDown}
+          inputMode="none"
+          data-keyboard="false"
+          aria-hidden="true"
+          tabIndex={-1}
+          className="absolute w-0 h-0 opacity-0 pointer-events-none"
+        />
         {t('pos.loading')}
       </div>
     );
@@ -209,6 +231,8 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           {scanToast.text}
         </div>
       )}
+      {/* Sync conflict banner (Path B) */}
+      <SyncConflictBanner />
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
         <div className="flex items-center gap-3">

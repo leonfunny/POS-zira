@@ -801,4 +801,88 @@ export const migrations: Migration[] = [
       ALTER TABLE orders ADD COLUMN server_updated_at TEXT;
     `,
   },
+  {
+    version: 17,
+    name: 'sync_log_path_b',
+    up: `
+      -- =====================================================
+      -- LOCAL SYNC LOG — mirrors server sync_log shape
+      -- Outbound entries start as 'pending', pushed in batches.
+      -- Inbound entries inserted as 'accepted' with server_seq.
+      -- =====================================================
+      CREATE TABLE IF NOT EXISTS local_sync_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_tx TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        event TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}',
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        server_seq INTEGER,
+        rejection_code TEXT,
+        rejection_detail TEXT,
+        attempts INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        pushed_at TEXT,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_lsl_status ON local_sync_log(status);
+      CREATE INDEX IF NOT EXISTS idx_lsl_source_tx ON local_sync_log(source_tx);
+      CREATE INDEX IF NOT EXISTS idx_lsl_entity ON local_sync_log(entity_type, entity_id);
+
+      -- =====================================================
+      -- SYNC STATE — cursor + mode tracking
+      -- =====================================================
+      CREATE TABLE IF NOT EXISTS sync_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      -- =====================================================
+      -- SYNC CONFLICTS — unresolved conflicts for cashier
+      -- =====================================================
+      CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        log_entry_id INTEGER NOT NULL,
+        conflict_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        detail TEXT,
+        resolution TEXT,
+        resolved_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `,
+  },
+  {
+    version: 18,
+    name: 'sync_retry_tracking',
+    up: `
+      -- Track sync attempts + last error on orders (caps infinite retry)
+      ALTER TABLE orders ADD COLUMN sync_attempts INTEGER DEFAULT 0;
+      ALTER TABLE orders ADD COLUMN sync_error TEXT;
+
+      -- Track sync attempts on shifts
+      ALTER TABLE shifts ADD COLUMN sync_attempts INTEGER DEFAULT 0;
+      ALTER TABLE shifts ADD COLUMN sync_error TEXT;
+    `,
+  },
+  {
+    version: 19,
+    name: 'order_refund_tracking',
+    up: `
+      ALTER TABLE orders ADD COLUMN refunded_at TEXT;
+    `,
+  },
+  {
+    version: 20,
+    name: 'split_payment_tenders',
+    up: `
+      -- JSON array of tenders: [{"method":"CASH","amount":5000},{"method":"CARD","amount":3000}]
+      -- Amounts stored in grosze (same as all prices). Null = single payment (use payment_method).
+      ALTER TABLE orders ADD COLUMN payment_tenders TEXT;
+    `,
+  },
 ];

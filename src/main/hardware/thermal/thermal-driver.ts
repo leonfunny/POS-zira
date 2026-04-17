@@ -365,27 +365,74 @@ export class ThermalDriver {
         const safeName = sanitizePrinterName(this.printerNameOrPort);
         if (!safeName) throw new Error(`Invalid printer name: "${this.printerNameOrPort}"`);
 
-        // Try direct file copy to shared printer first (via cmd.exe, no shell spawned by execFile)
-        try {
-          await execFileAsync(
-            'cmd.exe',
-            ['/c', 'copy', '/b', tempFile, `\\\\%COMPUTERNAME%\\${safeName}`],
-            { encoding: 'utf8', timeout: 15000 },
-          );
-        } catch {
-          // Fallback: PowerShell Out-Printer via EncodedCommand (avoids string escaping issues)
-          const psScript = `Get-Content -Encoding Byte '${tempFile.replace(/\\/g, '\\\\')}' | Out-Printer '${safeName}'`;
-          const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
-          await execFileAsync(
-            'powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
-            { timeout: 15000 },
-          );
-        }
+        // Send raw bytes via Win32 WritePrinter API (P/Invoke).
+        // This bypasses the spooler's text rendering — critical for ESC/POS
+        // binary commands. Generic / Text Only driver would otherwise convert
+        // each byte to its decimal text representation.
+        const escapedFile = tempFile.replace(/'/g, "''");
+        const psScript =
+          '$ProgressPreference = "SilentlyContinue"\n' +
+          'Add-Type @"\n' +
+          'using System;\nusing System.Runtime.InteropServices;\n' +
+          'public class RawPrint {\n' +
+          '  [StructLayout(LayoutKind.Sequential)] public struct DOCINFO {\n' +
+          '    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;\n' +
+          '    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;\n' +
+          '    [MarshalAs(UnmanagedType.LPStr)] public string pDatatype;\n' +
+          '  }\n' +
+          '  [DllImport("winspool.drv", SetLastError=true, CharSet=CharSet.Auto)]\n' +
+          '  public static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool StartDocPrinter(IntPtr hPrinter, int level, ref DOCINFO pDocInfo);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool StartPagePrinter(IntPtr hPrinter);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool EndPagePrinter(IntPtr hPrinter);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool EndDocPrinter(IntPtr hPrinter);\n' +
+          '  [DllImport("winspool.drv", SetLastError=true)]\n' +
+          '  public static extern bool ClosePrinter(IntPtr hPrinter);\n' +
+          '}\n"@\n' +
+          `$data = [System.IO.File]::ReadAllBytes('${escapedFile}')\n` +
+          '$h = [IntPtr]::Zero\n' +
+          `if (-not [RawPrint]::OpenPrinter('${safeName}', [ref]$h, [IntPtr]::Zero)) {\n` +
+          '  throw "OpenPrinter failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"\n}\n' +
+          '$di = New-Object RawPrint+DOCINFO\n' +
+          '$di.pDocName = "Zira AI Receipt"\n$di.pDatatype = "RAW"\n' +
+          'try {\n' +
+          '  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw "StartDocPrinter failed" }\n' +
+          '  [RawPrint]::StartPagePrinter($h) | Out-Null\n' +
+          '  $w = 0\n' +
+          '  if (-not [RawPrint]::WritePrinter($h, $data, $data.Length, [ref]$w)) { throw "WritePrinter failed" }\n' +
+          '  [RawPrint]::EndPagePrinter($h) | Out-Null\n' +
+          '  [RawPrint]::EndDocPrinter($h) | Out-Null\n' +
+          '  Write-Output "OK:$w"\n' +
+          '} finally {\n  [RawPrint]::ClosePrinter($h) | Out-Null\n}\n';
 
-        // ─── Post-flight: confirm queue actually drained ───────────────
-        // copy /b and Out-Printer both queue silently — they return success even
-        // if the spooler will then mark the job as Error/Offline. Re-check.
+        const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+        const { stdout, stderr } = await execFileAsync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+          { encoding: 'utf8', timeout: 15000 },
+        );
+
+        // Check for errors
+        if (stderr?.trim()) {
+          const cleaned = stderr.replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
+          if (cleaned) {
+            logger.warn(`[ThermalDriver] WritePrinter stderr: ${cleaned}`);
+            throw new Error(`Print failed: ${cleaned}`);
+          }
+        }
+        const result = (stdout || '').trim();
+        if (!result.startsWith('OK:')) {
+          throw new Error(`WritePrinter returned unexpected result: ${result}`);
+        }
+        logger.info(`[ThermalDriver] Raw data sent via WritePrinter (${result})`);
+
+        // Post-flight: confirm queue drained
         await new Promise(r => setTimeout(r, 1500));
         const stuckStatus = await getStuckPrintJobStatus(this.printerNameOrPort);
         if (stuckStatus) {
@@ -434,9 +481,175 @@ export class ThermalDriver {
     logger.info('[ThermalDriver] Printing receipt...');
 
     const escposData = this.formatter.formatReceipt(data);
-    await this.printRaw(escposData);
+
+    // Check if ESC/POS data contains non-ASCII text (Vietnamese, Polish, etc.).
+    // If so, re-render the entire receipt as a raster image — this bypasses
+    // codepage issues on budget printers that don't support UTF-8 mode.
+    if (this.bufferHasNonAsciiText(escposData)) {
+      logger.info('[ThermalDriver] Non-ASCII detected — rendering receipt as raster image');
+      const lines = this.formatter.formatReceiptPlainLines(data);
+      const rasterData = await this.renderTextToRaster(lines);
+      await this.printRaw(rasterData);
+    } else {
+      await this.printRaw(escposData);
+    }
 
     logger.info('[ThermalDriver] Receipt printed successfully');
+  }
+
+  /**
+   * Check if an ESC/POS buffer contains non-ASCII text bytes (bytes > 0x7F
+   * that are NOT part of known ESC/POS command sequences).
+   */
+  private bufferHasNonAsciiText(data: Buffer): boolean {
+    let i = 0;
+    while (i < data.length) {
+      const b = data[i];
+      // Skip ESC sequences (ESC + command byte + optional params)
+      if (b === 0x1B || b === 0x1D || b === 0x1C) { i += 2; continue; }
+      // Any byte > 0x7F outside a command = non-ASCII text (UTF-8 continuation)
+      if (b > 0x7F) return true;
+      i++;
+    }
+    return false;
+  }
+
+  /**
+   * Render an array of plain-text lines to ESC/POS raster image data.
+   * Uses PowerShell System.Drawing to render Unicode text to a monochrome
+   * bitmap, then converts to GS v 0 raster format. Works with ALL languages
+   * regardless of printer codepage support.
+   */
+  private async renderTextToRaster(lines: Array<{ text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean }>): Promise<Buffer> {
+    const dotsWidth = this.paperWidth === 58 ? 384 : 576; // pixels at 203 DPI
+    const bytesPerRow = dotsWidth / 8;
+
+    // Escape text for PowerShell string literal
+    const escapedLines = JSON.stringify(lines);
+    const tempJson = path.join(os.tmpdir(), `receipt_lines_${Date.now()}.json`);
+    const tempBmp = path.join(os.tmpdir(), `receipt_raster_${Date.now()}.bin`);
+
+    fs.writeFileSync(tempJson, escapedLines, 'utf8');
+
+    const psScript =
+      '$ProgressPreference = "SilentlyContinue"\n' +
+      'Add-Type -AssemblyName System.Drawing\n' +
+      `$lines = Get-Content -Path '${tempJson.replace(/\\/g, '\\\\')}' -Encoding UTF8 | ConvertFrom-Json\n` +
+      `$W = ${dotsWidth}\n` +
+      '$fontName = "Consolas"\n' +
+      // Font sizes calibrated for 203 DPI thermal printers:
+      // ESC/POS Font A = 12x24 dots ≈ 8pt at 203 DPI, double-size = 24x48 ≈ 14pt
+      '$fontNormal = New-Object System.Drawing.Font($fontName, 8, [System.Drawing.FontStyle]::Regular)\n' +
+      '$fontBold = New-Object System.Drawing.Font($fontName, 8, [System.Drawing.FontStyle]::Bold)\n' +
+      '$fontBig = New-Object System.Drawing.Font($fontName, 14, [System.Drawing.FontStyle]::Bold)\n' +
+      // Measure total height first
+      '$sfM = New-Object System.Drawing.StringFormat\n' +
+      '$sfM.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap\n' +
+      '$bmpM = New-Object System.Drawing.Bitmap(1, 1)\n' +
+      '$bmpM.SetResolution(203, 203)\n' +
+      '$gM = [System.Drawing.Graphics]::FromImage($bmpM)\n' +
+      '$totalH = 0\n' +
+      'foreach ($ln in $lines) {\n' +
+      '  if ($ln.separator) { $totalH += 16; continue }\n' +
+      '  $f = if ($ln.big) { $fontBig } elseif ($ln.bold) { $fontBold } else { $fontNormal }\n' +
+      '  $t = if ($ln.text) { $ln.text } else { " " }\n' +
+      '  $sz = $gM.MeasureString($t, $f, 9999, $sfM)\n' +
+      '  $totalH += [Math]::Ceiling($sz.Height)\n' +
+      '}\n' +
+      '$totalH += 30\n' + // bottom margin
+      '$gM.Dispose(); $bmpM.Dispose()\n' +
+      // Render
+      '$bmp = New-Object System.Drawing.Bitmap($W, [Math]::Max($totalH, 10))\n' +
+      '$bmp.SetResolution(203, 203)\n' + // Match thermal printer DPI
+      '$g = [System.Drawing.Graphics]::FromImage($bmp)\n' +
+      '$g.Clear([System.Drawing.Color]::White)\n' +
+      '$g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit\n' +
+      '$M = 8\n' + // left/right margin in pixels
+      '$PW = $W - $M * 2\n' + // printable width
+      '$sf = New-Object System.Drawing.StringFormat\n' +
+      '$sf.Trimming = [System.Drawing.StringTrimming]::None\n' +
+      '$sf.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap\n' +
+      '$y = 0\n' +
+      'foreach ($ln in $lines) {\n' +
+      '  if ($ln.separator) {\n' +
+      '    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Black, 1)\n' +
+      '    $g.DrawLine($pen, $M, ($y+8), ($W-$M), ($y+8))\n' +
+      '    $pen.Dispose(); $y += 16; continue\n' +
+      '  }\n' +
+      '  $f = if ($ln.big) { $fontBig } elseif ($ln.bold) { $fontBold } else { $fontNormal }\n' +
+      '  $t = if ($ln.text) { $ln.text } else { " " }\n' +
+      '  $brush = [System.Drawing.Brushes]::Black\n' +
+      '  $sz = $g.MeasureString($t, $f, $W, $sf)\n' +
+      '  $lh = [Math]::Ceiling($sz.Height)\n' +
+      // Handle left+right split (e.g. "Subtotal:" on left, "42.00 zl" on right)
+      '  if ($ln.rightText) {\n' +
+      '    $g.DrawString($t, $f, $brush, $M, $y)\n' +
+      '    $rsz = $g.MeasureString($ln.rightText, $f, $W, $sf)\n' +
+      '    $rx = $W - $M - $rsz.Width\n' +
+      '    $g.DrawString($ln.rightText, $f, $brush, $rx, $y)\n' +
+      '    $lh = [Math]::Max($lh, [Math]::Ceiling($rsz.Height))\n' +
+      '  } elseif ($ln.center) {\n' +
+      '    $x = [Math]::Max($M, ($W - $sz.Width) / 2)\n' +
+      '    $g.DrawString($t, $f, $brush, $x, $y)\n' +
+      '  } else {\n' +
+      '    $g.DrawString($t, $f, $brush, $M, $y)\n' +
+      '  }\n' +
+      '  $y += $lh\n' +
+      '}\n' +
+      '$g.Dispose()\n' +
+      // Convert to monochrome raster (threshold)
+      `$bw = ${bytesPerRow}\n` +
+      '$H = $bmp.Height\n' +
+      '$raster = New-Object byte[] ($bw * $H)\n' +
+      'for ($row = 0; $row -lt $H; $row++) {\n' +
+      '  for ($col = 0; $col -lt $W; $col++) {\n' +
+      '    $px = $bmp.GetPixel($col, $row)\n' +
+      '    $gray = ($px.R * 0.299 + $px.G * 0.587 + $px.B * 0.114)\n' +
+      '    if ($gray -lt 128) {\n' +
+      '      $byteIdx = $row * $bw + [Math]::Floor($col / 8)\n' +
+      '      $bitIdx = 7 - ($col % 8)\n' +
+      '      $raster[$byteIdx] = $raster[$byteIdx] -bor (1 -shl $bitIdx)\n' +
+      '    }\n' +
+      '  }\n' +
+      '}\n' +
+      '$bmp.Dispose()\n' +
+      // Build ESC/POS: INIT + GS v 0 + raster + feed + cut
+      '$esc = [byte[]]@(0x1B, 0x40)\n' + // ESC @
+      '$xL = $bw -band 0xFF; $xH = ($bw -shr 8) -band 0xFF\n' +
+      '$yL = $H -band 0xFF; $yH = ($H -shr 8) -band 0xFF\n' +
+      '$gsv = [byte[]]@(0x1D, 0x76, 0x30, 0x00, $xL, $xH, $yL, $yH)\n' + // GS v 0
+      '$feed = [byte[]]@(0x1B, 0x64, 0x03)\n' + // ESC d 3
+      '$cut = [byte[]]@(0x1D, 0x56, 0x01)\n' + // GS V 1
+      // Write all to binary file
+      `$outFile = '${tempBmp.replace(/\\/g, '\\\\')}'\n` +
+      '$fs = [IO.File]::Create($outFile)\n' +
+      '$fs.Write($esc, 0, $esc.Length)\n' +
+      '$fs.Write($gsv, 0, $gsv.Length)\n' +
+      '$fs.Write($raster, 0, $raster.Length)\n' +
+      '$fs.Write($feed, 0, $feed.Length)\n' +
+      '$fs.Write($cut, 0, $cut.Length)\n' +
+      '$fs.Close()\n' +
+      'Write-Output "OK:$($esc.Length + $gsv.Length + $raster.Length + $feed.Length + $cut.Length)"\n';
+
+    try {
+      const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+        { encoding: 'utf8', timeout: 30000 },
+      );
+      const result = (stdout || '').trim();
+      if (!result.startsWith('OK:')) {
+        throw new Error(`Raster rendering failed: ${result}`);
+      }
+      logger.info(`[ThermalDriver] Raster rendered: ${result} bytes`);
+
+      const rasterBuffer = fs.readFileSync(tempBmp);
+      return rasterBuffer;
+    } finally {
+      if (fs.existsSync(tempJson)) fs.unlinkSync(tempJson);
+      if (fs.existsSync(tempBmp)) fs.unlinkSync(tempBmp);
+    }
   }
 
   /**

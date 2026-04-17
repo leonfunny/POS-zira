@@ -5,13 +5,25 @@ import { ReceiptData, ReceiptItem } from '../../../shared/types';
  * Standard commands supported by most thermal receipt printers
  */
 const ESC = 0x1B;  // Escape
+const FS = 0x1C;   // Field Separator
 const GS = 0x1D;   // Group Separator
 const LF = 0x0A;   // Line Feed
 const CR = 0x0D;   // Carriage Return
 
 const ESCPOS = {
-  // Initialize printer
-  INIT: Buffer.from([ESC, 0x40]),
+  // Initialize printer + enable UTF-8 multi-byte character mode.
+  // After ESC @ (reset), we send two commands:
+  //   1. ESC t 0xFF  — select codepage 255 (user-defined / bypass) to stop
+  //      single-byte codepage interpretation of high bytes
+  //   2. FS . 2 0 0 0 — select UTF-8 as the multi-byte encoding
+  //      (FS . = 0x1C 0x2E, args: encType=2(UTF-8), hiB=0, loB=0, opt=0)
+  // This pair is supported by Epson, Xprinter, Star, Bixolon, and most
+  // modern ESC/POS printers. Printers that don't understand FS . silently
+  // ignore it and fall back to the selected codepage — harmless.
+  INIT: Buffer.from([
+    ESC, 0x40,                     // ESC @   — initialize/reset
+    FS, 0x2E, 0x02, 0x00, 0x00, 0x00, // FS . 2 0 0 0 — UTF-8 mode
+  ]),
 
   // Text alignment
   ALIGN_LEFT: Buffer.from([ESC, 0x61, 0x00]),
@@ -97,6 +109,20 @@ export class EscPosFormatter {
     // Header
     parts.push(ESCPOS.ALIGN_CENTER);
 
+    // Refund banner
+    if (data.isRefund) {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text('*** ZWROT / REFUND ***'));
+      parts.push(ESCPOS.BOLD_OFF);
+      if (data.originalOrderNumber) {
+        parts.push(this.text(`Original: #${data.originalOrderNumber}`));
+      }
+      if (data.refundReason) {
+        parts.push(this.text(`Reason: ${data.refundReason}`));
+      }
+      parts.push(this.text(''));
+    }
+
     // Reprint banner
     if (data.isReprint) {
       parts.push(ESCPOS.BOLD_ON);
@@ -119,7 +145,7 @@ export class EscPosFormatter {
 
     // Date/Time — use original date for reprints
     const receiptDate = data.isReprint && data.originalDate
-      ? new Date(data.originalDate).toLocaleString()
+      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z').toLocaleString()
       : new Date().toLocaleString();
     parts.push(this.text(receiptDate));
     if (data.isReprint) {
@@ -159,14 +185,28 @@ export class EscPosFormatter {
     // Separator
     parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
 
-    // Payment
-    parts.push(this.formatLine('Payment:', data.payment.method));
-    parts.push(this.formatLine('Amount:', this.formatMoney(data.payment.amount)));
-
-    // Change (if cash)
-    if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
-      const change = data.payment.amount - data.total;
-      parts.push(this.formatLine('Change:', this.formatMoney(change)));
+    // Payment — split or single
+    if (data.tenders && data.tenders.length > 1) {
+      parts.push(this.formatLine('Payment:', 'SPLIT'));
+      for (const tender of data.tenders) {
+        parts.push(this.formatLine(`  ${tender.method}:`, this.formatMoney(tender.amount)));
+      }
+      // Change from cash tender
+      const cashTender = data.tenders.find(t => t.method.toUpperCase() === 'CASH');
+      if (cashTender) {
+        const totalNonCash = data.tenders.filter(t => t.method.toUpperCase() !== 'CASH').reduce((s, t) => s + t.amount, 0);
+        const cashNeeded = data.total - totalNonCash;
+        if (cashTender.amount > cashNeeded && cashNeeded > 0) {
+          parts.push(this.formatLine('Change:', this.formatMoney(cashTender.amount - cashNeeded)));
+        }
+      }
+    } else {
+      parts.push(this.formatLine('Payment:', data.payment.method));
+      parts.push(this.formatLine('Amount:', this.formatMoney(data.payment.amount)));
+      if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
+        const change = data.payment.amount - data.total;
+        parts.push(this.formatLine('Change:', this.formatMoney(change)));
+      }
     }
 
     // Footer
@@ -234,75 +274,98 @@ export class EscPosFormatter {
   formatTestPage(): Buffer {
     const parts: Buffer[] = [];
 
-    // Initialize
     parts.push(ESCPOS.INIT);
-
-    // Header
     parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(ESCPOS.DOUBLE_SIZE_ON);
-    parts.push(this.text('PRINTER TEST'));
-    parts.push(ESCPOS.NORMAL_SIZE);
-    parts.push(this.text(''));
-
-    // Info
-    parts.push(this.text('Zira AI v1.0.1'));
-    parts.push(this.text(`Paper: ${this.paperWidth}mm`));
-    parts.push(this.text(`Chars/line: ${this.charsPerLine}`));
-    parts.push(this.text(''));
-
-    // Separator
-    parts.push(ESCPOS.ALIGN_LEFT);
-    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
-
-    // Text styles
-    parts.push(this.text('Normal text'));
     parts.push(ESCPOS.BOLD_ON);
-    parts.push(this.text('Bold text'));
+    parts.push(this.text('Zira AI'));
     parts.push(ESCPOS.BOLD_OFF);
-    parts.push(ESCPOS.UNDERLINE_ON);
-    parts.push(this.text('Underlined text'));
-    parts.push(ESCPOS.UNDERLINE_OFF);
-    parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
-    parts.push(this.text('Double height'));
-    parts.push(ESCPOS.NORMAL_SIZE);
-    parts.push(ESCPOS.DOUBLE_WIDTH_ON);
-    parts.push(this.text('Double width'));
-    parts.push(ESCPOS.NORMAL_SIZE);
-
-    // Separator
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
-
-    // Alignment test
-    parts.push(ESCPOS.ALIGN_LEFT);
-    parts.push(this.text('Left aligned'));
-    parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(this.text('Center aligned'));
-    parts.push(ESCPOS.ALIGN_RIGHT);
-    parts.push(this.text('Right aligned'));
-    parts.push(ESCPOS.ALIGN_LEFT);
-
-    // Separator
-    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
-
-    // Special characters
-    parts.push(this.text('Special: $ % & @ # !'));
-    parts.push(this.text('Polish: ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ'));
-    parts.push(this.text('Vietnamese: ăâđêôơư ĂÂĐÊÔƠƯ'));
-
-    // Separator
-    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
-
-    // Timestamp
-    parts.push(ESCPOS.ALIGN_CENTER);
+    parts.push(this.text(`${this.paperWidth}mm / ${this.charsPerLine} chars`));
     parts.push(this.text(new Date().toLocaleString()));
-    parts.push(this.text(''));
-    parts.push(this.text('Test completed successfully!'));
+    parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+    parts.push(this.text('OK'));
 
-    // Feed and cut
-    parts.push(ESCPOS.FEED_LINES(4));
+    parts.push(ESCPOS.FEED_LINES(3));
     parts.push(ESCPOS.CUT_PARTIAL);
 
     return Buffer.concat(parts);
+  }
+
+  /**
+   * Format receipt as plain-text structured lines for raster image rendering.
+   * Used when the printer doesn't support UTF-8 text mode.
+   */
+  formatReceiptPlainLines(data: ReceiptData): Array<{ text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean }> {
+    type Line = { text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean };
+    const lines: Line[] = [];
+    const lr = (left: string, right: string, opts?: Partial<Line>): Line =>
+      ({ text: left, rightText: right, ...opts });
+
+    if (data.isRefund) {
+      lines.push({ text: '*** ZWROT / REFUND ***', bold: true, center: true });
+      if (data.originalOrderNumber) lines.push({ text: `Original: #${data.originalOrderNumber}`, center: true });
+      if (data.refundReason) lines.push({ text: `Reason: ${data.refundReason}`, center: true });
+    }
+    if (data.isReprint) {
+      lines.push({ text: '*** KOPIA / REPRINT ***', bold: true, center: true });
+    }
+    lines.push({ text: data.salonName || 'Zira AI POS', big: true, center: true });
+    lines.push({ text: '' });
+    if (data.orderNumber) lines.push({ text: `Order #${data.orderNumber}`, bold: true, center: true });
+    const receiptDate = data.isReprint && data.originalDate
+      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z').toLocaleString()
+      : new Date().toLocaleString();
+    lines.push({ text: receiptDate, center: true });
+    if (data.isReprint) lines.push({ text: `Reprinted: ${new Date().toLocaleString()}`, center: true });
+    lines.push({ text: '' });
+    lines.push({ separator: true, text: '' });
+
+    for (const item of data.items) {
+      const name = this.truncate(item.name, 40);
+      lines.push({ text: name });
+      const unit = item.unit ? ` ${item.unit}` : '';
+      const qty = `${item.quantity}${unit}`;
+      lines.push({ text: `  ${qty} x ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}` });
+    }
+
+    lines.push({ separator: true, text: '' });
+    if (data.subtotal) lines.push(lr('Subtotal:', this.formatMoney(data.subtotal)));
+    if (data.discount && data.discount > 0) lines.push(lr('Discount:', `-${this.formatMoney(data.discount)}`));
+    lines.push(lr('TOTAL:', this.formatMoney(data.total), { bold: true, big: true }));
+    lines.push({ separator: true, text: '' });
+
+    if (data.tenders && data.tenders.length > 1) {
+      lines.push(lr('Payment:', 'SPLIT'));
+      for (const tender of data.tenders) {
+        lines.push(lr(`  ${tender.method}:`, this.formatMoney(tender.amount)));
+      }
+      const cashTender = data.tenders.find(t => t.method.toUpperCase() === 'CASH');
+      if (cashTender) {
+        const totalNonCash = data.tenders.filter(t => t.method.toUpperCase() !== 'CASH').reduce((s, t) => s + t.amount, 0);
+        const cashNeeded = data.total - totalNonCash;
+        if (cashTender.amount > cashNeeded && cashNeeded > 0) {
+          lines.push(lr('Change:', this.formatMoney(cashTender.amount - cashNeeded)));
+        }
+      }
+    } else {
+      lines.push(lr('Payment:', data.payment.method));
+      lines.push(lr('Amount:', this.formatMoney(data.payment.amount)));
+      if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
+        lines.push(lr('Change:', this.formatMoney(data.payment.amount - data.total)));
+      }
+    }
+
+    lines.push({ text: '' });
+    if (data.customerNip) {
+      lines.push({ text: `NIP: ${data.customerNip}`, center: true });
+      if (data.customerName) lines.push({ text: data.customerName, center: true });
+    }
+    if (data.cashierName) lines.push({ text: `Served by: ${data.cashierName}`, center: true });
+    lines.push({ text: '' });
+    lines.push({ text: 'Thank you for your visit!', center: true });
+    lines.push({ text: 'See you again!', center: true });
+
+    return lines;
   }
 
   /**

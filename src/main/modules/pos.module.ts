@@ -24,7 +24,8 @@ import { quickKeyLayoutRepo } from '../database/repos/quickkey-layout-repo';
 import { checkinRepo } from '../database/repos/checkin-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
-import { getConfig } from '../config/store';
+import { apiClient } from '../network/api-client';
+import { getConfig, getSecureAuthToken } from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
@@ -361,6 +362,48 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:reprint-receipt', async (_e, orderId: string) => {
       try { const printed = await this.paymentController?.reprintReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
+    });
+
+    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string }) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+        if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        // Call backend refund endpoint using the backend_id
+        const result = await apiClient.refundOrder(token, order.backend_id, {
+          type: data.type,
+          amount: data.type === 'PARTIAL' && data.amount ? data.amount / 100 : undefined, // grosze → PLN
+          reason: data.reason,
+        });
+
+        if (result === null) return { success: false, error: 'Refund endpoint not available' };
+
+        // Update local DB
+        const refundAmount = data.type === 'FULL' ? order.total : (data.amount ?? 0);
+        orderRepo.markRefunded(orderId, refundAmount, data.reason || '', data.type);
+        database.save();
+
+        // Print refund receipt
+        try { await this.paymentController?.printRefundReceipt(orderId); } catch (e: any) {
+          logger.warn(`[PosModule] Refund receipt print failed: ${e.message}`);
+        }
+
+        // Open cash drawer if original payment was cash
+        if (order.payment_method === 'CASH') {
+          try { await this.paymentController?.openCashDrawer(); } catch {}
+        }
+
+        logger.info(`[PosModule] Order ${order.order_number} refunded: ${data.type}, amount=${refundAmount}, reason=${data.reason}`);
+        return { success: true };
+      } catch (e: any) {
+        logger.error(`[PosModule] Refund failed for order ${orderId}: ${e.message}`);
+        return { success: false, error: e.message };
+      }
     });
 
     ipcMain.handle('pos:open-cash-drawer', async () => {

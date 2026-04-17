@@ -301,6 +301,10 @@ export interface ReceiptData {
   customerNip?: string;
   isReprint?: boolean;       // Mark as copy/reprint
   originalDate?: string;     // Original transaction date (ISO string)
+  isRefund?: boolean;        // Mark as refund receipt
+  refundReason?: string;     // Reason for refund
+  originalOrderNumber?: string; // Original order number being refunded
+  tenders?: ReceiptPayment[]; // Split payment: multiple tenders
 }
 
 // Document data for A4 printing

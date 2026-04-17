@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 
 interface CartItemProps {
@@ -25,6 +25,12 @@ export default function CartItemRow({
   const [priceInput, setPriceInput] = useState((item.price / 100).toFixed(2));
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState(item.notes || '');
+  const [editingQty, setEditingQty] = useState(false);
+  const [qtyInput, setQtyInput] = useState(String(item.quantity));
+  const qtyInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setQtyInput(String(item.quantity)); }, [item.quantity]);
+  useEffect(() => { if (editingQty) qtyInputRef.current?.select(); }, [editingQty]);
 
   useEffect(() => { setPriceInput((item.price / 100).toFixed(2)); }, [item.price]);
   useEffect(() => { setNotesInput(item.notes || ''); }, [item.notes]);
@@ -89,7 +95,35 @@ export default function CartItemRow({
                 : 'text-gray-500 hover:bg-gray-100 active:bg-gray-200 cursor-pointer'
             }`}
           >−</button>
-          <span className="px-3 text-center text-sm font-semibold text-gray-800 select-none">{item.quantity}</span>
+          {editingQty ? (
+            <input
+              ref={qtyInputRef}
+              type="text"
+              inputMode="numeric"
+              value={qtyInput}
+              onChange={(e) => { if (/^\d*$/.test(e.target.value)) setQtyInput(e.target.value); }}
+              onBlur={() => {
+                const val = parseInt(qtyInput, 10);
+                if (val > 0) onUpdateQuantity(item.id, val);
+                else setQtyInput(String(item.quantity));
+                setEditingQty(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
+                if (e.key === 'Escape') { setQtyInput(String(item.quantity)); setEditingQty(false); }
+              }}
+              className="w-12 text-center text-sm font-semibold text-gray-800 bg-white border border-brand-300 rounded outline-none py-0.5"
+              autoFocus
+            />
+          ) : (
+            <button
+              onClick={() => setEditingQty(true)}
+              className="px-3 text-center text-sm font-semibold text-gray-800 hover:text-brand-600 hover:bg-brand-50 rounded cursor-pointer transition-colors min-w-[2rem]"
+              title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
+            >
+              {item.quantity}
+            </button>
+          )}
           <button
             onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
             aria-label="Increase quantity"

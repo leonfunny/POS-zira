@@ -56,8 +56,47 @@ export const productRepo = {
   },
 
   getByBarcode(barcode: string): ProductVariantRow | null {
-    return database.get<ProductVariantRow>(
+    // 1. Exact match (fastest — indexed)
+    const exact = database.get<ProductVariantRow>(
       'SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1',
+      [barcode],
+    );
+    if (exact) return exact;
+
+    // 2. Strip leading zeros — some scanners prepend padding
+    const stripped = barcode.replace(/^0+/, '');
+    if (stripped !== barcode && stripped.length >= 4) {
+      const m = database.get<ProductVariantRow>(
+        'SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1',
+        [stripped],
+      );
+      if (m) return m;
+    }
+
+    // 3. Substring match — scanned data contains the stored barcode verbatim
+    const sub = database.get<ProductVariantRow>(
+      'SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4 AND INSTR(?, barcode) > 0',
+      [barcode],
+    );
+    if (sub) return sub;
+
+    // 4. Alphanumeric-only match — QR track data often rearranges special chars
+    //    (e.g. stored "9A30110=211106000006" → alphanumeric "9A30110211106000006"
+    //     scanned "0269A30110211106000006=..." → alphanumeric contains the same digits)
+    const scanAlnum = barcode.replace(/[^A-Za-z0-9]/g, '');
+    if (scanAlnum.length >= 8) {
+      const allActive = database.all<ProductVariantRow>(
+        'SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4',
+      );
+      for (const row of allActive) {
+        const rowAlnum = (row.barcode || '').replace(/[^A-Za-z0-9]/g, '');
+        if (rowAlnum.length >= 4 && scanAlnum.includes(rowAlnum)) return row;
+      }
+    }
+
+    // 5. Also try by SKU
+    return database.get<ProductVariantRow>(
+      'SELECT * FROM product_variants WHERE sku = ? AND is_active = 1',
       [barcode],
     );
   },

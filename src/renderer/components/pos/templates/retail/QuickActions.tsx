@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { PosAction, CartItem } from '../../../../hooks/usePosStore';
 
 interface HeldCart {
@@ -32,6 +32,7 @@ export default function QuickActions({
   const [discountValue, setDiscountValue] = useState('');
   const [discountMode, setDiscountMode] = useState<'fixed' | 'percentage'>('fixed');
   const [showHeld, setShowHeld] = useState(false);
+  const discountInputRef = useRef<HTMLInputElement>(null);
 
   const handleApplyDiscount = () => {
     const raw = parseFloat(discountValue || '0');
@@ -165,13 +166,17 @@ export default function QuickActions({
         {showDiscount && (
           <div className="flex items-center gap-1.5 ml-auto">
             <button
-              onClick={() => setDiscountMode(discountMode === 'fixed' ? 'percentage' : 'fixed')}
+              onClick={() => {
+                setDiscountMode(discountMode === 'fixed' ? 'percentage' : 'fixed');
+                requestAnimationFrame(() => discountInputRef.current?.focus());
+              }}
               className="px-2 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer min-w-[32px]"
               title={discountMode === 'fixed' ? 'Switch to %' : 'Switch to fixed'}
             >
               {discountMode === 'fixed' ? t('pos.currency') : '%'}
             </button>
             <input
+              ref={discountInputRef}
               type="text"
               inputMode="decimal"
               value={discountValue}

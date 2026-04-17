@@ -69,13 +69,16 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
   }, [cartStorageKey]);
 
   // Persist active cart to localStorage on every change (per-user, crash protection).
-  // Only saves when cart has items — never deletes on empty, because system-triggered
-  // cart/clear (e.g. logout) would wipe the saved cart before the user logs back in.
-  // The entry is cleared explicitly after successful payment via clearSavedCart().
+  // When cart becomes empty (clear or payment), remove the localStorage entry so
+  // stale items don't reappear when switching tabs or re-mounting.
   useEffect(() => {
-    if (cartStorageKey === null || cart.items.length === 0) return;
+    if (cartStorageKey === null) return;
     try {
-      window.localStorage.setItem(cartStorageKey, JSON.stringify(cart.items));
+      if (cart.items.length > 0) {
+        window.localStorage.setItem(cartStorageKey, JSON.stringify(cart.items));
+      } else {
+        window.localStorage.removeItem(cartStorageKey);
+      }
     } catch (err) {
       rlog.warn('[RetailTemplate] Failed to persist active cart:', err);
     }

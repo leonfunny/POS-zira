@@ -1,5 +1,16 @@
 # Repository Guidelines
 
+## Agent Operating Discipline
+Treat these as always-on defaults for coding, review, refactor, and debugging work in this repo:
+- Apply the behavior of the `karpathy-guidelines` skill by default; the user should not need to name it.
+- Be direct when assumptions, designs, or requests are weak. Explain the flaw and suggest a better alternative.
+- Surface important assumptions before acting. Ask only when ambiguity would make the implementation risky.
+- Prefer the smallest change that satisfies the goal. Do not add speculative features, flexibility, or abstractions.
+- Make surgical edits. Do not refactor, reformat, delete, or "improve" unrelated code.
+- Clean up only artifacts introduced by the current change, such as unused imports or dead branches created by your edit.
+- Define success criteria for non-trivial work and verify with the most relevant command or manual check before claiming completion.
+- If a task requires server-side behavior outside this repo, stop coding and draft a server change request instead of adding brittle client workarounds.
+
 ## Project Structure & Module Organization
 This repository is a Windows-focused Electron desktop app with a React renderer. Key paths:
 - `src/main/`: Electron main process entry (`index.ts`).

@@ -37,6 +37,7 @@ export const SERVICE_TOKENS = {
   CHANGE_FEED_SYNC: 'changeFeedSync',
   INVOICE_SYNC: 'invoiceSync',
   STAFF_SYNC: 'staffSync',
+  SYNC_LOG_SERVICE: 'syncLogService',
 
   // AI
   ZIRA_AI: 'ziraAI',

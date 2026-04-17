@@ -498,6 +498,7 @@ interface ElectronAPI {
       getDailyStats: (date: string) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
+      refund: (orderId: string, data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string }) => Promise<{ success: boolean; error?: string }>;
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
@@ -516,6 +517,11 @@ interface ElectronAPI {
       onProductsSynced: (callback: () => void) => () => void;
       onCatalogUpdated: (callback: (data: any) => void) => () => void;
       onStockUpdated: (callback: (data: any) => void) => () => void;
+      // Path B: Sync log conflicts
+      getConflicts: () => Promise<any[]>;
+      resolveConflict: (conflictId: number, resolution: string, adjustments?: any) => Promise<{ success: boolean; error?: string }>;
+      getSyncMode: () => Promise<string>;
+      onSyncEntry: (callback: (data: any) => void) => () => void;
     };
     tables: {
       getAll: () => Promise<PosTable[]>;

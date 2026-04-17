@@ -15,7 +15,7 @@ Desktop application (Electron + TypeScript) for connecting eNail POS with hardwa
 - npm or yarn
 
 ## Development Setup
-
+(powershell -File scripts/kill-electron.ps1)
 ```bash
 # Install dependencies
 npm install

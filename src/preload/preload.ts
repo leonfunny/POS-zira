@@ -457,6 +457,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
+      refund: (orderId: string, data: { type: string; amount?: number; reason?: string }) =>
+        ipcRenderer.invoke('pos:orders:refund', orderId, data),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),
@@ -490,6 +492,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const listener = (_e: any, data: any) => callback(data);
         ipcRenderer.on(IPC_CHANNELS.POS_STOCK_UPDATED, listener);
         return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STOCK_UPDATED, listener);
+      },
+      // Path B: Sync log conflicts
+      getConflicts: () => ipcRenderer.invoke('pos:sync:conflicts'),
+      resolveConflict: (conflictId: number, resolution: string, adjustments?: any) =>
+        ipcRenderer.invoke('pos:sync:resolve-conflict', conflictId, resolution, adjustments),
+      getSyncMode: () => ipcRenderer.invoke('pos:sync:mode'),
+      onSyncEntry: (callback: (data: any) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:sync-entry', listener);
+        return () => ipcRenderer.removeListener('pos:sync-entry', listener);
       },
     },
     tables: {

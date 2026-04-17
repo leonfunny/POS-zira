@@ -1263,13 +1263,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </>
                       ) : printerConfig.protocol === 'THERMAL' ? (
                         <>
-                          {/* USB / Windows Printer — for thermal USB printers, laser printers, etc. */}
+                          {/* USB / Windows Printer — for thermal USB printers */}
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.windowsPrinter')} (USB)</label>
                             <div className="flex gap-2">
                               <select
                                 value={printerConfig.windowsPrinter || ''}
-                                onChange={(e) => updatePrinter(printerType, { windowsPrinter: e.target.value })}
+                                onChange={(e) => updatePrinter(printerType, { windowsPrinter: e.target.value, ...(e.target.value ? { port: '' } : {}) })}
                                 className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                               >
                                 <option value="">{t('settings.selectPrinter')}</option>
@@ -1287,48 +1287,80 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               </button>
                             </div>
                           </div>
-                          <div className="relative flex items-center py-1">
-                            <div className="flex-grow border-t border-slate-200" />
-                            <span className="mx-2 text-xs text-slate-400">or serial</span>
-                            <div className="flex-grow border-t border-slate-200" />
-                          </div>
-                          {/* Serial / COM Port — for older serial thermal printers */}
-                          <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.comPort')} (Serial)</label>
-                            <div className="flex gap-2">
+                          {/* Serial fallback — only show when no USB printer is selected */}
+                          {!printerConfig.windowsPrinter && (
+                            <>
+                              <div className="relative flex items-center py-1">
+                                <div className="flex-grow border-t border-slate-200" />
+                                <span className="mx-2 text-xs text-slate-400">or serial</span>
+                                <div className="flex-grow border-t border-slate-200" />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.comPort')} (Serial)</label>
+                                <div className="flex gap-2">
+                                  <select
+                                    value={printerConfig.port || ''}
+                                    onChange={(e) => updatePrinter(printerType, { port: e.target.value })}
+                                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                  >
+                                    <option value="">{t('settings.selectPort')}</option>
+                                    {ports.map((port) => (
+                                      <option key={port} value={port}>{port}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    onClick={handleRefreshPorts}
+                                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.baudRate')}</label>
+                                <select
+                                  value={printerConfig.baudRate || 9600}
+                                  onChange={(e) => updatePrinter(printerType, { baudRate: parseInt(e.target.value) })}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                >
+                                  <option value={9600}>9600</option>
+                                  <option value={19200}>19200</option>
+                                  <option value={38400}>38400</option>
+                                  <option value={57600}>57600</option>
+                                  <option value={115200}>115200</option>
+                                </select>
+                              </div>
+                            </>
+                          )}
+                          {/* Paper settings */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.paperWidth')} (mm)</label>
                               <select
-                                value={printerConfig.port || ''}
-                                onChange={(e) => updatePrinter(printerType, { port: e.target.value })}
-                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                value={printerConfig.paperWidth || 80}
+                                onChange={(e) => {
+                                  const pw = parseInt(e.target.value);
+                                  updatePrinter(printerType, { paperWidth: pw, charsPerLine: pw === 80 ? 48 : 32 });
+                                }}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                               >
-                                <option value="">{t('settings.selectPort')}</option>
-                                {ports.map((port) => (
-                                  <option key={port} value={port}>{port}</option>
-                                ))}
+                                <option value={80}>80mm</option>
+                                <option value={58}>58mm</option>
                               </select>
-                              <button
-                                onClick={handleRefreshPorts}
-                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-                              >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
-                              </button>
                             </div>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.baudRate')}</label>
-                            <select
-                              value={printerConfig.baudRate || 9600}
-                              onChange={(e) => updatePrinter(printerType, { baudRate: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
-                            >
-                              <option value={9600}>9600</option>
-                              <option value={19200}>19200</option>
-                              <option value={38400}>38400</option>
-                              <option value={57600}>57600</option>
-                              <option value={115200}>115200</option>
-                            </select>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.charsPerLine')}</label>
+                              <input
+                                type="number"
+                                value={printerConfig.charsPerLine || 48}
+                                onChange={(e) => updatePrinter(printerType, { charsPerLine: parseInt(e.target.value) || 48 })}
+                                min={20}
+                                max={80}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                              />
+                            </div>
                           </div>
                         </>
                       ) : (

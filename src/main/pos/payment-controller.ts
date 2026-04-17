@@ -26,6 +26,17 @@ export class PaymentController {
   ) {}
 
   /**
+   * Parse tenders JSON from order row (if split payment).
+   */
+  private parseTenders(order: any): Array<{ method: string; amount: number }> | undefined {
+    if (!order.payment_tenders) return undefined;
+    try {
+      const tenders = JSON.parse(order.payment_tenders);
+      return Array.isArray(tenders) && tenders.length > 1 ? tenders : undefined;
+    } catch { return undefined; }
+  }
+
+  /**
    * Validate payment amount before processing
    */
   private validatePayment(orderId: string, amount?: number): { order: ReturnType<typeof orderRepo.getById>; error?: string } {
@@ -90,6 +101,7 @@ export class PaymentController {
       cashierName: order.staff_name || undefined,
       customerName: order.customer_name || undefined,
       customerNip: order.customer_nip || undefined,
+      tenders: this.parseTenders(order),
     };
 
     try {
@@ -145,6 +157,7 @@ export class PaymentController {
       cashierName: order.staff_name || undefined,
       customerName: order.customer_name || undefined,
       customerNip: order.customer_nip || undefined,
+      tenders: this.parseTenders(order),
       isReprint: true,
       originalDate: order.created_at,
     };
@@ -206,5 +219,64 @@ export class PaymentController {
 
     const receiptPrinted = await this.printReceipt(orderId);
     return { success: true, receiptPrinted };
+  }
+
+  /**
+   * Print a refund receipt — shows "ZWROT / REFUND" banner with negative amounts.
+   */
+  async printRefundReceipt(orderId: string): Promise<boolean> {
+    const order = orderRepo.getById(orderId);
+    if (!order) {
+      logger.warn(`[Payment] Cannot print refund receipt: order ${orderId} not found`);
+      return false;
+    }
+
+    const items = orderRepo.getItemsByOrderId(orderId);
+    const printer = this.getPrinter(PrinterType.RECEIPT);
+
+    if (!printer || !printer.isConnected()) {
+      logger.warn('[Payment] No receipt printer connected, cannot print refund receipt');
+      return false;
+    }
+
+    const refundAmount = (order as any).refund_amount ?? order.total;
+    const isFullRefund = refundAmount >= order.total;
+
+    const receiptData: ReceiptData = {
+      orderNumber: `R-${order.order_number || orderId.substring(0, 8)}`,
+      salonName: this.getSalonName?.(),
+      items: items.map((i) => {
+        const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
+        return {
+          name: i.name,
+          quantity: isFullRefund ? -i.quantity : i.quantity,
+          unitPrice: i.price,
+          totalPrice: isFullRefund ? -i.total : i.total,
+          vatRate: i.vat_rate,
+          sku: i.sku || undefined,
+          unit: product?.sale_unit || undefined,
+        };
+      }),
+      payment: {
+        method: order.payment_method || 'CASH',
+        amount: -refundAmount,
+      },
+      subtotal: isFullRefund ? -order.subtotal : order.subtotal,
+      discount: order.discount > 0 ? order.discount : undefined,
+      total: -refundAmount,
+      cashierName: order.staff_name || undefined,
+      isRefund: true,
+      refundReason: (order as any).refund_reason || undefined,
+      originalOrderNumber: order.order_number || orderId.substring(0, 8),
+    };
+
+    try {
+      await printer.printReceipt(receiptData);
+      logger.info(`[Payment] Refund receipt printed for order ${order.order_number}`);
+      return true;
+    } catch (err) {
+      logger.error(`[Payment] Refund receipt print failed: ${err}`);
+      return false;
+    }
   }
 }

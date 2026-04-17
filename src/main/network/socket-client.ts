@@ -483,6 +483,15 @@ export default class SocketClient extends EventEmitter {
       this.emit('billiard:resource-updated', data);
     });
 
+    // ==========================================
+    // Path B: Sync Log real-time events
+    // ==========================================
+
+    this.socket.on('sync:entry', (data: any) => {
+      logger.debug(`Sync entry received: seq=${data?.seq} type=${data?.entity_type}`);
+      this.emit('sync:entry', data);
+    });
+
     // Error handling
     this.socket.on('error', (error) => {
       logger.error(`Socket error: ${error.message || error}`);

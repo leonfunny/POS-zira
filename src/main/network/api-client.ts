@@ -416,6 +416,36 @@ export class ApiClient {
   }
 
   /**
+   * Refund a POS order (full or partial).
+   * POST /api/v1/b2b/pos/orders/:id/refund
+   * Returns null if endpoint not deployed (404/501).
+   */
+  async refundOrder(
+    token: string,
+    orderId: string,
+    data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string },
+  ): Promise<{ success: boolean; refundAmount?: number; status?: string } | null> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/refund`;
+
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Push a check-in to the server (Phase 1 of log-based sync).
    * POST /api/v1/print-agent/checkins
    *
@@ -799,6 +829,101 @@ export class ApiClient {
     }
     const data = await response.json();
     return Array.isArray(data) ? data : data.staff ?? data.items ?? [];
+  }
+
+  // ==========================================
+  // Sync — Path B: Log-based bidirectional sync
+  // ==========================================
+
+  /**
+   * Pull sync log entries from server.
+   * GET /api/v1/sync/pull?after=N&types=...&limit=200
+   *
+   * Returns null if endpoint not deployed (404/501) — dark launch safe.
+   */
+  async syncPull(
+    token: string,
+    after: number,
+    types?: string[],
+    limit: number = 200,
+  ): Promise<{ entries: any[]; hasMore: boolean } | null> {
+    const params = new URLSearchParams({
+      after: String(after),
+      limit: String(limit),
+    });
+    if (types?.length) params.set('types', types.join(','));
+
+    const url = `${this.baseUrl}/api/v1/sync/pull?${params}`;
+    const agentId = getConfigValue('agentId') as string | undefined;
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(agentId && { 'X-Agent-Id': agentId }),
+      },
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      entries: data.entries ?? [],
+      hasMore: data.hasMore ?? false,
+    };
+  }
+
+  /**
+   * Push local sync log entries to server.
+   * POST /api/v1/sync/push
+   *
+   * Server validates each entry and returns accept/reject per entry.
+   * Idempotent via source_tx UUID.
+   * Returns null if endpoint not deployed (404/501) — dark launch safe.
+   */
+  async syncPush(
+    token: string,
+    entries: Array<{
+      source_tx: string;
+      entity_type: string;
+      entity_id: string;
+      event: string;
+      payload: any;
+    }>,
+  ): Promise<{
+    results: Array<{
+      source_tx: string;
+      accepted: boolean;
+      seq?: number;
+      code?: string;
+      detail?: string;
+    }>;
+  } | null> {
+    const url = `${this.baseUrl}/api/v1/sync/push`;
+    const agentId = getConfigValue('agentId') as string | undefined;
+    const idempotencyKey = entries.length > 0 ? entries[0].source_tx : 'empty';
+
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+        ...(agentId && { 'X-Agent-Id': agentId }),
+      },
+      body: JSON.stringify({ entries }),
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
   }
 }
 

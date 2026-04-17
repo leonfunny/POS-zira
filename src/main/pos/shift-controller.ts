@@ -65,21 +65,32 @@ export class ShiftController {
 
     if (!shift) throw new Error(`Shift ${shiftId} not found`);
 
-    // Get orders for this shift
+    // Get orders for this shift — handle split payments
     const orders = orderRepo.getByShift(shiftId);
     const totalSales = orders.reduce((sum, o) => sum + o.total, 0);
-    const cashTotal = orders
-      .filter((o) => o.payment_method === 'CASH')
-      .reduce((sum, o) => sum + o.total, 0);
-    const cardTotal = orders
-      .filter((o) => o.payment_method === 'CARD')
-      .reduce((sum, o) => sum + o.total, 0);
-    const blikTotal = orders
-      .filter((o) => o.payment_method === 'BLIK')
-      .reduce((sum, o) => sum + o.total, 0);
-    const transferTotal = orders
-      .filter((o) => o.payment_method === 'TRANSFER')
-      .reduce((sum, o) => sum + o.total, 0);
+
+    // Aggregate by payment method, accounting for split tenders
+    let cashTotal = 0, cardTotal = 0, blikTotal = 0, transferTotal = 0;
+    for (const o of orders) {
+      const tendersJson = (o as any).payment_tenders;
+      if (tendersJson) {
+        try {
+          const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
+          for (const t of tenders) {
+            if (t.method === 'CASH') cashTotal += t.amount;
+            else if (t.method === 'CARD') cardTotal += t.amount;
+            else if (t.method === 'BLIK') blikTotal += t.amount;
+            else if (t.method === 'TRANSFER') transferTotal += t.amount;
+          }
+          continue; // skip single-method fallback
+        } catch { /* fall through */ }
+      }
+      // Single payment method
+      if (o.payment_method === 'CASH') cashTotal += o.total;
+      else if (o.payment_method === 'CARD') cardTotal += o.total;
+      else if (o.payment_method === 'BLIK') blikTotal += o.total;
+      else if (o.payment_method === 'TRANSFER') transferTotal += o.total;
+    }
 
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
@@ -149,30 +160,43 @@ export class ShiftController {
   }
 
   /**
-   * Retry syncing any unsynced shifts (called on reconnect)
+   * Retry syncing any unsynced shifts (called on reconnect).
+   * Caps retries at 5 — permanently failed shifts are marked synced=-1.
    */
   async retryUnsyncedShifts(): Promise<void> {
     const token = getSecureAuthToken();
     if (!token || !this.isOnline()) return;
 
+    const MAX_ATTEMPTS = 5;
+
     // Retry unsynced shift opens
-    const unsyncedOpen = database.all<{ id: string; staff_id: string; opening_cash: number }>(
-      'SELECT id, staff_id, opening_cash FROM shifts WHERE synced = 0 AND backend_id IS NULL',
+    const unsyncedOpen = database.all<{ id: string; staff_id: string; opening_cash: number; sync_attempts: number }>(
+      'SELECT id, staff_id, opening_cash, COALESCE(sync_attempts, 0) as sync_attempts FROM shifts WHERE synced = 0 AND backend_id IS NULL',
     );
     for (const shift of unsyncedOpen) {
+      if (shift.sync_attempts >= MAX_ATTEMPTS) {
+        database.run("UPDATE shifts SET synced = -1, sync_error = 'Max retry exceeded' WHERE id = ?", [shift.id]);
+        logger.warn(`[Shift] Shift open ${shift.id} shelved after ${shift.sync_attempts} failed attempts`);
+        continue;
+      }
+
       try {
+        database.run('UPDATE shifts SET sync_attempts = COALESCE(sync_attempts, 0) + 1 WHERE id = ?', [shift.id]);
         const result = await apiClient.openPosShift(token, {
           staffId: shift.staff_id,
           openingCash: shift.opening_cash,
         });
-        database.run('UPDATE shifts SET backend_id = ?, synced = 1 WHERE id = ?', [
+        database.run('UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ?', [
           result.shiftId,
           shift.id,
         ]);
         database.save();
         logger.info(`[Shift] Retry: synced shift open ${shift.id}`);
-      } catch (err) {
-        logger.warn(`[Shift] Retry failed for shift open ${shift.id}: ${err}`);
+      } catch (err: any) {
+        const errMsg = (err.message || String(err)).substring(0, 500);
+        database.run('UPDATE shifts SET sync_error = ? WHERE id = ?', [errMsg, shift.id]);
+        database.save();
+        logger.warn(`[Shift] Retry failed for shift open ${shift.id} (attempt ${shift.sync_attempts + 1}/${MAX_ATTEMPTS}): ${errMsg}`);
       }
     }
 
@@ -186,8 +210,8 @@ export class ShiftController {
           closingCash: shift.closing_cash,
         });
         logger.info(`[Shift] Retry: synced shift close ${shift.id}`);
-      } catch (err) {
-        logger.warn(`[Shift] Retry failed for shift close ${shift.id}: ${err}`);
+      } catch (err: any) {
+        logger.warn(`[Shift] Retry failed for shift close ${shift.id}: ${err.message}`);
       }
     }
   }

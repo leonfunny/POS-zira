@@ -203,6 +203,10 @@ class Database {
       'billiard_mutation_queue',
       // Sync state
       'change_feed_cursor',
+      // Path B sync log tables
+      'local_sync_log',
+      'sync_conflicts',
+      'sync_state',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)
