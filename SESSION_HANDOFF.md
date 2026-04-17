@@ -1,6 +1,38 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-17 (session 50) | Read this file at the start of every new session.
+> Last updated: 2026-04-17 (session 51) | Read this file at the start of every new session.
+
+---
+
+## Session 51 — PaymentModal Touch Keypad + POS Bug Fixes
+
+**Status:** Built, typecheck passes. Not yet committed.
+
+### Keypad
+- `PaymentModal.tsx`: In-modal numeric keypad (4x4 grid) for touchscreen POS use
+  - Digits 0-9, decimal, backspace (SVG), clear, 00, quick actions (Exact/Remaining)
+  - Functional state updates for rapid-tap safety; disabled during saving
+  - Cash mode + split mode support; physical keyboard still works
+- E2E verified with screenshots at 1280x720 and 1600x900
+
+### Payment speed optimization
+- **Before:** 10-15s (4 PowerShell spawns + 1.5s hardcoded delay)
+- **After:** ~3-5s (1 combined PS spawn, cached presence check, 300ms post-check)
+- `thermal-driver.ts`: Combined flush+print+post-check into single PowerShell call; cached printer presence (10s TTL); removed 1500ms hardcoded delay
+- `PaymentModal.tsx`: Receipt print + drawer open in parallel; shows "Printing..." status
+
+### Post-payment reset
+- `RetailTemplate.tsx`: Search query and category reset to "All" after payment
+
+### Discount fix
+- `pos-store.ts`: Cart stores `discountType` + `discountPercent`; `recalcCart` recalculates percentage discounts when items change; added `cart/clearDiscount` action
+- `Cart.tsx`: Shows discount percentage, added X button to remove discount
+
+### VAT display
+- `Cart.tsx`: "Incl. VAT" now styled as informational (italic, parenthesized, lighter color). Prices are gross (VAT-inclusive) — current calculation is correct for Polish retail.
+
+### aria-hidden fix
+- `POSLayout.tsx`: Replaced `aria-hidden="true"` with `aria-label="Barcode scanner"` on hidden scanner input (fixes Chrome console errors on fullscreen toggle)
 
 ---
 
@@ -46,6 +78,7 @@
 - [x] Split payment
 
 ### P1 — Should have
+- [x] PaymentModal touch keypad (s51)
 - [ ] Custom/open price items (cần backend sync)
 - [ ] Z-report warning (thiếu/thừa tiền > 5zl)
 

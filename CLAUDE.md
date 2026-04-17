@@ -290,7 +290,8 @@ The following skills are installed globally (`~/.claude/commands/`). Activate th
 
 | Trigger | Skill(s) to invoke |
 |---|---|
-| Building or redesigning any UI component | `ui-ux-pro-max` |
+| Building or redesigning any UI component | `ui-ux-pro-max` + read `DESIGN.md` first |
+| User mentions DESIGN.md, design presets, visual direction, or UI style | `design-md` |
 | Task involves auth, API keys, payments, user input validation, IPC handlers | `ecc:security-review` |
 | Writing or improving Playwright tests | `ecc:e2e-testing` |
 | Work touches `src/main/network/`, `src/main/database/`, or any IPC handler | `ecc:backend-patterns` |
@@ -325,6 +326,7 @@ The following skills are installed globally (`~/.claude/commands/`). Activate th
 | `/audit-functional` | Testing — E2E smoke tests, critical path coverage, test gaps (calls `test-print-agent` + `ecc:e2e-testing`) |
 | **Design & Quality** | |
 | `ui-ux-pro-max` | UI/UX design — 67 styles, 96 palettes, touch-friendly patterns |
+| `design-md` | Browse/apply awesome-design-md presets; respects existing DESIGN.md |
 | `ecc:security-review` | Security checklist for auth, payments, API, secrets |
 | `ecc:e2e-testing` | Playwright Page Object Model, CI/CD, artifact management |
 | `ecc:verification-loop` | 6-stage pre-PR quality gate (build→types→lint→tests→security→diff) |
