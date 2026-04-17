@@ -49,6 +49,9 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
   const parsedCash = parseFloat(cashAmount || '0');
   const cashAmountGrosze = Number.isFinite(parsedCash) ? Math.round(parsedCash * 100) : 0;
   const changeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - grandTotal) : 0;
+  const cashShortfall = method === 'CASH' && !splitMode && cashAmountGrosze > 0 && cashAmountGrosze < grandTotal
+    ? grandTotal - cashAmountGrosze
+    : 0;
 
   const isB2B = extraOrderFields?.mode === 'b2b';
   const canPayInvoice = extraOrderFields?.canPayInvoice ?? false;
@@ -222,214 +225,393 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
   );
 
   const currency = t('pos.currency') || 'zl';
+  const tOr = (key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  };
+  const money = (amount: number) => `${(amount / 100).toFixed(2)} ${currency}`;
+  const methodLabel = (pm: PaymentMethod) => t(`pos.payment.${pm.toLowerCase()}`) || pm;
+  const activeMethodLabel = splitMode ? tOr('pos.split.toggle', 'Split') : methodLabel(method);
+  const splitProgress = grandTotal > 0
+    ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
+    : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8 bg-black/50" onClick={saving ? undefined : onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-md mx-4 mb-[320px] shadow-2xl border border-gray-200" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="text-base font-bold text-gray-900">{t('pos.payment')}</h2>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-4"
+      onClick={saving ? undefined : onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="payment-modal-title"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase text-slate-500">{activeMethodLabel}</p>
+            <h2 id="payment-modal-title" className="truncate text-xl font-semibold text-slate-950">{t('pos.payment')}</h2>
+          </div>
           <div className="flex items-center gap-2">
-            {/* Split toggle */}
             <button
+              type="button"
               onClick={() => { setSplitMode(!splitMode); setTenders([]); setSplitAmount(''); }}
               disabled={saving}
-              className={`px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors cursor-pointer ${
+              aria-pressed={splitMode}
+              className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
-                  ? 'bg-purple-500 text-white border-purple-500'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300 hover:text-purple-500'
+                  ? 'border-brand-600 bg-brand-600 text-white'
+                  : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
               }`}
             >
-              {t('pos.split.toggle') || 'Split'}
+              {tOr('pos.split.toggle', 'Split')}
             </button>
             <button
+              type="button"
               onClick={onClose}
               disabled={saving}
               aria-label="Close"
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 transition-colors cursor-pointer"
+              className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
         </div>
 
-        <div className="px-5 py-4 space-y-4">
-          {/* Total */}
-          <div className="bg-brand-50 border border-brand-100 rounded-xl py-4 text-center">
-            <p className="text-xs text-brand-400 font-medium mb-0.5">{t('pos.cart.total')}</p>
-            <p className="text-3xl font-bold text-brand-600 leading-none">{totalZl.toFixed(2)}&nbsp;{currency}</p>
-          </div>
+        <div className="flex-1 overflow-y-auto bg-slate-100 p-4">
+          <div className="grid min-h-[520px] gap-4 lg:grid-cols-[0.9fr_1.35fr]">
+            <aside className="space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-5 text-white shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-300">{t('pos.cart.total')}</p>
+                <p className="mt-2 text-5xl font-semibold leading-none">{money(grandTotal)}</p>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-200">
+                  <div>
+                    <p className="text-xs text-slate-400">{t('pos.cart.subtotal')}</p>
+                    <p className="font-semibold">{money(cart.subtotal)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">{t('pos.cart.inclVat')}</p>
+                    <p className="font-semibold">{money(cart.tax)}</p>
+                  </div>
+                  {(cart.discount > 0 || tip > 0) && (
+                    <>
+                      {cart.discount > 0 && (
+                        <div>
+                          <p className="text-xs text-slate-400">{t('pos.cart.discount')}</p>
+                          <p className="font-semibold text-amber-200">-{money(cart.discount)}</p>
+                        </div>
+                      )}
+                      {tip > 0 && (
+                        <div>
+                          <p className="text-xs text-slate-400">{tOr('pos.tip', 'Tip')}</p>
+                          <p className="font-semibold">{money(tip)}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-500">{t('pos.payment')}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {availableMethods.map(pm => {
+                    const disabled = pm === 'INVOICE' && !canPayInvoice;
+                    const selected = !splitMode && method === pm;
+                    return (
+                      <button
+                        key={pm}
+                        type="button"
+                        onClick={() => !disabled && setMethod(pm)}
+                        disabled={saving || disabled}
+                        className={`flex min-h-[72px] min-w-0 items-center gap-3 rounded-md border p-3 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed ${
+                          selected
+                            ? 'border-brand-700 bg-brand-50 text-brand-900 shadow-sm'
+                            : disabled
+                              ? 'border-slate-200 bg-slate-50 text-slate-300'
+                              : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:bg-brand-50'
+                        }`}
+                      >
+                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md border ${
+                          selected ? 'border-brand-300 bg-white text-brand-700' : 'border-slate-200 bg-slate-50 text-slate-500'
+                        }`}>
+                          {PM_ICONS[pm]}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold">{methodLabel(pm)}</span>
+                          {pm === 'INVOICE' && disabled && (
+                            <span className="block truncate text-xs text-slate-400">B2B</span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
+
+            <section className="flex min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <p className="text-xs font-semibold uppercase text-slate-500">{activeMethodLabel}</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {splitMode
+                    ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
+                    : method === 'CASH'
+                      ? `${t('pos.payment.received')}: ${cashAmount ? money(cashAmountGrosze) : money(0)}`
+                      : `${t('pos.cart.total')}: ${money(grandTotal)}`}
+                </p>
+              </div>
+              <div className="flex-1 space-y-4 p-5">
 
           {/* ─── SPLIT MODE ─────────────────────────────────── */}
           {splitMode ? (
-            <div className="space-y-3">
-              {/* Remaining indicator */}
-              <div className={`flex justify-between items-center px-4 py-2.5 rounded-xl border ${
-                splitComplete ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'
+            <div className="space-y-4">
+              <div className={`rounded-lg border p-4 ${
+                splitComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
               }`}>
-                <span className="text-xs font-medium text-gray-600">
-                  {splitComplete ? (t('pos.split.complete') || 'Fully covered') : (t('pos.split.remaining') || 'Remaining')}
-                </span>
-                <span className={`text-sm font-bold ${splitComplete ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {splitComplete ? '0.00' : (remaining / 100).toFixed(2)} {currency}
-                </span>
-              </div>
-
-              {/* Tenders list */}
-              {tenders.length > 0 && (
-                <div className="space-y-1.5">
-                  {tenders.map((tender, idx) => (
-                    <div key={idx} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 text-gray-400">{PM_ICONS[tender.method]}</span>
-                        <span className="text-sm text-gray-700">{t(`pos.payment.${tender.method.toLowerCase()}`) || tender.method}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-gray-900">{(tender.amount / 100).toFixed(2)} {currency}</span>
-                        <button
-                          onClick={() => removeTender(idx)}
-                          className="w-6 h-6 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 cursor-pointer"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add tender form */}
-              {!splitComplete && (
-                <div className="flex gap-2">
-                  <select
-                    value={splitMethod}
-                    onChange={e => setSplitMethod(e.target.value as PaymentMethod)}
-                    className="px-2.5 py-2.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-brand-400 cursor-pointer"
-                  >
-                    {availableMethods.map(m => (
-                      <option key={m} value={m}>{t(`pos.payment.${m.toLowerCase()}`) || m}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={splitAmount}
-                    onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setSplitAmount(e.target.value); }}
-                    placeholder={(remaining / 100).toFixed(2)}
-                    className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-lg text-right font-medium focus:outline-none focus:border-brand-400"
-                    onKeyDown={e => { if (e.key === 'Enter') addTender(); }}
-                  />
-                  <button
-                    onClick={addTender}
-                    disabled={!splitAmount || parseFloat(splitAmount) <= 0}
-                    className="px-3 py-2.5 bg-brand-500 text-white rounded-lg text-xs font-medium hover:bg-brand-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    +
-                  </button>
-                </div>
-              )}
-
-              {/* Quick: add remaining */}
-              {!splitComplete && remaining > 0 && (
-                <button
-                  onClick={addRemaining}
-                  className="w-full py-2 text-xs text-brand-500 bg-brand-50 border border-brand-100 rounded-lg hover:bg-brand-100 cursor-pointer font-medium"
-                >
-                  {t('pos.split.addRemaining') || 'Add remaining'} ({(remaining / 100).toFixed(2)} {currency})
-                </button>
-              )}
-            </div>
-          ) : (
-            <>
-              {/* ─── SINGLE MODE ──────────────────────────────── */}
-              <div className="grid grid-cols-3 gap-2.5">
-                {availableMethods.map(pm => {
-                  const disabled = pm === 'INVOICE' && !canPayInvoice;
-                  return (
-                    <button
-                      key={pm}
-                      onClick={() => !disabled && setMethod(pm)}
-                      disabled={saving || disabled}
-                      className={`py-3.5 px-3 rounded-xl text-center transition-all flex flex-col items-center gap-1.5 border cursor-pointer touch-manipulation ${
-                        method === pm
-                          ? 'bg-brand-500 text-white border-brand-500 shadow-sm'
-                          : disabled
-                            ? 'bg-slate-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                            : 'bg-white text-gray-600 border-gray-200 hover:border-brand-300 hover:text-brand-500 hover:bg-brand-50'
-                      } disabled:opacity-50`}
-                    >
-                      <span className={method === pm ? 'text-white' : ''}>{PM_ICONS[pm]}</span>
-                      <p className="text-[11px] font-medium leading-none">{t(`pos.payment.${pm.toLowerCase()}`)}</p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Cash input */}
-              {method === 'CASH' && (
-                <div className="space-y-3">
+                <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
-                    <label className="text-xs text-gray-500 font-medium block mb-1.5">{t('pos.payment.received')}</label>
-                    <input
-                      ref={inputRef}
-                      type="text"
-                      inputMode="decimal"
-                      value={cashAmount}
-                      onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
-                      placeholder={totalZl.toFixed(2)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-gray-200 rounded-xl text-xl text-gray-900 text-right font-bold focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                    />
+                    <p className={`text-sm font-semibold ${splitComplete ? 'text-emerald-800' : 'text-amber-800'}`}>
+                      {splitComplete ? tOr('pos.split.complete', 'Fully covered') : tOr('pos.split.remaining', 'Remaining')}
+                    </p>
+                    <p className={`mt-1 text-3xl font-semibold leading-none ${splitComplete ? 'text-emerald-900' : 'text-amber-900'}`}>
+                      {money(splitComplete ? 0 : Math.max(remaining, 0))}
+                    </p>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => setCashAmount(totalZl.toFixed(2))} className="px-3 py-2 text-xs bg-brand-50 text-brand-500 border border-brand-200 rounded-lg hover:bg-brand-100 transition-colors font-medium cursor-pointer">
-                      {t('pos.payment.exact')}
+                  <div className="text-right text-sm text-slate-700">
+                    <p className="font-semibold">{money(tendersTotal)}</p>
+                    <p>{t('pos.cart.total')}: {money(grandTotal)}</p>
+                  </div>
+                </div>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
+                  <div className="h-full rounded-full bg-brand-600" style={{ width: `${splitProgress}%` }} />
+                </div>
+              </div>
+
+              {!splitComplete && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="grid gap-3 md:grid-cols-[1fr_1.15fr_auto]">
+                    <label className="block min-w-0">
+                      <span className="mb-1 block text-sm font-semibold text-slate-700">{t('pos.payment')}</span>
+                      <select
+                        value={splitMethod}
+                        onChange={e => setSplitMethod(e.target.value as PaymentMethod)}
+                        className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        {availableMethods.map(m => (
+                          <option key={m} value={m} disabled={m === 'INVOICE' && !canPayInvoice}>{methodLabel(m)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block min-w-0" htmlFor="payment-split-amount">
+                      <span className="mb-1 block text-sm font-semibold text-slate-700">{tOr('pos.split.remaining', 'Amount')}</span>
+                      <input
+                        id="payment-split-amount"
+                        type="text"
+                        inputMode="decimal"
+                        data-keyboard="false"
+                        value={splitAmount}
+                        onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setSplitAmount(e.target.value); }}
+                        placeholder={(Math.max(remaining, 0) / 100).toFixed(2)}
+                        className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-right text-lg font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        onKeyDown={e => { if (e.key === 'Enter') addTender(); }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={addTender}
+                      disabled={!splitAmount || parseFloat(splitAmount) <= 0}
+                      aria-label="Add tender"
+                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
+                    >
+                      +
                     </button>
-                    {QUICK_AMOUNTS.filter(a => a >= grandTotal).slice(0, 3).map(amount => (
-                      <button key={amount} onClick={() => setCashAmount((amount / 100).toFixed(2))} className="px-3 py-2 text-xs bg-slate-50 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors font-medium cursor-pointer">
-                        {(amount / 100).toFixed(0)}&nbsp;{currency}
-                      </button>
-                    ))}
                   </div>
-                  {cashAmountGrosze > 0 && cashAmountGrosze >= grandTotal && (
-                    <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl">
-                      <span className="text-sm font-medium text-emerald-700">{t('pos.payment.change')}</span>
-                      <span className="text-xl font-bold text-emerald-600">{(changeGrosze / 100).toFixed(2)}&nbsp;{currency}</span>
-                    </div>
+                  {remaining > 0 && (
+                    <button
+                      type="button"
+                      onClick={addRemaining}
+                      className="mt-3 min-h-[44px] w-full rounded-md border border-brand-300 bg-white px-4 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                    >
+                      {tOr('pos.split.addRemaining', 'Add remaining')} ({money(remaining)})
+                    </button>
                   )}
                 </div>
               )}
 
-              {/* Card status */}
-              {method === 'CARD' && cardStatus && (
-                <div className="flex items-center justify-center gap-2 py-3 px-4 bg-blue-50 border border-blue-100 rounded-xl">
-                  <svg className="w-4 h-4 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <p className="text-sm font-medium text-blue-600">{cardStatus}</p>
+              <div className="rounded-lg border border-slate-200 bg-white">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+                  <p className="text-sm font-semibold text-slate-900">{tOr('pos.split.toggle', 'Split')}</p>
+                  <p className="text-sm font-semibold text-slate-700">{money(tendersTotal)}</p>
+                </div>
+                {tenders.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-slate-500">
+                    No tenders added. {tOr('pos.split.remaining', 'Remaining')}: {money(grandTotal)}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200">
+                    {tenders.map((tender, idx) => (
+                      <div key={`${tender.method}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-600">{PM_ICONS[tender.method]}</span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-950">{methodLabel(tender.method)}</p>
+                            <p className="text-xs text-slate-500">{idx + 1}</p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <p className="text-lg font-semibold text-slate-950">{money(tender.amount)}</p>
+                          <button
+                            type="button"
+                            onClick={() => removeTender(idx)}
+                            aria-label="Remove tender"
+                            className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                          >
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : method === 'CASH' ? (
+            <div className="space-y-4">
+              {/* ─── SINGLE MODE ──────────────────────────────── */}
+              <label className="block" htmlFor="payment-cash-received">
+                <span className="mb-2 block text-sm font-semibold text-slate-700">{t('pos.payment.received')}</span>
+                <input
+                  id="payment-cash-received"
+                  ref={inputRef}
+                  type="text"
+                  inputMode="decimal"
+                  data-keyboard="false"
+                  value={cashAmount}
+                  onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
+                  placeholder={totalZl.toFixed(2)}
+                  className="h-16 w-full rounded-md border border-slate-300 bg-white px-4 text-right text-3xl font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => setCashAmount(totalZl.toFixed(2))}
+                  className="min-h-[44px] rounded-md border border-brand-300 bg-brand-50 px-3 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                >
+                  {t('pos.payment.exact')}
+                </button>
+                {QUICK_AMOUNTS.filter(a => a >= grandTotal).slice(0, 3).map(amount => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => setCashAmount((amount / 100).toFixed(2))}
+                    className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-400 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                  >
+                    {money(amount)}
+                  </button>
+                ))}
+              </div>
+
+              <div aria-live="polite" className={`rounded-lg border p-4 ${
+                cashShortfall > 0
+                  ? 'border-red-300 bg-red-50'
+                  : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
+                    ? 'border-emerald-300 bg-emerald-50'
+                    : 'border-slate-200 bg-slate-50'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {cashShortfall > 0
+                        ? tOr('pos.payment.insufficient', 'Insufficient cash')
+                        : t('pos.payment.change')}
+                    </p>
+                    <p className={`mt-1 text-3xl font-semibold leading-none ${
+                      cashShortfall > 0
+                        ? 'text-red-800'
+                        : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
+                          ? 'text-emerald-800'
+                          : 'text-slate-500'
+                    }`}>
+                      {cashShortfall > 0 ? money(cashShortfall) : money(changeGrosze)}
+                    </p>
+                  </div>
+                  <div className="text-right text-sm text-slate-600">
+                    <p>{t('pos.cart.total')}: {money(grandTotal)}</p>
+                    <p>{t('pos.payment.received')}: {money(cashAmountGrosze)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
+                <div className="flex items-start gap-4">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700">{PM_ICONS[method]}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-lg font-semibold text-slate-950">{methodLabel(method)}</p>
+                    <p className="mt-1 text-sm text-slate-600">{t('pos.cart.total')}: {money(grandTotal)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {method === 'CARD' && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                  <div className="flex items-center gap-3">
+                    <svg className={`h-5 w-5 text-blue-700 ${cardStatus ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <p className="text-sm font-semibold text-blue-900">{cardStatus || tOr('pos.payment.cardWaiting', 'Ready for terminal')}</p>
+                  </div>
                 </div>
               )}
-            </>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="px-5 pb-5 pt-1 space-y-2">
-          {error && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-lg">
-              <svg className="w-4 h-4 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-xs text-red-600">{error}</p>
+              {method === 'INVOICE' && (
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">{methodLabel('INVOICE')}</p>
+                  <p className="mt-1 text-sm text-slate-600">{extraOrderFields?.customer_name ?? extraOrderFields?.customer_nip ?? ''}</p>
+                </div>
+              )}
             </div>
           )}
-          <button
-            onClick={handleComplete}
-            disabled={!canComplete}
-            className="w-full py-4 rounded-xl font-bold text-base text-white bg-brand-500 hover:bg-brand-600 active:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm active:scale-[0.99] cursor-pointer"
-          >
-            {saving ? t('pos.payment.saving') : t('pos.payment.complete')}
-          </button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div className="space-y-3 border-t border-slate-200 bg-white px-5 py-4">
+          {error && (
+            <div aria-live="assertive" className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-3">
+              <svg className="h-5 w-5 shrink-0 text-red-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-red-800">{error}</p>
+            </div>
+          )}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 text-sm text-slate-600">
+              <p className="font-semibold text-slate-950">{activeMethodLabel}</p>
+              <p className="truncate">
+                {splitMode
+                  ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
+                  : method === 'CASH'
+                    ? `${t('pos.payment.change')}: ${money(changeGrosze)}`
+                    : `${t('pos.cart.total')}: ${money(grandTotal)}`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleComplete}
+              disabled={!canComplete}
+              className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
+            >
+              {saving ? t('pos.payment.saving') : `${t('pos.payment.complete')} ${money(grandTotal)}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
