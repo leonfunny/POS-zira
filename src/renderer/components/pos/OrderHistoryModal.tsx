@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface OrderRow {
   id: string;
@@ -18,6 +18,8 @@ interface OrderRow {
   refund_amount?: number;
   refund_reason?: string | null;
   refunded_at?: string | null;
+  customer_nip?: string | null;
+  customer_name?: string | null;
 }
 
 interface OrderItemRow {
@@ -36,15 +38,30 @@ interface OrderHistoryModalProps {
   t: (key: string) => string;
 }
 
-const PAYMENT_ICONS: Record<string, string> = {
-  CASH: '\u{1F4B5}',
-  CARD: '\u{1F4B3}',
-  BLIK: '\u{1F4F1}',
-  TRANSFER: '\u{1F3E6}',
-  INVOICE: '\u{1F4C4}',
-};
+type RefundStatus = 'none' | 'full' | 'partial';
+type ReprintStatus = { type: 'ok' | 'error'; message: string } | null;
 
 const PAGE_SIZE = 20;
+
+const PAYMENT_METHODS = [
+  { value: 'CASH', label: 'Cash' },
+  { value: 'CARD', label: 'Card' },
+  { value: 'BLIK', label: 'BLIK' },
+  { value: 'TRANSFER', label: 'Transfer' },
+  { value: 'INVOICE', label: 'Invoice' },
+];
+
+const REFUND_REASONS = [
+  { key: 'customerRequest', fallback: 'Customer request' },
+  { key: 'damaged', fallback: 'Damaged item' },
+  { key: 'wrongItem', fallback: 'Wrong item' },
+  { key: 'other', fallback: 'Other' },
+];
+
+function tOr(t: (key: string) => string, key: string, fallback: string): string {
+  const value = t(key);
+  return value && value !== key ? value : fallback;
+}
 
 function todayISO(): string {
   const d = new Date();
@@ -61,48 +78,122 @@ function formatTime(iso: string): string {
   try {
     const d = parseUtcDate(iso);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  } catch { return ''; }
+  } catch {
+    return '';
+  }
 }
 
 function formatDate(iso: string): string {
   try {
     const d = parseUtcDate(iso);
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-  } catch { return ''; }
+  } catch {
+    return '';
+  }
 }
 
-// ─── Refund status helpers ──────────────────────────────────
+function formatDateInput(value: string): string {
+  const [year, month, day] = value.split('-');
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
 
-function getRefundStatus(order: OrderRow): 'none' | 'full' | 'partial' {
+function formatMoney(amount: number, currency: string): string {
+  return `${(amount / 100).toFixed(2)} ${currency}`;
+}
+
+function getOrderLabel(order: OrderRow): string {
+  return order.order_number || order.id.substring(0, 8);
+}
+
+function paymentLabel(method: string | null | undefined): string {
+  switch (method) {
+    case 'CASH': return 'Cash';
+    case 'CARD': return 'Card';
+    case 'BLIK': return 'BLIK';
+    case 'TRANSFER': return 'Transfer';
+    case 'INVOICE': return 'Invoice';
+    default: return 'Unknown';
+  }
+}
+
+function getRefundStatus(order: OrderRow): RefundStatus {
   if (order.status === 'REFUNDED') return 'full';
   if (order.status === 'PARTIAL_REFUND') return 'partial';
   return 'none';
 }
 
-function RefundBadge({ status, t }: { status: 'full' | 'partial'; t: (k: string) => string }) {
-  const isFull = status === 'full';
+function StatusBadge({ order, t }: { order: OrderRow; t: (key: string) => string }) {
+  const refundStatus = getRefundStatus(order);
+
+  if (refundStatus === 'full') {
+    return (
+      <span className="inline-flex h-7 items-center rounded-full border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-700">
+        {tOr(t, 'pos.history.refunded', 'Refunded')}
+      </span>
+    );
+  }
+
+  if (refundStatus === 'partial') {
+    return (
+      <span className="inline-flex h-7 items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 text-xs font-bold text-amber-800">
+        {tOr(t, 'pos.history.partialRefund', 'Partial refund')}
+      </span>
+    );
+  }
+
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-      isFull ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
-    }`}>
-      {isFull ? (t('pos.history.refunded') || 'Refunded') : (t('pos.history.partialRefund') || 'Partial')}
+    <span className="inline-flex h-7 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700">
+      Completed
     </span>
   );
 }
 
-// ─── Refund Panel (inline in detail view) ───────────────────
+function DialogShell({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="flex h-[calc(100vh-24px)] max-h-[860px] w-[calc(100vw-24px)] max-w-[1180px] flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 
-const REFUND_REASONS = [
-  { key: 'customerRequest', fallback: 'Customer request' },
-  { key: 'damaged', fallback: 'Damaged item' },
-  { key: 'wrongItem', fallback: 'Wrong item' },
-  { key: 'other', fallback: 'Other' },
-];
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      onClick={onClose}
+      aria-label="Close"
+      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-200"
+    >
+      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  );
+}
 
-function RefundPanel({ order, currency, t, onComplete }: {
+function RefundPanel({
+  order,
+  currency,
+  t,
+  onCancel,
+  onComplete,
+}: {
   order: OrderRow;
   currency: string;
-  t: (k: string) => string;
+  t: (key: string) => string;
+  onCancel: () => void;
   onComplete: () => void;
 }) {
   const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>('FULL');
@@ -114,11 +205,28 @@ function RefundPanel({ order, currency, t, onComplete }: {
   const [success, setSuccess] = useState(false);
 
   const maxAmount = order.total / 100;
-  const parsedAmount = parseFloat(amount || '0');
+  const parsedAmount = Number.parseFloat(amount || '0');
+  const parsedAmountValid = Number.isFinite(parsedAmount);
   const refundAmount = refundType === 'FULL' ? order.total : Math.round(parsedAmount * 100);
-  const isValid = refundType === 'FULL' || (parsedAmount > 0 && parsedAmount <= maxAmount);
+  const isValid = refundType === 'FULL' || (parsedAmountValid && parsedAmount > 0 && parsedAmount <= maxAmount);
+  const showPartialWarning = refundType === 'PARTIAL' && amount.length > 0 && !isValid;
+
+  const setType = (next: 'FULL' | 'PARTIAL') => {
+    setRefundType(next);
+    setConfirmStep(false);
+    setError(null);
+  };
+
+  const handleAmountChange = (next: string) => {
+    if (/^\d*\.?\d{0,2}$/.test(next)) {
+      setAmount(next);
+      setConfirmStep(false);
+      setError(null);
+    }
+  };
 
   const handleConfirm = async () => {
+    if (!isValid || loading) return;
     if (!confirmStep) {
       setConfirmStep(true);
       return;
@@ -127,12 +235,13 @@ function RefundPanel({ order, currency, t, onComplete }: {
     setLoading(true);
     setError(null);
     try {
-      const reasonText = t(`pos.refund.${reason}`) || reason;
+      const reasonText = tOr(t, `pos.refund.${reason}`, reason);
       const result = await window.electronAPI.pos.orders.refund(order.id, {
         type: refundType,
         amount: refundType === 'PARTIAL' ? refundAmount : undefined,
         reason: reasonText,
       });
+
       if (result.success) {
         setSuccess(true);
         setTimeout(onComplete, 1500);
@@ -150,125 +259,308 @@ function RefundPanel({ order, currency, t, onComplete }: {
 
   if (success) {
     return (
-      <div className="px-5 py-4 bg-emerald-50 border-t border-emerald-100">
-        <p className="text-sm text-emerald-600 font-medium text-center">
-          {t('pos.refund.success') || 'Refund processed'}
-        </p>
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <div className="text-sm font-bold text-emerald-800">{tOr(t, 'pos.refund.success', 'Refund processed')}</div>
+        <div className="mt-1 text-xs text-emerald-700">Refreshing order status...</div>
       </div>
     );
   }
 
   return (
-    <div className="px-5 py-4 bg-slate-50 border-t border-gray-200 space-y-3">
-      <p className="text-sm font-semibold text-gray-700">{t('pos.refund.title') || 'Refund Order'}</p>
-
-      {/* Refund type toggle */}
-      <div className="flex gap-2">
+    <section className="rounded-lg border border-red-200 bg-red-50/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-extrabold text-red-900">{tOr(t, 'pos.refund.title', 'Refund Order')}</h3>
+          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(order.total, currency)}</p>
+        </div>
         <button
-          onClick={() => { setRefundType('FULL'); setConfirmStep(false); }}
-          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-            refundType === 'FULL'
-              ? 'bg-red-500 text-white'
-              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-          }`}
+          onClick={onCancel}
+          disabled={loading}
+          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
         >
-          {t('pos.refund.full') || 'Full Refund'}
-          <br />
-          <span className="text-[10px] opacity-80">{(order.total / 100).toFixed(2)} {currency}</span>
-        </button>
-        <button
-          onClick={() => { setRefundType('PARTIAL'); setConfirmStep(false); }}
-          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-            refundType === 'PARTIAL'
-              ? 'bg-amber-500 text-white'
-              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          {t('pos.refund.partial') || 'Partial Refund'}
+          Cancel
         </button>
       </div>
 
-      {/* Partial amount input */}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => setType('FULL')}
+          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
+            refundType === 'FULL'
+              ? 'border-red-600 bg-red-600 text-white'
+              : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
+          }`}
+        >
+          <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
+          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(order.total, currency)}</span>
+        </button>
+        <button
+          onClick={() => setType('PARTIAL')}
+          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-200 ${
+            refundType === 'PARTIAL'
+              ? 'border-amber-500 bg-amber-500 text-white'
+              : 'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50'
+          }`}
+        >
+          <span className="block">{tOr(t, 'pos.refund.partial', 'Partial Refund')}</span>
+          <span className="mt-0.5 block text-xs opacity-85">Manual amount</span>
+        </button>
+      </div>
+
       {refundType === 'PARTIAL' && (
-        <div>
-          <label className="text-xs text-gray-500 mb-1 block">{t('pos.refund.amount') || 'Refund amount'} ({currency})</label>
+        <div className="mt-4">
+          <label htmlFor="refund-amount" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
+            {tOr(t, 'pos.refund.amount', 'Refund amount')} ({currency})
+          </label>
           <input
-            type="number"
-            step="0.01"
-            min="0.01"
-            max={maxAmount}
+            id="refund-amount"
+            type="text"
+            inputMode="decimal"
             value={amount}
-            onChange={e => { setAmount(e.target.value); setConfirmStep(false); }}
-            placeholder={`max ${maxAmount.toFixed(2)}`}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-brand-400"
+            onChange={(e) => handleAmountChange(e.target.value)}
+            placeholder={`0.00 / max ${maxAmount.toFixed(2)}`}
+            className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-right text-lg font-extrabold text-slate-950 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
           />
+          {showPartialWarning && (
+            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+              Enter an amount greater than 0 and not above {maxAmount.toFixed(2)} {currency}.
+            </p>
+          )}
         </div>
       )}
 
-      {/* Reason selector */}
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">{t('pos.refund.reason') || 'Reason'}</label>
+      <div className="mt-4">
+        <label htmlFor="refund-reason" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
+          {tOr(t, 'pos.refund.reason', 'Reason')}
+        </label>
         <select
+          id="refund-reason"
           value={reason}
-          onChange={e => { setReason(e.target.value); setConfirmStep(false); }}
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-brand-400 cursor-pointer"
+          onChange={(e) => {
+            setReason(e.target.value);
+            setConfirmStep(false);
+            setError(null);
+          }}
+          className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
         >
-          {REFUND_REASONS.map(r => (
-            <option key={r.key} value={r.key}>{t(`pos.refund.${r.key}`) || r.fallback}</option>
+          {REFUND_REASONS.map((r) => (
+            <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
           ))}
         </select>
       </div>
 
-      {/* Error */}
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {confirmStep && (
+        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
+          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} This will record a {formatMoney(refundAmount, currency)} refund.
+        </div>
+      )}
 
-      {/* Confirm button (2-step) */}
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
+          {error}
+        </div>
+      )}
+
       <button
         onClick={handleConfirm}
         disabled={!isValid || loading}
-        className={`w-full py-3 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
-          loading ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-          : confirmStep ? 'bg-red-600 hover:bg-red-700 text-white cursor-pointer'
-          : 'bg-red-500 hover:bg-red-600 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed'
+        className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
+          loading
+            ? 'cursor-not-allowed bg-slate-200 text-slate-500'
+            : confirmStep
+              ? 'bg-red-700 text-white hover:bg-red-800'
+              : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
         }`}
       >
-        {loading ? (
-          <>
-            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-            Processing...
-          </>
-        ) : confirmStep ? (
-          t('pos.refund.confirmAsk') || 'Are you sure?'
-        ) : (
-          <>
-            {t('pos.refund.confirm') || 'Confirm Refund'}
-            {refundType === 'PARTIAL' && isValid && ` (${parsedAmount.toFixed(2)} ${currency})`}
-          </>
-        )}
+        {loading
+          ? 'Processing...'
+          : confirmStep
+            ? tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')
+            : `${tOr(t, 'pos.refund.confirm', 'Confirm Refund')} (${formatMoney(refundAmount, currency)})`}
       </button>
-    </div>
+    </section>
   );
 }
 
-// ─── Main Component ─────────────────────────────────────────
+function ServerActionsPanel({
+  order,
+  t,
+  onOrderUpdated,
+}: {
+  order: OrderRow & { customer_nip?: string | null };
+  t: (key: string) => string;
+  onOrderUpdated: () => void;
+}) {
+  const [nip, setNip] = useState((order as any).customer_nip || '');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ type: 'ok' | 'error'; message: string } | null>(null);
+  const [gusPreview, setGusPreview] = useState<{ name?: string; address?: string } | null>(null);
+
+  const hasInvoice = Boolean((order as any).customer_nip);
+  const kind: 'receipt' | 'invoice' = hasInvoice ? 'invoice' : 'receipt';
+
+  const run = async (key: string, fn: () => Promise<{ success: boolean; error?: string; message?: string }>) => {
+    if (busy) return;
+    setBusy(key);
+    setStatus(null);
+    try {
+      const res = await fn();
+      if (res.success) {
+        setStatus({ type: 'ok', message: res.message || tOr(t, 'pos.history.server.ok', 'Done') });
+      } else {
+        setStatus({ type: 'error', message: res.error || 'Failed' });
+      }
+    } catch (e: any) {
+      setStatus({ type: 'error', message: e?.message || 'Failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDownload = () =>
+    run('download', async () => {
+      const res = await window.electronAPI.pos.orders.downloadPdf(order.id, kind, 'VAT');
+      return res.success
+        ? { success: true, message: tOr(t, 'pos.history.server.pdfSaved', 'PDF saved') }
+        : { success: false, error: res.error };
+    });
+
+  const handleLookupNip = () =>
+    run('nip', async () => {
+      const res = await window.electronAPI.pos.customers.lookupNip(nip);
+      if (!res.success) return { success: false, error: res.error };
+      const gus = res.data?.gusData || res.data?.customer || null;
+      if (gus) setGusPreview({ name: gus.name, address: gus.address });
+      return { success: true, message: tOr(t, 'pos.history.server.nipFound', 'Company found') };
+    });
+
+  const handleAddInvoice = () =>
+    run('invoice', async () => {
+      const res = await window.electronAPI.pos.orders.addInvoice(order.id, { customerNip: nip, invoiceType: 'VAT' });
+      if (res.success) onOrderUpdated();
+      return res.success
+        ? { success: true, message: tOr(t, 'pos.history.server.invoiceAdded', 'Invoice attached') }
+        : { success: false, error: res.error };
+    });
+
+  const handleProforma = () =>
+    run('proforma', async () => {
+      const res = await window.electronAPI.pos.orders.generateProforma(order.id);
+      if (res.success) onOrderUpdated();
+      return res.success
+        ? { success: true, message: tOr(t, 'pos.history.server.proformaOk', 'Proforma generated') }
+        : { success: false, error: res.error };
+    });
+
+  const nipDigits = nip.replace(/\D/g, '');
+  const nipValid = nipDigits.length === 10;
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h3 className="text-sm font-extrabold text-slate-900">{tOr(t, 'pos.history.server.title', 'Server documents')}</h3>
+      <p className="mt-1 text-xs font-medium text-slate-500">
+        {tOr(t, 'pos.history.server.subtitle', 'Actions performed on the server for this order.')}
+      </p>
+
+      <button
+        onClick={handleDownload}
+        disabled={busy !== null}
+        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+      >
+        {busy === 'download' ? '...' : tOr(t, hasInvoice ? 'pos.history.server.downloadInvoice' : 'pos.history.server.downloadReceipt', hasInvoice ? 'Download Invoice PDF' : 'Download Receipt PDF')}
+      </button>
+
+      {!hasInvoice && (
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">
+            {tOr(t, 'pos.history.server.nipLabel', 'Add VAT invoice (NIP)')}
+          </label>
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={nip}
+              onChange={(e) => { setNip(e.target.value); setGusPreview(null); }}
+              placeholder="10 digits"
+              className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            />
+            <button
+              onClick={handleLookupNip}
+              disabled={!nipValid || busy !== null}
+              className="h-11 shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs font-extrabold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'nip' ? '...' : 'GUS'}
+            </button>
+          </div>
+
+          {gusPreview && (
+            <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              <div className="font-bold text-slate-900">{gusPreview.name}</div>
+              {gusPreview.address && <div>{gusPreview.address}</div>}
+            </div>
+          )}
+
+          <button
+            onClick={handleAddInvoice}
+            disabled={!nipValid || busy !== null}
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          >
+            {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
+          </button>
+        </div>
+      )}
+
+      <button
+        onClick={handleProforma}
+        disabled={busy !== null}
+        className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+      >
+        {busy === 'proforma' ? '...' : tOr(t, 'pos.history.server.proforma', 'Generate Proforma')}
+      </button>
+
+      {status && (
+        <div
+          className={`mt-3 rounded-lg border px-3 py-2 text-xs font-bold ${
+            status.type === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-red-200 bg-red-50 text-red-800'
+          }`}
+        >
+          {status.message}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [filterMethod, setFilterMethod] = useState('');
   const [filterStaff, setFilterStaff] = useState('');
   const [detail, setDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
-  const [reprintStatus, setReprintStatus] = useState<string | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
+  const [reprinting, setReprinting] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
 
-  const currency = t('pos.currency') || 'zl';
+  const currency = tOr(t, 'pos.currency', 'zl');
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
+  const hasActiveFilters = selectedDate !== todayISO() || filterMethod !== '' || filterStaff !== '';
+
+  const staffNames = useMemo(
+    () => Array.from(new Set(orders.map((o) => o.staff_name).filter((name): name is string => Boolean(name)))).sort(),
+    [orders],
+  );
+  const pageTotal = useMemo(() => orders.reduce((sum, o) => sum + o.total, 0), [orders]);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const result = await window.electronAPI.pos.orders.getHistory({
         from: selectedDate,
@@ -280,9 +572,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
       setOrders(result?.orders || []);
       setTotalOrders(result?.total || 0);
-    } catch {
+    } catch (e: any) {
       setOrders([]);
       setTotalOrders(0);
+      setLoadError(e?.message || 'Could not load orders');
     } finally {
       setLoading(false);
     }
@@ -292,283 +585,440 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   useEffect(() => { setPage(1); }, [selectedDate, filterMethod, filterStaff]);
 
   const handleSelectOrder = async (orderId: string) => {
-    const result = await window.electronAPI.pos.orders.getDetail(orderId);
-    if (result) {
-      setDetail(result);
-      setShowRefund(false);
+    setDetailLoadingId(orderId);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.getDetail(orderId);
+      if (result) {
+        setDetail(result);
+        setShowRefund(false);
+      }
+    } finally {
+      setDetailLoadingId(null);
     }
   };
 
-  const [reprinting, setReprinting] = useState(false);
   const handleReprint = async (orderId: string) => {
     if (reprinting) return;
     setReprinting(true);
     setReprintStatus(null);
     try {
-      await window.electronAPI.pos.payment.reprintReceipt(orderId);
-      setReprintStatus('ok');
-    } catch {
-      setReprintStatus('error');
+      const result = await window.electronAPI.pos.payment.reprintReceipt(orderId);
+      if (result?.success && result.receiptPrinted !== false) {
+        setReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.reprinted', 'Receipt sent to printer') });
+      } else {
+        setReprintStatus({
+          type: 'error',
+          message: result?.error || tOr(t, 'pos.history.reprintFailed', 'Printer not connected'),
+        });
+      }
+    } catch (e: any) {
+      setReprintStatus({
+        type: 'error',
+        message: e?.message || tOr(t, 'pos.history.reprintFailed', 'Printer not connected'),
+      });
+    } finally {
+      setReprinting(false);
     }
-    setReprinting(false);
-    setTimeout(() => setReprintStatus(null), 3000);
   };
 
-  const staffNames = [...new Set(orders.map(o => o.staff_name).filter(Boolean))];
-  const pageTotal = orders.reduce((sum, o) => sum + o.total, 0);
+  const resetFilters = () => {
+    setSelectedDate(todayISO());
+    setFilterMethod('');
+    setFilterStaff('');
+    setPage(1);
+  };
 
-  // ─── Detail view ──────────────────────────────────────────
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
-    const canRefund = order.backend_id && refundStatus === 'none';
+    const canRefund = Boolean(order.backend_id) && refundStatus === 'none';
     const notSynced = !order.backend_id && order.synced !== 1;
 
     return (
-      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8 bg-black/50" onClick={onClose}>
-        <div className="bg-white rounded-2xl w-full max-w-md mx-4 shadow-2xl border border-gray-200" onClick={e => e.stopPropagation()}>
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-            <button onClick={() => { setDetail(null); setShowRefund(false); }} className="text-sm text-brand-500 hover:text-brand-600 font-medium cursor-pointer flex items-center gap-1">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              {t('pos.history.title') || 'History'}
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-gray-900">{order.order_number || order.id.substring(0, 8)}</span>
-              {refundStatus !== 'none' && <RefundBadge status={refundStatus} t={t} />}
-            </div>
-            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-
-          {/* Order meta */}
-          <div className="px-5 py-3 text-sm text-gray-500 flex items-center gap-2 flex-wrap">
-            <span>{formatDate(order.created_at)} {formatTime(order.created_at)}</span>
-            <span>{PAYMENT_ICONS[order.payment_method || ''] || ''} {order.payment_method}</span>
-            {order.staff_name && <span>· {order.staff_name}</span>}
-          </div>
-
-          {/* Items */}
-          <div className="px-5 pb-3 space-y-2">
-            {items.map(item => (
-              <div key={item.id} className="flex justify-between text-sm">
-                <span className="text-gray-700">{item.name} <span className="text-gray-400">x{item.quantity}</span></span>
-                <span className="text-gray-900 font-medium">{(item.total / 100).toFixed(2)} {currency}</span>
-              </div>
-            ))}
-
-            <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">{t('pos.cart.subtotal') || 'Subtotal'}</span>
-                <span className="text-gray-600">{(order.subtotal / 100).toFixed(2)} {currency}</span>
-              </div>
-              {order.tax > 0 && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-400">{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
-                  <span className="text-gray-400">{(order.tax / 100).toFixed(2)} {currency}</span>
-                </div>
-              )}
-              {order.discount > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-emerald-500">{t('pos.cart.discount') || 'Discount'}</span>
-                  <span className="text-emerald-500">-{(order.discount / 100).toFixed(2)} {currency}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-base font-bold pt-1">
-                <span className="text-gray-900">{t('pos.cart.total') || 'Total'}</span>
-                <span className="text-brand-500">{(order.total / 100).toFixed(2)} {currency}</span>
-              </div>
-              {order.payment_method === 'CASH' && order.change_amount > 0 && (
-                <div className="flex justify-between text-xs text-gray-400">
-                  <span>Change</span>
-                  <span>{(order.change_amount / 100).toFixed(2)} {currency}</span>
-                </div>
-              )}
-              {/* Refund amount (if refunded) */}
-              {(order.refund_amount ?? 0) > 0 && (
-                <div className="flex justify-between text-sm text-red-500 pt-1">
-                  <span>{t('pos.history.refunded') || 'Refunded'}</span>
-                  <span>-{((order.refund_amount ?? 0) / 100).toFixed(2)} {currency}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div className="px-5 pb-3 flex gap-2">
+      <DialogShell onClose={onClose}>
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => handleReprint(order.id)}
-              disabled={reprinting}
-              className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                reprinting
-                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  : 'bg-slate-100 hover:bg-slate-200 text-gray-700 cursor-pointer'
-              }`}
+              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); }}
+              className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
-              {t('pos.history.reprint') || 'Reprint'}
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+              </svg>
+              {tOr(t, 'pos.history.title', 'History')}
             </button>
-            {canRefund && (
-              <button
-                onClick={() => setShowRefund(!showRefund)}
-                className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer ${
-                  showRefund
-                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                    : 'bg-red-50 hover:bg-red-100 text-red-500'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
-                {t('pos.refund.title') || 'Refund'}
-              </button>
-            )}
-            {notSynced && (
-              <span className="flex-1 py-3 rounded-xl text-xs text-gray-400 bg-gray-50 flex items-center justify-center">
-                {t('pos.refund.notSynced') || 'Not synced'}
-              </span>
-            )}
-            {refundStatus !== 'none' && (
-              <span className="flex-1 py-3 rounded-xl text-xs text-gray-400 bg-gray-50 flex items-center justify-center">
-                {t('pos.refund.alreadyRefunded') || 'Refunded'}
-              </span>
-            )}
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-xl font-extrabold text-slate-950">{getOrderLabel(order)}</h2>
+                <StatusBadge order={order} t={t} />
+              </div>
+              <p className="mt-1 text-sm font-medium text-slate-500">
+                {formatDate(order.created_at)} {formatTime(order.created_at)} - {paymentLabel(order.payment_method)}
+                {order.staff_name ? ` - ${order.staff_name}` : ''}
+              </p>
+            </div>
           </div>
-
-          {/* Reprint feedback */}
-          {reprintStatus === 'ok' && (
-            <p className="text-xs text-emerald-500 text-center pb-3">{t('pos.history.reprinted') || 'Receipt sent to printer'}</p>
-          )}
-          {reprintStatus === 'error' && (
-            <p className="text-xs text-red-500 text-center pb-3">{t('pos.history.reprintFailed') || 'Printer not connected'}</p>
-          )}
-
-          {/* Refund panel (inline) */}
-          {showRefund && canRefund && (
-            <RefundPanel
-              order={order}
-              currency={currency}
-              t={t}
-              onComplete={() => {
-                setShowRefund(false);
-                // Reload detail to show updated status
-                handleSelectOrder(order.id);
-                loadOrders();
-              }}
-            />
-          )}
+          <CloseButton onClose={onClose} />
         </div>
-      </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-slate-50">
+          <main className="min-h-0 overflow-y-auto p-5">
+            <div className="grid grid-cols-4 gap-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Total</div>
+                <div className="mt-2 text-2xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.total, currency)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Paid</div>
+                <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.payment_amount, currency)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Tax</div>
+                <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.tax, currency)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Staff</div>
+                <div className="mt-2 truncate text-xl font-extrabold text-slate-950">{order.staff_name || '-'}</div>
+              </div>
+            </div>
+
+            <section className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+                <h3 className="text-sm font-extrabold text-slate-900">Items</h3>
+                <span className="text-xs font-bold text-slate-500">{items.length} rows</span>
+              </div>
+              <div className="grid grid-cols-[minmax(0,1fr)_76px_108px_112px] gap-3 border-b border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                <span>Product</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">VAT</span>
+                <span className="text-right">Total</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {items.map((item) => (
+                  <div key={item.id} className="grid min-h-14 grid-cols-[minmax(0,1fr)_76px_108px_112px] items-center gap-3 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-bold text-slate-950">{item.name}</div>
+                      <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
+                    </div>
+                    <div className="text-right text-sm font-bold tabular-nums text-slate-700">{item.quantity}</div>
+                    <div className="text-right text-sm font-bold tabular-nums text-slate-700">{item.vat_rate}%</div>
+                    <div className="text-right text-sm font-extrabold tabular-nums text-slate-950">{formatMoney(item.total, currency)}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-extrabold text-slate-900">Payment and totals</h3>
+              <div className="mt-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.subtotal', 'Subtotal')}</span>
+                  <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.subtotal, currency)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.inclVat', 'Incl. VAT')}</span>
+                  <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.tax, currency)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.discount', 'Discount')}</span>
+                  <span className="font-bold tabular-nums text-emerald-700">
+                    {order.discount > 0 ? `-${formatMoney(order.discount, currency)}` : formatMoney(0, currency)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">Method</span>
+                  <span className="font-bold text-slate-900">{paymentLabel(order.payment_method)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">Paid amount</span>
+                  <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.payment_amount, currency)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-slate-500">Change</span>
+                  <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.change_amount, currency)}</span>
+                </div>
+                {(order.refund_amount ?? 0) > 0 && (
+                  <>
+                    <div className="flex justify-between gap-4">
+                      <span className="font-medium text-red-700">{tOr(t, 'pos.history.refunded', 'Refunded')}</span>
+                      <span className="font-bold tabular-nums text-red-700">-{formatMoney(order.refund_amount ?? 0, currency)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="font-medium text-slate-500">{tOr(t, 'pos.refund.reason', 'Reason')}</span>
+                      <span className="truncate font-bold text-slate-900">{order.refund_reason || '-'}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-3">
+                <span className="text-base font-extrabold text-slate-950">{tOr(t, 'pos.cart.total', 'Total')}</span>
+                <span className="text-2xl font-extrabold tabular-nums text-brand-700">{formatMoney(order.total, currency)}</span>
+              </div>
+            </section>
+          </main>
+
+          <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Operations</div>
+              <div className="mt-1 text-lg font-extrabold text-slate-950">Receipt and refund</div>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              {showRefund && canRefund && (
+                <RefundPanel
+                  order={order}
+                  currency={currency}
+                  t={t}
+                  onCancel={() => setShowRefund(false)}
+                  onComplete={() => {
+                    setShowRefund(false);
+                    handleSelectOrder(order.id);
+                    loadOrders();
+                  }}
+                />
+              )}
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-extrabold text-slate-900">Receipt</h3>
+                <p className="mt-1 text-xs font-medium text-slate-500">Send this order receipt to the configured printer.</p>
+                <button
+                  onClick={() => handleReprint(order.id)}
+                  disabled={reprinting}
+                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                >
+                  {reprinting && (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+                  )}
+                  {reprinting ? 'Sending...' : tOr(t, 'pos.history.reprint', 'Reprint Receipt')}
+                </button>
+
+                {reprintStatus && (
+                  <div
+                    className={`mt-3 rounded-lg border px-3 py-3 text-sm font-bold ${
+                      reprintStatus.type === 'ok'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-red-200 bg-red-50 text-red-800'
+                    }`}
+                  >
+                    {reprintStatus.message}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-extrabold text-slate-900">Refund availability</h3>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="font-medium text-slate-500">Backend sync</span>
+                    <span className={`font-bold ${order.backend_id ? 'text-emerald-700' : 'text-amber-800'}`}>
+                      {order.backend_id ? 'Ready' : 'Not ready'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="font-medium text-slate-500">Refund status</span>
+                    <span className="font-bold text-slate-900">
+                      {refundStatus === 'none'
+                        ? canRefund ? 'Available' : 'Blocked'
+                        : refundStatus === 'full'
+                          ? tOr(t, 'pos.history.refunded', 'Refunded')
+                          : tOr(t, 'pos.history.partialRefund', 'Partial refund')}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {canRefund && !showRefund && (
+                <button
+                  onClick={() => setShowRefund(true)}
+                  className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
+                >
+                  {tOr(t, 'pos.refund.title', 'Refund Order')}
+                </button>
+              )}
+
+              {notSynced && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+                  {tOr(t, 'pos.refund.notSynced', 'Order not synced yet')}
+                </div>
+              )}
+
+              {refundStatus !== 'none' && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+                  {tOr(t, 'pos.refund.alreadyRefunded', 'Already refunded')}
+                </div>
+              )}
+
+              {order.backend_id && (
+                <ServerActionsPanel
+                  order={order as any}
+                  t={t}
+                  onOrderUpdated={() => { handleSelectOrder(order.id); loadOrders(); }}
+                />
+              )}
+
+            </div>
+          </aside>
+        </div>
+      </DialogShell>
     );
   }
 
-  // ─── List view ────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8 bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg mx-4 shadow-2xl border border-gray-200 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
-          <h2 className="text-sm font-bold text-gray-900">{t('pos.history.title') || 'Order History'}</h2>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
+    <DialogShell onClose={onClose}>
+      <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+        <div className="min-w-0">
+          <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
+          <p className="mt-1 text-sm font-medium text-slate-500">
+            {formatDateInput(selectedDate)} - {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} - page total {formatMoney(pageTotal, currency)}
+          </p>
         </div>
+        <CloseButton onClose={onClose} />
+      </div>
 
-        {/* Filters */}
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-50 shrink-0 flex-wrap">
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-brand-400"
-          />
-          <select
-            value={filterMethod}
-            onChange={e => setFilterMethod(e.target.value)}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-brand-400 cursor-pointer"
-          >
-            <option value="">{t('pos.history.allMethods') || 'All Methods'}</option>
-            <option value="CASH">Cash</option>
-            <option value="CARD">Card</option>
-            <option value="BLIK">Blik</option>
-            <option value="TRANSFER">Transfer</option>
-          </select>
-          {staffNames.length > 0 && (
+      <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-[168px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
+            Date
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          </label>
+
+          <label className="min-w-[184px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
+            Payment
+            <select
+              value={filterMethod}
+              onChange={(e) => setFilterMethod(e.target.value)}
+              className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            >
+              <option value="">{tOr(t, 'pos.history.allMethods', 'All Methods')}</option>
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>{method.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="min-w-[184px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
+            Staff
             <select
               value={filterStaff}
-              onChange={e => setFilterStaff(e.target.value)}
-              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-brand-400 cursor-pointer"
+              onChange={(e) => setFilterStaff(e.target.value)}
+              disabled={staffNames.length === 0}
+              className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >
-              <option value="">{t('pos.history.allStaff') || 'All Staff'}</option>
-              {staffNames.map(name => <option key={name} value={name!}>{name}</option>)}
+              <option value="">{tOr(t, 'pos.history.allStaff', 'All Staff')}</option>
+              {staffNames.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
-          )}
+          </label>
+
+          <button
+            onClick={resetFilters}
+            disabled={!hasActiveFilters}
+            className="h-11 min-w-[112px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col bg-white">
+        <div className="grid h-11 shrink-0 grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 border-b border-slate-200 bg-slate-100 px-5 text-xs font-extrabold uppercase tracking-wide text-slate-600">
+          <span>Order</span>
+          <span>Time</span>
+          <span className="text-right">Total</span>
+          <span>Payment</span>
+          <span>Staff</span>
+          <span>Status</span>
+          <span />
         </div>
 
-        {/* Summary */}
-        <div className="px-5 py-2 text-xs text-gray-400 border-b border-gray-50 shrink-0">
-          {totalOrders} {t('pos.history.orders') || 'orders'} · {(pageTotal / 100).toFixed(2)} {currency}
-          {totalPages > 1 && <span className="ml-2">· Page {page}/{totalPages}</span>}
-        </div>
-
-        {/* Orders list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-500" />
+            <div className="flex h-full min-h-[260px] items-center justify-center">
+              <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600 shadow-sm">
+                <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" aria-hidden="true" />
+                Loading orders...
+              </div>
+            </div>
+          ) : loadError ? (
+            <div className="flex h-full min-h-[260px] items-center justify-center px-6 text-center">
+              <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-800">
+                {loadError}
+              </div>
             </div>
           ) : orders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-sm text-gray-400">{t('pos.history.noOrders') || 'No orders found'}</p>
+            <div className="flex h-full min-h-[260px] flex-col items-center justify-center px-6 text-center">
+              <div className="text-base font-extrabold text-slate-900">{tOr(t, 'pos.history.noOrders', 'No orders found')}</div>
+              <div className="mt-1 text-sm font-medium text-slate-500">Adjust the date, payment method, or staff filter.</div>
             </div>
           ) : (
-            orders.map(order => {
-              const refStatus = getRefundStatus(order);
-              return (
-                <button
-                  key={order.id}
-                  onClick={() => handleSelectOrder(order.id)}
-                  className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors cursor-pointer border-b border-gray-50 last:border-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono text-gray-400 w-24 text-left">{order.order_number || order.id.substring(0, 8)}</span>
-                    <span className="text-xs text-gray-400 w-12">{formatTime(order.created_at)}</span>
-                    {refStatus !== 'none' && <RefundBadge status={refStatus} t={t} />}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-sm font-bold ${refStatus !== 'none' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                      {(order.total / 100).toFixed(2)} {currency}
+            <div className="divide-y divide-slate-100">
+              {orders.map((order) => {
+                const refundStatus = getRefundStatus(order);
+                return (
+                  <button
+                    key={order.id}
+                    onClick={() => handleSelectOrder(order.id)}
+                    className="grid min-h-[64px] w-full grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-extrabold text-slate-950">{getOrderLabel(order)}</span>
+                      <span className="mt-0.5 block truncate text-xs font-medium text-slate-500">{formatDate(order.created_at)}</span>
                     </span>
-                    <span className="text-sm" title={order.payment_method || ''}>{PAYMENT_ICONS[order.payment_method || ''] || '?'}</span>
-                    <span className="text-xs text-gray-400 w-16 text-right truncate">{order.staff_name || ''}</span>
-                    <svg className="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                  </div>
-                </button>
-              );
-            })
+                    <span className="text-sm font-bold tabular-nums text-slate-700">{formatTime(order.created_at)}</span>
+                    <span className={`text-right text-base font-extrabold tabular-nums ${refundStatus === 'none' ? 'text-slate-950' : 'text-slate-500 line-through'}`}>
+                      {formatMoney(order.total, currency)}
+                    </span>
+                    <span className="inline-flex h-8 max-w-full items-center justify-center truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-extrabold text-slate-700">
+                      {paymentLabel(order.payment_method)}
+                    </span>
+                    <span className="truncate text-sm font-bold text-slate-700">{order.staff_name || '-'}</span>
+                    <StatusBadge order={order} t={t} />
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400">
+                      {detailLoadingId === order.id ? (
+                        <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" aria-hidden="true" />
+                      ) : (
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 px-5 py-3 border-t border-gray-100 shrink-0">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <div className="text-sm font-bold text-slate-600">
+            {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} - {formatMoney(pageTotal, currency)} on this page
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
             >
-              &larr;
+              Prev
             </button>
-            <span className="text-xs text-gray-500">{page} / {totalPages}</span>
+            <span className="min-w-[88px] text-center text-sm font-extrabold tabular-nums text-slate-700">
+              {page} / {totalPages}
+            </span>
             <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
             >
-              &rarr;
+              Next
             </button>
           </div>
-        )}
+        </div>
       </div>
-    </div>
+    </DialogShell>
   );
 }

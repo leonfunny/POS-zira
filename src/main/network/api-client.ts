@@ -281,7 +281,7 @@ export class ApiClient {
 
   /**
    * Get POS products and categories (with optional delta since timestamp)
-   * GET /api/v1/pos/products
+   * GET /api/v1/warehouse/public/products
    */
   async getPosProducts(
     token: string,
@@ -443,6 +443,115 @@ export class ApiClient {
     }
 
     return response.json();
+  }
+
+  /**
+   * Download receipt or invoice PDF for a POS order.
+   * GET /api/v1/b2b/pos/orders/cash/:id/receipt-pdf
+   * GET /api/v1/b2b/pos/orders/invoiced/:id/invoice-pdf?type=VAT|PROFORMA
+   */
+  async getOrderPdf(
+    token: string,
+    backendOrderId: string,
+    kind: 'receipt' | 'invoice',
+    invoiceType: 'VAT' | 'PROFORMA' = 'VAT',
+  ): Promise<Buffer | null> {
+    const path = kind === 'receipt'
+      ? `/api/v1/b2b/pos/orders/cash/${encodeURIComponent(backendOrderId)}/receipt-pdf`
+      : `/api/v1/b2b/pos/orders/invoiced/${encodeURIComponent(backendOrderId)}/invoice-pdf?type=${invoiceType}`;
+    const url = `${this.baseUrl}${path}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    const arrayBuf = await response.arrayBuffer();
+    return Buffer.from(arrayBuf);
+  }
+
+  /**
+   * Attach a VAT invoice to an already-created POS order.
+   * PATCH /api/v1/b2b/pos/orders/:id/add-invoice
+   */
+  async addInvoiceToOrder(
+    token: string,
+    backendOrderId: string,
+    data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' },
+  ): Promise<any> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/add-invoice`;
+    const response = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ customerNip: data.customerNip, invoiceType: data.invoiceType ?? 'VAT' }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Generate a proforma invoice from a POS order (POS-DRA → POS-PRO).
+   * POST /api/v1/b2b/pos/orders/:id/generate-proforma
+   */
+  async generateProforma(token: string, backendOrderId: string): Promise<any> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/generate-proforma`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Lookup a customer by NIP (Polish tax ID). Falls back to GUS registry if
+   * no existing customer matches.
+   * GET /api/v1/b2b/pos/customers/nip/:nip
+   */
+  async lookupCustomerByNip(token: string, nip: string): Promise<any> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/customers/nip/${encodeURIComponent(nip)}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Get audit history for a POS order (edits, status changes, refunds).
+   * GET /api/v1/b2b/pos/orders/:id/history
+   */
+  async getOrderServerHistory(token: string, backendOrderId: string): Promise<any[]> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/history`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : (data.history ?? []);
   }
 
   /**

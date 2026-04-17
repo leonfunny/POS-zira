@@ -4,7 +4,9 @@
  * Owns PosStore, PaymentController, ShiftController, and all POS IPC handlers.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, dialog, shell, BrowserWindow, app } from 'electron';
+import * as path from 'path';
+import { promises as fs } from 'fs';
 import { BaseModule, ModuleState } from '../core/module';
 import type { ServiceContainer } from '../core/container';
 import type { EventBus } from '../core/event-bus';
@@ -403,6 +405,109 @@ export class PosModule extends BaseModule {
       } catch (e: any) {
         logger.error(`[PosModule] Refund failed for order ${orderId}: ${e.message}`);
         return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:downloadPdf', async (e, orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const pdf = await apiClient.getOrderPdf(token, order.backend_id, kind, invoiceType ?? 'VAT');
+        if (!pdf) return { success: false, error: 'PDF not available on server' };
+
+        const suggestedName = `${kind === 'invoice' ? 'invoice' : 'receipt'}-${order.order_number || order.id.substring(0, 8)}.pdf`;
+        const parentWindow = BrowserWindow.fromWebContents(e.sender) ?? undefined;
+        const result = await dialog.showSaveDialog(parentWindow!, {
+          title: `Save ${kind === 'invoice' ? 'Invoice' : 'Receipt'} PDF`,
+          defaultPath: path.join(app.getPath('downloads'), suggestedName),
+          filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        });
+        if (result.canceled || !result.filePath) return { success: false, error: 'Cancelled' };
+
+        await fs.writeFile(result.filePath, pdf);
+        shell.openPath(result.filePath).catch(() => {});
+        return { success: true, filePath: result.filePath };
+      } catch (err: any) {
+        logger.error(`[PosModule] downloadPdf failed: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:addInvoice', async (_e, orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const nip = (data.customerNip || '').replace(/\D/g, '');
+        if (nip.length !== 10) return { success: false, error: 'NIP must be 10 digits' };
+
+        const result = await apiClient.addInvoiceToOrder(token, order.backend_id, {
+          customerNip: nip,
+          invoiceType: data.invoiceType ?? 'VAT',
+        });
+
+        database.run('UPDATE orders SET customer_nip = ? WHERE id = ?', [nip, orderId]);
+        database.save();
+
+        logger.info(`[PosModule] Invoice attached to order ${order.order_number} (NIP ${nip})`);
+        return { success: true, order: result };
+      } catch (err: any) {
+        logger.error(`[PosModule] addInvoice failed: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:generateProforma', async (_e, orderId: string) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const result = await apiClient.generateProforma(token, order.backend_id);
+        logger.info(`[PosModule] Proforma generated for order ${order.order_number}`);
+        return { success: true, proforma: result };
+      } catch (err: any) {
+        logger.error(`[PosModule] generateProforma failed: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:customers:lookupNip', async (_e, nip: string) => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        const cleanNip = (nip || '').replace(/\D/g, '');
+        if (cleanNip.length !== 10) return { success: false, error: 'NIP must be 10 digits' };
+        const data = await apiClient.lookupCustomerByNip(token, cleanNip);
+        return { success: true, data };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:getServerHistory', async (_e, orderId: string) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        const history = await apiClient.getOrderServerHistory(token, order.backend_id);
+        return { success: true, history };
+      } catch (err: any) {
+        return { success: false, error: err.message };
       }
     });
 

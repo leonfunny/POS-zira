@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
       getDailyStats: (date: string) => ipcRenderer.invoke('pos:orders:getDailyStats', date),
+      getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
+      getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
+      refund: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:refund', orderId, data),
+      downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') =>
+        ipcRenderer.invoke('pos:orders:downloadPdf', orderId, kind, invoiceType),
+      addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) =>
+        ipcRenderer.invoke('pos:orders:addInvoice', orderId, data),
+      generateProforma: (orderId: string) => ipcRenderer.invoke('pos:orders:generateProforma', orderId),
+      getServerHistory: (orderId: string) => ipcRenderer.invoke('pos:orders:getServerHistory', orderId),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-receipt', orderId),
@@ -73,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       search: (query: string) => ipcRenderer.invoke('pos:customers:search', query),
       getById: (id: string) => ipcRenderer.invoke('pos:customers:getById', id),
       increaseDebt: (id: string, amount: number) => ipcRenderer.invoke('pos:customers:increaseDebt', id, amount),
+      lookupNip: (nip: string) => ipcRenderer.invoke('pos:customers:lookupNip', nip),
     },
     // Mode-specific: Staff (Salon)
     staff: {

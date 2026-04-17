@@ -1,6 +1,48 @@
 # Zira AI Print Agent — Session Handoff
 
-> Last updated: 2026-04-17 (session 51) | Read this file at the start of every new session.
+> Last updated: 2026-04-17 (session 52) | Read this file at the start of every new session.
+
+---
+
+## Session 52 — Wire server POS endpoints into UI (2026-04-17)
+
+**Status:** Built, both tsc passes, NOT committed yet. Requires live server test.
+
+Server team shipped endpoint spec (41 endpoints). Cross-checked with client; wired high-value gaps.
+
+### New `apiClient` methods (`src/main/network/api-client.ts`)
+- `getOrderPdf(token, backendId, kind, invoiceType)` — `GET /b2b/pos/orders/{cash|invoiced}/:id/{receipt,invoice}-pdf`
+- `addInvoiceToOrder(token, backendId, {customerNip, invoiceType})` — `PATCH /b2b/pos/orders/:id/add-invoice`
+- `generateProforma(token, backendId)` — `POST /b2b/pos/orders/:id/generate-proforma`
+- `lookupCustomerByNip(token, nip)` — `GET /b2b/pos/customers/nip/:nip` (GUS fallback)
+- `getOrderServerHistory(token, backendId)` — `GET /b2b/pos/orders/:id/history`
+- Fixed stale comment `/api/v1/pos/products` → `/api/v1/warehouse/public/products`
+
+### IPC handlers (`src/main/modules/pos.module.ts`)
+- `pos:orders:downloadPdf` (save dialog + auto-open)
+- `pos:orders:addInvoice` (also updates local `orders.customer_nip`)
+- `pos:orders:generateProforma`
+- `pos:customers:lookupNip`
+- `pos:orders:getServerHistory` (IPC only, no UI yet)
+
+### Preload + types
+- `src/preload/preload-pos.ts`: new methods under `pos.orders.*` + `pos.customers.lookupNip`
+- `src/shared/electron.d.ts`: type signatures added
+
+### UI (`OrderHistoryModal.tsx`)
+- New `ServerActionsPanel` in order detail sidebar (visible when `backend_id`):
+  - Download Receipt/Invoice PDF
+  - NIP input + GUS lookup + "Attach invoice" (when no invoice yet)
+  - Generate Proforma
+- Added `customer_nip`, `customer_name` to `OrderRow` interface
+
+### Still NOT wired
+- Server audit log viewer UI
+- Item editing (`PATCH/POST/DELETE .../items`)
+- Notify Telegram, email send (server stub)
+- Mark-paid, cancel, delete (overlap with refund flow)
+- PIN login via `/public/pos/:slug/login`
+- SQL.js `undefined bind` bug in order `POS-20260417-0009` sync
 
 ---
 

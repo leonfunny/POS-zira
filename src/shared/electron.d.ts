@@ -189,7 +189,9 @@ interface ElectronAPI {
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
-  testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<{ success: boolean; error?: string }>;
+  testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
+  onTestPrintProgress: (callback: (step: import('./types').TestPrintStep) => void) => () => void;
+  openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
   getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
   installPosnetDriver: () => Promise<{ success: boolean; message: string; rebootRequired?: boolean }>;
@@ -499,6 +501,10 @@ interface ElectronAPI {
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       refund: (orderId: string, data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string }) => Promise<{ success: boolean; error?: string }>;
+      downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;
+      addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => Promise<{ success: boolean; order?: any; error?: string }>;
+      generateProforma: (orderId: string) => Promise<{ success: boolean; proforma?: any; error?: string }>;
+      getServerHistory: (orderId: string) => Promise<{ success: boolean; history?: any[]; error?: string }>;
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
@@ -535,6 +541,7 @@ interface ElectronAPI {
       search: (query: string) => Promise<PosCustomer[]>;
       getById: (id: string) => Promise<PosCustomer | null>;
       increaseDebt: (id: string, amount: number) => Promise<void>;
+      lookupNip: (nip: string) => Promise<{ success: boolean; data?: any; error?: string }>;
     };
     staff: {
       getAll: () => Promise<PosStaff[]>;
