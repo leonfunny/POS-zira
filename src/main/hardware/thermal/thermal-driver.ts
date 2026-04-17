@@ -27,6 +27,8 @@ export class ThermalDriver {
   private connectionType: ThermalConnectionType;
   /** Detected brand name, used for recovery matching. */
   private brand: string = '';
+  /** Timestamp of last successful printer presence check (ms) — skip re-check within 10s */
+  private lastPresenceCheckAt: number = 0;
 
   /**
    * When true, printTest() uses plain-text Out-Printer instead of ESC/POS bytes.
@@ -103,6 +105,7 @@ export class ThermalDriver {
         }
 
         this.connected = true;
+        this.lastPresenceCheckAt = Date.now();
         logger.info(`[ThermalDriver] Connected to USB printer "${this.printerNameOrPort}" (verified present)`);
       } else {
         // Serial path: present-port list check + ESC/POS probe
@@ -317,20 +320,19 @@ export class ThermalDriver {
   private async printRaw(data: Buffer | string): Promise<void> {
     // ─── Pre-flight verification ───────────────────────────────────────────
     if (this.connectionType === 'USB') {
-      const present = await isWindowsPrinterPresent(this.printerNameOrPort);
-      if (!present) {
-        this.connected = false;
-        throw new Error(
-          `Printer "${this.printerNameOrPort}" is not physically connected. ` +
-          `Check the USB cable and power, then click Detect Printers.`
-        );
-      }
-      try {
-        const flushed = await flushStuckPrintJobs(this.printerNameOrPort);
-        if (flushed > 0) {
-          logger.warn(`[ThermalDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerNameOrPort}"`);
+      // Skip presence check if we verified within the last 10 seconds
+      const now = Date.now();
+      if (now - this.lastPresenceCheckAt > 10_000) {
+        const present = await isWindowsPrinterPresent(this.printerNameOrPort);
+        if (!present) {
+          this.connected = false;
+          throw new Error(
+            `Printer "${this.printerNameOrPort}" is not physically connected. ` +
+            `Check the USB cable and power, then click Detect Printers.`
+          );
         }
-      } catch { /* best-effort */ }
+        this.lastPresenceCheckAt = now;
+      }
     } else {
       // SERIAL — re-probe to confirm printer still responds
       const ports = await listSerialPorts();
@@ -365,13 +367,19 @@ export class ThermalDriver {
         const safeName = sanitizePrinterName(this.printerNameOrPort);
         if (!safeName) throw new Error(`Invalid printer name: "${this.printerNameOrPort}"`);
 
-        // Send raw bytes via Win32 WritePrinter API (P/Invoke).
-        // This bypasses the spooler's text rendering — critical for ESC/POS
-        // binary commands. Generic / Text Only driver would otherwise convert
-        // each byte to its decimal text representation.
+        // ─── Combined flush + print + post-check in ONE PowerShell call ───
+        // This replaces 3 separate PS spawns (flush, print, post-check) with
+        // a single process, saving ~3-5 seconds of PS startup overhead.
         const escapedFile = tempFile.replace(/'/g, "''");
         const psScript =
           '$ProgressPreference = "SilentlyContinue"\n' +
+          // Phase 1: Flush stuck jobs (best-effort)
+          'try {\n' +
+          `  $jobs = Get-PrintJob -PrinterName '${safeName}' -ErrorAction SilentlyContinue\n` +
+          '  $stuck = $jobs | Where-Object { $_.JobStatus -match "Error|Offline|Blocked|Paused" }\n' +
+          '  if ($stuck) { $stuck | Remove-PrintJob -ErrorAction SilentlyContinue }\n' +
+          '} catch {}\n' +
+          // Phase 2: Add-Type + WritePrinter
           'Add-Type @"\n' +
           'using System;\nusing System.Runtime.InteropServices;\n' +
           'public class RawPrint {\n' +
@@ -409,7 +417,17 @@ export class ThermalDriver {
           '  [RawPrint]::EndPagePrinter($h) | Out-Null\n' +
           '  [RawPrint]::EndDocPrinter($h) | Out-Null\n' +
           '  Write-Output "OK:$w"\n' +
-          '} finally {\n  [RawPrint]::ClosePrinter($h) | Out-Null\n}\n';
+          '} finally {\n  [RawPrint]::ClosePrinter($h) | Out-Null\n}\n' +
+          // Phase 3: Post-check for stuck jobs (inline, no separate PS spawn)
+          'Start-Sleep -Milliseconds 300\n' +
+          'try {\n' +
+          `  $postJobs = Get-PrintJob -PrinterName '${safeName}' -ErrorAction SilentlyContinue\n` +
+          '  $postStuck = $postJobs | Where-Object { $_.JobStatus -match "Error|Offline|Blocked" }\n' +
+          '  if ($postStuck) {\n' +
+          '    $postStuck | Remove-PrintJob -ErrorAction SilentlyContinue\n' +
+          '    Write-Error "STUCK:$($postStuck[0].JobStatus)"\n' +
+          '  }\n' +
+          '} catch {}\n';
 
         const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
         const { stdout, stderr } = await execFileAsync(
@@ -419,31 +437,26 @@ export class ThermalDriver {
         );
 
         // Check for errors
-        if (stderr?.trim()) {
-          const cleaned = stderr.replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
-          if (cleaned) {
-            logger.warn(`[ThermalDriver] WritePrinter stderr: ${cleaned}`);
-            throw new Error(`Print failed: ${cleaned}`);
+        const cleanedErr = (stderr || '').replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
+        if (cleanedErr) {
+          // Distinguish stuck-job warning from real errors
+          if (cleanedErr.includes('STUCK:')) {
+            const stuckStatus = cleanedErr.match(/STUCK:(.*)/)?.[1] || 'Unknown';
+            logger.error(`[ThermalDriver] Post-flight queue check: stuck job (${stuckStatus})`);
+            this.connected = false;
+            throw new Error(
+              `Printer "${this.printerNameOrPort}" did not accept the job (${stuckStatus}). ` +
+              `Check the printer is powered on and connected.`
+            );
           }
+          logger.warn(`[ThermalDriver] WritePrinter stderr: ${cleanedErr}`);
+          throw new Error(`Print failed: ${cleanedErr}`);
         }
         const result = (stdout || '').trim();
         if (!result.startsWith('OK:')) {
           throw new Error(`WritePrinter returned unexpected result: ${result}`);
         }
         logger.info(`[ThermalDriver] Raw data sent via WritePrinter (${result})`);
-
-        // Post-flight: confirm queue drained
-        await new Promise(r => setTimeout(r, 1500));
-        const stuckStatus = await getStuckPrintJobStatus(this.printerNameOrPort);
-        if (stuckStatus) {
-          logger.error(`[ThermalDriver] Post-flight queue check: stuck job (${stuckStatus})`);
-          try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
-          this.connected = false;
-          throw new Error(
-            `Printer "${this.printerNameOrPort}" did not accept the job (${stuckStatus}). ` +
-            `Check the printer is powered on and connected.`
-          );
-        }
       } else {
         // Serial port: Configure and send via cmd.exe
         await execFileAsync(
