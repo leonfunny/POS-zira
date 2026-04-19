@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import CustomerDisplayShell from '../src/renderer/windows/customer/components/CustomerDisplayShell';
 import IdleView from '../src/renderer/windows/customer/views/IdleView';
+import RetailAssistedIdleView from '../src/renderer/windows/customer/views/RetailAssistedIdleView';
+import RetailAssistedCartView from '../src/renderer/windows/customer/views/RetailAssistedCartView';
+import RetailAssistedThankYouView from '../src/renderer/windows/customer/views/RetailAssistedThankYouView';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -63,5 +66,89 @@ describe('Customer display viewport contract', () => {
 
     expect(appSource).not.toContain('min-h-screen');
     expect(appSource).toContain('h-screen');
+  });
+
+  it('renders retail assisted idle copy without self-scan language', () => {
+    const t = (key: string) => ({
+      'customer.retail.idleTitle': 'Staff will scan your items',
+      'customer.retail.idleSubtitle': 'Your items will appear here',
+      'customer.retail.paymentPrompt': 'Staff will take payment when ready',
+      'customer.brandName': 'Zira AI',
+    }[key] || key);
+
+    const markup = renderToStaticMarkup(
+      React.createElement(RetailAssistedIdleView, {
+        t,
+        businessName: 'Retail Shop',
+      }),
+    );
+
+    expect(markup).toContain('Staff will scan your items');
+    expect(markup).toContain('Your items will appear here');
+    expect(markup).not.toMatch(/scan a product|self-checkout|pay now/i);
+  });
+
+  it('renders retail assisted cart without salon upsell copy', () => {
+    const t = (key: string) => ({
+      'customer.retail.cartTitle': 'Your items',
+      'customer.retail.cartSubtitle': 'Staff will continue adding your items',
+      'customer.retail.paymentPrompt': 'Staff will take payment when ready',
+      'customer.retail.paymentStatus': 'Payment status',
+      'customer.retail.total': 'Total',
+      'customer.discount': 'Discount',
+      'customer.retail.idleSubtitle': 'Your items will appear here',
+    }[key] || key);
+
+    const markup = renderToStaticMarkup(
+      React.createElement(RetailAssistedCartView, {
+        t,
+        language: 'en',
+        cart: {
+          items: [
+            { id: '1', variantId: 'v1', name: 'Coffee', sku: 'COF', price: 1000, quantity: 2, total: 2000 },
+          ],
+          subtotal: 2000,
+          discount: 0,
+          tax: 0,
+          total: 2000,
+        },
+      }),
+    );
+
+    expect(markup).toContain('Your items');
+    expect(markup).toContain('Staff will continue adding your items');
+    expect(markup).not.toContain('Complete your look');
+    expect(markup).not.toContain('Add to my visit');
+  });
+
+  it('renders retail assisted thank-you without salon booking copy', () => {
+    const t = (key: string) => ({
+      'customer.retail.thankYou': 'Thank you',
+      'customer.retail.thankYouSubtitle': 'Your payment is complete',
+    }[key] || key);
+
+    const markup = renderToStaticMarkup(
+      React.createElement(RetailAssistedThankYouView, {
+        t,
+        language: 'en',
+        lastOrderTotal: 2000,
+      }),
+    );
+
+    expect(markup).toContain('Your payment is complete');
+    expect(markup).not.toContain('Book your next visit');
+    expect(markup).not.toContain('Scan to book online');
+  });
+
+  it('includes Polish public copy for retail assisted display', () => {
+    const translationsSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/i18n/translations.ts'),
+      'utf8',
+    );
+
+    expect(translationsSource).toContain("'customer.retail.idleTitle': 'Obsługa zeskanuje Twoje produkty'");
+    expect(translationsSource).toContain("'customer.retail.idleSubtitle': 'Twoje produkty pojawią się tutaj'");
+    expect(translationsSource).toContain("'customer.retail.paymentPrompt': 'Obsługa przyjmie płatność, gdy zamówienie będzie gotowe'");
+    expect(translationsSource).toContain("'customer.retail.thankYouSubtitle': 'Płatność zakończona'");
   });
 });
