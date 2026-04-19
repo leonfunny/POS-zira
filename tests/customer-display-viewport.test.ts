@@ -83,6 +83,39 @@ describe('Customer display viewport contract', () => {
     expect(appSource.indexOf("displayProfile === 'promo_only'")).toBeLessThan(appSource.indexOf("displayMode === 'checkin'"));
   });
 
+  it('keeps promo_only routing off the retail assisted idle surface', () => {
+    const appSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/windows/customer/CustomerApp.tsx'),
+      'utf8',
+    );
+    const promoOnlyStart = appSource.indexOf("displayProfile === 'promo_only'");
+    const retailAssistedStart = appSource.indexOf("displayProfile === 'retail_assisted'");
+
+    expect(promoOnlyStart).toBeGreaterThan(-1);
+    expect(retailAssistedStart).toBeGreaterThan(promoOnlyStart);
+
+    const promoOnlyBlock = appSource.slice(promoOnlyStart, retailAssistedStart);
+    expect(promoOnlyBlock).toContain('PromoOnlyIdleView');
+    expect(promoOnlyBlock).toContain("displayMode === 'promo'");
+    expect(promoOnlyBlock).toContain('fallback={');
+    expect(promoOnlyBlock).not.toContain('RetailAssistedIdleView');
+  });
+
+  it('keeps the promo_only idle surface neutral and free of assisted retail copy', () => {
+    const promoOnlyViewPath = path.join(
+      REPO_ROOT,
+      'src/renderer/windows/customer/views/PromoOnlyIdleView.tsx',
+    );
+    const promoOnlyViewSource = fs.existsSync(promoOnlyViewPath)
+      ? fs.readFileSync(promoOnlyViewPath, 'utf8')
+      : '';
+
+    expect(fs.existsSync(promoOnlyViewPath)).toBe(true);
+    expect(promoOnlyViewSource).toContain('data-customer-display-promo-only-idle="true"');
+    expect(promoOnlyViewSource).not.toContain('customer.retail');
+    expect(promoOnlyViewSource).not.toMatch(/Staff will scan your items|Your items will appear here/i);
+  });
+
   it('renders retail assisted idle copy without self-scan language', () => {
     const t = (key: string) => ({
       'customer.retail.idleTitle': 'Staff will scan your items',

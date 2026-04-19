@@ -26,6 +26,26 @@ async function configure(page, profile, posMode = 'retail') {
   }, { profile, posMode });
 }
 
+async function enterOfflineMode(page) {
+  for (const selector of ['button:has-text("Offline")', 'text=Offline']) {
+    try {
+      await page.click(selector, { timeout: 3000 });
+      break;
+    } catch {}
+  }
+}
+
+async function navigateToSettings(page) {
+  await page.waitForSelector('aside', { timeout: 10000 });
+  for (const selector of ['aside button[data-tooltip="Settings"]', 'aside button:has-text("Settings")']) {
+    try {
+      await page.click(selector, { timeout: 3000 });
+      break;
+    } catch {}
+  }
+  await page.waitForTimeout(500);
+}
+
 async function openCustomerWindow(page, app) {
   await page.evaluate(async () => {
     await window.electronAPI.window.open('customer');
@@ -83,6 +103,75 @@ async function dispatch(page, action) {
   await page.waitForTimeout(400);
 }
 
+async function changeSettingsProfileAndOpen(page, profile) {
+  await navigateToSettings(page);
+  const profileSelect = page.locator('select').filter({
+    has: page.locator(`option[value="${profile}"]`),
+  }).first();
+  await profileSelect.waitFor({ state: 'visible', timeout: 10000 });
+  await profileSelect.selectOption(profile);
+  const openButton = page.locator('button', { hasText: 'Open Customer Display' });
+  await openButton.click();
+  const deadline = Date.now() + 5000;
+  let saved = false;
+  while (Date.now() < deadline) {
+    const savedProfile = await page.evaluate(async () => {
+      const config = await window.electronAPI.getConfig();
+      return config.customerDisplayProfile;
+    });
+    if (savedProfile === profile) {
+      saved = true;
+      break;
+    }
+    await page.waitForTimeout(100);
+  }
+  if (!saved) {
+    throw new Error(`Settings did not save customerDisplayProfile=${profile} before opening`);
+  }
+  await page.waitForTimeout(800);
+}
+
+async function assertCustomerDisplaySafeForPromoOnly(customer) {
+  try {
+    await customer.waitForSelector('[data-customer-display-promo-only-idle="true"], img', { timeout: 5000 });
+  } catch (error) {
+    const bodyText = await customer.locator('body').innerText().catch(() => '<unavailable>');
+    const customerConfig = await customer.evaluate(() => window.electronAPI.getConfig()).catch(() => null);
+    const refreshApiType = await customer.evaluate(() => typeof window.electronAPI.display?.onRefreshConfig).catch(() => '<unavailable>');
+    await customer.screenshot({
+      path: join(OUT_DIR, 'debug-settings-open-promo-only.png'),
+      fullPage: true,
+    }).catch(() => {});
+    console.error('[display-profile] Customer body after Settings open:', bodyText);
+    console.error('[display-profile] Customer config after Settings open:', customerConfig);
+    console.error('[display-profile] Customer refresh API type:', refreshApiType);
+    throw error;
+  }
+  const bodyText = await customer.locator('body').innerText();
+  const bannedText = [
+    'Staff will scan your items',
+    'Your items will appear here',
+    'Staff will take payment',
+    'Payment status',
+    'Waiting for terminal',
+  ];
+
+  for (const text of bannedText) {
+    if (bodyText.includes(text)) {
+      throw new Error(`promo_only customer display leaked retail-assisted copy: ${text}`);
+    }
+  }
+
+  const blockedSurfaceCount = await customer.locator([
+    '[data-customer-display-hub="hub"]',
+    '[data-customer-display-checkin-booking-list="true"]',
+    '[data-customer-display-checkin-phone-selection="true"]',
+  ].join(',')).count();
+  if (blockedSurfaceCount > 0) {
+    throw new Error('promo_only customer display leaked check-in surface');
+  }
+}
+
 async function captureBothSizes(page, name) {
   await screenshot(page, name, 1280, 720);
   await screenshot(page, name, 1600, 900);
@@ -105,13 +194,28 @@ async function main() {
   });
 
   const page = await app.firstWindow();
+  page.on('console', (message) => {
+    if (['error', 'warning'].includes(message.type())) {
+      console.log(`[main:${message.type()}] ${message.text()}`);
+    }
+  });
+  page.on('pageerror', (error) => {
+    console.error('[main:pageerror]', error);
+  });
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(2000);
+  await enterOfflineMode(page);
 
   await configure(page, 'retail_assisted', 'retail');
   const customer = await openCustomerWindow(page, app);
   await captureBothSizes(customer, 'display-on-retail-assisted-idle');
 
+  await changeSettingsProfileAndOpen(page, 'promo_only');
+  await assertCustomerDisplaySafeForPromoOnly(customer);
+  await captureBothSizes(customer, 'display-on-settings-open-promo-only');
+
+  await configure(page, 'retail_assisted', 'retail');
+  await reloadCustomerWindow(customer);
   await dispatch(page, {
     type: 'cart/addItem',
     payload: { id: 'shot-item-1', variantId: 'shot-var-1', name: 'Coffee Beans', sku: 'COF-001', price: 2499, quantity: 2, total: 4998, vatRate: 23 },

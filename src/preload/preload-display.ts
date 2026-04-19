@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('set-config', config),
   display: {
+    onRefreshConfig: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('customer-display:refresh-config', listener);
+      return () => ipcRenderer.removeListener('customer-display:refresh-config', listener);
+    },
     touch: () => ipcRenderer.invoke('display:touch'),
     requestService: (serviceId: string) => ipcRenderer.invoke('display:request-service', serviceId),
     getBookings: () => ipcRenderer.invoke('display:get-bookings'),

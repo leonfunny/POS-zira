@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   CUSTOMER_DISPLAY_LIVE_PROFILES,
   CUSTOMER_DISPLAY_RESERVED_PROFILES,
   isLiveCustomerDisplayProfile,
   resolveCustomerDisplayProfile,
 } from '../src/shared/customer-display-profile';
+
+const REPO_ROOT = path.resolve(__dirname, '..');
 
 describe('customer display profile contract', () => {
   it('keeps live profiles separate from reserved profiles', () => {
@@ -44,5 +48,52 @@ describe('customer display profile contract', () => {
       customerDisplayProfile: 'retail_self_checkout',
       posMode: 'retail',
     })).toBe('retail_assisted');
+  });
+});
+
+describe('customer display profile runtime wiring', () => {
+  it('flushes the selected Settings profile before opening the customer display', () => {
+    const settingsSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/components/Settings.tsx'),
+      'utf8',
+    );
+    const openCallIndex = settingsSource.indexOf("window.electronAPI.window.open('customer')");
+    const handlerStartIndex = settingsSource.lastIndexOf('onClick={async () =>', openCallIndex);
+
+    expect(openCallIndex).toBeGreaterThan(-1);
+    expect(handlerStartIndex).toBeGreaterThan(-1);
+
+    const openCall = "window.electronAPI.window.open('customer')";
+    const openHandlerSource = settingsSource.slice(handlerStartIndex, openCallIndex + openCall.length);
+
+    expect(settingsSource).toContain('customerDisplayProfileRef.current = nextProfile;');
+    expect(settingsSource).toContain('customerDisplayProfileSelectRef');
+    expect(openHandlerSource).toContain('const payload = buildGeneralConfigPayload({');
+    expect(openHandlerSource).toContain('customerDisplayProfile: currentCustomerDisplayProfile');
+    expect(openHandlerSource).toContain('customerDisplayProfileSelectRef.current?.value');
+    expect(openHandlerSource).toContain('await Promise.resolve(onConfigChange(payload));');
+    expect(openHandlerSource.indexOf('onConfigChange(payload)')).toBeLessThan(
+      openHandlerSource.indexOf(openCall),
+    );
+  });
+
+  it('allows blank POS language while saving the customer display profile payload', () => {
+    const storeSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/main/config/store.ts'),
+      'utf8',
+    );
+
+    expect(storeSource).toContain("posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] }");
+  });
+
+  it('reloads customer display profile config when the customer window receives a refresh event', () => {
+    const appSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/windows/customer/CustomerApp.tsx'),
+      'utf8',
+    );
+
+    expect(appSource).toContain('loadCustomerDisplayConfig');
+    expect(appSource).toContain('onRefreshConfig');
+    expect(appSource).toContain('resolveCustomerDisplayProfile(config)');
   });
 });

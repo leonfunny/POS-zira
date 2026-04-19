@@ -312,6 +312,7 @@ interface ElectronAPI {
       y: number;
       isPrimary: boolean;
     }>>;
+    onRefreshConfig: (callback: () => void) => () => void;
     touch: () => Promise<{ success: boolean }>;
     requestService: (serviceId: string) => Promise<{ success: boolean }>;
     getBookings: () => Promise<BooksyBookingSummary[]>;

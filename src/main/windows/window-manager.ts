@@ -204,6 +204,9 @@ export class WindowManager {
     if (existing) {
       existing.show();
       existing.focus();
+      if (id === 'customer') {
+        existing.webContents.send('customer-display:refresh-config');
+      }
       return existing;
     }
 

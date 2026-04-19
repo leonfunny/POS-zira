@@ -181,7 +181,7 @@ const store = new Store<AgentConfig>({
     // POS settings
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
-    posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'] },
+    posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },
     customerDisplayProfile: {

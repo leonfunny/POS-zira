@@ -178,6 +178,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [customerDisplayProfile, setCustomerDisplayProfile] = useState<LiveCustomerDisplayProfile>(
     resolveCustomerDisplayProfile(config),
   );
+  const customerDisplayProfileRef = useRef<LiveCustomerDisplayProfile>(customerDisplayProfile);
+  const customerDisplayProfileSelectRef = useRef<HTMLSelectElement | null>(null);
+  customerDisplayProfileRef.current = customerDisplayProfile;
   const [customerDisplayMonitor, setCustomerDisplayMonitor] = useState(config?.customerDisplayMonitor ?? 0);
   const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useState(config?.customerDisplayForceKiosk ?? true);
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
@@ -230,7 +233,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const latestPrinterSignatureRef = useRef(getPrinterPayloadSignature(latestPrinterPayloadRef.current));
   const componentMountedRef = useRef(true);
 
-  const buildGeneralConfigPayload = useCallback((): Partial<AgentConfig> => ({
+  const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
     autoStart,
     language,
@@ -244,6 +247,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     customerDisplayPromoFolder: promoFolder,
     customerDisplayPromoInterval: promoInterval,
     customerDisplayIdleTimeout: idleTimeout,
+    ...overrides,
   }), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage,
@@ -370,7 +374,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
       setCustomerDisplayEnabled(config.customerDisplayEnabled ?? false);
-      setCustomerDisplayProfile(resolveCustomerDisplayProfile(config));
+      const nextProfile = resolveCustomerDisplayProfile(config);
+      customerDisplayProfileRef.current = nextProfile;
+      setCustomerDisplayProfile(nextProfile);
       setCustomerDisplayMonitor(config.customerDisplayMonitor ?? 0);
       setCustomerDisplayForceKiosk(config.customerDisplayForceKiosk ?? true);
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
@@ -1893,8 +1899,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   {t('settings.customerDisplayProfile')}
                 </label>
                 <select
+                  ref={customerDisplayProfileSelectRef}
                   value={customerDisplayProfile}
-                  onChange={(e) => setCustomerDisplayProfile(e.target.value as LiveCustomerDisplayProfile)}
+                  onChange={(e) => {
+                    const nextProfile = e.target.value as LiveCustomerDisplayProfile;
+                    customerDisplayProfileRef.current = nextProfile;
+                    setCustomerDisplayProfile(nextProfile);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                 >
                   <option value="retail_assisted">{t('settings.customerDisplayProfile.retail_assisted')}</option>
@@ -1913,6 +1924,18 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 type="button"
                 onClick={async () => {
                   try {
+                    if (autoSaveTimerRef.current) {
+                      clearTimeout(autoSaveTimerRef.current);
+                      autoSaveTimerRef.current = null;
+                    }
+                    const currentCustomerDisplayProfile = (
+                      customerDisplayProfileSelectRef.current?.value as LiveCustomerDisplayProfile | undefined
+                    ) || customerDisplayProfileRef.current;
+                    const payload = buildGeneralConfigPayload({
+                      customerDisplayProfile: currentCustomerDisplayProfile,
+                    });
+                    await Promise.resolve(onConfigChange(payload));
+                    window.electronAPI.setAutoStart(autoStart).catch(() => {});
                     const result = await window.electronAPI.window.open('customer');
                     if (!result.success) {
                       rlog.error('[Settings] Failed to open customer display:', result.error);

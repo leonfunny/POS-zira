@@ -4,9 +4,10 @@ import IdleView from './IdleView';
 interface PromoViewProps {
   images: string[];
   intervalMs: number;
+  fallback?: React.ReactNode;
 }
 
-export default function PromoView({ images, intervalMs }: PromoViewProps) {
+export default function PromoView({ images, intervalMs, fallback }: PromoViewProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -40,7 +41,7 @@ export default function PromoView({ images, intervalMs }: PromoViewProps) {
   }, [stableImages, intervalMs]);
 
   if (stableImages.length === 0) {
-    return <IdleView />;
+    return fallback ? <>{fallback}</> : <IdleView />;
   }
 
   // Guard against stale index after image list shrinks

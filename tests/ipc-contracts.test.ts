@@ -64,6 +64,12 @@ describe('IPC channel contracts - display preload', () => {
     expect(preloadDisplay).toContain('getConfig');
   });
 
+  it('exposes a customer display config refresh listener', () => {
+    expect(preloadDisplay).toContain('onRefreshConfig');
+    expect(preloadDisplay).toContain('customer-display:refresh-config');
+    expect(electronDts).toContain('onRefreshConfig');
+  });
+
   it('exposes display.touch', () => {
     expect(preloadDisplay).toContain('touch');
   });

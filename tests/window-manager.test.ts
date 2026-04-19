@@ -282,6 +282,26 @@ describe('WindowManager customer display behavior', () => {
     manager.destroy();
   });
 
+  it('refreshes customer display config when opening an existing customer window', () => {
+    configValues.customerDisplayForceKiosk = false;
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('customer') as unknown as MockBrowserWindow;
+    win.webContents.sentMessages.length = 0;
+
+    const existing = manager.createWindow('customer') as unknown as MockBrowserWindow;
+
+    expect(existing).toBe(win);
+    expect(win.show).toHaveBeenCalledOnce();
+    expect(win.focus).toHaveBeenCalledOnce();
+    expect(win.webContents.sentMessages).toContainEqual({
+      channel: 'customer-display:refresh-config',
+      payload: undefined,
+    });
+
+    manager.destroy();
+  });
+
   it('reapplies bounds-based customer display layout when displays are added or removed', () => {
     configValues.customerDisplayForceKiosk = true;
     configValues.customerDisplayMonitor = 1;

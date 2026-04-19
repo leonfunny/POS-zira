@@ -16,6 +16,7 @@ import CartView from './views/CartView';
 import CheckInView from './views/CheckInView';
 import IdleView from './views/IdleView';
 import PromoView from './views/PromoView';
+import PromoOnlyIdleView from './views/PromoOnlyIdleView';
 import RetailAssistedCartView from './views/RetailAssistedCartView';
 import RetailAssistedIdleView from './views/RetailAssistedIdleView';
 import RetailAssistedThankYouView from './views/RetailAssistedThankYouView';
@@ -67,6 +68,12 @@ export default function CustomerApp() {
   const [lang, setLang] = useState<Language>('en');
   const [displayProfile, setDisplayProfile] = useState<LiveCustomerDisplayProfile | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
+
+  const loadCustomerDisplayConfig = useCallback(async () => {
+    const config = await window.electronAPI.getConfig();
+    setLang(resolveCustomerDisplayLanguage(config));
+    setDisplayProfile(resolveCustomerDisplayProfile(config));
+  }, []);
 
   useEffect(() => {
     const EDGE_BLOCK_PX = 20;
@@ -152,17 +159,22 @@ export default function CustomerApp() {
       setState((prev) => prev ?? nextState);
     });
 
-    window.electronAPI.getConfig().then((config: any) => {
-      setLang(resolveCustomerDisplayLanguage(config));
-      setDisplayProfile(resolveCustomerDisplayProfile(config));
+    void loadCustomerDisplayConfig();
+
+    const unsubscribeRefreshConfig = window.electronAPI.display?.onRefreshConfig?.(() => {
+      void loadCustomerDisplayConfig();
     });
 
-    return unsubscribe;
-  }, []);
+    return () => {
+      unsubscribe();
+      unsubscribeRefreshConfig?.();
+    };
+  }, [loadCustomerDisplayConfig]);
 
   const t = getTranslation(lang);
   const displayMode = state?.display?.mode || 'idle';
   const display = state?.display;
+  const promoImages = display?.promoImages || [];
   const hasSalonData = (display?.serviceCategories?.length ?? 0) > 0;
   const paymentStatus = display?.paymentStatus;
 
@@ -202,21 +214,24 @@ export default function CustomerApp() {
   }
 
   if (displayProfile === 'promo_only') {
-    if (displayMode === 'promo') {
-      return (
-        <PromoView
-          images={display?.promoImages || []}
-          intervalMs={display?.promoIntervalMs || 5000}
-        />
-      );
-    }
-
-    return (
-      <RetailAssistedIdleView
+    const promoOnlyIdleView = (
+      <PromoOnlyIdleView
         t={t}
         businessName={display?.salonName}
       />
     );
+
+    if (promoImages.length > 0 || displayMode === 'promo') {
+      return (
+        <PromoView
+          images={promoImages}
+          intervalMs={display?.promoIntervalMs || 5000}
+          fallback={promoOnlyIdleView}
+        />
+      );
+    }
+
+    return promoOnlyIdleView;
   }
 
   if (displayProfile === 'retail_assisted') {
