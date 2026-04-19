@@ -45,6 +45,8 @@ screenshots/
 
 # Temporary test scripts in root
 test-*.ps1
+tmp-*.ps1
+tmp-*.log
 
 # Generated test output
 scripts/test-output/
