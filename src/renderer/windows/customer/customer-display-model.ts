@@ -141,3 +141,16 @@ export function formatDisplayDate(date: Date, language: Language): string {
     month: 'short',
   });
 }
+
+export {
+  CUSTOMER_DISPLAY_LIVE_PROFILES,
+  CUSTOMER_DISPLAY_RESERVED_PROFILES,
+  isCustomerDisplayProfile,
+  isLiveCustomerDisplayProfile,
+  resolveCustomerDisplayProfile,
+} from '../../../shared/customer-display-profile';
+export type {
+  CustomerDisplayProfile,
+  LiveCustomerDisplayProfile,
+  ReservedCustomerDisplayProfile,
+} from '../../../shared/types';

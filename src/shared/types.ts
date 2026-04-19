@@ -187,6 +187,19 @@ export type PrintersConfig = {
   [key in PrinterType]?: PrinterConfig;
 };
 
+export type LiveCustomerDisplayProfile =
+  | 'retail_assisted'
+  | 'salon_checkin'
+  | 'promo_only';
+
+export type ReservedCustomerDisplayProfile =
+  | 'retail_self_checkout'
+  | 'restaurant_table_display';
+
+export type CustomerDisplayProfile =
+  | LiveCustomerDisplayProfile
+  | ReservedCustomerDisplayProfile;
+
 // Agent configuration stored locally
 export interface AgentConfig {
   agentId?: string;
@@ -263,6 +276,7 @@ export interface AgentConfig {
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
+  customerDisplayProfile?: CustomerDisplayProfile; // Live: retail_assisted, salon_checkin, promo_only. Reserved values are not selectable.
   customerDisplayMonitor?: number;     // Monitor index for customer display (0 = primary)
   customerDisplayForceKiosk?: boolean; // Force kiosk/fullscreen even on single monitor (default true). Esc + 3-finger swipe-down still exit.
   customerDisplayPromoFolder?: string; // Local folder path for promo images
