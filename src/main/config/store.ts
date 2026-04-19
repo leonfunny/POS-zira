@@ -184,6 +184,10 @@ const store = new Store<AgentConfig>({
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'] },
     customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },
+    customerDisplayProfile: {
+      type: 'string',
+      enum: ['retail_assisted', 'salon_checkin', 'promo_only', 'retail_self_checkout', 'restaurant_table_display'],
+    },
     customerDisplayMonitor: { type: 'number', default: 0 },
     // When true (default), customer display opens in true fullscreen kiosk even on
     // single-monitor setups. Set to false on dev machines to keep the old windowed

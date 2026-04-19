@@ -22,8 +22,11 @@ vi.mock('../src/main/pos/promo-loader', () => ({
   },
 }));
 
+const mockConfig: Record<string, unknown> = {};
+
 vi.mock('../src/main/config/store', () => ({
   getConfigValue: vi.fn((key: string) => {
+    if (Object.prototype.hasOwnProperty.call(mockConfig, key)) return mockConfig[key];
     if (key === 'customerDisplayIdleTimeout') return 120000;
     if (key === 'customerDisplayPromoInterval') return 5000;
     return undefined;
@@ -37,6 +40,7 @@ import type { PosAction, CartItem, PosState } from '../src/main/pos/pos-store';
 let PosStore: typeof import('../src/main/pos/pos-store').PosStore;
 beforeEach(async () => {
   vi.useFakeTimers();
+  for (const key of Object.keys(mockConfig)) delete mockConfig[key];
   const mod = await import('../src/main/pos/pos-store');
   PosStore = mod.PosStore;
 });
@@ -249,7 +253,8 @@ describe('Display state transitions', () => {
     store.destroy();
   });
 
-  it('handleTouch transitions from idle to interactive', () => {
+  it('handleTouch transitions from idle to interactive for salon_checkin', () => {
+    mockConfig.customerDisplayProfile = 'salon_checkin';
     const store = new PosStore();
     expect(store.getState().display.mode).toBe('idle');
     store.handleTouch();
@@ -262,6 +267,78 @@ describe('Display state transitions', () => {
     store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
     expect(store.getState().display.mode).toBe('cart');
     store.handleTouch();
+    expect(store.getState().display.mode).toBe('cart');
+    store.destroy();
+  });
+
+  it('does not open check-in or interactive flow when profile is retail_assisted', () => {
+    mockConfig.customerDisplayProfile = 'retail_assisted';
+    const store = new PosStore();
+    store.setSalonDisplayInfo({ salonName: 'Retail Shop' });
+
+    store.handleTouch();
+
+    expect(store.getState().display.mode).toBe('idle');
+    store.destroy();
+  });
+
+  it('does not open check-in or interactive flow when profile is promo_only', () => {
+    mockConfig.customerDisplayProfile = 'promo_only';
+    const store = new PosStore();
+    store.setSalonDisplayInfo({ salonName: 'Promo Screen' });
+
+    store.handleTouch();
+
+    expect(store.getState().display.mode).toBe('idle');
+    store.destroy();
+  });
+
+  it('preserves salon touch behavior when profile is salon_checkin', () => {
+    mockConfig.customerDisplayProfile = 'salon_checkin';
+    const store = new PosStore();
+    store.setSalonDisplayInfo({ salonName: 'Salon' });
+
+    store.handleTouch();
+
+    expect(store.getState().display.mode).toBe('checkin');
+    store.destroy();
+  });
+
+  it('keeps promo_only in promo mode when an item is added during promo', () => {
+    mockConfig.customerDisplayProfile = 'promo_only';
+    const store = new PosStore();
+    store.dispatch({
+      type: 'display/setMode',
+      payload: { mode: 'promo', promoImages: ['promo-a.jpg'] },
+    });
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+
+    expect(store.getState().cart.items).toHaveLength(1);
+    expect(store.getState().display.mode).toBe('promo');
+    store.destroy();
+  });
+
+  it('keeps promo_only customer-safe when an item is added during idle', () => {
+    mockConfig.customerDisplayProfile = 'promo_only';
+    const store = new PosStore();
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+
+    expect(store.getState().cart.items).toHaveLength(1);
+    expect(store.getState().display.mode).toBe('idle');
+    expect(store.getState().display.mode).not.toBe('cart');
+    expect(store.getState().display.mode).not.toBe('checkin');
+    store.destroy();
+  });
+
+  it('still switches retail_assisted display to cart when an item is added', () => {
+    mockConfig.customerDisplayProfile = 'retail_assisted';
+    const store = new PosStore();
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+
+    expect(store.getState().cart.items).toHaveLength(1);
     expect(store.getState().display.mode).toBe('cart');
     store.destroy();
   });

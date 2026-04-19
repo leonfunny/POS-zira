@@ -3,7 +3,8 @@ import logger from '../logger';
 import { PromoLoader } from './promo-loader';
 import { getConfigValue } from '../config/store';
 import { productRepo } from '../database/repos/product-repo';
-import type { SelectedService } from '../../shared/types';
+import type { AgentConfig, LiveCustomerDisplayProfile, SelectedService } from '../../shared/types';
+import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 
 // === State interfaces ===
 
@@ -178,7 +179,15 @@ function recalcCart(cart: CartState): CartState {
   return { ...cart, subtotal, discount, tax, total };
 }
 
-function posReducer(state: PosState, action: PosAction): PosState {
+interface PosReducerOptions {
+  customerDisplayProfile?: LiveCustomerDisplayProfile;
+}
+
+function posReducer(
+  state: PosState,
+  action: PosAction,
+  options: PosReducerOptions = {},
+): PosState {
   switch (action.type) {
     case 'cart/addItem': {
       // Merge only if same variant AND same staff AND same course
@@ -204,9 +213,11 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // them there — the cart preview only appears once they're idle/promo or
       // already viewing the cart.
       const currentMode = state.display.mode;
-      const nextMode = currentMode === 'checkin' || currentMode === 'interactive'
-        ? currentMode
-        : 'cart';
+      const nextMode = options.customerDisplayProfile === 'promo_only'
+        ? (currentMode === 'promo' ? 'promo' : 'idle')
+        : currentMode === 'checkin' || currentMode === 'interactive'
+          ? currentMode
+          : 'cart';
       return { ...state, cart: recalcCart({ ...state.cart, items }), display: { ...state.display, mode: nextMode } };
     }
 
@@ -354,13 +365,22 @@ export class PosStore {
     return this.state;
   }
 
+  private getCustomerDisplayProfile(): LiveCustomerDisplayProfile {
+    return resolveCustomerDisplayProfile({
+      customerDisplayProfile: getConfigValue('customerDisplayProfile') as AgentConfig['customerDisplayProfile'],
+      posMode: getConfigValue('posMode') as AgentConfig['posMode'],
+    });
+  }
+
   dispatch(action: PosAction): void {
     logger.info(`[PosStore] Dispatch: ${action.type}`);
     // Invalidate any in-flight async transitions (e.g. transitionToPromoOrIdle)
     // so they don't clobber the state we're about to set. Without this, an idle
     // timer that fires mid-dispatch can overwrite a freshly-added cart with idle.
     this.transitionVersion++;
-    this.state = posReducer(this.state, action);
+    this.state = posReducer(this.state, action, {
+      customerDisplayProfile: this.getCustomerDisplayProfile(),
+    });
     this.broadcast();
 
     this.handleDisplayTransitions();
@@ -410,6 +430,12 @@ export class PosStore {
     const mode = this.state.display.mode;
     // Only transition from idle or promo to interactive/checkin
     if (mode !== 'idle' && mode !== 'promo') return;
+
+    const profile = this.getCustomerDisplayProfile();
+    if (profile !== 'salon_checkin') {
+      logger.info(`[PosStore] Ignoring customer touch for profile=${profile}`);
+      return;
+    }
 
     // Load service categories for display
     this.loadServiceCategories();
