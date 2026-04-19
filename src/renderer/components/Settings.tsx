@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile } from '../../shared/types';
+import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
@@ -174,6 +175,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [customerDisplayEnabled, setCustomerDisplayEnabled] = useState(config?.customerDisplayEnabled ?? false);
+  const [customerDisplayProfile, setCustomerDisplayProfile] = useState<LiveCustomerDisplayProfile>(
+    resolveCustomerDisplayProfile(config),
+  );
   const [customerDisplayMonitor, setCustomerDisplayMonitor] = useState(config?.customerDisplayMonitor ?? 0);
   const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useState(config?.customerDisplayForceKiosk ?? true);
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
@@ -234,6 +238,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
     customerDisplayEnabled,
+    customerDisplayProfile,
     customerDisplayMonitor,
     customerDisplayForceKiosk,
     customerDisplayPromoFolder: promoFolder,
@@ -242,7 +247,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   }), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage,
-    customerDisplayEnabled, customerDisplayMonitor, customerDisplayForceKiosk,
+    customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
     promoFolder, promoInterval, idleTimeout,
   ]);
 
@@ -365,6 +370,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
       setCustomerDisplayEnabled(config.customerDisplayEnabled ?? false);
+      setCustomerDisplayProfile(resolveCustomerDisplayProfile(config));
       setCustomerDisplayMonitor(config.customerDisplayMonitor ?? 0);
       setCustomerDisplayForceKiosk(config.customerDisplayForceKiosk ?? true);
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
@@ -1880,6 +1886,26 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 />
               </button>
             </div>
+
+            {customerDisplayEnabled && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  {t('settings.customerDisplayProfile')}
+                </label>
+                <select
+                  value={customerDisplayProfile}
+                  onChange={(e) => setCustomerDisplayProfile(e.target.value as LiveCustomerDisplayProfile)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                >
+                  <option value="retail_assisted">{t('settings.customerDisplayProfile.retail_assisted')}</option>
+                  <option value="salon_checkin">{t('settings.customerDisplayProfile.salon_checkin')}</option>
+                  <option value="promo_only">{t('settings.customerDisplayProfile.promo_only')}</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  {t('settings.customerDisplayProfileDesc')}
+                </p>
+              </div>
+            )}
 
             {/* Open Customer Display Button */}
             {customerDisplayEnabled && (
