@@ -129,13 +129,37 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Test print state
   const [testingPrinter, setTestingPrinter] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ printerType: string; success: boolean; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    printerType: string;
+    success: boolean;
+    error?: string;
+    steps?: Array<{ step: string; ok: boolean; detail?: string; error?: string; durationMs?: number }>;
+    modelName?: string;
+    charsetUsed?: string;
+    cutModeUsed?: string;
+  } | null>(null);
+  // Live progress — updated as each step streams back from main process
+  const [liveSteps, setLiveSteps] = useState<Array<{ step: string; ok: boolean; detail?: string; error?: string }>>([]);
   // Calibrate state
   const [calibratingPrinter, setCalibratingPrinter] = useState<string | null>(null);
   const [calibrateResult, setCalibrateResult] = useState<{ printerType: string; success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } } | null>(null);
 
-  // Printer detection state
-  const [posnetStatus, setPosnetStatus] = useState<PrinterDetectionStatus | null>(null);
+  // Printer detection state — persisted to sessionStorage so switching tabs
+  // (which unmounts Settings) doesn't wipe the detected printer list from the
+  // UI. Main-side registry keeps the real cache; this is just for instant UI
+  // restore.
+  const [posnetStatus, setPosnetStatus] = useState<PrinterDetectionStatus | null>(() => {
+    try {
+      const raw = sessionStorage.getItem('zira.posnetStatus');
+      return raw ? JSON.parse(raw) as PrinterDetectionStatus : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      if (posnetStatus) sessionStorage.setItem('zira.posnetStatus', JSON.stringify(posnetStatus));
+      else sessionStorage.removeItem('zira.posnetStatus');
+    } catch { /* quota/private mode — best-effort */ }
+  }, [posnetStatus]);
   const [posnetChecking, setPosnetChecking] = useState(false);
   const [posnetInstalling, setPosnetInstalling] = useState(false);
   const [posnetInstallResult, setPosnetInstallResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -518,17 +542,33 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const handleTestPrint = async (printerType: string) => {
     setTestingPrinter(printerType);
     setTestResult(null);
+    setLiveSteps([]);
+    // Subscribe to progress stream — main process emits one event per step
+    const unsubscribe = window.electronAPI.onTestPrintProgress?.((step: any) => {
+      setLiveSteps(prev => [...prev, step]);
+    });
     try {
       const printerConfig = getPrinterConfig(printerType as PrinterTypeValue);
       // Force enabled=true so testPrinterByConfig can create the driver even before saving
-      const result = await window.electronAPI.testPrinterByConfig({ ...printerConfig, enabled: true }, printerType);
-      setTestResult({ printerType, success: result.success, error: result.error });
+      const result: any = await window.electronAPI.testPrinterByConfig({ ...printerConfig, enabled: true }, printerType);
+      // New shape: { success, steps, modelName, charsetUsed, cutModeUsed } — old shape {success, error} still tolerated
+      const firstFail = Array.isArray(result.steps) ? result.steps.find((s: any) => !s.ok) : null;
+      setTestResult({
+        printerType,
+        success: !!result.success,
+        error: result.error || firstFail?.error,
+        steps: result.steps,
+        modelName: result.modelName,
+        charsetUsed: result.charsetUsed,
+        cutModeUsed: result.cutModeUsed,
+      });
     } catch (error: any) {
       setTestResult({ printerType, success: false, error: error.message });
     } finally {
       setTestingPrinter(null);
-      // Clear result after 5 seconds
-      setTimeout(() => setTestResult(null), 5000);
+      if (typeof unsubscribe === 'function') unsubscribe();
+      // Keep detail visible longer on failure so user can read the steps
+      setTimeout(() => { setTestResult(null); setLiveSteps([]); }, 15000);
     }
   };
 
@@ -1453,14 +1493,50 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             </>
                           )}
                         </button>
-                        {/* Test Result */}
+                        {/* Live progress while a test is running */}
+                        {testingPrinter === printerType && liveSteps.length > 0 && (
+                          <div className="mt-2 px-3 py-2 rounded-lg text-xs bg-slate-50 text-slate-700 font-mono">
+                            {liveSteps.map((s, idx) => (
+                              <div key={idx} className={s.ok ? 'text-emerald-700' : 'text-red-700'}>
+                                {s.ok ? '✓' : '✗'} {s.step}{s.detail ? ` — ${s.detail}` : ''}{s.error ? ` — ${s.error}` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Test Result — detailed on failure */}
                         {testResult && testResult.printerType === printerType && (
                           <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
                             testResult.success
                               ? 'bg-green-50 text-green-700'
                               : 'bg-red-50 text-red-700'
                           }`}>
-                            {testResult.success ? t('test.success') : `${t('test.error')}: ${testResult.error}`}
+                            <div className="font-medium">
+                              {testResult.success ? t('test.success') : `${t('test.error')}: ${testResult.error || 'Unknown error'}`}
+                            </div>
+                            {(testResult.modelName || testResult.charsetUsed) && (
+                              <div className="mt-1 text-[11px] opacity-80">
+                                {testResult.modelName && <span>Model: {testResult.modelName}</span>}
+                                {testResult.charsetUsed && <span> · charset: {testResult.charsetUsed}</span>}
+                                {testResult.cutModeUsed && <span> · cut: {testResult.cutModeUsed}</span>}
+                              </div>
+                            )}
+                            {!testResult.success && testResult.steps && testResult.steps.length > 0 && (
+                              <div className="mt-2 font-mono text-[11px] space-y-0.5">
+                                {testResult.steps.map((s, idx) => (
+                                  <div key={idx} className={s.ok ? 'text-emerald-700' : 'text-red-700'}>
+                                    {s.ok ? '✓' : '✗'} {s.step}{s.detail ? ` — ${s.detail}` : ''}{s.error ? ` — ${s.error}` : ''}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {!testResult.success && (
+                              <button
+                                onClick={() => window.electronAPI.openLogFolder?.()}
+                                className="mt-2 px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
+                              >
+                                Open log folder
+                              </button>
+                            )}
                           </div>
                         )}
 

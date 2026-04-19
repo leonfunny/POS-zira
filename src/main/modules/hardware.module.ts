@@ -34,6 +34,9 @@ import {
   DeviceStatus,
   CheckinConfirmationData,
   ALLOWED_PROTOCOLS_BY_TYPE,
+  TestPrintStep,
+  TestPrintStepName,
+  TestPrintResult,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
@@ -225,6 +228,17 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig, printerType?: string) => {
       return this.testPrinterByConfig(config, printerType);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.OPEN_LOG_FOLDER, async () => {
+      try {
+        const { shell } = require('electron');
+        const logPath = require('path').join(app.getPath('userData'), 'logs');
+        await shell.openPath(logPath);
+        return { success: true, path: logPath };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
     });
 
     ipcMain.handle(IPC_CHANNELS.CALIBRATE_PRINTER, async (_, config: PrinterConfig) => {
@@ -622,34 +636,135 @@ export class HardwareModule extends BaseModule {
   }
 
   /**
-   * Test a printer directly from its config object — no need to save first.
-   * Creates a temporary driver, connects, prints test page, then disconnects.
+   * Emit a per-step progress update to the renderer so the UI can show live
+   * diagnostics instead of a single opaque success/failure toast.
    */
-  async testPrinterByConfig(config: PrinterConfig, printerType?: string): Promise<{ success: boolean; error?: string }> {
-    // Backend protocol lock — reject invalid (printerType, protocol) combos
-    // before even creating the driver. The UI dropdown should also enforce this,
-    // but the backend is the source of truth.
-    if (printerType) {
-      const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerType.toUpperCase() as PrinterType];
-      if (allowed && !allowed.includes(config.protocol)) {
-        return {
-          success: false,
-          error: `${printerType} slot cannot use ${config.protocol} protocol. Allowed: ${allowed.join(', ')}`,
-        };
-      }
-    }
-    // Pass the printerType as the slot name so createPrinterFromConfig also validates.
-    const driver = this.createPrinterFromConfig(config, printerType || 'test');
-    if (!driver) return { success: false, error: 'Invalid printer configuration (missing port or printer name)' };
+  private emitTestPrintProgress(step: TestPrintStep): void {
     try {
-      const connected = await driver.connect();
-      if (!connected) return { success: false, error: 'Printer not found. Check the printer name or connection.' };
-      await driver.printTest();
-      driver.disconnect();
-      return { success: true };
+      const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
+      mainWindow?.webContents.send(IPC_CHANNELS.TEST_PRINT_PROGRESS, step);
+    } catch (err: any) {
+      logger.debug('[HardwareModule] send test-print progress failed:', err?.message);
+    }
+  }
+
+  /**
+   * Run one diagnostic step, time it, record the outcome, and stream the
+   * result to the renderer. Returns true on success so the caller can short-
+   * circuit when a step fails.
+   */
+  private async runStep(
+    steps: TestPrintStep[],
+    step: TestPrintStepName,
+    fn: () => Promise<{ detail?: string; data?: unknown }>,
+  ): Promise<boolean> {
+    const start = Date.now();
+    try {
+      const out = await fn();
+      const entry: TestPrintStep = { step, ok: true, detail: out.detail, data: out.data, durationMs: Date.now() - start };
+      steps.push(entry);
+      this.emitTestPrintProgress(entry);
+      return true;
     } catch (e: any) {
+      const entry: TestPrintStep = { step, ok: false, error: e?.message || String(e), durationMs: Date.now() - start };
+      steps.push(entry);
+      this.emitTestPrintProgress(entry);
+      return false;
+    }
+  }
+
+  /**
+   * Test a printer directly from its config object — no need to save first.
+   *
+   * Runs a 6-step diagnostic flow (config → connect → identify → build → send
+   * → verify), streaming per-step progress to the renderer. Returns the full
+   * step list so the UI can show exactly where things went wrong.
+   */
+  async testPrinterByConfig(config: PrinterConfig, printerType?: string): Promise<TestPrintResult> {
+    const steps: TestPrintStep[] = [];
+    const result: TestPrintResult = { success: false, steps };
+
+    // STEP 1 — config validation
+    const configOk = await this.runStep(steps, 'config', async () => {
+      if (printerType) {
+        const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerType.toUpperCase() as PrinterType];
+        if (allowed && !allowed.includes(config.protocol)) {
+          throw new Error(`${printerType} slot cannot use ${config.protocol} protocol. Allowed: ${allowed.join(', ')}`);
+        }
+      }
+      if (!config.port && !config.windowsPrinter) {
+        throw new Error('Missing port (COM) or windowsPrinter name in config');
+      }
+      return { detail: `protocol=${config.protocol} target=${config.port || config.windowsPrinter}` };
+    });
+    if (!configOk) return result;
+
+    // Build driver (no side effects yet)
+    const driver = this.createPrinterFromConfig({ ...config, enabled: true }, printerType || 'test');
+    if (!driver) {
+      const entry: TestPrintStep = { step: 'config', ok: false, error: 'createPrinterFromConfig returned null (invalid combination)' };
+      steps.push(entry);
+      this.emitTestPrintProgress(entry);
+      return result;
+    }
+
+    try {
+      // STEP 2 — connect
+      const connectOk = await this.runStep(steps, 'connect', async () => {
+        const connected = await driver.connect();
+        if (!connected) throw new Error('Printer not found. Check the cable, power, and whether the printer is selected/installed.');
+        return { detail: 'Connected' };
+      });
+      if (!connectOk) return result;
+
+      // STEP 3 — identify model (best-effort; non-fatal)
+      await this.runStep(steps, 'identify', async () => {
+        if (driver instanceof PosnetDriver) {
+          const info = await driver.identifyModel();
+          result.modelName = info.modelName;
+          result.firmwareVersion = info.firmwareVersion;
+          return { detail: info.modelName ? `${info.modelName} (${info.source})` : 'unknown (no response)', data: info };
+        }
+        if (driver instanceof ThermalDriver) {
+          const info = driver.identifyModel();
+          result.modelName = info.modelName;
+          return { detail: info.modelName ? `${info.modelName} (${info.source})` : 'unknown', data: info };
+        }
+        return { detail: 'Skipped (non-thermal/posnet driver)' };
+      });
+
+      // STEP 4 — build is implicit inside printTest; we record which charset/cut are in use
+      await this.runStep(steps, 'build', async () => {
+        if (driver instanceof ThermalDriver) {
+          result.charsetUsed = driver.getCharset();
+          result.cutModeUsed = driver.getCutMode();
+          return { detail: `charset=${result.charsetUsed} cut=${result.cutModeUsed}` };
+        }
+        return { detail: 'POSNET frame (non-fiscal trinit/trline/trend)' };
+      });
+
+      // STEP 5 + 6 — send and verify are combined inside printTest() because
+      // the driver throws on verify failure. We report them as two entries so
+      // the UI lines up with the documented 6-step flow.
+      const sendOk = await this.runStep(steps, 'send', async () => {
+        await driver.printTest();
+        return { detail: 'Bytes written to printer' };
+      });
+      if (!sendOk) return result;
+
+      await this.runStep(steps, 'verify', async () => {
+        // printTest() already throws on stuck jobs / protocol errors; if we got
+        // here, verify passed. Kept as a distinct step for UI parity.
+        return { detail: 'No stuck jobs, no protocol errors' };
+      });
+
+      result.success = steps.every(s => s.ok);
+      try {
+        result.logFilePath = require('path').join(app.getPath('userData'), 'logs', 'combined.log');
+      } catch { /* logger path not critical */ }
+      return result;
+    } finally {
       try { driver.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect driver after test failed:', err?.message); }
-      return { success: false, error: e.message };
     }
   }
 
@@ -1277,6 +1392,7 @@ export class HardwareModule extends BaseModule {
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
       return null;
     }
+    const tOpts = { charset: config.charset, cutMode: config.cutMode };
     if (config.protocol === 'WINDOWS') {
       // Regular Windows printers (A4, inkjet, laser): use ThermalDriver in
       // windowsTextMode so printTest sends plain text via Out-Printer instead
@@ -1288,6 +1404,7 @@ export class HardwareModule extends BaseModule {
         config.paperWidth || 80,
         config.charsPerLine || 48,
         true,  // windowsTextMode — A4/laser path
+        tOpts,
       );
       return null;
     }
@@ -1297,8 +1414,8 @@ export class HardwareModule extends BaseModule {
       return null;
     }
     // THERMAL protocol: ESC/POS thermal receipt printers (USB or serial)
-    if (config.windowsPrinter) return new ThermalDriver(config.windowsPrinter, config.baudRate || 9600, 'USB', config.paperWidth || 80, config.charsPerLine || 48);
-    if (config.port) return new ThermalDriver(config.port, config.baudRate || 9600, 'SERIAL', config.paperWidth || 80, config.charsPerLine || 48);
+    if (config.windowsPrinter) return new ThermalDriver(config.windowsPrinter, config.baudRate || 9600, 'USB', config.paperWidth || 80, config.charsPerLine || 48, false, tOpts);
+    if (config.port) return new ThermalDriver(config.port, config.baudRate || 9600, 'SERIAL', config.paperWidth || 80, config.charsPerLine || 48, false, tOpts);
     return null;
   }
 

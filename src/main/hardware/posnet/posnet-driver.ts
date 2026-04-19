@@ -4,6 +4,7 @@ import logger from '../../logger';
 import { ReceiptFormatter } from './receipt-formatter';
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
 import { listSerialPorts, sanitizePortName } from '../port-utils';
+import { POSNET_PRODUCT_IDS } from './probe-profiles';
 
 const execFileAsync = promisify(execFile);
 
@@ -50,6 +51,8 @@ const TAB = 0x09;
 export class PosnetDriver {
   private connected = false;
   private formatter: ReceiptFormatter;
+  private modelName?: string;
+  private firmwareVersion?: string;
 
   constructor(
     private portName: string = 'COM3',
@@ -59,6 +62,9 @@ export class PosnetDriver {
     this.formatter = new ReceiptFormatter();
     logger.info(`[PosnetDriver] Driver initialized for ${portName} @ ${baudRate}`);
   }
+
+  getModelName(): string | undefined { return this.modelName; }
+  getFirmwareVersion(): string | undefined { return this.firmwareVersion; }
 
   // ─── Connection lifecycle ─────────────────────────────────────────────────
 
@@ -169,37 +175,110 @@ export class PosnetDriver {
   // ─── Printing ─────────────────────────────────────────────────────────────
 
   /**
+   * Query the printer for its model + firmware via POSNET `modinf`.
+   *
+   * POSNET response format: modinf TAB na<name> TAB nv<version> TAB ... TAB # CRC ETX
+   * On failure (no response, wrong command, legacy model that doesn't support
+   * modinf), falls back to USB VID_1424 PID lookup via POSNET_PRODUCT_IDS.
+   * Result is cached on the instance (this.modelName / this.firmwareVersion)
+   * so subsequent callers don't re-query the printer.
+   */
+  async identifyModel(): Promise<{ modelName?: string; firmwareVersion?: string; source: 'modinf' | 'usb-pid' | 'none' }> {
+    if (!this.isConnected()) {
+      return { source: 'none' };
+    }
+
+    // 1) Try modinf
+    try {
+      const responses = await this.sendPosnetSequence([['modinf']]);
+      const resp = responses[0] || '';
+      // Parse: find na<name> and nv<version> tokens
+      const nameMatch = resp.match(/\bna([^\t\x03#]+)/);
+      const versMatch = resp.match(/\bnv([^\t\x03#]+)/);
+      if (nameMatch) {
+        this.modelName = nameMatch[1].trim();
+        if (versMatch) this.firmwareVersion = versMatch[1].trim();
+        logger.info(`[PosnetDriver] modinf → ${this.modelName} fw=${this.firmwareVersion ?? '?'}`);
+        return { modelName: this.modelName, firmwareVersion: this.firmwareVersion, source: 'modinf' };
+      }
+    } catch (err) {
+      logger.warn(`[PosnetDriver] modinf failed, falling back to USB PID lookup: ${(err as Error).message}`);
+    }
+
+    // 2) Fallback: USB PID lookup for VID_1424
+    try {
+      const pid = await PosnetDriver.findPosnetPidForPort(this.portName);
+      if (pid !== null && POSNET_PRODUCT_IDS[pid]) {
+        this.modelName = `POSNET ${POSNET_PRODUCT_IDS[pid]}`;
+        logger.info(`[PosnetDriver] USB PID 0x${pid.toString(16)} → ${this.modelName}`);
+        return { modelName: this.modelName, source: 'usb-pid' };
+      }
+    } catch (err) {
+      logger.debug(`[PosnetDriver] USB PID lookup failed: ${(err as Error).message}`);
+    }
+
+    return { source: 'none' };
+  }
+
+  /**
    * Print a test page via non-fiscal transaction.
-   * Sequence: trinit bm0 → trline × N → trend to<total>
+   *
+   * Primary path: `trinit bm0` → `trline` × N → `trend to<total>` (POSNET v2 standard).
+   * Fallback path: `prninit` → `prnline tx<text>` × N → `prnend` (legacy non-fiscal
+   * printout, for older POSNET models that reject `trinit`).
+   *
+   * Model name on the receipt is the one returned by `identifyModel()` — no
+   * hard-coded model string.
    */
   async printTest(): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
     logger.info(`[PosnetDriver] Printing test page on ${this.portName}...`);
 
+    if (!this.modelName) {
+      await this.identifyModel();
+    }
+    const modelLine = this.modelName ? `Model: ${this.modelName}` : 'POSNET Printer';
+
     const lines = [
       '*** TEST PRINT ***',
-      'POSNET Temo HS',
-      this.portName + ' @ ' + this.baudRate,
+      modelLine,
+      `${this.portName} @ ${this.baudRate}`,
       new Date().toLocaleString('pl-PL'),
       'Zira AI Print Agent',
     ];
 
-    // Each line is a "1 grosze item" — non-fiscal doesn't care about real prices
-    const pricePerLine = 1; // 1 grosz
-    const total = lines.length * pricePerLine;
+    // Primary: trinit / trline / trend (1 grosz per line item, non-fiscal)
+    try {
+      const pricePerLine = 1;
+      const total = lines.length * pricePerLine;
 
-    const frames: string[][] = [];
-    // Start non-fiscal transaction
-    frames.push(['trinit', 'bm0']);
-    // Print lines
-    for (const text of lines) {
-      frames.push(['trline', `na${text}`, 'vt0', `pr${pricePerLine}`, 'il1.000']);
+      const frames: string[][] = [['trinit', 'bm0']];
+      for (const text of lines) {
+        frames.push(['trline', `na${text}`, 'vt0', `pr${pricePerLine}`, 'il1.000']);
+      }
+      frames.push(['trend', `to${total}`]);
+
+      await this.sendPosnetSequence(frames);
+      logger.info('[PosnetDriver] Test page printed (trinit path)');
+      return;
+    } catch (primaryErr) {
+      logger.warn(`[PosnetDriver] trinit path failed, attempting prninit fallback: ${(primaryErr as Error).message}`);
     }
-    // End + print
-    frames.push(['trend', `to${total}`]);
 
-    await this.sendPosnetSequence(frames);
-    logger.info('[PosnetDriver] Test page printed');
+    // Fallback: prninit / prnline / prnend (legacy non-fiscal printout for older models)
+    try {
+      const frames: string[][] = [['prninit']];
+      for (const text of lines) {
+        frames.push(['prnline', `tx${text}`]);
+      }
+      frames.push(['prnend']);
+
+      await this.sendPosnetSequence(frames);
+      logger.info('[PosnetDriver] Test page printed (prninit fallback)');
+    } catch (fallbackErr) {
+      logger.error(`[PosnetDriver] Both trinit and prninit paths failed`);
+      throw fallbackErr;
+    }
   }
 
   /**
@@ -447,6 +526,45 @@ export class PosnetDriver {
       return null;
     } catch (error) {
       logger.error('[PosnetDriver] detectPosnetPort failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Find the USB Product ID (PID) for a given COM port, if it's a POSNET
+   * VID_1424 device. Returns null for non-POSNET ports.
+   */
+  private static async findPosnetPidForPort(port: string): Promise<number | null> {
+    try {
+      const psCommand =
+        "Get-CimInstance Win32_PnPEntity | " +
+        "Where-Object { $_.DeviceID -match 'VID_1424' -and $_.Name -match 'COM\\d+' } | " +
+        "ForEach-Object { if ($_.Name -match '\\(COM(\\d+)\\)' -and $_.DeviceID -match 'PID_([0-9A-Fa-f]{4})') { Write-Output \"COM$($Matches[1])|$($Matches[1])\" } }";
+      // Note: the regex overwrites $Matches for each -match — re-run both captures in order
+      const fixedPsCommand =
+        "Get-CimInstance Win32_PnPEntity | " +
+        "Where-Object { $_.DeviceID -match 'VID_1424' } | " +
+        "ForEach-Object { " +
+        "  $name = $_.Name; $did = $_.DeviceID; " +
+        "  if ($name -match '\\(COM(\\d+)\\)') { $com = 'COM' + $Matches[1] } else { $com = '' }; " +
+        "  if ($did -match 'PID_([0-9A-Fa-f]{4})') { $pid = $Matches[1] } else { $pid = '' }; " +
+        "  if ($com -and $pid) { Write-Output (\"{0}|{1}\" -f $com, $pid) } " +
+        "}";
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', fixedPsCommand],
+        { encoding: 'utf8', timeout: 15000 },
+      );
+      const target = port.toUpperCase();
+      for (const line of stdout.split('\n').map(l => l.trim()).filter(Boolean)) {
+        const [com, pidHex] = line.split('|');
+        if (com && com.toUpperCase() === target && pidHex) {
+          return parseInt(pidHex, 16);
+        }
+      }
+      return null;
+    } catch (error) {
+      logger.debug(`[PosnetDriver] findPosnetPidForPort failed: ${(error as Error).message}`);
       return null;
     }
   }

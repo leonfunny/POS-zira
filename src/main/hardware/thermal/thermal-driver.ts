@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
-import { EscPosFormatter, DailyReportData } from './escpos-formatter';
+import { EscPosFormatter, DailyReportData, EscPosCharset, EscPosCutMode } from './escpos-formatter';
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { matchBrand, type RecoveryResult } from '../detection/types';
@@ -43,14 +43,32 @@ export class ThermalDriver {
     private paperWidth: number = 80,     // 80mm or 58mm
     private charsPerLine: number = 48,   // Characters per line
     windowsTextMode: boolean = false,    // true → A4/laser path (Out-Printer text)
+    opts?: { charset?: EscPosCharset; cutMode?: EscPosCutMode },
   ) {
     this.connectionType = connectionType;
     this.windowsTextMode = windowsTextMode;
-    this.formatter = new EscPosFormatter(paperWidth, charsPerLine);
+    this.formatter = new EscPosFormatter(paperWidth, charsPerLine, opts);
     // Auto-detect brand from printer name for recovery
     const matched = matchBrand(printerNameOrPort);
     if (matched) this.brand = matched.brand;
-    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm${windowsTextMode ? ', TEXT' : ''})${this.brand ? ` [${this.brand}]` : ''}`);
+    logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm, charset=${opts?.charset ?? 'utf8'}, cut=${opts?.cutMode ?? 'partial'}${windowsTextMode ? ', TEXT' : ''})${this.brand ? ` [${this.brand}]` : ''}`);
+  }
+
+  setCharset(charset: EscPosCharset): void { this.formatter.setCharset(charset); }
+  setCutMode(mode: EscPosCutMode): void { this.formatter.setCutMode(mode); }
+  getCharset(): EscPosCharset { return this.formatter.getCharset(); }
+  getCutMode(): EscPosCutMode { return this.formatter.getCutMode(); }
+
+  /**
+   * Best-effort model identification. Returns the brand name derived from the
+   * printer name (matched against the brand registry), or the configured name
+   * itself as a human-readable fallback. GS I 67 bidirectional read is not
+   * attempted here because Out-Printer does not expose a read channel.
+   */
+  identifyModel(): { modelName?: string; source: 'brand' | 'name' | 'none' } {
+    if (this.brand) return { modelName: this.brand, source: 'brand' };
+    if (this.printerNameOrPort) return { modelName: this.printerNameOrPort, source: 'name' };
+    return { source: 'none' };
   }
 
   /**
@@ -709,8 +727,24 @@ export class ThermalDriver {
       return;
     }
 
-    const testData = this.formatter.formatTestPage();
+    const modelInfo = this.identifyModel();
+    const testData = this.formatter.formatTestPage({ modelName: modelInfo.modelName });
     await this.printRaw(testData);
+
+    // Post-flight: USB spooler jobs may stick if the printer is off/offline —
+    // Out-Printer returns success even then. Check the queue and surface a
+    // meaningful error rather than claiming success.
+    if (this.connectionType === 'USB') {
+      await new Promise(r => setTimeout(r, 1500));
+      const stuckStatus = await getStuckPrintJobStatus(this.printerNameOrPort);
+      if (stuckStatus) {
+        try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
+        throw new Error(
+          `Test page was sent but got stuck in the spooler (${stuckStatus}). ` +
+          `The printer may be off, offline, or out of paper.`
+        );
+      }
+    }
 
     logger.info('[ThermalDriver] Test page printed');
   }

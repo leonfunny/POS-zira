@@ -1,4 +1,38 @@
-import { ReceiptData, ReceiptItem } from '../../../shared/types';
+import { ReceiptData, ReceiptItem, charsPerLineFor } from '../../../shared/types';
+
+export type EscPosCharset = 'utf8' | 'cp1250' | 'ascii';
+export type EscPosCutMode = 'partial' | 'full' | 'none';
+
+/**
+ * Subset of CP1250 (Polish) mappings for the characters most likely to appear
+ * in Polish receipts. Characters outside this map fall back to ASCII stripping.
+ */
+const CP1250_MAP: Record<string, number> = {
+  'Ą': 0xA5, 'ą': 0xB9, 'Ć': 0xC6, 'ć': 0xE6, 'Ę': 0xCA, 'ę': 0xEA,
+  'Ł': 0xA3, 'ł': 0xB3, 'Ń': 0xD1, 'ń': 0xF1, 'Ó': 0xD3, 'ó': 0xF3,
+  'Ś': 0x8C, 'ś': 0x9C, 'Ź': 0x8F, 'ź': 0x9F, 'Ż': 0xAF, 'ż': 0xBF,
+};
+
+function encodeText(str: string, charset: EscPosCharset): Buffer {
+  if (charset === 'utf8') return Buffer.from(str, 'utf8');
+  if (charset === 'cp1250') {
+    const bytes: number[] = [];
+    for (const ch of str) {
+      if (ch.charCodeAt(0) < 0x80) { bytes.push(ch.charCodeAt(0)); continue; }
+      const mapped = CP1250_MAP[ch];
+      if (mapped !== undefined) { bytes.push(mapped); continue; }
+      // Unmapped: strip diacritic and keep ASCII fallback
+      const stripped = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      for (const s of stripped) bytes.push(s.charCodeAt(0) < 0x80 ? s.charCodeAt(0) : 0x3F);
+    }
+    return Buffer.from(bytes);
+  }
+  // ASCII: strip diacritics aggressively
+  const ascii = str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[Łł]/g, m => m === 'Ł' ? 'L' : 'l')
+    .replace(/[^\x00-\x7F]/g, '?');
+  return Buffer.from(ascii, 'ascii');
+}
 
 /**
  * ESC/POS Commands for thermal printers
@@ -88,13 +122,27 @@ const ESCPOS = {
  */
 export class EscPosFormatter {
   private charsPerLine: number;
+  private charset: EscPosCharset;
+  private cutMode: EscPosCutMode;
 
   constructor(
     private paperWidth: number = 80,
-    charsPerLine?: number
+    charsPerLine?: number,
+    opts?: { charset?: EscPosCharset; cutMode?: EscPosCutMode }
   ) {
-    // Default chars per line based on paper width
-    this.charsPerLine = charsPerLine || (paperWidth === 80 ? 48 : 32);
+    this.charsPerLine = charsPerLine || charsPerLineFor(paperWidth);
+    this.charset = opts?.charset ?? 'utf8';
+    this.cutMode = opts?.cutMode ?? 'partial';
+  }
+
+  setCharset(charset: EscPosCharset): void { this.charset = charset; }
+  setCutMode(mode: EscPosCutMode): void { this.cutMode = mode; }
+  getCharset(): EscPosCharset { return this.charset; }
+  getCutMode(): EscPosCutMode { return this.cutMode; }
+
+  private cutBytes(): Buffer {
+    if (this.cutMode === 'none') return Buffer.alloc(0);
+    return this.cutMode === 'full' ? ESCPOS.CUT_FULL : ESCPOS.CUT_PARTIAL;
   }
 
   /**
@@ -233,7 +281,7 @@ export class EscPosFormatter {
 
     // Feed and cut
     parts.push(ESCPOS.FEED_LINES(4));
-    parts.push(ESCPOS.CUT_PARTIAL);
+    parts.push(this.cutBytes());
 
     return Buffer.concat(parts);
   }
@@ -269,9 +317,10 @@ export class EscPosFormatter {
   }
 
   /**
-   * Format test page
+   * Format test page. Model info (if provided) is printed on the receipt so
+   * users can visually verify auto-identification matches their hardware.
    */
-  formatTestPage(): Buffer {
+  formatTestPage(modelInfo?: { modelName?: string; firmwareVersion?: string }): Buffer {
     const parts: Buffer[] = [];
 
     parts.push(ESCPOS.INIT);
@@ -280,13 +329,18 @@ export class EscPosFormatter {
     parts.push(this.text('Zira AI'));
     parts.push(ESCPOS.BOLD_OFF);
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
+    if (modelInfo?.modelName) {
+      parts.push(this.text(modelInfo.modelName));
+      if (modelInfo.firmwareVersion) parts.push(this.text(`fw ${modelInfo.firmwareVersion}`));
+    }
     parts.push(this.text(`${this.paperWidth}mm / ${this.charsPerLine} chars`));
+    parts.push(this.text(`charset: ${this.charset}  cut: ${this.cutMode}`));
     parts.push(this.text(new Date().toLocaleString()));
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
     parts.push(this.text('OK'));
 
     parts.push(ESCPOS.FEED_LINES(3));
-    parts.push(ESCPOS.CUT_PARTIAL);
+    parts.push(this.cutBytes());
 
     return Buffer.concat(parts);
   }
@@ -386,9 +440,8 @@ export class EscPosFormatter {
    * Convert text to buffer with line feed
    */
   private text(str: string): Buffer {
-    // Use Windows-1250 encoding for Polish characters, or UTF-8
     return Buffer.concat([
-      Buffer.from(str, 'utf8'),
+      encodeText(str, this.charset),
       Buffer.from([LF]),
     ]);
   }

@@ -138,6 +138,48 @@ export interface PrinterConfig {
   charsPerLine?: number; // Characters per line (default: 48)
   supportsCut?: boolean; // Auto paper cut
   supportsCashDrawer?: boolean; // Cash drawer support
+  // Character encoding for ESC/POS text. Default 'utf8'. Test-print auto-falls back to cp1250 → ascii on verify failure.
+  charset?: 'utf8' | 'cp1250' | 'ascii';
+  // Paper cut behavior. Default 'partial'. Test-print falls back 'partial' → 'full' → 'none'.
+  cutMode?: 'partial' | 'full' | 'none';
+}
+
+/**
+ * Chars-per-line derived from paper width (mm). Single source of truth — used by
+ * config defaults, ESC/POS formatter, and Settings UI so they can never diverge.
+ */
+export function charsPerLineFor(paperWidth: number): number {
+  if (paperWidth <= 58) return 32;
+  if (paperWidth <= 76) return 42;
+  return 48; // 80mm standard
+}
+
+// One diagnostic step in the Test Print flow.
+export type TestPrintStepName =
+  | 'config'        // Validate config shape
+  | 'connect'       // Open port / verify printer exists
+  | 'identify'      // Read model + firmware
+  | 'build'         // Build the test page bytes
+  | 'send'          // Send bytes to printer
+  | 'verify';       // Confirm job actually printed / no stuck jobs
+
+export interface TestPrintStep {
+  step: TestPrintStepName;
+  ok: boolean;
+  detail?: string;       // Human-readable explanation for UI
+  data?: unknown;        // Raw data (model info, echoed bytes, etc.) — logged, not shown to user
+  error?: string;        // Error message if ok=false
+  durationMs?: number;
+}
+
+export interface TestPrintResult {
+  success: boolean;
+  steps: TestPrintStep[];
+  modelName?: string;      // Discovered model (identify step)
+  firmwareVersion?: string;
+  charsetUsed?: 'utf8' | 'cp1250' | 'ascii';
+  cutModeUsed?: 'partial' | 'full' | 'none';
+  logFilePath?: string;    // Absolute path to log file for "Open log folder"
 }
 
 // Dictionary of printers by type
@@ -562,6 +604,8 @@ export const IPC_CHANNELS = {
   TEST_PRINT: 'test-print',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
+  TEST_PRINT_PROGRESS: 'test-print-progress',  // Main → Renderer: per-step progress stream
+  OPEN_LOG_FOLDER: 'open-log-folder',
   CALIBRATE_PRINTER: 'calibrate-printer',
   GET_POSNET_DRIVER_STATUS: 'get-posnet-driver-status',
   INSTALL_POSNET_DRIVER: 'install-posnet-driver',

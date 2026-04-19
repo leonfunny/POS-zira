@@ -107,6 +107,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
+  onTestPrintProgress: (callback: (step: any) => void) => {
+    const listener = (_event: any, step: any) => callback(step);
+    ipcRenderer.on(IPC_CHANNELS.TEST_PRINT_PROGRESS, listener);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TEST_PRINT_PROGRESS, listener);
+  },
+  openLogFolder: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_LOG_FOLDER),
   calibratePrinter: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.CALIBRATE_PRINTER, config),
   getPosnetDriverStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_POSNET_DRIVER_STATUS),
   installPosnetDriver: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_POSNET_DRIVER),

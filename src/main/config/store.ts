@@ -50,6 +50,8 @@ const printerConfigSchema = {
     charsPerLine: { type: 'number', default: 48 },
     supportsCut: { type: 'boolean', default: true },
     supportsCashDrawer: { type: 'boolean', default: false },
+    charset: { type: 'string', enum: ['utf8', 'cp1250', 'ascii'], default: 'utf8' },
+    cutMode: { type: 'string', enum: ['partial', 'full', 'none'], default: 'partial' },
   },
 };
 
