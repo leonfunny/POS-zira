@@ -7,6 +7,8 @@
 //   cart          -> CartView
 //   thankyou      -> ThankYouView
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { LiveCustomerDisplayProfile } from '../../../shared/types';
+import { resolveCustomerDisplayProfile } from '../../../shared/customer-display-profile';
 import type { PosState } from '../../hooks/usePosStore';
 import { getTranslation, Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
@@ -14,6 +16,9 @@ import CartView from './views/CartView';
 import CheckInView from './views/CheckInView';
 import IdleView from './views/IdleView';
 import PromoView from './views/PromoView';
+import RetailAssistedCartView from './views/RetailAssistedCartView';
+import RetailAssistedIdleView from './views/RetailAssistedIdleView';
+import RetailAssistedThankYouView from './views/RetailAssistedThankYouView';
 import SalonInteractiveView from './views/SalonInteractiveView';
 import ThankYouView from './views/ThankYouView';
 import { resolveCustomerDisplayLanguage } from './customer-display-model';
@@ -60,6 +65,7 @@ class ErrorBoundary extends React.Component<
 export default function CustomerApp() {
   const [state, setState] = useState<PosState | null>(null);
   const [lang, setLang] = useState<Language>('en');
+  const [displayProfile, setDisplayProfile] = useState<LiveCustomerDisplayProfile | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
 
   useEffect(() => {
@@ -148,6 +154,7 @@ export default function CustomerApp() {
 
     window.electronAPI.getConfig().then((config: any) => {
       setLang(resolveCustomerDisplayLanguage(config));
+      setDisplayProfile(resolveCustomerDisplayProfile(config));
     });
 
     return unsubscribe;
@@ -189,6 +196,69 @@ export default function CustomerApp() {
       rlog.error('[CustomerApp] Failed to save customer display language:', error);
     }
   }, []);
+
+  if (!displayProfile) {
+    return <div className="h-screen bg-slate-50" aria-label="Loading customer display" />;
+  }
+
+  if (displayProfile === 'promo_only') {
+    if (displayMode === 'promo') {
+      return (
+        <PromoView
+          images={display?.promoImages || []}
+          intervalMs={display?.promoIntervalMs || 5000}
+        />
+      );
+    }
+
+    return (
+      <RetailAssistedIdleView
+        t={t}
+        businessName={display?.salonName}
+      />
+    );
+  }
+
+  if (displayProfile === 'retail_assisted') {
+    if (displayMode === 'promo') {
+      return (
+        <div onClick={handleScreenTouch}>
+          <PromoView
+            images={display?.promoImages || []}
+            intervalMs={display?.promoIntervalMs || 5000}
+          />
+        </div>
+      );
+    }
+
+    if (displayMode === 'cart' && state?.cart) {
+      return (
+        <RetailAssistedCartView
+          cart={state.cart}
+          t={t}
+          language={lang}
+          paymentStatus={paymentStatus}
+        />
+      );
+    }
+
+    if (displayMode === 'thankyou') {
+      return (
+        <RetailAssistedThankYouView
+          lastOrderTotal={display?.lastOrderTotal}
+          t={t}
+          language={lang}
+        />
+      );
+    }
+
+    return (
+      <RetailAssistedIdleView
+        t={t}
+        businessName={display?.salonName}
+      />
+    );
+  }
 
   if (displayMode === 'promo') {
     return (

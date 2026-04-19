@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { CustomerDisplayProfile } from '../../shared/types';
 
 interface SelectedService {
   id: string;
@@ -45,6 +46,7 @@ interface PosSessionState {
 
 interface DisplayState {
   mode: 'cart' | 'idle' | 'thankyou' | 'promo' | 'interactive' | 'checkin';
+  profile?: CustomerDisplayProfile;
   promoImageUrl?: string;
   promoImages?: string[];
   promoIntervalMs?: number;
