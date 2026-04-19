@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 const ROOT = process.cwd();
 const OUT_DIR = join(ROOT, 'docs', 'screenshots');
+const FIXED_CUSTOMER_TIME_ISO = '2026-04-19T12:00:00+02:00';
 mkdirSync(OUT_DIR, { recursive: true });
 
 function run(command) {
@@ -33,7 +34,31 @@ async function openCustomerWindow(page, app) {
   const customer = app.windows().find((candidate) => candidate !== page);
   if (!customer) throw new Error('Customer display window did not open');
   await customer.waitForLoadState('domcontentloaded');
+  await freezeCustomerClock(customer);
+  await reloadCustomerWindow(customer);
   return customer;
+}
+
+async function freezeCustomerClock(customer) {
+  await customer.addInitScript((fixedIso) => {
+    const fixedTime = new Date(fixedIso).getTime();
+    const RealDate = Date;
+
+    class FixedDate extends RealDate {
+      constructor(...args) {
+        super(...(args.length > 0 ? args : [fixedTime]));
+      }
+
+      static now() {
+        return fixedTime;
+      }
+    }
+
+    FixedDate.UTC = RealDate.UTC;
+    FixedDate.parse = RealDate.parse;
+    FixedDate.prototype = RealDate.prototype;
+    window.Date = FixedDate;
+  }, FIXED_CUSTOMER_TIME_ISO);
 }
 
 async function reloadCustomerWindow(customer) {
