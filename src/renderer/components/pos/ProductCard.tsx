@@ -34,7 +34,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
   const showImage = imgSrc && !imgError;
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md focus-within:ring-2 focus-within:ring-brand-100 transition-colors duration-150 flex flex-col p-2 h-full min-h-[190px]">
+    <div className="bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md focus-within:ring-2 focus-within:ring-brand-100 transition-colors duration-150 flex flex-col p-1.5 h-full min-h-[184px]">
       <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full border border-slate-100">
         {showImage ? (
           <img
@@ -64,7 +64,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
         )}
       </div>
 
-      <div className="flex-1 pt-2 pb-1 flex flex-col min-h-[54px]">
+      <div className="flex-1 pt-1.5 pb-1 flex flex-col min-h-[54px]">
         <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">{product.name}</p>
         {product.sku && (
           <p className="text-[10px] text-slate-500 mt-1 truncate tracking-wide">{product.sku}</p>
