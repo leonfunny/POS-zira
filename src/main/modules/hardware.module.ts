@@ -88,6 +88,12 @@ export class HardwareModule extends BaseModule {
   // Health check backoff: consecutive fail count per printer type key
   private healthCheckFailCount: Map<string, number> = new Map();
   private healthCheckTick = 0;
+  // Cached detection snapshot — reused when every active driver is stuck on
+  // manual-protocol-action and the serial port list hasn't changed, to avoid
+  // hammering PnP/spooler queries every 30s for a device we can't recover
+  // without the user physically changing the printer menu.
+  private lastDetectionSnapshot: Awaited<ReturnType<typeof getPosnetDriverStatus>> | null = null;
+  private lastDetectionPortSignature: string = '';
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
 
@@ -297,6 +303,27 @@ export class HardwareModule extends BaseModule {
       } catch (err: any) {
         logger.error('[HardwareModule] Posnet rescan failed:', err);
         return { success: false, devices: [], warnings: [err.message] };
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.POSNET_DIAGNOSE_PORT, async (_, port: string, baudRate?: number) => {
+      try {
+        const result = await PosnetDriver.diagnosePort(port, baudRate || 9600);
+        logger.info(`[HardwareModule] Diagnose ${port}@${baudRate || 9600} → ${result.diagnostic.code} (posnetResponse=${result.posnetResponse})`);
+        return result;
+      } catch (err: any) {
+        logger.error('[HardwareModule] Diagnose failed:', err);
+        return {
+          port,
+          portPresent: false,
+          portOpenable: false,
+          vidMatch: false,
+          posnetResponse: false,
+          baudRate: baudRate || 9600,
+          diagnostic: { code: 'PORT_NOT_FOUND', detail: err?.message || String(err) },
+          guidance: ['Unexpected error during diagnostic — check the app logs'],
+          requiresManualSetup: false,
+        };
       }
     });
 
@@ -712,7 +739,23 @@ export class HardwareModule extends BaseModule {
       // STEP 2 — connect
       const connectOk = await this.runStep(steps, 'connect', async () => {
         const connected = await driver.connect();
-        if (!connected) throw new Error('Printer not found. Check the cable, power, and whether the printer is selected/installed.');
+        if (!connected) {
+          if (driver instanceof PosnetDriver) {
+            const diag = driver.getLastDiagnostic();
+            const state = driver.getConnectionState();
+            if (diag?.code === 'PORT_BUSY') throw new Error(`PORT_BUSY: ${diag.detail}`);
+            if (diag?.code === 'ACCESS_DENIED') throw new Error(`ACCESS_DENIED: ${diag.detail}`);
+            if (diag?.code === 'WRONG_BAUD_OR_MODE') throw new Error(`WRONG_BAUD_OR_MODE: ${diag.detail}`);
+            if (state === 'physical_present') throw new Error(`DEVICE_DETECTED_NO_PROTOCOL_RESPONSE: ${diag?.detail || `Device detected on ${driver.getPort()} but no POSNET protocol response`}`);
+            throw new Error(`PORT_NOT_FOUND: ${diag?.detail || 'Printer not found'}`);
+          }
+          throw new Error('Printer not found. Check the cable, power, and whether the printer is selected/installed.');
+        }
+        if (driver instanceof PosnetDriver) {
+          const pid = driver.getDetectedPid();
+          const pidInfo = pid ? ` (PID 0x${pid.toString(16).toUpperCase()})` : '';
+          return { detail: `Connected on ${driver.getPort()}${pidInfo}` };
+        }
         return { detail: 'Connected' };
       });
       if (!connectOk) return result;
@@ -723,7 +766,9 @@ export class HardwareModule extends BaseModule {
           const info = await driver.identifyModel();
           result.modelName = info.modelName;
           result.firmwareVersion = info.firmwareVersion;
-          return { detail: info.modelName ? `${info.modelName} (${info.source})` : 'unknown (no response)', data: info };
+          const pid = driver.getDetectedPid();
+          const pidStr = pid ? ` [VID_1424 PID_${pid.toString(16).toUpperCase().padStart(4, '0')}]` : '';
+          return { detail: info.modelName ? `${info.modelName} (${info.source})${pidStr}` : `unknown (no response)${pidStr}`, data: info };
         }
         if (driver instanceof ThermalDriver) {
           const info = driver.identifyModel();
@@ -795,9 +840,13 @@ export class HardwareModule extends BaseModule {
     // If device info provided, use smart routing based on brand
     if (device) {
       if (device.autoSetupEligible === false) {
+        const isPosnet = (device.brand || '').toUpperCase() === 'POSNET' || (device.vid || '').toUpperCase() === '1424';
+        const posnetHint = isPosnet
+          ? ' This POSNET model may be set to POSNET or THEMAL on the printer itself; verify the printer-side PC protocol is POSNET before selecting the COM port.'
+          : '';
         return {
           success: false,
-          message: `${device.brand} ${device.model} requires manual configuration. Select the COM port and slot in Settings instead of auto-setup.`,
+          message: `${device.brand} ${device.model} requires manual configuration. Select the COM port and slot in Settings instead of auto-setup.${posnetHint}`,
           action: 'manual_required',
         };
       }
@@ -976,10 +1025,12 @@ export class HardwareModule extends BaseModule {
   ): boolean {
     let actualIdentifier: string | null = null;
     let isPort = false;
+    let actualBaudRate: number | undefined;
 
     if (driver instanceof PosnetDriver) {
       actualIdentifier = driver.getPort();
       isPort = true;
+      actualBaudRate = driver.getBaudRate();
     } else if (driver instanceof ThermalDriver) {
       actualIdentifier = driver.getPrinterNameOrPort();
       isPort = !!actualIdentifier.match(/^COM\d+$/i);
@@ -993,8 +1044,11 @@ export class HardwareModule extends BaseModule {
     const configuredIdentifier = isPort
       ? (originalConfig.port || '')
       : (originalConfig.windowsPrinter || '');
+    const configuredBaudRate = originalConfig.baudRate || 9600;
+    const identifierChanged = actualIdentifier.toLowerCase() !== configuredIdentifier.toLowerCase();
+    const baudChanged = typeof actualBaudRate === 'number' && actualBaudRate !== configuredBaudRate;
 
-    if (actualIdentifier.toLowerCase() === configuredIdentifier.toLowerCase()) {
+    if (!identifierChanged && !baudChanged) {
       return false; // no migration
     }
 
@@ -1007,14 +1061,19 @@ export class HardwareModule extends BaseModule {
     const currentPrinters = { ...(config.printers || {}) };
     if (currentPrinters[pt]) {
       const pc = { ...currentPrinters[pt]! };
-      if (isPort) {
-        pc.port = actualIdentifier;
-      } else {
-        pc.windowsPrinter = actualIdentifier;
+      if (identifierChanged) {
+        if (isPort) {
+          pc.port = actualIdentifier;
+        } else {
+          pc.windowsPrinter = actualIdentifier;
+        }
+      }
+      if (baudChanged) {
+        pc.baudRate = actualBaudRate;
       }
       currentPrinters[pt] = pc;
       setConfig({ multiPrinterMode: true, printers: currentPrinters });
-      logger.info(`[HardwareModule] ${pt} config updated: ${isPort ? 'port' : 'windowsPrinter'}="${actualIdentifier}"`);
+      logger.info(`[HardwareModule] ${pt} config updated: ${isPort ? 'port' : 'windowsPrinter'}="${actualIdentifier}", baudRate=${pc.baudRate || configuredBaudRate}`);
       return true;
     }
     return false;
@@ -1154,6 +1213,10 @@ export class HardwareModule extends BaseModule {
     let isPort = false;
 
     if (driver instanceof PosnetDriver) {
+      if (driver.requiresManualProtocolAction()) {
+        logger.info(`[HardwareModule] Skipping active POSNET recovery for ${pt}: physical device is present but selected POSNET protocol did not respond`);
+        return false;
+      }
       logger.info(`[HardwareModule] Attempting port recovery for POSNET (${pt})...`);
       newIdentifier = await driver.recoverPort();
       isPort = true;
@@ -1195,13 +1258,50 @@ export class HardwareModule extends BaseModule {
     return true;
   }
 
+  /**
+   * True when every active driver is a POSNET driver sitting in
+   * `requiresManualProtocolAction()` state — i.e. the printer is physically
+   * present but the printer-side PC protocol is not POSNET, and no amount of
+   * active probing will change that until the user touches the printer menu.
+   */
+  private allActiveDriversStuckOnManualProtocol(): boolean {
+    const drivers: (PrinterDriver | null)[] = [
+      ...Object.values(this.printers),
+      this.receiptPrinter,
+      this.labelPrinter,
+      this.printerDriver,
+    ].filter((d): d is PrinterDriver => !!d);
+
+    if (drivers.length === 0) return false;
+    return drivers.every(d => d instanceof PosnetDriver && d.requiresManualProtocolAction());
+  }
+
   private async runHealthCheck(): Promise<void> {
     this.healthCheckTick++;
     let changed = false;
 
     // Fetch a single detection snapshot per cycle so drivers do not each spawn
-    // their own presence-check PowerShell queries.
-    const statusSnapshot = await getPosnetDriverStatus();
+    // their own presence-check PowerShell queries. When every active driver is
+    // a POSNET stuck on the manual-protocol wall AND the port list hasn't
+    // changed since last check, reuse the cached snapshot instead of
+    // re-running the heavy PnP/spooler query.
+    const currentPorts = await listSerialPorts();
+    const portSignature = [...currentPorts].sort().join(',');
+    const portsUnchanged = portSignature === this.lastDetectionPortSignature;
+    const canReuseSnapshot =
+      this.lastDetectionSnapshot !== null
+      && portsUnchanged
+      && this.allActiveDriversStuckOnManualProtocol();
+
+    let statusSnapshot: Awaited<ReturnType<typeof getPosnetDriverStatus>>;
+    if (canReuseSnapshot) {
+      statusSnapshot = this.lastDetectionSnapshot!;
+    } else {
+      statusSnapshot = await getPosnetDriverStatus();
+      this.lastDetectionSnapshot = statusSnapshot;
+      this.lastDetectionPortSignature = portSignature;
+    }
+
     const cachedPrinters = Array.from(new Set(
       statusSnapshot.devices
         .filter((device) => device.windowsPrinterName && device.connectionType !== 'VIRTUAL')
@@ -1429,6 +1529,10 @@ export class HardwareModule extends BaseModule {
     const port = getConfigValue('printerPort') as string | undefined;
     const zebra = getConfigValue('zebraPrinter') as string | undefined;
     const baud = (getConfigValue('printerBaudRate') as number) || 9600;
+    if (protocol === 'POSNET') {
+      if (port) return new PosnetDriver(port, baud, 'POSNET');
+      return null;
+    }
     if (zebra) return new ThermalDriver(zebra, baud, 'USB', 80, 48);
     if (port) return new ThermalDriver(port, baud, 'SERIAL', 80, 48);
     return null;

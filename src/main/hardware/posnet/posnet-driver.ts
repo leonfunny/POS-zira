@@ -2,9 +2,11 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import logger from '../../logger';
 import { ReceiptFormatter } from './receipt-formatter';
-import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
+import { ReceiptData, PrinterStatusInfo, PosnetDiagnoseResult } from '../../../shared/types';
 import { listSerialPorts, sanitizePortName } from '../port-utils';
 import { POSNET_PRODUCT_IDS } from './probe-profiles';
+import { withPortLock } from './port-mutex';
+import { buildFindPosnetVidPortsScript, parsePosnetVidPortOutput } from './pnp-port-parser';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +35,47 @@ function crc16(data: Buffer): string {
   return crc.toString(16).toUpperCase().padStart(4, '0');
 }
 
+function formatPid(pid: number): string {
+  return `0x${pid.toString(16).toUpperCase().padStart(4, '0')}`;
+}
+
+/**
+ * Step-by-step guidance + model name for an ambiguous-protocol POSNET Thermal.
+ * Empty `steps` means no printer-menu action is known/required.
+ */
+export function getProtocolMismatchGuidance(pid?: number): { modelName?: string; steps: string[] } {
+  const productName = pid !== undefined ? POSNET_PRODUCT_IDS[pid] : undefined;
+  const modelName = productName ? `POSNET ${productName}` : undefined;
+  if (!productName || !/thermal/i.test(productName)) {
+    return { modelName, steps: [] };
+  }
+  return {
+    modelName,
+    steps: [
+      'On the printer, press MENU to open settings',
+      'Navigate to: Interfejs PC (PC interface)',
+      'Select: Protokół (Protocol)',
+      'Choose POSNET — this driver does not support THEMAL',
+      'Save the setting and restart the printer',
+      'Click Diagnose again to verify',
+    ],
+  };
+}
+
+function getProtocolMismatchHint(pid?: number): string {
+  const { modelName, steps } = getProtocolMismatchGuidance(pid);
+  if (!modelName || steps.length === 0) return '';
+  return ` Detected ${modelName} (${formatPid(pid!)}). This model supports both POSNET and THEMAL protocols on the printer, but only POSNET v2 is supported by this driver. Open the printer menu Interfejs PC → Protokół and set it to POSNET, then save and restart the printer. If it is already POSNET, verify the PC interface is USB and the cable is healthy.`;
+}
+
+function isAmbiguousThermalProtocolPid(pid?: number): boolean {
+  return pid === 0x100A || pid === 0x100B;
+}
+
+function isSerialWriteTimeout(text?: string): boolean {
+  return /semaphore timeout period has expired|operation has timed out|write timed out/i.test(text || '');
+}
+
 // ─── POSNET frame constants ─────────────────────────────────────────────────
 
 const STX = 0x02;
@@ -48,11 +91,28 @@ const TAB = 0x09;
  *
  * All serial I/O via PowerShell System.IO.Ports.SerialPort.
  */
+export type PosnetConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
+
+export interface PosnetDiagnosticCode {
+  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED';
+  detail?: string;
+}
+
+type PosnetVerifyResult = {
+  ok: boolean;
+  result?: string;
+  errorCode?: 'ACCESS_DENIED' | 'WRONG_BAUD_OR_MODE';
+  detail?: string;
+};
+
 export class PosnetDriver {
-  private connected = false;
+  private connectionState: PosnetConnectionState = 'disconnected';
   private formatter: ReceiptFormatter;
   private modelName?: string;
   private firmwareVersion?: string;
+  private lastDiagnostic?: PosnetDiagnosticCode;
+  private detectedPid?: number;
+  private lastBaudProbeFailures: string[] = [];
 
   constructor(
     private portName: string = 'COM3',
@@ -65,83 +125,165 @@ export class PosnetDriver {
 
   getModelName(): string | undefined { return this.modelName; }
   getFirmwareVersion(): string | undefined { return this.firmwareVersion; }
+  getConnectionState(): PosnetConnectionState { return this.connectionState; }
+  getLastDiagnostic(): PosnetDiagnosticCode | undefined { return this.lastDiagnostic; }
+  getDetectedPid(): number | undefined { return this.detectedPid; }
+  getBaudRate(): number { return this.baudRate; }
+  requiresManualProtocolAction(): boolean {
+    return this.connectionState === 'physical_present'
+      && (this.lastDiagnostic?.code === 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE'
+        || this.lastDiagnostic?.code === 'WRONG_BAUD_OR_MODE');
+  }
 
   // ─── Connection lifecycle ─────────────────────────────────────────────────
 
   async connect(): Promise<boolean> {
+    const lockResult = await withPortLock(this.portName, 'connect', () => this.connectInner());
+    if (!lockResult.ok) {
+      this.lastDiagnostic = { code: 'PORT_BUSY', detail: lockResult.message };
+      logger.warn(`[PosnetDriver] connect() blocked: ${lockResult.message}`);
+      return false;
+    }
+    return lockResult.value;
+  }
+
+  private async connectInner(): Promise<boolean> {
     logger.info(`[PosnetDriver] Connecting to ${this.portName}...`);
     try {
       const ports = await listSerialPorts();
       const portUpper = this.portName.toUpperCase();
-      if (ports.includes(portUpper)) {
-        // Port exists — try to verify a POSNET device is on it via rtcget.
-        const verified = await PosnetDriver.verifyPosnetDevice(this.portName);
-        if (verified) {
-          this.connected = true;
-          logger.info(`[PosnetDriver] Connected and verified POSNET on ${this.portName}`);
-          return true;
+
+      if (!ports.includes(portUpper)) {
+        // Check if VID_1424 is on a different port
+        const candidates = await PosnetDriver.findPosnetCandidates();
+        if (candidates.length === 0) {
+          this.connectionState = 'disconnected';
+          this.lastDiagnostic = { code: 'PORT_NOT_FOUND', detail: `${this.portName} not present. Available: ${ports.join(', ') || 'none'}` };
+          logger.warn(`[PosnetDriver] ${this.lastDiagnostic.detail}`);
+          return false;
         }
-        // rtcget got no response — but some POSNET Thermal models (e.g. Thermal XL)
-        // don't reply to rtcget while still being fully functional for printing.
-        // Fall through to VID-based physical presence check below.
-        logger.warn(`[PosnetDriver] Port ${this.portName} exists but no POSNET rtcget response — checking VID`);
-      } else {
-        logger.warn(`[PosnetDriver] COM port "${this.portName}" not present. Available: ${ports.join(', ') || 'none'}`);
+        // VID found elsewhere — try to use that port
+        const targetPort = candidates.find(c => ports.includes(c.toUpperCase())) || candidates[0];
+        logger.info(`[PosnetDriver] Port ${this.portName} missing, found VID_1424 on ${targetPort}`);
+        if (targetPort.toUpperCase() !== portUpper) {
+          const lockResult = await withPortLock(targetPort, 'connect:migrated-port', async () => {
+            this.portName = targetPort;
+            return this.connectInner();
+          });
+          if (!lockResult.ok) {
+            this.lastDiagnostic = { code: 'PORT_BUSY', detail: lockResult.message };
+            return false;
+          }
+          return lockResult.value;
+        }
+        this.portName = targetPort;
       }
 
-      // Check if a POSNET USB device (VID_1424) is physically present.
-      const candidates = await PosnetDriver.findPosnetCandidates();
-      if (candidates.length > 0) {
-        // VID_1424 device found — check if configured port matches a candidate
-        const matchesConfigured = candidates.some(c => c.toUpperCase() === portUpper);
-        if (matchesConfigured) {
-          // The configured port IS a VID_1424 device — trust physical presence
-          // even though rtcget didn't respond. The printer is plugged in.
-          logger.info(`[PosnetDriver] VID_1424 confirmed on ${this.portName} — connecting without rtcget verify`);
-          this.connected = true;
-          return true;
-        }
-        // VID_1424 found but on a different port — switch to that port
-        // Prefer one that responds to rtcget, fall back to first openable
-        for (const port of candidates) {
-          const confirmedPosnet = await PosnetDriver.verifyPosnetDevice(port);
-          if (confirmedPosnet) {
-            logger.info(`[PosnetDriver] Auto-detected POSNET on ${port} (was ${this.portName})`);
-            this.portName = port;
-            this.connected = true;
-            return true;
-          }
-        }
-        // No rtcget response on any candidate, but VID_1424 is present — use first openable
-        for (const port of candidates) {
-          const canOpen = await PosnetDriver.testPortOpen(port);
-          if (canOpen) {
-            logger.info(`[PosnetDriver] VID_1424 device on ${port} (no rtcget) — connecting on physical presence`);
-            this.portName = port;
-            this.connected = true;
-            return true;
-          }
-        }
+      // Port exists — check VID for physical presence
+      const pid = await PosnetDriver.findPosnetPidForPort(this.portName);
+      if (pid !== null) {
+        this.detectedPid = pid;
+        this.connectionState = 'physical_present';
+        logger.info(`[PosnetDriver] VID_1424 PID_${pid.toString(16).toUpperCase()} detected on ${this.portName}`);
       }
 
-      // No VID_1424 device found at all — printer is genuinely not connected
-      this.connected = false;
+      // Try POSNET protocol verification via rtcget
+      const configuredVerify = await PosnetDriver.verifyPosnetDeviceUnlocked(this.portName, this.baudRate);
+      if (configuredVerify.ok) {
+        this.connectionState = 'protocol_ready';
+        this.lastDiagnostic = undefined;
+        logger.info(`[PosnetDriver] Connected and verified POSNET on ${this.portName} @ ${this.baudRate}`);
+        return true;
+      }
+      const configuredFailure = `${this.baudRate}:${configuredVerify.result || configuredVerify.errorCode || configuredVerify.detail || 'failed'}`;
+      if (configuredVerify.errorCode === 'ACCESS_DENIED') {
+        this.lastDiagnostic = { code: 'ACCESS_DENIED', detail: configuredVerify.detail || `Access denied opening ${this.portName}` };
+        return false;
+      }
+
+      // rtcget failed at configured baud — run baud probe only when useful.
+      if (this.connectionState === 'physical_present') {
+        const terminalWriteFailure = configuredVerify.errorCode === 'WRONG_BAUD_OR_MODE';
+        const shouldProbeBaud = !terminalWriteFailure && !isAmbiguousThermalProtocolPid(this.detectedPid);
+        if (shouldProbeBaud) {
+          const probeResult = await this.probeBaudRates();
+          if (probeResult) {
+            this.baudRate = probeResult;
+            this.connectionState = 'protocol_ready';
+            this.lastDiagnostic = undefined;
+            logger.info(`[PosnetDriver] Baud probe succeeded: ${this.portName} @ ${probeResult}`);
+            return true;
+          }
+          if (this.lastDiagnostic?.code === 'ACCESS_DENIED') {
+            return false;
+          }
+        }
+        // Device physically present but selected/probed POSNET v2 baud did not respond.
+        const failures = [configuredFailure, ...this.lastBaudProbeFailures].join(', ');
+        const protocolHint = getProtocolMismatchHint(this.detectedPid);
+        this.lastDiagnostic = {
+          code: terminalWriteFailure ? 'WRONG_BAUD_OR_MODE' : 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE',
+          detail: `VID_1424 on ${this.portName} but no POSNET response. Tried ${failures}.${protocolHint}`,
+        };
+        logger.warn(`[PosnetDriver] ${this.lastDiagnostic.detail}`);
+        return false;
+      }
+
+      // Port exists but no VID and no rtcget — not a POSNET device
+      this.connectionState = 'disconnected';
+      this.lastDiagnostic = { code: 'PORT_NOT_FOUND', detail: `No POSNET device on ${this.portName}` };
       return false;
-    } catch (error) {
+    } catch (error: any) {
+      const msg = error?.message || String(error);
+      if (msg.includes('Access') && msg.includes('denied')) {
+        this.lastDiagnostic = { code: 'ACCESS_DENIED', detail: msg };
+        // Do NOT set connected — port busy does not mean device is present
+      } else {
+        this.lastDiagnostic = { code: 'PORT_NOT_FOUND', detail: msg };
+      }
       logger.error('[PosnetDriver] Connection failed:', error);
-      this.connected = false;
+      this.connectionState = 'disconnected';
       return false;
     }
   }
 
+  /**
+   * Probe multiple baud rates to find one that gets a POSNET response.
+   * Returns the working baud rate or null if none respond.
+   */
+  private async probeBaudRates(): Promise<number | null> {
+    const baudsToTry = [9600, 19200, 115200].filter(b => b !== this.baudRate);
+    this.lastBaudProbeFailures = [];
+    // Already tried this.baudRate in connect(), try the rest
+    for (const baud of baudsToTry) {
+      logger.info(`[PosnetDriver] Probing ${this.portName} @ ${baud}...`);
+      const result = await PosnetDriver.verifyPosnetDeviceUnlocked(this.portName, baud);
+      if (result.ok) return baud;
+      this.lastBaudProbeFailures.push(`${baud}:${result.result || result.errorCode || result.detail || 'failed'}`);
+      if (result.errorCode === 'ACCESS_DENIED') {
+        this.lastDiagnostic = { code: 'ACCESS_DENIED', detail: result.detail || `Access denied opening ${this.portName}` };
+        return null;
+      }
+      if (result.errorCode === 'WRONG_BAUD_OR_MODE') {
+        this.lastDiagnostic = { code: 'WRONG_BAUD_OR_MODE', detail: result.detail || `Serial write timed out on ${this.portName}` };
+        return null;
+      }
+    }
+    return null;
+  }
+
   disconnect(): void {
-    this.connected = false;
+    this.connectionState = 'disconnected';
     logger.info(`[PosnetDriver] Disconnected`);
   }
 
   getPort(): string { return this.portName; }
 
   async recoverPort(): Promise<string | null> {
+    if (this.requiresManualProtocolAction()) {
+      logger.info(`[PosnetDriver] Recovery skipped for ${this.portName}: POSNET protocol did not respond; manual protocol/profile action required`);
+      return null;
+    }
     logger.info('[PosnetDriver] Scanning all COM ports for POSNET device...');
     const found = await PosnetDriver.detectPosnetPort();
     if (found) {
@@ -150,26 +292,28 @@ export class PosnetDriver {
     return found;
   }
 
-  isConnected(): boolean { return this.connected; }
+  isConnected(): boolean { return this.connectionState === 'protocol_ready'; }
 
   /** Reconnect using a new COM port (RecoverableDriver). */
   reconnect(newPort: string): void {
     logger.info(`[PosnetDriver] Reconnecting: ${this.portName} → ${newPort}`);
     this.portName = newPort;
-    this.connected = true;
+    this.connectionState = 'physical_present';
   }
 
   async healthCheck(cachedPorts?: string[]): Promise<boolean> {
     const ports = cachedPorts ?? await listSerialPorts();
-    const stillAvailable = ports.includes(this.portName);
-    if (this.connected && !stillAvailable) {
+    const portUpper = this.portName.toUpperCase();
+    const stillAvailable = ports.includes(portUpper);
+    if (this.connectionState === 'protocol_ready' && !stillAvailable) {
       logger.warn(`[PosnetDriver] Health check: port ${this.portName} disappeared`);
-      this.connected = false;
-    } else if (!this.connected && stillAvailable) {
-      logger.info(`[PosnetDriver] Health check: port ${this.portName} reappeared`);
-      this.connected = true;
+      this.connectionState = 'disconnected';
+    } else if (this.connectionState === 'disconnected' && stillAvailable) {
+      // Port reappeared — mark as physical only, require reconnect for protocol_ready
+      logger.info(`[PosnetDriver] Health check: port ${this.portName} reappeared (physical only)`);
+      this.connectionState = 'physical_present';
     }
-    return this.connected;
+    return this.isConnected();
   }
 
   // ─── Printing ─────────────────────────────────────────────────────────────
@@ -336,11 +480,14 @@ export class PosnetDriver {
 
   async getStatus(): Promise<PrinterStatusInfo> {
     return {
-      connected: this.connected,
+      connected: this.isConnected(),
       type: 'POSNET',
       mock: false,
       port: this.portName,
       protocol: this.protocol,
+      connectionState: this.connectionState,
+      diagnostic: this.lastDiagnostic,
+      detectedPid: this.detectedPid,
     };
   }
 
@@ -370,14 +517,53 @@ export class PosnetDriver {
     return frame;
   }
 
+  private static classifySerialError(error: any, port: string): PosnetDiagnosticCode {
+    const msg = error?.message || String(error);
+    if (/access.*denied|denied.*access/i.test(msg)) {
+      return { code: 'ACCESS_DENIED', detail: msg };
+    }
+    if (/busy|another operation/i.test(msg)) {
+      return { code: 'PORT_BUSY', detail: msg };
+    }
+    if (/no response|noreply/i.test(msg)) {
+      return { code: 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE', detail: msg };
+    }
+    if (isSerialWriteTimeout(msg)) {
+      return { code: 'WRONG_BAUD_OR_MODE', detail: msg };
+    }
+    if (/POSNET .* failed|ERR|\?/i.test(msg)) {
+      return { code: 'COMMAND_REJECTED', detail: msg };
+    }
+    return { code: 'COMMAND_REJECTED', detail: msg || `POSNET command failed on ${port}` };
+  }
+
   /**
    * Send multiple POSNET frames in a single serial session.
    * Opens port → writes all frames (waiting for response between each) → closes.
    * Throws on any error response from the printer.
+   * Acquires port mutex to prevent concurrent access.
    */
   private async sendPosnetSequence(commands: string[][]): Promise<string[]> {
     const safePort = sanitizePortName(this.portName);
     if (!safePort) throw new Error(`Invalid port name: ${this.portName}`);
+
+    try {
+      const lockResult = await withPortLock(this.portName, `sendPosnetSequence(${commands[0]?.[0] || '?'})`, () => this.sendPosnetSequenceInner(commands, safePort));
+      if (!lockResult.ok) {
+        this.lastDiagnostic = { code: 'PORT_BUSY', detail: lockResult.message };
+        throw new Error(lockResult.message);
+      }
+      this.lastDiagnostic = { code: 'PRINT_OK' };
+      return lockResult.value;
+    } catch (error: any) {
+      if (this.lastDiagnostic?.code !== 'PORT_BUSY') {
+        this.lastDiagnostic = PosnetDriver.classifySerialError(error, this.portName);
+      }
+      throw error;
+    }
+  }
+
+  private async sendPosnetSequenceInner(commands: string[][], safePort: string): Promise<string[]> {
 
     // Build all frames as hex arrays for PowerShell
     const frameHexArrays: string[] = [];
@@ -536,30 +722,16 @@ export class PosnetDriver {
    */
   private static async findPosnetPidForPort(port: string): Promise<number | null> {
     try {
-      const psCommand =
-        "Get-CimInstance Win32_PnPEntity | " +
-        "Where-Object { $_.DeviceID -match 'VID_1424' -and $_.Name -match 'COM\\d+' } | " +
-        "ForEach-Object { if ($_.Name -match '\\(COM(\\d+)\\)' -and $_.DeviceID -match 'PID_([0-9A-Fa-f]{4})') { Write-Output \"COM$($Matches[1])|$($Matches[1])\" } }";
-      // Note: the regex overwrites $Matches for each -match — re-run both captures in order
-      const fixedPsCommand =
-        "Get-CimInstance Win32_PnPEntity | " +
-        "Where-Object { $_.DeviceID -match 'VID_1424' } | " +
-        "ForEach-Object { " +
-        "  $name = $_.Name; $did = $_.DeviceID; " +
-        "  if ($name -match '\\(COM(\\d+)\\)') { $com = 'COM' + $Matches[1] } else { $com = '' }; " +
-        "  if ($did -match 'PID_([0-9A-Fa-f]{4})') { $pid = $Matches[1] } else { $pid = '' }; " +
-        "  if ($com -and $pid) { Write-Output (\"{0}|{1}\" -f $com, $pid) } " +
-        "}";
-      const { stdout } = await execFileAsync(
+      const psCommand = buildFindPosnetVidPortsScript(POSNET_USB_VID);
+      const { stdout, stderr } = await execFileAsync(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', fixedPsCommand],
+        ['-NoProfile', '-NonInteractive', '-Command', psCommand],
         { encoding: 'utf8', timeout: 15000 },
       );
       const target = port.toUpperCase();
-      for (const line of stdout.split('\n').map(l => l.trim()).filter(Boolean)) {
-        const [com, pidHex] = line.split('|');
-        if (com && com.toUpperCase() === target && pidHex) {
-          return parseInt(pidHex, 16);
+      for (const row of parsePosnetVidPortOutput(stdout, stderr)) {
+        if (row.port === target) {
+          return row.pid;
         }
       }
       return null;
@@ -571,16 +743,13 @@ export class PosnetDriver {
 
   private static async findPosnetCandidates(): Promise<string[]> {
     try {
-      const psCommand =
-        "Get-CimInstance Win32_PnPEntity | " +
-        "Where-Object { $_.DeviceID -match 'VID_1424' -and $_.Name -match 'COM\\d+' } | " +
-        "ForEach-Object { if ($_.Name -match '\\(COM(\\d+)\\)') { Write-Output \"COM$($Matches[1])\" } }";
-      const { stdout } = await execFileAsync(
+      const psCommand = buildFindPosnetVidPortsScript(POSNET_USB_VID);
+      const { stdout, stderr } = await execFileAsync(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', psCommand],
         { encoding: 'utf8', timeout: 15000 },
       );
-      return stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('COM'));
+      return parsePosnetVidPortOutput(stdout, stderr).map(row => row.port);
     } catch (error) {
       logger.error('[PosnetDriver] findPosnetCandidates failed:', error);
       return [];
@@ -590,6 +759,12 @@ export class PosnetDriver {
   private static async testPortOpen(port: string): Promise<boolean> {
     const safePort = sanitizePortName(port);
     if (!safePort) return false;
+    const locked = await withPortLock(safePort, `testPortOpen(${safePort})`, () => PosnetDriver.testPortOpenUnlocked(safePort));
+    if (!locked.ok) return false;
+    return locked.value;
+  }
+
+  private static async testPortOpenUnlocked(safePort: string): Promise<boolean> {
     try {
       const psCommand =
         `$p = New-Object System.IO.Ports.SerialPort('${safePort}', 9600, 'None', 8, 'One'); ` +
@@ -607,10 +782,20 @@ export class PosnetDriver {
    * Verify POSNET device by sending rtcget (read clock).
    * A POSNET printer responds with: rtcget TAB da<date> TAB #CRC ETX
    */
-  private static async verifyPosnetDevice(port: string): Promise<boolean> {
+  private static async verifyPosnetDevice(port: string, baudRate: number = 9600): Promise<boolean> {
     const safePort = sanitizePortName(port);
     if (!safePort) return false;
+    const locked = await withPortLock(safePort, `verifyPosnetDevice(${safePort}@${baudRate})`, async () => {
+      const result = await PosnetDriver.verifyPosnetDeviceUnlocked(safePort, baudRate);
+      return result.ok;
+    });
+    if (!locked.ok) return false;
+    return locked.value;
+  }
 
+  private static async verifyPosnetDeviceUnlocked(port: string, baudRate: number = 9600): Promise<PosnetVerifyResult> {
+    const safePort = sanitizePortName(port);
+    if (!safePort) return { ok: false, result: 'INVALID_PORT' };
     try {
       // Build rtcget frame
       const frame = PosnetDriver.buildFrame('rtcget');
@@ -618,7 +803,7 @@ export class PosnetDriver {
 
       const psScript =
         '$ProgressPreference = "SilentlyContinue"\n' +
-        `$p = New-Object System.IO.Ports.SerialPort('${safePort}', 9600, 'None', 8, 'One')\n` +
+        `$p = New-Object System.IO.Ports.SerialPort('${safePort}', ${baudRate}, 'None', 8, 'One')\n` +
         '$p.ReadTimeout = 3000\n$p.WriteTimeout = 3000\n' +
         '$p.DtrEnable = $true\n$p.RtsEnable = $true\n' +
         'try {\n  $p.Open()\n' +
@@ -634,6 +819,7 @@ export class PosnetDriver {
         "    elseif ($buf[0] -eq 0x02) { Write-Output 'POSNET' }\n" +
         "    else { Write-Output 'UNKNOWN' }\n" +
         "  } else { Write-Output 'NOREPLY' }\n" +
+        '} catch {\n  Write-Output "ERROR:$($_.Exception.Message)"\n' +
         '} finally {\n  if ($p.IsOpen) { $p.Close() }\n}\n';
 
       const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
@@ -645,10 +831,147 @@ export class PosnetDriver {
 
       const result = stdout.trim();
       logger.info(`[PosnetDriver] verifyPosnetDevice(${safePort}): ${result}`);
-      return result === 'POSNET';
-    } catch (error) {
+      if (result === 'POSNET') return { ok: true, result };
+      if (/ERROR:.*access.*denied|ERROR:.*denied.*access/i.test(result)) {
+        return { ok: false, result, errorCode: 'ACCESS_DENIED', detail: result.replace(/^ERROR:/, '') };
+      }
+      if (isSerialWriteTimeout(result)) {
+        return { ok: false, result, errorCode: 'WRONG_BAUD_OR_MODE', detail: result.replace(/^ERROR:/, '') };
+      }
+      return { ok: false, result: result || 'EMPTY' };
+    } catch (error: any) {
+      const msg = error?.message || String(error);
       logger.warn(`[PosnetDriver] verifyPosnetDevice(${safePort}) failed:`, error);
-      return false;
+      if (/access.*denied|denied.*access/i.test(msg)) {
+        return { ok: false, errorCode: 'ACCESS_DENIED', detail: msg };
+      }
+      if (isSerialWriteTimeout(msg)) {
+        return { ok: false, result: 'ERROR', errorCode: 'WRONG_BAUD_OR_MODE', detail: msg };
+      }
+      return { ok: false, result: 'ERROR', detail: msg };
     }
+  }
+
+  /**
+   * Diagnostic-only probe: check port presence → VID/PID → open → rtcget.
+   *
+   * Unlike `connect()` this method does NOT mutate any driver state, does NOT
+   * send print commands, and does NOT auto-save config. It's a read-only
+   * inspection used by the Settings UI to show users exactly where the
+   * communication chain breaks.
+   *
+   * Serial I/O is serialized via `withPortLock`, so calling this while another
+   * operation owns the port returns `PORT_BUSY` without disturbing it.
+   */
+  static async diagnosePort(port: string, baudRate: number = 9600): Promise<PosnetDiagnoseResult> {
+    const safePort = sanitizePortName(port);
+    if (!safePort) {
+      return {
+        port,
+        portPresent: false,
+        portOpenable: false,
+        vidMatch: false,
+        posnetResponse: false,
+        baudRate,
+        diagnostic: { code: 'PORT_NOT_FOUND', detail: `Invalid port name: ${port}` },
+        guidance: ['The port name is invalid — choose a valid COM port'],
+        requiresManualSetup: false,
+      };
+    }
+
+    const portUpper = safePort.toUpperCase();
+    const ports = await listSerialPorts();
+    const portPresent = ports.includes(portUpper);
+
+    let pid: number | null = null;
+    try { pid = await PosnetDriver.findPosnetPidForPort(safePort); } catch { /* non-fatal */ }
+    const vidMatch = pid !== null;
+    const productName = pid !== null ? POSNET_PRODUCT_IDS[pid] : undefined;
+    const modelName = productName ? `POSNET ${productName}` : undefined;
+    const pidHex = pid !== null ? formatPid(pid) : undefined;
+
+    const result: PosnetDiagnoseResult = {
+      port: portUpper,
+      portPresent,
+      portOpenable: false,
+      vidMatch,
+      pid: pid ?? undefined,
+      pidHex,
+      modelName,
+      posnetResponse: false,
+      baudRate,
+      diagnostic: { code: 'PORT_NOT_FOUND' },
+      guidance: [],
+      requiresManualSetup: false,
+    };
+
+    if (!portPresent) {
+      result.diagnostic = {
+        code: 'PORT_NOT_FOUND',
+        detail: `${portUpper} not present. Available: ${ports.join(', ') || 'none'}`,
+      };
+      result.guidance = [
+        'Check that the printer is powered on',
+        'Check the USB cable is connected on both ends',
+        'Install or reinstall the POSNET USB driver if the device is new',
+      ];
+      return result;
+    }
+
+    const locked = await withPortLock(safePort, `diagnosePort(${safePort}@${baudRate})`, () =>
+      PosnetDriver.verifyPosnetDeviceUnlocked(safePort, baudRate),
+    );
+
+    if (!locked.ok) {
+      result.diagnostic = { code: 'PORT_BUSY', detail: locked.message };
+      result.guidance = [
+        'Another operation is using the printer right now',
+        'Wait a few seconds and click Diagnose again',
+      ];
+      return result;
+    }
+
+    const verify = locked.value;
+    result.portOpenable = verify.errorCode !== 'ACCESS_DENIED';
+
+    if (verify.ok) {
+      result.posnetResponse = true;
+      result.diagnostic = {
+        code: 'PRINT_OK',
+        detail: `POSNET v2 responded on ${portUpper} @ ${baudRate}`,
+      };
+      result.guidance = ['The printer is ready — click Test Print to verify the full print path'];
+      return result;
+    }
+
+    if (verify.errorCode === 'ACCESS_DENIED') {
+      result.diagnostic = { code: 'ACCESS_DENIED', detail: verify.detail || `Access denied opening ${portUpper}` };
+      result.guidance = [
+        'Close any other app that may be using the printer (Posnet OPS, previous Test Print dialog)',
+        'Disconnect and reconnect the USB cable',
+        'Restart the printer',
+      ];
+      return result;
+    }
+
+    const wrongBaudOrMode = verify.errorCode === 'WRONG_BAUD_OR_MODE';
+    const protocolHint = getProtocolMismatchHint(pid ?? undefined);
+    result.diagnostic = {
+      code: wrongBaudOrMode ? 'WRONG_BAUD_OR_MODE' : 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE',
+      detail: `VID_${POSNET_USB_VID} on ${portUpper} but no POSNET response @ ${baudRate}.${protocolHint}`,
+    };
+    const { steps } = getProtocolMismatchGuidance(pid ?? undefined);
+    if (steps.length > 0) {
+      result.guidance = steps;
+      result.requiresManualSetup = true;
+    } else {
+      result.guidance = [
+        'Verify the printer is powered on and has paper',
+        'Check the USB cable is fully seated on both ends',
+        'Try restarting the printer',
+        'If this persists, the printer may not support POSNET v2 protocol',
+      ];
+    }
+    return result;
   }
 }

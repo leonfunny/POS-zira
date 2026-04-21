@@ -35,6 +35,24 @@ export interface DetectedDevice {
   autoSetupEligible?: boolean;
 }
 
+const POSNET_MANUAL_PROTOCOL_PIDS = new Set(['100A', '100B']); // Thermal HD/XL can be set to different PC protocols.
+
+function normalizeUsbPid(pid: string | null | undefined): string {
+  const cleaned = (pid || '').replace(/^0x/i, '').toUpperCase();
+  return cleaned ? cleaned.padStart(4, '0') : '';
+}
+
+export function requiresManualPosnetProtocolSelection(device: Pick<DetectedDevice, 'vid' | 'pid' | 'brand' | 'model'>): boolean {
+  const brand = (device.brand || '').toUpperCase();
+  const vid = (device.vid || '').toUpperCase();
+  if (brand !== 'POSNET' && vid !== POSNET_VID) return false;
+
+  const pid = normalizeUsbPid(device.pid);
+  if (pid && POSNET_MANUAL_PROTOCOL_PIDS.has(pid)) return true;
+
+  return /\bthermal\s+(hd|xl)\b/i.test(device.model || '');
+}
+
 export interface HardwareStatus {
   devices: DetectedDevice[];
   posnetPresent: boolean;
@@ -548,7 +566,9 @@ foreach ($vid in $vids) {
     const classification = classifyPrinterCategory(dev);
     dev.targetType = classification.targetType;
     dev.recommendedProtocol = classification.protocol;
-    if (dev.autoSetupEligible === undefined) {
+    if (requiresManualPosnetProtocolSelection(dev)) {
+      dev.autoSetupEligible = false;
+    } else if (dev.autoSetupEligible === undefined) {
       dev.autoSetupEligible = dev.brand !== 'Generic Serial';
     }
   }
@@ -695,6 +715,9 @@ export function classifyPrinterCategory(device: DetectedDevice): {
   const combined = `${model} ${driver}`;
 
   // POSNET — always receipt, always POSNET protocol
+  // POSNET fiscal support here is POSNET v2 only. Some Thermal HD/XL devices
+  // can also be configured for a printer-side THEMAL protocol, so discovery
+  // disables auto-setup for those PIDs until the printer menu is verified.
   if (brand === 'POSNET' || device.vid === POSNET_VID) {
     return { targetType: 'RECEIPT', protocol: 'POSNET' };
   }

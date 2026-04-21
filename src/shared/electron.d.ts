@@ -84,8 +84,12 @@ interface PosProduct {
   category_id: string | null;
   image_url: string | null;
   in_stock: number;
+  available_qty: number;
   vat_rate: number;
   is_active: number;
+  is_on_sale: number;
+  thumbnail_url: string | null;
+  sale_unit: string | null;
   updated_at: string | null;
 }
 
@@ -201,6 +205,7 @@ interface ElectronAPI {
   posnetListDevices: () => Promise<{ version: number; lastScan: string; devices: Record<string, any>; selectedSerial: string | null }>;
   posnetSelectDevice: (serial: string) => Promise<{ success: boolean; device?: any; error?: string }>;
   posnetRescanKnown: () => Promise<{ success: boolean; devices: any[]; warnings: string[] }>;
+  posnetDiagnosePort: (port: string, baudRate?: number) => Promise<import('./types').PosnetDiagnoseResult>;
   // Universal printer detection (all brands)
   universalScanDevices: () => Promise<{ success: boolean; devices: Array<{ id: string; brand: string; model: string; protocol: string; printerType: string; connectionType: string; windowsPrinterName?: string; port?: string; status: string; lastSeen: string; autoSelected: boolean }>; configured: any[]; warnings: string[] }>;
   universalListDevices: () => Promise<{ version: number; lastScan: string; devices: Record<string, any> }>;
@@ -501,11 +506,21 @@ interface ElectronAPI {
       getDailyStats: (date: string) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
-      refund: (orderId: string, data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string }) => Promise<{ success: boolean; error?: string }>;
+      refund: (orderId: string, data: {
+        type: 'FULL' | 'PARTIAL';
+        reason?: string;
+        lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
+        manualAdjustmentAmount?: number;
+      }) => Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; error?: string }>;
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => Promise<{ success: boolean; order?: any; error?: string }>;
       generateProforma: (orderId: string) => Promise<{ success: boolean; proforma?: any; error?: string }>;
       getServerHistory: (orderId: string) => Promise<{ success: boolean; history?: any[]; error?: string }>;
+      cancel: (orderId: string) => Promise<{ success: boolean; error?: string }>;
+      retrySync: (orderId: string) => Promise<{ success: boolean; result?: any; summary?: any; error?: string }>;
+      repairStockFailures: () => Promise<{ success: boolean; resetCount?: number; summary?: any; error?: string }>;
+      getServerList: (params: { period?: string; page?: number; limit?: number }) => Promise<{ success: boolean; data?: { orders: any[]; total: number; page: number; limit: number }; error?: string }>;
+      getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
@@ -517,6 +532,7 @@ interface ElectronAPI {
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string }>;
       close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any }>;
+      getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
     };
     sync: {
       products: () => Promise<void>;
@@ -524,6 +540,8 @@ interface ElectronAPI {
       onProductsSynced: (callback: () => void) => () => void;
       onCatalogUpdated: (callback: (data: any) => void) => () => void;
       onStockUpdated: (callback: (data: any) => void) => () => void;
+      onOrderSynced: (callback: (data: { orderId: string; backendId: string }) => void) => () => void;
+      onOrderSyncFailed: (callback: (data: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => () => void;
       // Path B: Sync log conflicts
       getConflicts: () => Promise<any[]>;
       resolveConflict: (conflictId: number, resolution: string, adjustments?: any) => Promise<{ success: boolean; error?: string }>;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
@@ -30,6 +30,7 @@ const defaultPrinterConfig: PrinterConfig = {
 
 interface DetectedPrinterDevice {
   vid: string;
+  pid?: string;
   brand: string;
   model: string;
   windowsPrinterName: string | null;
@@ -169,6 +170,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [settingUpDevice, setSettingUpDevice] = useState<string | null>(null); // brand being set up
   const [refreshingDevice, setRefreshingDevice] = useState<string | null>(null); // device being refreshed
   const [refreshDeviceResult, setRefreshDeviceResult] = useState<{ key: string; success: boolean; message: string } | null>(null);
+  const [diagnosingDevice, setDiagnosingDevice] = useState<string | null>(null);
+  const [diagnoseResult, setDiagnoseResult] = useState<{ key: string; result: PosnetDiagnoseResult } | null>(null);
 
   // POS settings
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
@@ -552,6 +555,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Test print for a specific printer type using current (unsaved) config from state
   const handleTestPrint = async (printerType: string) => {
+    if (testingPrinter) return;
     setTestingPrinter(printerType);
     setTestResult(null);
     setLiveSteps([]);
@@ -609,6 +613,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Test print for legacy single printer
   const handleLegacyTestPrint = async () => {
+    if (testingPrinter) return;
     setTestingPrinter('legacy');
     setTestResult(null);
     try {
@@ -787,6 +792,41 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     } finally {
       setRefreshingDevice(null);
       setTimeout(() => setRefreshDeviceResult(null), 5000);
+    }
+  };
+
+  /**
+   * Diagnose a detected POSNET device on its COM port. Read-only probe —
+   * shows the user where the communication chain breaks (port presence, VID,
+   * port open, POSNET protocol response) and step-by-step printer-menu
+   * guidance when the printer-side protocol is not POSNET.
+   */
+  const handleDiagnoseDevice = async (dev: DetectedPrinterDevice, devKey: string) => {
+    if (!dev.comPort) return;
+    setDiagnosingDevice(devKey);
+    setDiagnoseResult(null);
+    try {
+      const receiptCfg = getPrinterConfig('RECEIPT');
+      const baudRate = receiptCfg?.baudRate || 9600;
+      const result = await window.electronAPI.posnetDiagnosePort(dev.comPort, baudRate);
+      setDiagnoseResult({ key: devKey, result });
+    } catch (err: any) {
+      setDiagnoseResult({
+        key: devKey,
+        result: {
+          port: dev.comPort,
+          portPresent: false,
+          portOpenable: false,
+          vidMatch: false,
+          posnetResponse: false,
+          baudRate: 9600,
+          diagnostic: { code: 'PORT_NOT_FOUND', detail: err?.message || 'Diagnose failed' },
+          guidance: ['Unexpected error — check the app logs'],
+          requiresManualSetup: false,
+        },
+      });
+    } finally {
+      setDiagnosingDevice(null);
     }
   };
 
@@ -1039,7 +1079,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   )}
 
                   {dev.autoSetupEligible === false && (
-                    <div className="text-amber-600">Manual configuration required â€” choose the COM port and printer slot below.</div>
+                    <div className="text-amber-600">
+                      {isPosnet
+                        ? 'Manual configuration required - POSNET Thermal models can use POSNET or THEMAL on the printer. Set printer-side PC protocol to POSNET before choosing this COM port below.'
+                        : 'Manual configuration required - choose the COM port and printer slot below.'}
+                    </div>
                   )}
 
                   {/* Per-device actions */}
@@ -1125,6 +1169,24 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </button>
                       )}
 
+                      {/* POSNET Thermal: Diagnose button for manual-protocol scenarios */}
+                      {isPosnet && dev.autoSetupEligible === false && dev.comPort && (() => {
+                        const isDiagnosing = diagnosingDevice === devKey;
+                        return (
+                          <button
+                            onClick={() => handleDiagnoseDevice(dev, devKey)}
+                            disabled={isDiagnosing}
+                            title="Check where the POSNET communication chain breaks without printing"
+                            className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                          >
+                            <svg className={`w-3 h-3 ${isDiagnosing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-3-3v6m-9 0a9 9 0 1118 0 9 9 0 01-18 0z" />
+                            </svg>
+                            {isDiagnosing ? 'Diagnosing...' : 'Diagnose'}
+                          </button>
+                        );
+                      })()}
+
                       {/* P6.1: Per-device refresh button (also shown for unconfigured) */}
                       <button
                         onClick={() => handleRefreshDevice(dev, devKey)}
@@ -1144,6 +1206,44 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       {refreshMsg.message}
                     </div>
                   )}
+                  {diagnoseResult?.key === devKey && (() => {
+                    const r = diagnoseResult.result;
+                    const step = (ok: boolean | undefined, label: string) => (
+                      <div className="flex items-start gap-1.5">
+                        <span className={ok ? 'text-green-600' : 'text-amber-600'}>{ok ? '✓' : '✗'}</span>
+                        <span className="text-slate-600">{label}</span>
+                      </div>
+                    );
+                    return (
+                      <div className="mt-2 p-2 bg-white rounded border border-slate-200 text-[11px] space-y-1">
+                        <div className="font-medium text-slate-700 mb-1">Diagnostic result — {r.modelName || 'POSNET device'} on {r.port}</div>
+                        {step(r.portPresent, `Port ${r.port} visible in Windows`)}
+                        {step(r.vidMatch, `USB VID_1424 ${r.pidHex ? `PID_${r.pidHex.replace('0x', '')}` : ''} detected`)}
+                        {step(r.portOpenable, 'Serial port can be opened')}
+                        {step(r.posnetResponse, `POSNET v2 responds @ ${r.baudRate} baud`)}
+                        {!r.posnetResponse && r.guidance.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-slate-200">
+                            <div className="font-medium text-slate-700 mb-1">
+                              {r.requiresManualSetup ? 'Fix required on the printer:' : 'Try these steps:'}
+                            </div>
+                            <ol className="list-decimal pl-4 space-y-0.5 text-slate-600">
+                              {r.guidance.map((s, idx) => <li key={idx}>{s}</li>)}
+                            </ol>
+                          </div>
+                        )}
+                        {r.posnetResponse && (
+                          <div className="mt-2 pt-2 border-t border-slate-200 text-green-600 font-medium">
+                            Ready — click Test Print or Auto Setup to finish.
+                          </div>
+                        )}
+                        {r.diagnostic.detail && (
+                          <div className="mt-2 pt-2 border-t border-slate-200 text-slate-500 text-[10px]">
+                            <span className="font-mono">{r.diagnostic.code}</span>: {r.diagnostic.detail}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   </>
                     );
                   })()}
@@ -1481,9 +1581,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       <div className="pt-2 border-t border-slate-100">
                         <button
                           onClick={() => handleTestPrint(printerType)}
-                          disabled={testingPrinter === printerType}
+                          disabled={testingPrinter !== null}
                           className={`w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                            testingPrinter === printerType
+                            testingPrinter !== null
                               ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                               : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
                           }`}
@@ -1754,9 +1854,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             <div className="pt-4 border-t border-slate-200">
               <button
                 onClick={handleLegacyTestPrint}
-                disabled={testingPrinter === 'legacy'}
+                disabled={testingPrinter !== null}
                 className={`w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  testingPrinter === 'legacy'
+                  testingPrinter !== null
                     ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                     : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
                 }`}

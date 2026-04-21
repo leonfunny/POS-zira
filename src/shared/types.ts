@@ -63,6 +63,30 @@ export interface PrinterStatusInfo {
   connectionType?: string;
   paperWidth?: number;
   mock?: boolean;
+  connectionState?: 'disconnected' | 'physical_present' | 'protocol_ready';
+  diagnostic?: { code: string; detail?: string };
+  detectedPid?: number;
+}
+
+/**
+ * Structured result of `PosnetDriver.diagnosePort()` — a read-only probe that
+ * tells the UI exactly where the POSNET communication chain breaks without
+ * mutating driver state or auto-saving config.
+ */
+export interface PosnetDiagnoseResult {
+  port: string;
+  portPresent: boolean;
+  portOpenable: boolean;
+  vidMatch: boolean;
+  pid?: number;
+  pidHex?: string;
+  modelName?: string;
+  posnetResponse: boolean;
+  baudRate: number;
+  diagnostic: { code: string; detail?: string };
+  guidance: string[];
+  /** True when resolution requires a hardware-menu change on the printer. */
+  requiresManualSetup: boolean;
 }
 
 // Daily report data for thermal printers
@@ -629,6 +653,7 @@ export const IPC_CHANNELS = {
   POSNET_LIST_DEVICES: 'posnet-list-devices',
   POSNET_SELECT_DEVICE: 'posnet-select-device',
   POSNET_RESCAN_KNOWN: 'posnet-rescan-known',
+  POSNET_DIAGNOSE_PORT: 'posnet-diagnose-port',
   // Universal printer detection (all brands)
   UNIVERSAL_SCAN_DEVICES: 'universal-scan-devices',
   UNIVERSAL_LIST_DEVICES: 'universal-list-devices',
@@ -727,6 +752,7 @@ export const IPC_CHANNELS = {
   POS_PRODUCTS_SYNCED: 'pos:products-synced',
   POS_CATALOG_UPDATED: 'pos:catalog-updated',
   POS_STOCK_UPDATED: 'pos:stock-updated',
+  POS_ORDER_SYNCED: 'pos:order-synced',
 
   // POS - Tables
   POS_TABLES_GET_ALL: 'pos:tables:getAll',
