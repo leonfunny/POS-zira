@@ -18,7 +18,8 @@ import { listSerialPorts } from '../port-utils';
 import { PosnetProbeEngine } from './posnet-probe-engine';
 import { DeviceProfileRegistry } from './device-profile-registry';
 import { DetectionResult, DeviceProfile } from './types';
-import { POSNET_USB_VID, POSNET_PRODUCT_IDS } from './probe-profiles';
+import { POSNET_USB_VID } from './probe-profiles';
+import { buildFindPosnetVidPortsScript, parsePosnetVidPortOutput } from './pnp-port-parser';
 
 const execFileAsync = promisify(execFile);
 
@@ -267,36 +268,17 @@ export class DeviceDetectionService {
    * Query PnP for USB devices with VID_1424, extracting COM port and PID.
    */
   private async findPosnetVidPorts(): Promise<PortCandidate[]> {
-    const psCommand = `
-Get-CimInstance Win32_PnPEntity |
-  Where-Object { $_.DeviceID -match 'VID_${POSNET_USB_VID}' -and $_.Name -match 'COM\\d+' } |
-  ForEach-Object {
-    $port = if ($_.Name -match '\\(COM(\\d+)\\)') { "COM$($Matches[1])" } else { '' }
-    $pid = if ($_.DeviceID -match 'PID_([0-9A-Fa-f]+)') { $Matches[1] } else { '0000' }
-    if ($port) { Write-Output "$port|$pid" }
-  }
-`.trim();
+    const psCommand = buildFindPosnetVidPortsScript(POSNET_USB_VID);
 
     try {
-      const { stdout } = await execFileAsync(
+      const { stdout, stderr } = await execFileAsync(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', psCommand],
         { encoding: 'utf8', timeout: 15000 },
       );
 
-      return stdout
-        .split('\n')
-        .map(l => l.trim())
-        .filter(Boolean)
-        .map(line => {
-          const [port, pidHex] = line.split('|');
-          const pid = parseInt(pidHex, 16);
-          return {
-            port,
-            pid: isNaN(pid) ? undefined : pid,
-            isVidMatch: true,
-          };
-        });
+      return parsePosnetVidPortOutput(stdout, stderr)
+        .map(row => ({ port: row.port, pid: row.pid, isVidMatch: true }));
     } catch (err: any) {
       logger.warn(`[Detection] findPosnetVidPorts failed: ${err.message}`);
       return [];

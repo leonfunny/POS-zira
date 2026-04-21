@@ -10,6 +10,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import logger from '../logger';
 import { BRAND_PATTERNS } from './detection/types';
+import { withPortLock } from './posnet/port-mutex';
 
 const execFileAsync = promisify(execFile);
 
@@ -491,6 +492,15 @@ export async function probeEscPosPort(port: string, baudRate: number = 9600): Pr
   const safePort = sanitizePortName(port);
   if (!safePort) return false;
 
+  const locked = await withPortLock(safePort, `probeEscPosPort(${safePort})`, () => probeEscPosPortUnlocked(safePort, baudRate));
+  if (!locked.ok) {
+    logger.warn(`[PortUtils] ESC/POS probe ${safePort}: ${locked.message}`);
+    return false;
+  }
+  return locked.value;
+}
+
+async function probeEscPosPortUnlocked(safePort: string, baudRate: number): Promise<boolean> {
   try {
     const psScript =
       '$ProgressPreference = "SilentlyContinue"\n' +
@@ -518,7 +528,7 @@ export async function probeEscPosPort(port: string, baudRate: number = 9600): Pr
     logger.info(`[PortUtils] ESC/POS probe ${safePort}: ${result}`);
     return result === 'ESCPOS';
   } catch (err: any) {
-    logger.debug(`[PortUtils] ESC/POS probe ${port} failed: ${err.message}`);
+    logger.debug(`[PortUtils] ESC/POS probe ${safePort} failed: ${err.message}`);
     return false;
   }
 }

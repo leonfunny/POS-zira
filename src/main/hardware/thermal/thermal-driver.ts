@@ -8,6 +8,7 @@ import { EscPosFormatter, DailyReportData, EscPosCharset, EscPosCutMode } from '
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { matchBrand, type RecoveryResult } from '../detection/types';
+import { withPortLock } from '../posnet/port-mutex';
 
 const execFileAsync = promisify(execFile);
 
@@ -477,16 +478,22 @@ export class ThermalDriver {
         logger.info(`[ThermalDriver] Raw data sent via WritePrinter (${result})`);
       } else {
         // Serial port: Configure and send via cmd.exe
-        await execFileAsync(
-          'mode.com',
-          [`${this.printerNameOrPort}:`, `baud=${this.baudRate}`, 'parity=n', 'data=8', 'stop=1'],
-          { encoding: 'utf8', timeout: 10000 },
-        );
-        await execFileAsync(
-          'cmd.exe',
-          ['/c', 'copy', '/b', tempFile, `${this.printerNameOrPort}:`],
-          { encoding: 'utf8', timeout: 15000 },
-        );
+        const locked = await withPortLock(this.printerNameOrPort, `thermal.printRaw(${this.printerNameOrPort})`, async () => {
+          await execFileAsync(
+            'mode.com',
+            [`${this.printerNameOrPort}:`, `baud=${this.baudRate}`, 'parity=n', 'data=8', 'stop=1'],
+            { encoding: 'utf8', timeout: 10000 },
+          );
+          await execFileAsync(
+            'cmd.exe',
+            ['/c', 'copy', '/b', tempFile, `${this.printerNameOrPort}:`],
+            { encoding: 'utf8', timeout: 15000 },
+          );
+        });
+        if (!locked.ok) {
+          this.connected = false;
+          throw new Error(locked.message);
+        }
       }
 
       logger.info('[ThermalDriver] Data sent to printer');

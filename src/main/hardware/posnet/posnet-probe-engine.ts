@@ -17,6 +17,7 @@ import logger from '../../logger';
 import { sanitizePortName } from '../port-utils';
 import { ProbeProfile, ProbeResult, DeviceCapabilities, PosnetProtocol } from './types';
 import { DEFAULT_PROBE_PROFILES, POSNET_PRODUCT_IDS } from './probe-profiles';
+import { withPortLock } from './port-mutex';
 
 const execFileAsync = promisify(execFile);
 
@@ -136,25 +137,34 @@ export class PosnetProbeEngine {
       return null;
     }
 
+    const locked = await withPortLock(safePort, `probePort(${safePort})`, () => this.probePortUnlocked(safePort, pidHint));
+    if (!locked.ok) {
+      logger.warn(`[ProbeEngine] ${safePort} probe skipped: ${locked.message}`);
+      return null;
+    }
+    return locked.value;
+  }
+
+  private async probePortUnlocked(port: string, pidHint?: number): Promise<ProbeResult | null> {
     // Sort profiles: prefer those whose hintProductIds match the PID
     const sorted = this.prioritizeProfiles(pidHint);
 
     for (const profile of sorted) {
-      logger.info(`[ProbeEngine] Probing ${safePort} with profile "${profile.name}" (${profile.protocol} @ ${profile.baudRate})`);
+      logger.info(`[ProbeEngine] Probing ${port} with profile "${profile.name}" (${profile.protocol} @ ${profile.baudRate})`);
 
       try {
-        const result = await this.tryProfile(safePort, profile, pidHint);
+        const result = await this.tryProfile(port, profile, pidHint);
         if (result.success) {
-          logger.info(`[ProbeEngine] SUCCESS on ${safePort}: profile="${profile.name}", serial=${result.serial}, model=${result.model}`);
+          logger.info(`[ProbeEngine] SUCCESS on ${port}: profile="${profile.name}", serial=${result.serial}, model=${result.model}`);
           return result;
         }
-        logger.info(`[ProbeEngine] Profile "${profile.name}" failed on ${safePort}: ${result.errorMessage}`);
+        logger.info(`[ProbeEngine] Profile "${profile.name}" failed on ${port}: ${result.errorMessage}`);
       } catch (err: any) {
-        logger.warn(`[ProbeEngine] Profile "${profile.name}" threw on ${safePort}: ${err.message}`);
+        logger.warn(`[ProbeEngine] Profile "${profile.name}" threw on ${port}: ${err.message}`);
       }
     }
 
-    logger.info(`[ProbeEngine] All profiles exhausted for ${safePort}`);
+    logger.info(`[ProbeEngine] All profiles exhausted for ${port}`);
     return null;
   }
 

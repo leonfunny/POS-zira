@@ -30,6 +30,8 @@ export type { IPosnetSdkClient } from './posnet-probe-engine';
 export { DeviceProfileRegistry } from './device-profile-registry';
 export { FiscalPrinterAdapter } from './fiscal-printer-adapter';
 export { PosnetDriver } from './posnet-driver';
+export type { PosnetConnectionState, PosnetDiagnosticCode } from './posnet-driver';
+export { withPortLock, isPortBusy } from './port-mutex';
 export { ReceiptFormatter } from './receipt-formatter';
 export { DEFAULT_PROBE_PROFILES, POSNET_PRODUCT_IDS, POSNET_USB_VID } from './probe-profiles';
 export type {
