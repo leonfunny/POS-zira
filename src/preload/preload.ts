@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   posnetListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_LIST_DEVICES),
   posnetSelectDevice: (serial: string) => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SELECT_DEVICE, serial),
   posnetRescanKnown: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_RESCAN_KNOWN),
+  posnetDiagnosePort: (port: string, baudRate?: number) => ipcRenderer.invoke(IPC_CHANNELS.POSNET_DIAGNOSE_PORT, port, baudRate),
   // Universal printer detection (all brands)
   universalScanDevices: () => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_SCAN_DEVICES),
   universalListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.UNIVERSAL_LIST_DEVICES),
@@ -463,8 +464,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
-      refund: (orderId: string, data: { type: string; amount?: number; reason?: string }) =>
+      refund: (orderId: string, data: any) =>
         ipcRenderer.invoke('pos:orders:refund', orderId, data),
+      downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') =>
+        ipcRenderer.invoke('pos:orders:downloadPdf', orderId, kind, invoiceType),
+      addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) =>
+        ipcRenderer.invoke('pos:orders:addInvoice', orderId, data),
+      generateProforma: (orderId: string) => ipcRenderer.invoke('pos:orders:generateProforma', orderId),
+      getServerHistory: (orderId: string) => ipcRenderer.invoke('pos:orders:getServerHistory', orderId),
+      cancel: (orderId: string) => ipcRenderer.invoke('pos:orders:cancel', orderId),
+      retrySync: (orderId: string) => ipcRenderer.invoke('pos:orders:retrySync', orderId),
+      repairStockFailures: () => ipcRenderer.invoke('pos:orders:repairStockFailures'),
+      getServerList: (params: any) => ipcRenderer.invoke('pos:orders:getServerList', params),
+      getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),
@@ -480,6 +492,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_OPEN, data),
       close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
+      getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {
       products: () => ipcRenderer.invoke(IPC_CHANNELS.POS_SYNC_PRODUCTS),
@@ -498,6 +511,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const listener = (_e: any, data: any) => callback(data);
         ipcRenderer.on(IPC_CHANNELS.POS_STOCK_UPDATED, listener);
         return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STOCK_UPDATED, listener);
+      },
+      onOrderSynced: (callback: (data: { orderId: string; backendId: string }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:order-synced', listener);
+        return () => ipcRenderer.removeListener('pos:order-synced', listener);
+      },
+      onOrderSyncFailed: (callback: (data: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:order-sync-failed', listener);
+        return () => ipcRenderer.removeListener('pos:order-sync-failed', listener);
       },
       // Path B: Sync log conflicts
       getConflicts: () => ipcRenderer.invoke('pos:sync:conflicts'),
@@ -522,6 +545,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       search: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_CUSTOMERS_SEARCH, query),
       getById: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_CUSTOMERS_GET_BY_ID, id),
       increaseDebt: (id: string, amount: number) => ipcRenderer.invoke(IPC_CHANNELS.POS_CUSTOMERS_INCREASE_DEBT, id, amount),
+      lookupNip: (nip: string) => ipcRenderer.invoke('pos:customers:lookupNip', nip),
     },
     staff: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL),

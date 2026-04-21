@@ -29,6 +29,14 @@ export interface OrderRow {
   order_type: string | null;    // 'standard' | 'dine_in' | 'takeout' | 'delivery'
   tip: number | null;            // grosze
   mode: string | null;           // 'retail' | 'salon' | 'b2b' | 'restaurant'
+  // Payment & sync
+  payment_tenders: string | null; // JSON array of {method, amount}
+  sync_attempts: number;
+  sync_error: string | null;
+  // Refund
+  refund_amount: number | null;
+  refund_reason: string | null;
+  refunded_at: string | null;
 }
 
 export interface OrderItemRow {
@@ -70,16 +78,19 @@ export const orderRepo = {
 
       const finalOrder = { ...order, order_number: finalOrderNumber };
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal,
-          finalOrder.discount, finalOrder.tax, finalOrder.total, finalOrder.payment_method,
-          finalOrder.payment_amount, finalOrder.change_amount, finalOrder.staff_id,
-          finalOrder.staff_name, finalOrder.customer_id, finalOrder.customer_name,
-          finalOrder.customer_nip, finalOrder.shift_id, finalOrder.source,
+          finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal ?? 0,
+          finalOrder.discount ?? 0, finalOrder.tax ?? 0, finalOrder.total ?? 0,
+          finalOrder.payment_method ?? null, finalOrder.payment_amount ?? 0,
+          finalOrder.change_amount ?? 0, finalOrder.staff_id ?? null,
+          finalOrder.staff_name ?? null, finalOrder.customer_id ?? null,
+          finalOrder.customer_name ?? null, finalOrder.customer_nip ?? null,
+          finalOrder.shift_id ?? null, finalOrder.source ?? 'POS',
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',
+          (finalOrder as any).payment_tenders ?? null,
         ],
       );
 
@@ -88,8 +99,8 @@ export const orderRepo = {
           `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            item.id, item.order_id, item.variant_id, item.name, item.sku,
-            item.price, item.quantity, item.total, item.vat_rate,
+            item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
+            item.price, item.quantity, item.total, item.vat_rate ?? 23,
             item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
           ],
         );
@@ -152,6 +163,14 @@ export const orderRepo = {
 
   getByShift(shiftId: string): OrderRow[] {
     return database.all<OrderRow>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
+  },
+
+  getUnsyncedCountByShift(shiftId: string): number {
+    const row = database.get<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM orders WHERE shift_id = ? AND synced != 1',
+      [shiftId],
+    );
+    return row?.cnt ?? 0;
   },
 
   getDailyStats(date: string): DailyStats {

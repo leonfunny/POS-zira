@@ -239,7 +239,7 @@ export class PaymentController {
       return false;
     }
 
-    const refundAmount = (order as any).refund_amount ?? order.total;
+    const refundAmount = order.refund_amount ?? order.total;
     const isFullRefund = refundAmount >= order.total;
 
     const receiptData: ReceiptData = {
@@ -266,7 +266,7 @@ export class PaymentController {
       total: -refundAmount,
       cashierName: order.staff_name || undefined,
       isRefund: true,
-      refundReason: (order as any).refund_reason || undefined,
+      refundReason: order.refund_reason || undefined,
       originalOrderNumber: order.order_number || orderId.substring(0, 8),
     };
 

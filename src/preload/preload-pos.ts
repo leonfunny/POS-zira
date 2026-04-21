@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('pos:orders:addInvoice', orderId, data),
       generateProforma: (orderId: string) => ipcRenderer.invoke('pos:orders:generateProforma', orderId),
       getServerHistory: (orderId: string) => ipcRenderer.invoke('pos:orders:getServerHistory', orderId),
+      cancel: (orderId: string) => ipcRenderer.invoke('pos:orders:cancel', orderId),
+      retrySync: (orderId: string) => ipcRenderer.invoke('pos:orders:retrySync', orderId),
+      repairStockFailures: () => ipcRenderer.invoke('pos:orders:repairStockFailures'),
+      getServerList: (params: any) => ipcRenderer.invoke('pos:orders:getServerList', params),
+      getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-receipt', orderId),
@@ -48,6 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke('pos:shift:open', data),
       close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke('pos:shift:close', data),
+      getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {
       products: () => ipcRenderer.invoke('pos:sync:products'),
@@ -66,6 +72,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const listener = (_e: any, data: any) => callback(data);
         ipcRenderer.on('pos:stock-updated', listener);
         return () => ipcRenderer.removeListener('pos:stock-updated', listener);
+      },
+      onOrderSynced: (callback: (data: { orderId: string; backendId: string }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:order-synced', listener);
+        return () => ipcRenderer.removeListener('pos:order-synced', listener);
+      },
+      onOrderSyncFailed: (callback: (data: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:order-sync-failed', listener);
+        return () => ipcRenderer.removeListener('pos:order-sync-failed', listener);
       },
     },
     // Mode-specific: Tables (Restaurant)

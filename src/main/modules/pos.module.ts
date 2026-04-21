@@ -76,8 +76,72 @@ export class PosModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.PAYMENT_CONTROLLER, this.paymentController);
     this.container.set(SERVICE_TOKENS.SHIFT_CONTROLLER, this.shiftController);
 
+    // Crash recovery: orders marked synced=2 (in-flight) when the app crashed → reset to 0
+    database.run('UPDATE orders SET synced = 0 WHERE synced = 2');
+    // Repair corrupted state: synced=1 but no backend_id (response-shape bug fix side-effect)
+    const corruptedCount = database.get<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM orders WHERE synced = 1 AND (backend_id IS NULL OR backend_id = '')",
+    )?.cnt ?? 0;
+    if (corruptedCount > 0) {
+      database.run("UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE synced = 1 AND (backend_id IS NULL OR backend_id = '')");
+      database.save();
+      logger.warn(`[PosModule] Reset ${corruptedCount} orders with missing backend_id for re-sync`);
+    }
+    // NOTE: shelved orders (synced = -1) are NOT auto-reset. They require an explicit
+    // retry via `pos:orders:retrySync` or one-time repair via `pos:orders:repairStockFailures`.
+
+    // Finish any synced orders that were created before the /finish call was added.
+    // Non-blocking — runs in background after init completes.
+    setTimeout(async () => {
+      const token = getSecureAuthToken();
+      if (!token) return;
+      const unfinished = database.all<{ backend_id: string; order_number: string }>(
+        "SELECT backend_id, order_number FROM orders WHERE synced = 1 AND backend_id IS NOT NULL AND backend_id != ''",
+      );
+      for (const o of unfinished) {
+        try {
+          await apiClient.finishOrder(token, o.backend_id);
+          logger.info(`[PosModule] Retroactively finished order ${o.order_number}`);
+        } catch { /* already finished or endpoint not available */ }
+      }
+    }, 5000);
+
+    // Recover open shift from local DB (app restart during active shift)
+    const openShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null; opened_at: string }>(
+      'SELECT id, staff_id, staff_name, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+    );
+    if (openShift) {
+      this.posStore.dispatch({
+        type: 'session/open',
+        payload: { shiftId: openShift.id, staffId: openShift.staff_id, staffName: openShift.staff_name, openedAt: openShift.opened_at },
+      });
+      logger.info(`[PosModule] Recovered open shift ${openShift.id} (${openShift.staff_name})`);
+    }
+
+    // Cross-verify with server (async, non-blocking)
+    this.verifyShiftWithServer(openShift?.id ?? null);
+
     this.setState(ModuleState.READY);
     logger.info('[PosModule] Initialized');
+  }
+
+  private async verifyShiftWithServer(localShiftId: string | null): Promise<void> {
+    try {
+      const token = getSecureAuthToken();
+      if (!token) return;
+      const serverShift = await apiClient.getActiveShift(token);
+      if (serverShift && !localShiftId) {
+        logger.warn(`[PosModule] Server has active shift ${serverShift.id} but local DB has none — restoring`);
+        this.posStore?.dispatch({
+          type: 'session/open',
+          payload: { shiftId: serverShift.id, staffId: serverShift.staffId, staffName: serverShift.staffName, openedAt: serverShift.openedAt },
+        });
+      } else if (!serverShift && localShiftId) {
+        logger.warn(`[PosModule] Local shift ${localShiftId} is open but server says no active shift — local shift may have been closed elsewhere`);
+      }
+    } catch {
+      logger.debug('[PosModule] Server shift verification skipped (offline or error)');
+    }
   }
 
   registerIpcHandlers(): void {
@@ -240,7 +304,16 @@ export class PosModule extends BaseModule {
 
     // Orders
     ipcMain.handle('pos:orders:create', (_e, order, items) => {
-      try { return { success: true, id: orderRepo.create(order, items) }; }
+      try {
+        const id = orderRepo.create(order, items);
+        for (const item of items) {
+          if (item.variant_id && item.quantity > 0) {
+            productRepo.decrementStock(item.variant_id, item.quantity);
+          }
+        }
+        database.save();
+        return { success: true, id };
+      }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('pos:orders:getDailyStats', (_e, date: string) => orderRepo.getDailyStats(date));
@@ -366,7 +439,11 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
-    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string }) => {
+    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: {
+      type: 'FULL' | 'PARTIAL'; reason?: string;
+      lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
+      manualAdjustmentAmount?: number;
+    }) => {
       try {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
@@ -376,18 +453,41 @@ export class PosModule extends BaseModule {
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
 
-        // Call backend refund endpoint using the backend_id
-        const result = await apiClient.refundOrder(token, order.backend_id, {
-          type: data.type,
-          amount: data.type === 'PARTIAL' && data.amount ? data.amount / 100 : undefined, // grosze → PLN
-          reason: data.reason,
-        });
+        // Convert line amounts from grosze → PLN for backend
+        const lines = (data.lines ?? []).map(l => ({
+          variantId: l.variantId,
+          sku: l.sku,
+          name: l.name,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice / 100,
+          refundAmount: l.refundAmount / 100,
+          restock: l.restock,
+        }));
 
+        const backendPayload: Record<string, any> = {
+          type: data.type,
+          reason: data.reason,
+        };
+        if (lines.length > 0) {
+          backendPayload.lines = lines;
+        }
+        if (data.manualAdjustmentAmount != null) {
+          backendPayload.manualAdjustmentAmount = data.manualAdjustmentAmount / 100;
+        }
+
+        logger.info(`[PosModule] Refund ${order.order_number}: ${data.type}, ${lines.length} lines, payload=${JSON.stringify(backendPayload).substring(0, 300)}`);
+
+        const result = await apiClient.refundOrder(token, order.backend_id, backendPayload);
         if (result === null) return { success: false, error: 'Refund endpoint not available' };
 
-        // Update local DB
-        const refundAmount = data.type === 'FULL' ? order.total : (data.amount ?? 0);
-        orderRepo.markRefunded(orderId, refundAmount, data.reason || '', data.type);
+        // Update local DB from backend response
+        const refundedAmount = result.totalRefundedAmount != null
+          ? Math.round(result.totalRefundedAmount * 100)
+          : result.refundAmount != null
+            ? Math.round(result.refundAmount * 100)
+            : data.type === 'FULL' ? order.total : lines.reduce((s, l) => s + Math.round(l.refundAmount * 100), 0);
+        const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
+        orderRepo.markRefunded(orderId, refundedAmount, data.reason || '', status);
         database.save();
 
         // Print refund receipt
@@ -395,13 +495,21 @@ export class PosModule extends BaseModule {
           logger.warn(`[PosModule] Refund receipt print failed: ${e.message}`);
         }
 
-        // Open cash drawer if original payment was cash
         if (order.payment_method === 'CASH') {
           try { await this.paymentController?.openCashDrawer(); } catch {}
         }
 
-        logger.info(`[PosModule] Order ${order.order_number} refunded: ${data.type}, amount=${refundAmount}, reason=${data.reason}`);
-        return { success: true };
+        // Trigger product sync to refresh stock after restock
+        if (lines.some(l => l.restock)) {
+          const productSync = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+          if (productSync) {
+            try { await productSync.deltaSync(); } catch {}
+          }
+        }
+
+        logger.info(`[PosModule] Order ${order.order_number} refunded: ${data.type}, backend status=${result.status}`);
+        const { success: _s, ...rest } = result;
+        return { success: true, ...rest };
       } catch (e: any) {
         logger.error(`[PosModule] Refund failed for order ${orderId}: ${e.message}`);
         return { success: false, error: e.message };
@@ -511,6 +619,82 @@ export class PosModule extends BaseModule {
       }
     });
 
+    ipcMain.handle('pos:orders:retrySync', async (_e, orderId: string) => {
+      try {
+        const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+        if (!orderSync) return { success: false, error: 'OrderSync not initialized' };
+        const reset = orderSync.resetForRetry(orderId);
+        if (!reset) return { success: false, error: 'Order not in shelved state or not found' };
+        const summary = await orderSync.syncPendingOrders();
+        const result = summary.results.find((r: any) => r.orderId === orderId);
+        return { success: true, result, summary };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:repairStockFailures', async () => {
+      try {
+        const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+        if (!orderSync) return { success: false, error: 'OrderSync not initialized' };
+        const resetCount = orderSync.repairStockFailures();
+        if (resetCount === 0) return { success: true, resetCount: 0, summary: null };
+        const summary = await orderSync.syncPendingOrders();
+        return { success: true, resetCount, summary };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:cancel', async (_e, orderId: string) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced — cannot cancel on server' };
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        await apiClient.cancelOrder(token, order.backend_id);
+        database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [order.id]);
+        database.save();
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:getServerList', async (_e, params: { period?: string; page?: number; limit?: number }) => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        const data = await apiClient.getServerOrders(token, params);
+        return { success: true, data };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:getTodayServer', async () => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        const orders = await apiClient.getTodayOrders(token);
+        return { success: true, orders, count: orders.length };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle('pos:shift:getActive', async () => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        const shift = await apiClient.getActiveShift(token);
+        return { success: true, shift };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
     ipcMain.handle('pos:open-cash-drawer', async () => {
       try { await this.paymentController?.openCashDrawer(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
@@ -558,6 +742,11 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
+        // Attempt to sync pending orders before closing shift
+        const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+        if (orderSync) {
+          try { await orderSync.syncPendingOrders(); } catch { /* best-effort */ }
+        }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash);
         this.posStore?.dispatch({ type: 'session/close' });
         await this.shiftController.printZReport(report);

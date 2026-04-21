@@ -122,7 +122,7 @@ export type PosAction =
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
   | { type: 'cart/setItemCourse'; payload: { id: string; course: number } }
-  | { type: 'session/open'; payload: { shiftId: string; staffId: string; staffName: string } }
+  | { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }
   | { type: 'table/setActive'; payload: { tableId: string | null } }
@@ -305,7 +305,7 @@ function posReducer(
           staffId: action.payload.staffId,
           staffName: action.payload.staffName,
           isOpen: true,
-          openedAt: new Date().toISOString(),
+          openedAt: action.payload.openedAt ?? new Date().toISOString(),
         },
       };
 

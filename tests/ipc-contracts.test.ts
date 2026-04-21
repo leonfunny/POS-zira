@@ -16,8 +16,6 @@ const preloadPos = readFileSync(join(__dirname, '../src/preload/preload-pos.ts')
 const preloadDisplay = readFileSync(join(__dirname, '../src/preload/preload-display.ts'), 'utf-8');
 
 describe('IPC channel contracts - main preload', () => {
-  // Every top-level API group in preload.ts should have a corresponding
-  // declaration in electron.d.ts
   const topLevelGroups = [
     'getConfig', 'setConfig', 'connect', 'disconnect', 'getStatus',
     'listPorts', 'listWindowsPrinters', 'testPrint',
@@ -47,6 +45,38 @@ describe('IPC channel contracts - POS preload', () => {
   for (const group of posGroups) {
     it(`preload-pos.ts exposes "${group}"`, () => {
       expect(preloadPos).toContain(group.split('.').pop()!);
+    });
+  }
+});
+
+describe('IPC channel contracts - POS methods must be in BOTH preloads', () => {
+  const requiredPosMethods = [
+    { scope: 'orders', method: 'cancel', ipc: 'pos:orders:cancel' },
+    { scope: 'orders', method: 'downloadPdf', ipc: 'pos:orders:downloadPdf' },
+    { scope: 'orders', method: 'generateProforma', ipc: 'pos:orders:generateProforma' },
+    { scope: 'orders', method: 'addInvoice', ipc: 'pos:orders:addInvoice' },
+    { scope: 'orders', method: 'getServerHistory', ipc: 'pos:orders:getServerHistory' },
+    { scope: 'orders', method: 'retrySync', ipc: 'pos:orders:retrySync' },
+    { scope: 'orders', method: 'repairStockFailures', ipc: 'pos:orders:repairStockFailures' },
+    { scope: 'orders', method: 'getServerList', ipc: 'pos:orders:getServerList' },
+    { scope: 'orders', method: 'getTodayServer', ipc: 'pos:orders:getTodayServer' },
+    { scope: 'customers', method: 'lookupNip', ipc: 'pos:customers:lookupNip' },
+    { scope: 'shift', method: 'getActive', ipc: 'pos:shift:getActive' },
+    { scope: 'sync', method: 'onOrderSynced', ipc: 'pos:order-synced' },
+    { scope: 'sync', method: 'onOrderSyncFailed', ipc: 'pos:order-sync-failed' },
+  ];
+
+  for (const { scope, method, ipc } of requiredPosMethods) {
+    it(`preload-pos.ts exposes ${scope}.${method}`, () => {
+      expect(preloadPos).toContain(method);
+      expect(preloadPos).toContain(ipc);
+    });
+    it(`preload.ts (main window) also exposes ${scope}.${method}`, () => {
+      expect(preloadMain).toContain(method);
+      expect(preloadMain).toContain(ipc);
+    });
+    it(`electron.d.ts declares ${scope}.${method}`, () => {
+      expect(electronDts).toContain(method);
     });
   }
 });
@@ -98,5 +128,47 @@ describe('Type consistency', () => {
 
   it('preload-pos exposes customer display status listener', () => {
     expect(preloadPos).toContain('customer-display:status');
+  });
+});
+
+describe('Refund payload passes lines[] end-to-end', () => {
+  const orderHistoryModal = readFileSync(
+    join(__dirname, '../src/renderer/components/pos/OrderHistoryModal.tsx'), 'utf-8',
+  );
+  const posModule = readFileSync(
+    join(__dirname, '../src/main/modules/pos.module.ts'), 'utf-8',
+  );
+  const apiClientSrc = readFileSync(
+    join(__dirname, '../src/main/network/api-client.ts'), 'utf-8',
+  );
+
+  it('renderer sends lines (not items) in refund payload', () => {
+    expect(orderHistoryModal).toContain('lines: refundItems');
+    expect(orderHistoryModal).not.toMatch(/items:\s*refundItems/);
+  });
+
+  it('renderer does NOT send local item.id as orderItemId', () => {
+    expect(orderHistoryModal).not.toContain('orderItemId: item.id');
+  });
+
+  it('main IPC handler forwards lines to apiClient', () => {
+    expect(posModule).toContain('backendPayload.lines = lines');
+  });
+
+  it('main IPC handler maps lines explicitly without orderItemId', () => {
+    expect(posModule).toContain('variantId: l.variantId');
+    expect(posModule).toContain('sku: l.sku');
+    expect(posModule).toContain('restock: l.restock');
+    expect(posModule).not.toMatch(/orderItemId.*l\./);
+  });
+
+  it('apiClient refundOrder accepts Record<string, any> (not legacy amount-only type)', () => {
+    expect(apiClientSrc).toContain('data: Record<string, any>');
+    expect(apiClientSrc).toContain('body: JSON.stringify(data)');
+  });
+
+  it('main IPC handler converts line unitPrice/refundAmount from grosze to PLN', () => {
+    expect(posModule).toContain('unitPrice: l.unitPrice / 100');
+    expect(posModule).toContain('refundAmount: l.refundAmount / 100');
   });
 });

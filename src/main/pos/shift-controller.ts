@@ -19,6 +19,7 @@ export interface ShiftReport {
   blikTotal: number;
   transferTotal: number;
   difference: number; // closingCash - (openingCash + cashTotal)
+  unsyncedOrders: number;
 }
 
 type PrinterDriver = {
@@ -69,10 +70,12 @@ export class ShiftController {
     const orders = orderRepo.getByShift(shiftId);
     const totalSales = orders.reduce((sum, o) => sum + o.total, 0);
 
+    const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
+
     // Aggregate by payment method, accounting for split tenders
     let cashTotal = 0, cardTotal = 0, blikTotal = 0, transferTotal = 0;
     for (const o of orders) {
-      const tendersJson = (o as any).payment_tenders;
+      const tendersJson = o.payment_tenders;
       if (tendersJson) {
         try {
           const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
@@ -114,6 +117,7 @@ export class ShiftController {
       blikTotal,
       transferTotal,
       difference,
+      unsyncedOrders,
     };
 
     // Async sync to backend (non-blocking)
