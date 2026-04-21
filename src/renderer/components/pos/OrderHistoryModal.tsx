@@ -20,11 +20,15 @@ interface OrderRow {
   refunded_at?: string | null;
   customer_nip?: string | null;
   customer_name?: string | null;
+  payment_tenders?: string | null;
+  sync_error?: string | null;
+  sync_attempts?: number;
 }
 
 interface OrderItemRow {
   id: string;
   order_id: string;
+  variant_id?: string | null;
   name: string;
   sku: string | null;
   price: number;
@@ -185,63 +189,99 @@ function CloseButton({ onClose }: { onClose: () => void }) {
 
 function RefundPanel({
   order,
+  items,
   currency,
   t,
   onCancel,
   onComplete,
 }: {
   order: OrderRow;
+  items: OrderItemRow[];
   currency: string;
   t: (key: string) => string;
   onCancel: () => void;
   onComplete: () => void;
 }) {
   const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>('FULL');
-  const [amount, setAmount] = useState('');
+  const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
+  const [restock, setRestock] = useState(true);
   const [reason, setReason] = useState('customerRequest');
   const [confirmStep, setConfirmStep] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const maxAmount = order.total / 100;
-  const parsedAmount = Number.parseFloat(amount || '0');
-  const parsedAmountValid = Number.isFinite(parsedAmount);
-  const refundAmount = refundType === 'FULL' ? order.total : Math.round(parsedAmount * 100);
-  const isValid = refundType === 'FULL' || (parsedAmountValid && parsedAmount > 0 && parsedAmount <= maxAmount);
-  const showPartialWarning = refundType === 'PARTIAL' && amount.length > 0 && !isValid;
+  const alreadyRefunded = order.refund_amount ?? 0;
+  const refundableItems = items.map(item => ({
+    ...item,
+    maxQty: item.quantity,
+  }));
+
+  const selectedRefundLines = refundableItems
+    .filter(item => (selectedQtys[item.id] ?? 0) > 0)
+    .map(item => ({
+      variantId: item.variant_id ?? undefined,
+      sku: item.sku ?? undefined,
+      name: item.name,
+      quantity: selectedQtys[item.id],
+      unitPrice: item.price,
+      refundAmount: item.price * selectedQtys[item.id],
+      restock,
+    }));
+
+  const computedRefundTotal = refundType === 'FULL'
+    ? order.total - alreadyRefunded
+    : selectedRefundLines.reduce((sum, l) => sum + l.refundAmount, 0);
+
+  const isValid = refundType === 'FULL'
+    ? (order.total - alreadyRefunded) > 0
+    : selectedRefundLines.length > 0 && computedRefundTotal > 0;
 
   const setType = (next: 'FULL' | 'PARTIAL') => {
     setRefundType(next);
     setConfirmStep(false);
     setError(null);
+    if (next === 'FULL') {
+      const allQtys: Record<string, number> = {};
+      refundableItems.forEach(item => { allQtys[item.id] = item.maxQty; });
+      setSelectedQtys(allQtys);
+    } else {
+      setSelectedQtys({});
+    }
   };
 
-  const handleAmountChange = (next: string) => {
-    if (/^\d*\.?\d{0,2}$/.test(next)) {
-      setAmount(next);
-      setConfirmStep(false);
-      setError(null);
-    }
+  const setItemQty = (itemId: string, qty: number, max: number) => {
+    setSelectedQtys(prev => ({ ...prev, [itemId]: Math.max(0, Math.min(qty, max)) }));
+    setConfirmStep(false);
+    setError(null);
   };
 
   const handleConfirm = async () => {
     if (!isValid || loading) return;
-    if (!confirmStep) {
-      setConfirmStep(true);
-      return;
-    }
+    if (!confirmStep) { setConfirmStep(true); return; }
 
     setLoading(true);
     setError(null);
     try {
       const reasonText = tOr(t, `pos.refund.${reason}`, reason);
+      let refundItems = selectedRefundLines as any[];
+      if (refundType === 'FULL') {
+        refundItems = refundableItems.map(item => ({
+          variantId: item.variant_id ?? undefined,
+          sku: item.sku ?? undefined,
+          name: item.name,
+          quantity: item.maxQty,
+          unitPrice: item.price,
+          refundAmount: item.price * item.maxQty,
+          restock,
+        }));
+      }
+
       const result = await window.electronAPI.pos.orders.refund(order.id, {
         type: refundType,
-        amount: refundType === 'PARTIAL' ? refundAmount : undefined,
         reason: reasonText,
+        lines: refundItems,
       });
-
       if (result.success) {
         setSuccess(true);
         setTimeout(onComplete, 1500);
@@ -271,78 +311,79 @@ function RefundPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-extrabold text-red-900">{tOr(t, 'pos.refund.title', 'Refund Order')}</h3>
-          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(order.total, currency)}</p>
+          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(order.total - alreadyRefunded, currency)}</p>
         </div>
-        <button
-          onClick={onCancel}
-          disabled={loading}
-          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
-        >
+        <button onClick={onCancel} disabled={loading}
+          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200">
           Cancel
         </button>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <button
-          onClick={() => setType('FULL')}
+        <button onClick={() => setType('FULL')}
           className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
-            refundType === 'FULL'
-              ? 'border-red-600 bg-red-600 text-white'
-              : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
-          }`}
-        >
+            refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
+          }`}>
           <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
-          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(order.total, currency)}</span>
+          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(order.total - alreadyRefunded, currency)}</span>
         </button>
-        <button
-          onClick={() => setType('PARTIAL')}
+        <button onClick={() => setType('PARTIAL')}
           className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-200 ${
-            refundType === 'PARTIAL'
-              ? 'border-amber-500 bg-amber-500 text-white'
-              : 'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50'
-          }`}
-        >
+            refundType === 'PARTIAL' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50'
+          }`}>
           <span className="block">{tOr(t, 'pos.refund.partial', 'Partial Refund')}</span>
-          <span className="mt-0.5 block text-xs opacity-85">Manual amount</span>
+          <span className="mt-0.5 block text-xs opacity-85">Select items</span>
         </button>
       </div>
 
       {refundType === 'PARTIAL' && (
-        <div className="mt-4">
-          <label htmlFor="refund-amount" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
-            {tOr(t, 'pos.refund.amount', 'Refund amount')} ({currency})
-          </label>
-          <input
-            id="refund-amount"
-            type="text"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => handleAmountChange(e.target.value)}
-            placeholder={`0.00 / max ${maxAmount.toFixed(2)}`}
-            className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-right text-lg font-extrabold text-slate-950 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-          />
-          {showPartialWarning && (
-            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-              Enter an amount greater than 0 and not above {maxAmount.toFixed(2)} {currency}.
-            </p>
-          )}
+        <div className="mt-4 space-y-2">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-600">Select items to refund</div>
+          {refundableItems.map(item => {
+            const qty = selectedQtys[item.id] ?? 0;
+            return (
+              <div key={item.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-bold text-slate-900 truncate">{item.name}</div>
+                  <div className="text-xs text-slate-500">{formatMoney(item.price, currency)} x {item.maxQty}</div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
+                    disabled={qty <= 0}
+                    className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                    -
+                  </button>
+                  <span className="w-8 text-center text-sm font-extrabold tabular-nums">{qty}</span>
+                  <button onClick={() => setItemQty(item.id, qty + 1, item.maxQty)}
+                    disabled={qty >= item.maxQty}
+                    className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                    +
+                  </button>
+                </div>
+                <div className="text-sm font-bold tabular-nums text-slate-900 w-20 text-right">
+                  {qty > 0 ? formatMoney(item.price * qty, currency) : '-'}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
+
+      <div className="mt-4 flex items-center gap-3">
+        <label className="flex items-center gap-2 cursor-pointer text-sm font-bold text-slate-700">
+          <input type="checkbox" checked={restock} onChange={e => setRestock(e.target.checked)}
+            className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
+          Restock items to inventory
+        </label>
+      </div>
 
       <div className="mt-4">
         <label htmlFor="refund-reason" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
           {tOr(t, 'pos.refund.reason', 'Reason')}
         </label>
-        <select
-          id="refund-reason"
-          value={reason}
-          onChange={(e) => {
-            setReason(e.target.value);
-            setConfirmStep(false);
-            setError(null);
-          }}
-          className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-        >
+        <select id="refund-reason" value={reason}
+          onChange={(e) => { setReason(e.target.value); setConfirmStep(false); setError(null); }}
+          className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
           {REFUND_REASONS.map((r) => (
             <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
           ))}
@@ -351,34 +392,99 @@ function RefundPanel({
 
       {confirmStep && (
         <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
-          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} This will record a {formatMoney(refundAmount, currency)} refund.
+          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} This will refund {formatMoney(computedRefundTotal, currency)}
+          {restock ? ' and restock items.' : ' (no restock).'}
         </div>
       )}
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
-          {error}
-        </div>
+        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">{error}</div>
       )}
 
-      <button
-        onClick={handleConfirm}
-        disabled={!isValid || loading}
+      <button onClick={handleConfirm} disabled={!isValid || loading}
         className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
-          loading
-            ? 'cursor-not-allowed bg-slate-200 text-slate-500'
-            : confirmStep
-              ? 'bg-red-700 text-white hover:bg-red-800'
-              : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
-        }`}
-      >
-        {loading
-          ? 'Processing...'
-          : confirmStep
-            ? tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')
-            : `${tOr(t, 'pos.refund.confirm', 'Confirm Refund')} (${formatMoney(refundAmount, currency)})`}
+          loading ? 'cursor-not-allowed bg-slate-200 text-slate-500'
+            : confirmStep ? 'bg-red-700 text-white hover:bg-red-800'
+            : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
+        }`}>
+        {loading ? 'Processing...'
+          : confirmStep ? tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')
+          : `${tOr(t, 'pos.refund.confirm', 'Confirm Refund')} (${formatMoney(computedRefundTotal, currency)})`}
       </button>
     </section>
+  );
+}
+
+function SyncFailurePanel({
+  order,
+  onRetried,
+  t,
+}: {
+  order: OrderRow;
+  onRetried: () => void;
+  t: (key: string) => string;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const err = order.sync_error;
+  const isShelved = order.synced === -1;
+  const isStockError = err ? /insufficient stock/i.test(err) : false;
+
+  const handleRetry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    setRetryResult(null);
+    try {
+      const res = await window.electronAPI.pos.orders.retrySync(order.id);
+      if (res.success && res.result?.status === 'synced') {
+        setRetryResult({ ok: true, msg: 'Order synced successfully' });
+        setTimeout(onRetried, 400);
+      } else {
+        const errMsg = res.result?.error || res.error || 'Retry failed — check backend stock';
+        setRetryResult({ ok: false, msg: errMsg });
+      }
+    } catch (e: any) {
+      setRetryResult({ ok: false, msg: e.message || 'Retry failed' });
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+      <div className="flex items-start gap-2">
+        <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+        </svg>
+        <div className="flex-1 text-sm">
+          <div className="font-bold text-amber-900">
+            {isShelved ? (isStockError ? 'Backend rejected: insufficient stock' : 'Sync failed') : 'Order not synced yet'}
+          </div>
+          {err && (
+            <div className="mt-1 text-amber-800 font-medium break-words">{err}</div>
+          )}
+          {isStockError && (
+            <div className="mt-2 text-xs text-amber-700 font-medium">
+              Fix backend stock first, then click Retry. Refund/cancel unavailable until synced.
+            </div>
+          )}
+        </div>
+      </div>
+      {isShelved && (
+        <button
+          onClick={handleRetry}
+          disabled={retrying}
+          className="w-full flex items-center justify-center gap-2 rounded-md border border-amber-400 bg-white px-3 py-2 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+        >
+          {retrying ? 'Retrying...' : 'Retry sync'}
+        </button>
+      )}
+      {retryResult && (
+        <div className={`text-xs font-bold ${retryResult.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+          {retryResult.msg}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -547,6 +653,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
   const [reprinting, setReprinting] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
@@ -583,6 +690,26 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { setPage(1); }, [selectedDate, filterMethod, filterStaff]);
+
+  useEffect(() => {
+    const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data) => {
+      loadOrders();
+      if (detail && detail.order.id === data.orderId) {
+        window.electronAPI.pos.orders.getDetail(data.orderId).then((result) => {
+          if (result) setDetail(result);
+        });
+      }
+    });
+    const unsubFailed = window.electronAPI.pos.sync.onOrderSyncFailed?.((data) => {
+      loadOrders();
+      if (detail && detail.order.id === data.orderId) {
+        window.electronAPI.pos.orders.getDetail(data.orderId).then((result) => {
+          if (result) setDetail(result);
+        });
+      }
+    });
+    return () => { unsubSynced?.(); unsubFailed?.(); };
+  }, [detail, loadOrders]);
 
   const handleSelectOrder = async (orderId: string) => {
     setDetailLoadingId(orderId);
@@ -654,7 +781,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <StatusBadge order={order} t={t} />
               </div>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                {formatDate(order.created_at)} {formatTime(order.created_at)} - {paymentLabel(order.payment_method)}
+                {formatDate(order.created_at)} {formatTime(order.created_at)} - {(() => {
+                  try { const t2 = order.payment_tenders ? JSON.parse(order.payment_tenders) : null; if (Array.isArray(t2) && t2.length > 1) return 'Split'; } catch {}
+                  return paymentLabel(order.payment_method);
+                })()}
                 {order.staff_name ? ` - ${order.staff_name}` : ''}
               </p>
             </div>
@@ -726,10 +856,29 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                     {order.discount > 0 ? `-${formatMoney(order.discount, currency)}` : formatMoney(0, currency)}
                   </span>
                 </div>
-                <div className="flex justify-between gap-4">
-                  <span className="font-medium text-slate-500">Method</span>
-                  <span className="font-bold text-slate-900">{paymentLabel(order.payment_method)}</span>
-                </div>
+                {(() => {
+                  let tenders: Array<{ method: string; amount: number }> | null = null;
+                  try { if (order.payment_tenders) tenders = JSON.parse(order.payment_tenders); } catch {}
+                  if (tenders && tenders.length > 1) {
+                    return (
+                      <div className="space-y-1">
+                        <span className="font-medium text-slate-500">Payment split</span>
+                        {tenders.map((t, i) => (
+                          <div key={i} className="flex justify-between gap-4 pl-2">
+                            <span className="text-slate-600">{paymentLabel(t.method)}</span>
+                            <span className="font-bold tabular-nums text-slate-900">{formatMoney(t.amount, currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="flex justify-between gap-4">
+                      <span className="font-medium text-slate-500">Method</span>
+                      <span className="font-bold text-slate-900">{paymentLabel(order.payment_method)}</span>
+                    </div>
+                  );
+                })()}
                 <div className="flex justify-between gap-4">
                   <span className="font-medium text-slate-500">Paid amount</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.payment_amount, currency)}</span>
@@ -768,6 +917,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               {showRefund && canRefund && (
                 <RefundPanel
                   order={order}
+                  items={items}
                   currency={currency}
                   t={t}
                   onCancel={() => setShowRefund(false)}
@@ -837,10 +987,31 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </button>
               )}
 
+              {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
+                <button
+                  disabled={cancelling}
+                  onClick={async () => {
+                    if (!confirm(tOr(t, 'pos.history.cancelConfirm', 'Cancel this order? This cannot be undone.'))) return;
+                    setCancelling(true);
+                    try {
+                      const res = await window.electronAPI.pos.orders.cancel(order.id);
+                      if (res.success) { handleSelectOrder(order.id); loadOrders(); }
+                      else { alert(res.error || 'Cancel failed'); }
+                    } catch (err: any) { alert(err.message); }
+                    finally { setCancelling(false); }
+                  }}
+                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
+                >
+                  {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
+                </button>
+              )}
+
               {notSynced && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
-                  {tOr(t, 'pos.refund.notSynced', 'Order not synced yet')}
-                </div>
+                <SyncFailurePanel
+                  order={order}
+                  onRetried={() => { handleSelectOrder(order.id); loadOrders(); }}
+                  t={t}
+                />
               )}
 
               {refundStatus !== 'none' && (
@@ -974,7 +1145,13 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                       {formatMoney(order.total, currency)}
                     </span>
                     <span className="inline-flex h-8 max-w-full items-center justify-center truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-extrabold text-slate-700">
-                      {paymentLabel(order.payment_method)}
+                      {(() => {
+                        try {
+                          const t2 = order.payment_tenders ? JSON.parse(order.payment_tenders) : null;
+                          if (Array.isArray(t2) && t2.length > 1) return 'Split';
+                        } catch {}
+                        return paymentLabel(order.payment_method);
+                      })()}
                     </span>
                     <span className="truncate text-sm font-bold text-slate-700">{order.staff_name || '-'}</span>
                     <StatusBadge order={order} t={t} />

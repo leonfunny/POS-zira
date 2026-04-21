@@ -197,6 +197,12 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     const result = await window.electronAPI.pos.orders.create(order, items);
     if (result && !result.success) throw new Error(result.error || 'Failed to save order');
 
+    // Trigger immediate backend sync — don't wait 30s. Runs in parallel with print.
+    // Result surfaces via pos:order-synced / pos:order-sync-failed events → Order History banner.
+    window.electronAPI.pos.sync.orders().catch((err: unknown) => {
+      rlog.warn('[PaymentModal] Immediate order sync failed:', err);
+    });
+
     const hasCash = splitMode
       ? tenders.some(t => t.method === 'CASH')
       : method === 'CASH';

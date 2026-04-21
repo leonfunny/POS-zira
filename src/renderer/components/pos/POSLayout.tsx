@@ -98,21 +98,25 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         try {
           const product = await window.electronAPI.pos.products.getByBarcode(code);
           if (product) {
-            dispatch({
-              type: 'cart/addItem',
-              payload: {
-                id: crypto.randomUUID(),
-                variantId: product.id,
-                name: product.name,
-                sku: product.sku || '',
-                price: product.retail_price,
-                quantity: 1,
-                total: product.retail_price,
-                imageUrl: product.image_url || undefined,
-                vatRate: product.vat_rate,
-              },
-            });
-            showScanToast(`+ ${product.name}`, 'ok');
+            if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
+              showScanToast(`${product.name} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
+            } else {
+              dispatch({
+                type: 'cart/addItem',
+                payload: {
+                  id: crypto.randomUUID(),
+                  variantId: product.id,
+                  name: product.name,
+                  sku: product.sku || '',
+                  price: product.retail_price,
+                  quantity: 1,
+                  total: product.retail_price,
+                  imageUrl: product.image_url || undefined,
+                  vatRate: product.vat_rate,
+                },
+              });
+              showScanToast(`+ ${product.name}`, 'ok');
+            }
           } else {
             showScanToast(`Barcode not found: ${code}`, 'err');
           }

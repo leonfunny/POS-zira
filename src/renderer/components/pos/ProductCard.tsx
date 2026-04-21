@@ -22,19 +22,45 @@ function placeholderColor(name: string): string {
   return PLACEHOLDER_COLORS[Math.abs(hash) % PLACEHOLDER_COLORS.length];
 }
 
+export function isProductSoldOut(product: Product): boolean {
+  if (product.category_id === 'cat-5') return false;
+  const qty = product.available_qty ?? product.in_stock;
+  return qty <= 0;
+}
+
 function ProductCard({ product, onAdd, t }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const isService = product.category_id === 'cat-5';
   const stockQty = product.available_qty ?? product.in_stock;
-  const lowStock = !isService && stockQty <= 5;
+  const soldOut = !isService && stockQty <= 0;
+  const lowStock = !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';
   const colorClass = placeholderColor(product.name);
   const imgSrc = product.thumbnail_url || product.image_url;
   const showImage = imgSrc && !imgError;
+  const handleAdd = () => { if (!soldOut) onAdd(product); };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.key === 'Enter' || event.key === ' ') && !soldOut) {
+      event.preventDefault();
+      handleAdd();
+    }
+  };
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md focus-within:ring-2 focus-within:ring-brand-100 transition-colors duration-150 flex flex-col p-1.5 h-full min-h-[184px]">
+    <div
+      role="button"
+      tabIndex={soldOut ? -1 : 0}
+      onClick={handleAdd}
+      onKeyDown={handleKeyDown}
+      aria-label={soldOut ? `${product.name} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${product.name}`}
+      aria-disabled={soldOut || undefined}
+      className={`group bg-white rounded-lg border shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-100 transition-colors duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
+        soldOut
+          ? 'border-slate-200 opacity-60 cursor-not-allowed'
+          : 'border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer touch-manipulation'
+      }`}
+    >
       <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full border border-slate-100">
         {showImage ? (
           <img
@@ -42,7 +68,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
             alt={product.name}
             loading="lazy"
             onError={() => setImgError(true)}
-            className="w-full h-full object-cover"
+            className={`w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
           />
         ) : (
           <div className={`w-full h-full flex flex-col items-center justify-center gap-1 text-lg font-bold ${colorClass}`}>
@@ -52,12 +78,19 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
             <span>{product.name.charAt(0).toUpperCase()}</span>
           </div>
         )}
+        {soldOut && (
+          <div className="absolute inset-0 bg-white/60 flex items-center justify-center">
+            <span className="text-[11px] text-red-700 bg-red-50 border border-red-300 px-3 py-1.5 rounded font-extrabold leading-none shadow-sm">
+              {t?.('pos.product.soldOut') ?? 'Sold out'}
+            </span>
+          </div>
+        )}
         {lowStock && (
           <span className="absolute top-2 left-2 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             {stockQty} {pieces}
           </span>
         )}
-        {product.is_on_sale === 1 && (
+        {product.is_on_sale === 1 && !soldOut && (
           <span className="absolute top-2 right-2 text-[10px] text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             SALE
           </span>
@@ -75,15 +108,16 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
         <span className="text-sm font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
         </span>
-        <button
-          onClick={() => onAdd(product)}
-          aria-label={`Add ${product.name}`}
-          className="w-11 h-11 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white rounded-md flex items-center justify-center shadow-sm transition-colors cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-brand-200 focus:ring-offset-1"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
+        {!soldOut && (
+          <span
+            aria-hidden="true"
+            className="w-11 h-11 bg-brand-600 group-hover:bg-brand-700 group-active:bg-brand-800 text-white rounded-md flex items-center justify-center shadow-sm transition-colors shrink-0"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
+            </svg>
+          </span>
+        )}
       </div>
     </div>
   );

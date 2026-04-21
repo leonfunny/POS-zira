@@ -14,6 +14,7 @@ interface ShiftReportData {
   blikTotal: number;
   transferTotal: number;
   difference: number;
+  unsyncedOrders?: number;
 }
 
 interface ShiftReportProps {
@@ -69,6 +70,17 @@ export default function ShiftReportModal({ report, onClose, t }: ShiftReportProp
               color={report.difference === 0 ? 'text-green-400' : report.difference > 0 ? 'text-yellow-400' : 'text-red-400'}
             />
           </div>
+
+          {(report.unsyncedOrders ?? 0) > 0 && (
+            <div className="mt-3 px-3 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50">
+              <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <span>{report.unsyncedOrders} {report.unsyncedOrders === 1 ? 'order' : 'orders'} not synced to server</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-4 border-t border-slate-700">

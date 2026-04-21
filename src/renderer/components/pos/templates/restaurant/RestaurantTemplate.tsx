@@ -94,6 +94,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
   }, [dispatch, tables, refreshTables]);
 
   const handleAddProduct = useCallback((product: Product) => {
+    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
     if (!activeTableId) return;
     dispatch({
       type: 'cart/addItem',

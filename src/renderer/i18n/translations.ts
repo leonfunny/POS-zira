@@ -274,6 +274,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Open a shift to accept payments',
     'pos.perUnit': '/pc',
     'pos.pieces': 'pcs',
+    'pos.product.soldOut': 'Sold out',
     'pos.otherZone': 'Other',
 
     // Mode names
@@ -1242,6 +1243,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Mở ca để nhận thanh toán',
     'pos.perUnit': '/cái',
     'pos.pieces': 'cái',
+    'pos.product.soldOut': 'Hết hàng',
     'pos.otherZone': 'Khác',
 
     // Mode names
@@ -2153,6 +2155,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Ödeme almak için vardiya açın',
     'pos.perUnit': '/ad',
     'pos.pieces': 'ad',
+    'pos.product.soldOut': 'Tükendi',
     'pos.otherZone': 'Diğer',
 
     // Mode names
@@ -3064,6 +3067,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': '请先开班以接受付款',
     'pos.perUnit': '/件',
     'pos.pieces': '件',
+    'pos.product.soldOut': '缺货',
     'pos.otherZone': '其他',
 
     // Mode names
@@ -3975,6 +3979,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Відкрийте зміну для прийому оплати',
     'pos.perUnit': '/шт',
     'pos.pieces': 'шт',
+    'pos.product.soldOut': 'Немає',
     'pos.otherZone': 'Інше',
 
     // Mode names
@@ -4886,6 +4891,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Откройте смену для приёма оплаты',
     'pos.perUnit': '/шт',
     'pos.pieces': 'шт',
+    'pos.product.soldOut': 'Нет в наличии',
     'pos.otherZone': 'Другое',
 
     // Mode names
@@ -5820,6 +5826,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.openRequired': 'Otwórz zmianę, aby przyjmować płatności',
     'pos.perUnit': '/szt',
     'pos.pieces': 'szt',
+    'pos.product.soldOut': 'Brak',
     'pos.otherZone': 'Inne',
 
     // Mode names

@@ -91,6 +91,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
   }, [dispatch]);
 
   const handleAddProduct = useCallback((product: Product) => {
+    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
     if (!selectedCustomer) {
       setShowCustomerPrompt(true);
       return;

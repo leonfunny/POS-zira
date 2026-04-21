@@ -106,6 +106,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
 
   const handleAddProduct = useCallback(
     (product: Product) => {
+      if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
       dispatch({
         type: 'cart/addItem',
         payload: {
