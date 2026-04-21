@@ -19,7 +19,7 @@ export default class SocketClient extends EventEmitter {
   private socket: Socket | null = null;
   private remoteSocket: Socket | null = null;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 10;
+  private maxReconnectAttempts = Infinity;
   private reconnectDelay = 5000;
   private heartbeatInterval: NodeJS.Timeout | null = null;
 

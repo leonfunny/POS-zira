@@ -45,6 +45,7 @@ export class SyncModule extends BaseModule {
   private staffSync: StaffSync | null = null;
   private syncLogService: SyncLogService | null = null;
   private _syncInProgress = false;
+  private _didFullProductSync = false;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -68,6 +69,14 @@ export class SyncModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.INVOICE_SYNC, this.invoiceSync);
     this.container.set(SERVICE_TOKENS.STAFF_SYNC, this.staffSync);
     this.container.set(SERVICE_TOKENS.SYNC_LOG_SERVICE, this.syncLogService);
+
+    // Start HTTP-based sync timers immediately — they don't depend on socket.
+    // If socket dies, HTTP can still reach backend. Each sync call no-ops when
+    // offline or token missing, so it's safe to run continuously.
+    this.orderSync.startPeriodicSync();
+    this.checkinSync.startPeriodicSync();
+    this.invoiceSync.startPeriodicSync();
+
     this.setState(ModuleState.READY);
   }
 
@@ -81,8 +90,8 @@ export class SyncModule extends BaseModule {
 
     ipcMain.handle('pos:sync:orders', async () => {
       try {
-        await this.orderSync?.syncPendingOrders();
-        return { success: true };
+        const summary = await this.orderSync?.syncPendingOrders();
+        return { success: true, summary };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -372,11 +381,17 @@ export class SyncModule extends BaseModule {
         const usePathBPush = this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_PUSH) ?? false;
 
         // ── Always: ProductSync + StaffSync (baseline catalog) ──
-        // These are always needed — Path B pull only delivers CHANGES after
-        // sync_log was deployed, not the historical product catalog.
+        // First sync of each session = FULL sync (catches server-side stock
+        // changes that may not bump product.updated_at — e.g., admin adjustments,
+        // backfills, bulk imports). Subsequent polls use delta.
         if (this.productSync) {
           try {
-            await this.productSync.deltaSync();
+            if (!this._didFullProductSync) {
+              await this.productSync.fullSync();
+              this._didFullProductSync = true;
+            } else {
+              await this.productSync.deltaSync();
+            }
             const posWindow = wm?.getWindow('pos');
             if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:products-synced');
           } catch (err) { logger.warn(`[SyncModule] Product sync failed: ${err}`); }
@@ -402,23 +417,19 @@ export class SyncModule extends BaseModule {
           }
         }
 
-        // ── Always: OrderSync + CheckinSync + InvoiceSync outbox ──
-        // Path B push is not yet wired to order creation — orders still use
-        // direct POST /b2b/pos/orders via OrderSync (Path A outbox).
-        // This will be replaced in Phase 3 when order creation writes to local_sync_log.
-        this.orderSync?.startPeriodicSync();
+        // ── OrderSync + CheckinSync + InvoiceSync: trigger immediate sync ──
+        // Periodic timers already started in init() (socket-independent).
+        // Here we just flush pending items right after reconnect.
         try { await this.orderSync?.syncPendingOrders(); } catch (err: any) { logger.debug('[SyncModule] sync pending orders failed:', err?.message); }
 
         if (this.checkinSync) {
           this.checkinSync.resetEndpointAvailability();
           try { await this.checkinSync.syncPending(); } catch (err: any) { logger.debug('[SyncModule] sync pending checkins failed:', err?.message); }
-          this.checkinSync.startPeriodicSync();
         }
 
         if (this.invoiceSync) {
           this.invoiceSync.resetEndpointAvailability();
           try { await this.invoiceSync.syncPending(); } catch (err) { logger.debug('[SyncModule] Invoice sync failed:', err); }
-          this.invoiceSync.startPeriodicSync();
         }
 
         // ── Path B Push: for future use (sync log push) ──
@@ -461,9 +472,8 @@ export class SyncModule extends BaseModule {
     });
 
     bus.on('socket:disconnected', () => {
-      this.orderSync?.stop();
-      this.checkinSync?.stop();
-      this.invoiceSync?.stop();
+      // Keep HTTP-based sync timers running — they use REST, not socket.
+      // They will retry naturally and succeed when connectivity returns.
       this.changeFeedSync?.stop();
       this.syncLogService?.stop();
       if (this.billiardSync) {

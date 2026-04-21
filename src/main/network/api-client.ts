@@ -394,7 +394,7 @@ export class ApiClient {
    * Create POS order
    * POST /api/v1/b2b/pos/orders
    */
-  async createPosOrder(token: string, order: any): Promise<{ orderId: string }> {
+  async createPosOrder(token: string, order: any): Promise<{ id?: string; orderId?: string; [key: string]: any }> {
     // Use b2b/pos endpoint (the actual backend route)
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders`;
 
@@ -423,8 +423,8 @@ export class ApiClient {
   async refundOrder(
     token: string,
     orderId: string,
-    data: { type: 'FULL' | 'PARTIAL'; amount?: number; reason?: string },
-  ): Promise<{ success: boolean; refundAmount?: number; status?: string } | null> {
+    data: Record<string, any>,
+  ): Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[] } | null> {
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/refund`;
 
     const response = await fetchWithTimeout(url, {
@@ -555,6 +555,25 @@ export class ApiClient {
   }
 
   /**
+   * Finalize a POS order (locks it from further edits, triggers stock deduction).
+   * POST /api/v1/b2b/pos/orders/:id/finish
+   */
+  async finishOrder(token: string, backendOrderId: string): Promise<any> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/finish`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: 'POS auto-finish' }),
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
    * Push a check-in to the server (Phase 1 of log-based sync).
    * POST /api/v1/print-agent/checkins
    *
@@ -669,6 +688,103 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
+    return response.json();
+  }
+
+  /**
+   * Get the currently active (open) shift from server.
+   * GET /api/v1/pos/shifts/active
+   * Returns null if no active shift or endpoint not deployed.
+   */
+  async getActiveShift(token: string): Promise<{
+    id: string; staffId: string; staffName: string; openingCash: number; openedAt: string; status: string;
+  } | null> {
+    const url = `${this.baseUrl}/api/v1/pos/shifts/active`;
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.active === false || !data.id) return null;
+    return data;
+  }
+
+  /**
+   * Get today's POS orders from server.
+   * GET /api/v1/b2b/pos/orders/cash/today
+   */
+  async getTodayOrders(token: string): Promise<any[]> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/cash/today`;
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : data.orders ?? [];
+  }
+
+  /**
+   * List POS orders from server with filters.
+   * GET /api/v1/b2b/pos/orders
+   */
+  async getServerOrders(
+    token: string,
+    params: { period?: string; paymentStatus?: string; requiresInvoice?: boolean; page?: number; limit?: number },
+  ): Promise<{ orders: any[]; total: number; page: number; limit: number }> {
+    const qs = new URLSearchParams();
+    if (params.period) qs.set('period', params.period);
+    if (params.paymentStatus) qs.set('paymentStatus', params.paymentStatus);
+    if (params.requiresInvoice !== undefined) qs.set('requiresInvoice', String(params.requiresInvoice));
+    qs.set('page', String(params.page ?? 1));
+    qs.set('limit', String(params.limit ?? 20));
+
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders?${qs}`;
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return { orders: data.orders ?? [], total: data.total ?? 0, page: data.page ?? 1, limit: data.limit ?? 20 };
+  }
+
+  /**
+   * Get a single order detail from server.
+   * GET /api/v1/b2b/pos/orders/cash/:id  OR  /invoiced/:id
+   */
+  async getServerOrderDetail(token: string, backendOrderId: string, kind: 'cash' | 'invoiced' = 'cash'): Promise<any | null> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${kind}/${encodeURIComponent(backendOrderId)}`;
+    const response = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Cancel a POS order.
+   * PATCH /api/v1/b2b/pos/orders/:id/cancel
+   */
+  async cancelOrder(token: string, backendOrderId: string): Promise<any> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/cancel`;
+    const response = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
     return response.json();
   }
 
