@@ -47,3 +47,25 @@ No automated test scripts are configured in `package.json` currently. If tests a
 ## Security & Configuration Tips
 - Configuration is stored under `%APPDATA%/Zira AI/config.json` on Windows.
 - If you touch hardware or network integration, note protocol or device impact in the PR description.
+
+## Second Brain Wiki
+
+A shared Obsidian wiki (repo: github.com/KaiPizz/kaipizz-second-brain). It uses the Karpathy LLM Wiki pattern. Multiple AI models (Claude Code, Codex) share this wiki. Find the vault by searching for a local directory containing `AGENTS.md` with the text "wiki maintainer for this Obsidian vault", or clone from the repo above. Default location: `~/Desktop/kaipizz-second-brain/second-brain/`.
+
+**When to read from wiki** (do this yourself, no need to ask):
+- Start of session: read `wiki/index.md` to see what knowledge exists for this project
+- Before making architecture decisions: check `wiki/decisions/` for prior ADRs
+- When debugging: check `wiki/troubleshooting/` for known issues
+- When unsure about a technology: check `wiki/tech/` pages
+
+**When to suggest a wiki update** (do NOT auto-update — always ask first):
+- Architecture decisions (ADRs) — e.g., choosing a library, changing sync strategy
+- Hard-won debugging insights — bugs that took >1 hour to solve
+- New patterns or conventions established in this project
+- Integration knowledge — how Zira connects to eNail, hardware protocols
+
+**How to read or update** (reading is autonomous, updating needs user confirmation):
+1. Locate the vault (see path above), then read files from its `wiki/` directory
+2. **Before ANY write to the vault**: read the vault's `AGENTS.md` first — it contains all naming, frontmatter, and log conventions. Never guess the format.
+3. Update wiki pages, index.md, and log.md per those conventions. Identify yourself as `codex` in log entries and commit messages.
+4. Git commit changes in the vault repo, then return to this project directory

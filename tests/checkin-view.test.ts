@@ -8,6 +8,7 @@ import CheckInView, {
   getCustomerTouchKeyboardInset,
   shouldDismissCustomerTouchKeyboard,
 } from '../src/renderer/windows/customer/views/CheckInView';
+import ConfirmedReceiptView from '../src/renderer/windows/customer/components/ConfirmedReceiptView';
 import type { CustomerDisplayServiceCategory } from '../src/renderer/windows/customer/customer-display-model';
 
 const checkInViewSource = readFileSync(
@@ -174,14 +175,48 @@ describe('CheckInView hub category summary', () => {
     expect(checkInViewSource).toContain('selectedPhoneBooking ? (');
   });
 
-  it('renders the legacy check-in confirmation using the fixed-height receipt layout with internal scroll regions', () => {
-    expect(checkInViewSource).toContain('data-customer-display-checkin-confirmed-receipt="true"');
-    expect(checkInViewSource).toContain('data-customer-display-checkin-confirmed-summary="true"');
-    expect(checkInViewSource).toContain('data-customer-display-checkin-confirmed-detail-scroll="true"');
-    expect(checkInViewSource).toContain('data-customer-display-checkin-receipt-sticky-summary="true"');
-    expect(checkInViewSource).toContain('approxDurationMinutes');
-    expect(checkInViewSource).toContain('totalPrice');
-    expect(checkInViewSource).not.toContain('flex min-h-0 flex-1 items-center justify-center');
+  it('passes check-in confirmation hooks into the shared fixed-height receipt layout', () => {
+    const confirmedBlockStart = checkInViewSource.indexOf("{step === 'confirmed' && confirmedCheckIn && (");
+    const confirmedBlockEnd = checkInViewSource.indexOf(
+      '<div className="absolute bottom-0 left-0 right-0 z-20"',
+      confirmedBlockStart,
+    );
+    const confirmedBlock = checkInViewSource.slice(confirmedBlockStart, confirmedBlockEnd);
+
+    expect(checkInViewSource).toContain('rootAttr="data-customer-display-checkin-confirmed-receipt"');
+    expect(checkInViewSource).toContain('summaryAttr="data-customer-display-checkin-confirmed-summary"');
+    expect(checkInViewSource).toContain('scrollAttr="data-customer-display-checkin-confirmed-detail-scroll"');
+    expect(confirmedBlock).toContain('approxDurationMinutes');
+    expect(confirmedBlock).toContain('totalPrice');
+    expect(confirmedBlock).not.toContain('flex min-h-0 flex-1 items-center justify-center');
+  });
+
+  it('renders custom confirmation data hooks from the shared receipt component', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(ConfirmedReceiptView, {
+        t,
+        language: 'en',
+        customerName: 'Ada',
+        services: [
+          {
+            id: 'nails-service',
+            name: 'Nails Service',
+            price: 500,
+            duration: 30,
+          },
+        ],
+        totalPrice: 500,
+        approxDurationMinutes: 30,
+        rootAttr: 'data-customer-display-checkin-confirmed-receipt',
+        summaryAttr: 'data-customer-display-checkin-confirmed-summary',
+        scrollAttr: 'data-customer-display-checkin-confirmed-detail-scroll',
+      }),
+    );
+
+    expect(markup).toContain('data-customer-display-checkin-confirmed-receipt="true"');
+    expect(markup).toContain('data-customer-display-checkin-confirmed-summary="true"');
+    expect(markup).toContain('data-customer-display-checkin-confirmed-detail-scroll="true"');
+    expect(markup).toContain('overflow-y-auto');
   });
 
   it('renders the walk-in service picker as a compact browse-style toolbar without the old category rail', () => {

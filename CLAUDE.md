@@ -2,28 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Remote Operation Mode
-
-When running via Discord channel (`--channels plugin:discord@claude-plugins-official`), the operator is remote and may not respond immediately. In this mode:
-
-- **Never pause to ask for confirmation** — make the safest, most reasonable decision autonomously and proceed.
-- **Never ask "should I continue?"** — just continue.
-- When there are multiple options, pick the most conservative/safe one and report what you chose via Discord.
-- After completing a task, always send a summary to Discord so the operator knows the outcome.
-- If something is genuinely ambiguous and risky, state your assumption, proceed with it, and report.
-
-### Thinking Keywords from Discord
-
-Discord messages bypass CLI keyword detection, so thinking-level triggers like `ultrathink` won't automatically activate. When you see these keywords in a Discord message, manually adjust your behavior:
-
-| Keyword in message | Behavior |
-|---|---|
-| `ultrathink` | Maximum depth: research extensively, read all relevant files, consider every edge case, plan before acting, verify assumptions, use Agent tool for parallel deep research. Treat this as the hardest problem — no shortcuts. |
-| `think hard` / `think harder` | Deep analysis: read related code thoroughly, consider multiple approaches, pick the best one with reasoning. |
-| `think` | Standard careful analysis (default for complex tasks). |
-
-When you detect any of these keywords at the start of a Discord message, strip the keyword from the task description and apply the corresponding thinking level to the actual task that follows.
-
 ## Project Overview
 
 **Zira AI Print Agent** — Electron + React + TypeScript desktop app that connects the eNail POS system with hardware devices (thermal printers, barcode scanners, cash drawers). Targets **Windows 10/11 64-bit only**.
@@ -81,9 +59,9 @@ When in doubt, grep `src/main/network/api-client.ts` and `src/main/network/socke
 
 ### How to submit a server request to IT
 
-When you identify that a task requires server-side work, do **not** try to work around it with brittle client hacks (e.g., scraping, fragile parsing, polling loops, hardcoded values). Instead, produce a clean written request and report it to the user via Discord.
+When you identify that a task requires server-side work, do **not** try to work around it with brittle client hacks (e.g., scraping, fragile parsing, polling loops, hardcoded values). Instead, produce a clean written request and report it to the user.
 
-Use this template — save it as a markdown block in your Discord reply so the user can forward it to server IT:
+Use this template so the user can forward it to server IT:
 
 ```markdown
 ## 📨 Server Change Request — eNail ERP
@@ -132,9 +110,9 @@ Use this template — save it as a markdown block in your Discord reply so the u
 
 After drafting the request:
 
-1. **Post it to Discord** with a short summary sentence: *"Server change needed before I can finish X. Draft request below — please forward to eNail IT."*
+1. **Report to the user** with a short summary: *"Server change needed before I can finish X. Draft request below — please forward to eNail IT."*
 2. **Do not block the session** waiting for the server change. If a partial/safe workaround exists, ship it behind a feature flag or `TODO(server-change)` comment and keep moving on other tasks.
-3. **Track the pending request** in `SESSION_HANDOFF.md` under a "Blocked on server IT" section so it isn't forgotten across sessions.
+3. **Suggest adding the pending request** to the Second Brain wiki (see section below) so it isn't forgotten across sessions.
 4. **When the server change lands**, remove the workaround, wire up the real endpoint, and delete the `TODO(server-change)` marker.
 
 ### Anti-patterns — do NOT do these
@@ -350,3 +328,25 @@ Source: [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/an
 3. **Surgical Changes** — Edit only what's necessary. Preserve existing code style, don't "improve" adjacent sections, and only remove dead code that your changes created. When fixing a bug, change only the buggy lines without reformatting unrelated code.
 
 4. **Goal-Driven Execution** — Transform vague requests into verifiable success criteria with defined checkpoints. Instead of "fix authentication," establish: "change password -> verify old session invalidates -> confirm no regression." This enables independent, testable progress.
+
+## Second Brain Wiki
+
+A shared Obsidian wiki (repo: github.com/KaiPizz/kaipizz-second-brain). It uses the Karpathy LLM Wiki pattern — read its CLAUDE.md for full conventions. Find the vault by searching for a local directory containing `CLAUDE.md` with the text "wiki maintainer for this Obsidian vault", or clone from the repo above. Default location: `~/Desktop/kaipizz-second-brain/second-brain/`.
+
+**When to read from wiki** (do this yourself, no need to ask):
+- Start of session: read `wiki/index.md` to see what knowledge exists for this project
+- Before making architecture decisions: check `wiki/decisions/` for prior ADRs
+- When debugging: check `wiki/troubleshooting/` for known issues
+- When unsure about a technology: check `wiki/tech/` pages
+
+**When to suggest a wiki update** (do NOT auto-update — always ask first):
+- Architecture decisions (ADRs) — e.g., choosing a library, changing sync strategy
+- Hard-won debugging insights — bugs that took >1 hour to solve
+- New patterns or conventions established in this project
+- Integration knowledge — how Zira connects to eNail, hardware protocols
+
+**How to read or update** (reading is autonomous, updating needs user confirmation):
+1. Locate the vault (see path above), then read files from its `wiki/` directory
+2. **Before ANY write to the vault**: read the vault's `CLAUDE.md` first — it contains all naming, frontmatter, and log conventions. Never guess the format.
+3. Update wiki pages, index.md, and log.md per those conventions
+4. Git commit changes in the vault repo, then return to this project directory

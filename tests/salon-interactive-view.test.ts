@@ -84,10 +84,10 @@ describe('SalonInteractiveView browse flow', () => {
   });
 
   it('uses the editorial receipt layout for the confirmed walk-in screen', () => {
-    expect(source).toContain('data-customer-display-confirmed-receipt="true"');
-    expect(source).toContain('data-customer-display-confirmed-metrics="true"');
-    expect(source).toContain('data-customer-display-confirmed-services-scroll="true"');
-    expect(source).toContain("t('customer.approxTime')");
+    expect(source).toContain('rootAttr="data-customer-display-confirmed-receipt"');
+    expect(source).toContain('summaryAttr="data-customer-display-confirmed-metrics"');
+    expect(source).toContain('scrollAttr="data-customer-display-confirmed-services-scroll"');
+    expect(source).toContain('approxDurationMinutes={selectedServicesDuration > 0 ? selectedServicesDuration : null}');
     expect(source).toContain('selectedServices.reduce((total, service) => total + service.duration, 0)');
   });
 });

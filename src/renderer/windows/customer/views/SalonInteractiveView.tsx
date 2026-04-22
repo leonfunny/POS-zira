@@ -616,8 +616,19 @@ export default function SalonInteractiveView({
                           <div className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-slate-900">
                             {service.name}
                           </div>
-                          <div className="shrink-0 text-sm font-semibold text-slate-600">
-                            {formatDisplayCurrency(service.price, language)}
+                          <div className="flex shrink-0 items-center gap-3">
+                            <div className="text-sm font-semibold text-slate-600">
+                              {formatDisplayCurrency(service.price, language)}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeSelectedService(service.id)}
+                              aria-label={t('common.remove')}
+                              data-customer-display-selected-service-remove="true"
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-95"
+                            >
+                              <RemoveIcon />
+                            </button>
                           </div>
                         </div>
                       ))}
