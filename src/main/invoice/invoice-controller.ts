@@ -19,6 +19,9 @@ import { InvoiceFormatter } from './invoice-formatter';
 import { InvoiceA4Formatter } from './invoice-a4-formatter';
 import { nipLookupService } from './nip-lookup';
 import { sendToKsef, sendBatchToKsef, getKsefStats } from './ksef-sync';
+import { SERVICE_TOKENS } from '../core/tokens';
+import type { ServiceContainer } from '../core/container';
+import type { SyncLogService } from '../sync/sync-log-service';
 import logger from '../logger';
 
 // Formatters
@@ -31,6 +34,7 @@ const a4Formatter = new InvoiceA4Formatter();
 export function registerInvoiceHandlers(
   getThermalDriver: () => any,
   getA4Printer: () => string | null,
+  container?: ServiceContainer,
 ): void {
   // ==========================================
   // Invoice CRUD
@@ -66,6 +70,18 @@ export function registerInvoiceHandlers(
   ipcMain.handle(IPC_CHANNELS.INVOICE_CREATE, async (_, data: InvoiceCreateDTO) => {
     try {
       const result = invoiceRepo.create(data);
+
+      // Path B: write to sync log for outbound push
+      try {
+        const syncLog = container?.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+        if (syncLog && result.invoice.id) {
+          syncLog.writeLocalEntry('invoice', result.invoice.id, 'created', {
+            ...result.invoice,
+            items: result.items,
+          });
+        }
+      } catch (e) { logger.debug('[InvoiceController] Sync log write failed for invoice:', e); }
+
       const vatSummary: VatSummaryEntry[] = result.invoice.vat_summary
         ? JSON.parse(result.invoice.vat_summary)
         : [];
@@ -177,6 +193,18 @@ export function registerInvoiceHandlers(
   ipcMain.handle(IPC_CHANNELS.INVOICE_CREATE_CORRECTION, async (_, originalId: string, reason: string, newItems: any[]) => {
     try {
       const result = invoiceRepo.createCorrection(originalId, reason, newItems);
+
+      // Path B: write to sync log for outbound push
+      try {
+        const syncLog = container?.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+        if (syncLog && result.invoice.id) {
+          syncLog.writeLocalEntry('invoice', result.invoice.id, 'created', {
+            ...result.invoice,
+            items: result.items,
+          });
+        }
+      } catch (e) { logger.debug('[InvoiceController] Sync log write failed for invoice correction:', e); }
+
       const vatSummary: VatSummaryEntry[] = result.invoice.vat_summary
         ? JSON.parse(result.invoice.vat_summary)
         : [];

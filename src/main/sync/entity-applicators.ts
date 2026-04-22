@@ -8,6 +8,7 @@
 import { productRepo } from '../database/repos/product-repo';
 import { staffRepo } from '../database/repos/staff-repo';
 import { orderRepo } from '../database/repos/order-repo';
+import { salonCustomerRepo } from '../database/repos/salon-customer-repo';
 import { database } from '../database/database';
 import logger from '../logger';
 
@@ -41,6 +42,8 @@ export function applyEntry(entry: SyncLogEntry): boolean {
         return applyInvoice(entry);
       case 'checkin':
         return applyCheckin(entry);
+      case 'customer':
+        return applyCustomer(entry);
       case 'category':
         return applyCategory(entry);
       default:
@@ -224,6 +227,43 @@ function applyCheckin(entry: SyncLogEntry): boolean {
     database.run(
       'UPDATE checkins SET status = ? WHERE id = ?',
       [p.status, existing.id],
+    );
+  }
+
+  return true;
+}
+
+// ─── Customer ──────────────────────────────────────────────
+
+function applyCustomer(entry: SyncLogEntry): boolean {
+  const p = entry.payload;
+  if (!entry.entity_id) return false;
+
+  if (entry.event === 'deleted') {
+    database.run('DELETE FROM salon_customers WHERE id = ?', [entry.entity_id]);
+    return true;
+  }
+
+  salonCustomerRepo.upsertByPhone({
+    id: entry.entity_id,
+    name: p.name ?? '',
+    phone: p.phone,
+    email: p.email,
+    birthday: p.birthday,
+    notes: p.notes,
+    marketing_consent: p.marketingConsent,
+  });
+
+  if (p.preferredStaffId || p.preferredStaffName) {
+    database.run(
+      'UPDATE salon_customers SET preferred_staff_id = ?, preferred_staff_name = ? WHERE id = ?',
+      [p.preferredStaffId ?? null, p.preferredStaffName ?? null, entry.entity_id],
+    );
+  }
+  if (p.visitCount != null) {
+    database.run(
+      'UPDATE salon_customers SET visit_count = ?, last_visit_at = ?, last_service_name = ? WHERE id = ?',
+      [p.visitCount, p.lastVisitAt ?? null, p.lastServiceName ?? null, entry.entity_id],
     );
   }
 

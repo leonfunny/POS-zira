@@ -5,17 +5,19 @@
 import { ipcMain } from 'electron';
 import { BaseModule, ModuleState } from '../core/module';
 import type { ServiceContainer } from '../core/container';
+import { SERVICE_TOKENS } from '../core/tokens';
 import { salonCustomerRepo } from '../database/repos/salon-customer-repo';
 import { servicePopularityRepo } from '../database/repos/service-popularity-repo';
 import { checkinRepo } from '../database/repos/checkin-repo';
 import { database } from '../database/database';
 import { IPC_CHANNELS } from '../../shared/types';
+import type { SyncLogService } from '../sync/sync-log-service';
 import logger from '../logger';
 
 export class CheckinModule extends BaseModule {
   readonly name = 'checkin';
 
-  constructor(_container: ServiceContainer) {
+  constructor(private container: ServiceContainer) {
     super();
   }
 
@@ -48,6 +50,29 @@ export class CheckinModule extends BaseModule {
       try {
         const customer = salonCustomerRepo.upsertByPhone(data);
         database.save();
+
+        // Path B: write to sync log for outbound push
+        try {
+          const syncLog = this.container.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+          if (syncLog && customer) {
+            syncLog.writeLocalEntry('customer', customer.id, 'created', {
+              id: customer.id,
+              name: customer.name,
+              phone: customer.phone,
+              email: customer.email,
+              birthday: customer.birthday,
+              notes: customer.notes,
+              marketingConsent: !!customer.marketing_consent,
+              preferredStaffId: customer.preferred_staff_id,
+              preferredStaffName: customer.preferred_staff_name,
+              visitCount: customer.visit_count,
+              lastVisitAt: customer.last_visit_at,
+              lastServiceName: customer.last_service_name,
+              createdAt: customer.created_at,
+            });
+          }
+        } catch (e) { logger.debug('[CheckinModule] Sync log write failed for customer:', e); }
+
         return { success: true, data: customer };
       } catch (e: any) {
         return { success: false, error: e.message };
@@ -128,6 +153,33 @@ export class CheckinModule extends BaseModule {
         servicePopularityRepo.refresh();
 
         database.save();
+
+        // Path B: write to sync log for outbound push
+        try {
+          const syncLog = this.container.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+          if (syncLog && data.id) {
+            syncLog.writeLocalEntry('checkin', data.id, 'created', {
+              id: data.id,
+              bookingNumber,
+              customerId: data.customer_id,
+              customerName: data.customer_name,
+              customerPhone: data.customer_phone,
+              customerEmail: data.customer_email,
+              serviceId: data.service_id,
+              serviceName: data.service_name,
+              staffId: data.staff_id,
+              staffName: data.staff_name,
+              bookingId: data.booking_id,
+              bookingSource: data.booking_source,
+              isWalkin: !!data.is_walkin,
+              status: data.status || 'WAITING',
+              checkedInAt: data.checked_in_at || new Date().toISOString(),
+              estimatedDuration: data.estimated_duration,
+              notes: data.notes,
+            });
+          }
+        } catch (e) { logger.debug('[CheckinModule] Sync log write failed for check-in:', e); }
+
         return { success: true, bookingNumber };
       } catch (e: any) {
         logger.error('[CheckinModule] Create with customer error:', e);

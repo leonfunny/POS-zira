@@ -31,6 +31,7 @@ import { getConfig, getSecureAuthToken } from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
+import type { SyncLogService } from '../sync/sync-log-service';
 import logger from '../logger';
 
 export class PosModule extends BaseModule {
@@ -202,10 +203,12 @@ export class PosModule extends BaseModule {
       this.posStore?.handleCheckIn(normalizedData);
       // Persist to checkins table
       let bookingNumber: string | undefined;
+      let checkinId: string | undefined;
       try {
         bookingNumber = checkinRepo.nextBookingNumber();
+        checkinId = `ci-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         checkinRepo.create({
-          id: `ci-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: checkinId,
           booking_number: bookingNumber,
           customer_name: normalizedData.customerName,
           customer_phone: normalizedData.customerPhone,
@@ -217,6 +220,27 @@ export class PosModule extends BaseModule {
           is_walkin: normalizedData.isWalkIn ? 1 : 0,
         });
         database.save();
+
+        // Path B: write to sync log for outbound push
+        try {
+          const syncLog = this.container.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+          if (syncLog && checkinId) {
+            syncLog.writeLocalEntry('checkin', checkinId, 'created', {
+              id: checkinId,
+              bookingNumber,
+              customerName: normalizedData.customerName,
+              customerPhone: normalizedData.customerPhone,
+              customerEmail: normalizedData.customerEmail,
+              serviceName: normalizedData.serviceName,
+              staffName: normalizedData.staffName,
+              bookingId: normalizedData.bookingId?.toString(),
+              bookingSource: normalizedData.bookingId ? 'booksy' : undefined,
+              isWalkin: !!normalizedData.isWalkIn,
+              status: 'WAITING',
+              checkedInAt: new Date().toISOString(),
+            });
+          }
+        } catch (e) { logger.debug('[PosModule] Sync log write failed for check-in:', e); }
       } catch (e) {
         logger.error('[PosModule] Failed to persist check-in:', e);
       }
@@ -312,6 +336,48 @@ export class PosModule extends BaseModule {
           }
         }
         database.save();
+
+        // Path B: write to sync log for outbound push
+        try {
+          const syncLog = this.container.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+          if (syncLog) {
+            const PM: Record<string, string> = { CASH: 'CASH', CARD: 'CARD', BLIK: 'BLIK', TRANSFER: 'BANK_TRANSFER', BANK_TRANSFER: 'BANK_TRANSFER', CREDIT: 'CREDIT', INVOICE: 'BANK_TRANSFER' };
+            const dto: Record<string, any> = {
+              id,
+              priceType: 'brutto',
+              requiresInvoice: !!order.customer_nip,
+              items: (items || []).filter((i: any) => i.variant_id || i.id).map((i: any) => ({
+                productId: i.variant_id || i.id,
+                variantId: i.variant_id || i.id,
+                ...(i.sku ? { variantSku: i.sku } : {}),
+                packQuantity: Math.max(1, Math.round(i.quantity || 1)),
+                ...(typeof i.price === 'number' && Number.isFinite(i.price) ? { customPrice: i.price / 100 } : {}),
+              })),
+            };
+            if (order.payment_tenders) {
+              try {
+                const tenders = JSON.parse(order.payment_tenders) as Array<{ method: string; amount: number }>;
+                if (tenders.length > 0) dto.tenders = tenders.map((t: any) => ({ method: PM[t.method] || t.method, amount: t.amount / 100 }));
+              } catch { /* single method fallback below */ }
+            }
+            if (order.payment_method) dto.paymentMethod = PM[order.payment_method] || 'CASH';
+            if (order.staff_id) dto.staffId = order.staff_id;
+            if (order.staff_name) dto.staffName = order.staff_name;
+            if (order.shift_id) dto.shiftId = order.shift_id;
+            if (order.customer_id) dto.customerId = order.customer_id;
+            if (order.customer_nip) dto.customerNip = order.customer_nip;
+            if (order.customer_name) dto.customerName = order.customer_name;
+            if (order.source) dto.source = order.source;
+            if (order.order_type) dto.orderType = order.order_type;
+            if (order.mode) dto.mode = order.mode;
+            if (order.discount > 0) dto.discountAmount = order.discount / 100;
+            if (order.payment_amount > 0) dto.paymentAmount = order.payment_amount / 100;
+            if (order.change_amount > 0) dto.changeAmount = order.change_amount / 100;
+            if (order.tip && order.tip > 0) dto.tip = order.tip / 100;
+            syncLog.writeLocalEntry('order', id, 'created', dto);
+          }
+        } catch (e) { logger.debug('[PosModule] Sync log write failed for order:', e); }
+
         return { success: true, id };
       }
       catch (e: any) { return { success: false, error: e.message }; }

@@ -43,6 +43,7 @@ export class InvoiceModule extends BaseModule {
         const config = getConfig();
         return config.printers?.['A4']?.windowsPrinter || null;
       },
+      this.container,
     );
 
     // Entitlements
