@@ -163,7 +163,7 @@ function createInitialState(): PosState {
 function recalcCart(cart: CartState): CartState {
   const subtotal = cart.items.reduce((sum, item) => sum + item.total, 0);
   // Recalculate percentage discounts when cart changes; clamp to subtotal
-  const discount = cart.discountType === 'percentage' && cart.discountPercent
+  const discount = cart.discountType === 'percentage' && cart.discountPercent != null
     ? Math.min(Math.round(subtotal * cart.discountPercent / 100), subtotal)
     : Math.min(cart.discount, subtotal);
   // Polish tax compliance: round VAT per line item in grosze, then sum.

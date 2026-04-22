@@ -69,7 +69,9 @@ function applyProduct(entry: SyncLogEntry): boolean {
 
   // created or updated — upsert
   const toGrosze = (v: any) => v != null ? Math.round(parseFloat(v) * 100) : 0;
-  const retailGrosze = p.retail_price ?? toGrosze(p.retailPrice);
+  const normalizePrice = (v: any) => v != null ? (v < 500 ? Math.round(parseFloat(v) * 100) : Math.round(parseFloat(v))) : 0;
+  const rawRetail = p.retail_price ?? p.retailPrice;
+  const retailGrosze = rawRetail != null ? normalizePrice(rawRetail) : 0;
 
   productRepo.upsertMany([{
     id: entry.entity_id,
@@ -85,9 +87,9 @@ function applyProduct(entry: SyncLogEntry): boolean {
     is_active: p.is_active ?? (p.isActive !== false ? 1 : 0),
     updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
     available_qty: p.available_qty ?? p.availableQty ?? 0,
-    price_gross: p.price_gross ?? (toGrosze(p.priceGross) || retailGrosze),
-    price_net: p.price_net ?? toGrosze(p.priceNet),
-    vat_amount: p.vat_amount ?? toGrosze(p.vatAmount),
+    price_gross: p.price_gross != null ? normalizePrice(p.price_gross) : (toGrosze(p.priceGross) || retailGrosze),
+    price_net: p.price_net != null ? normalizePrice(p.price_net) : toGrosze(p.priceNet),
+    vat_amount: p.vat_amount != null ? normalizePrice(p.vat_amount) : toGrosze(p.vatAmount),
     is_on_sale: p.is_on_sale ?? (p.isOnSale ? 1 : 0),
     thumbnail_url: p.thumbnail_url ?? p.thumbnailUrl ?? null,
     sale_unit: p.sale_unit ?? p.saleUnit ?? null,
@@ -150,9 +152,13 @@ function applyOrder(entry: SyncLogEntry): boolean {
 
   // Handle refunds
   if (p.refundAmount !== undefined) {
+    // Server always sends refundAmount in PLN float — convert to grosze
+    const refundGrosze = typeof p.refundAmount === 'number'
+      ? Math.round(p.refundAmount * 100)
+      : p.refundAmount;
     database.run(
       'UPDATE orders SET refund_amount = ?, refund_reason = ? WHERE id = ?',
-      [p.refundAmount, p.refundReason ?? null, localId],
+      [refundGrosze, p.refundReason ?? null, localId],
     );
   }
 

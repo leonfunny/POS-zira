@@ -90,7 +90,7 @@ export const orderRepo = {
           finalOrder.shift_id ?? null, finalOrder.source ?? 'POS',
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',
-          (finalOrder as any).payment_tenders ?? null,
+          finalOrder.payment_tenders ?? null,
         ],
       );
 
@@ -106,12 +106,6 @@ export const orderRepo = {
         );
       }
 
-      // Add to sync queue
-      database.run(
-        `INSERT INTO sync_queue (entity_type, entity_id, action, payload)
-         VALUES ('order', ?, 'create', ?)`,
-        [finalOrder.id, JSON.stringify({ order: finalOrder, items })],
-      );
     }); // End transaction
 
     // Flush to disk immediately — financial data must not be lost on crash

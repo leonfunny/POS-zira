@@ -181,9 +181,9 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     const items = cart.items.map((item) => ({
       id: crypto.randomUUID(),
       order_id: orderId,
-      variant_id: item.variantId,
+      variant_id: item.variantId ?? null,
       name: item.name,
-      sku: item.sku,
+      sku: item.sku ?? null,
       price: item.price,
       quantity: item.quantity,
       total: item.total,

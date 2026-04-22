@@ -91,12 +91,17 @@ class Database {
     }
   }
 
+  private sanitizeParams(params?: any[]): any[] | undefined {
+    if (!params) return params;
+    return params.map(p => p === undefined ? null : p);
+  }
+
   run(sql: string, params?: any[]): void {
     if (!this.db) {
       logger.error('[DB] Cannot run query: database not initialized');
       return;
     }
-    this.db.run(sql, params);
+    this.db.run(sql, this.sanitizeParams(params));
     this.dirty = true;
   }
 
@@ -107,7 +112,7 @@ class Database {
     }
     const stmt = this.db.prepare(sql);
     try {
-      if (params) stmt.bind(params);
+      if (params) stmt.bind(this.sanitizeParams(params)!);
       return stmt.step() ? (stmt.getAsObject() as T) : null;
     } finally {
       stmt.free();
@@ -121,7 +126,7 @@ class Database {
     }
     const stmt = this.db.prepare(sql);
     try {
-      if (params) stmt.bind(params);
+      if (params) stmt.bind(this.sanitizeParams(params)!);
       const results: T[] = [];
       while (stmt.step()) {
         results.push(stmt.getAsObject() as T);
