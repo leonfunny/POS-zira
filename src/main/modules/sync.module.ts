@@ -14,9 +14,6 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { ProductSync } from '../sync/product-sync';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
-import { CheckinSync } from '../sync/checkin-sync';
-import { ChangeFeedSync } from '../sync/change-feed-sync';
-import { InvoiceSync } from '../sync/invoice-sync';
 import { StaffSync } from '../sync/staff-sync';
 import { SyncLogService, SYNC_MODES } from '../sync/sync-log-service';
 import { productRepo } from '../database/repos/product-repo';
@@ -24,7 +21,6 @@ import { billiardResourceRepo } from '../database/repos/billiard-resource-repo';
 import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
 import { billiardComboRepo } from '../database/repos/billiard-combo-repo';
 import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-repo';
-import { database } from '../database/database';
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -39,9 +35,6 @@ export class SyncModule extends BaseModule {
   private productSync: ProductSync | null = null;
   private orderSync: OrderSync | null = null;
   private billiardSync: BilliardSync | null = null;
-  private checkinSync: CheckinSync | null = null;
-  private changeFeedSync: ChangeFeedSync | null = null;
-  private invoiceSync: InvoiceSync | null = null;
   private staffSync: StaffSync | null = null;
   private syncLogService: SyncLogService | null = null;
   private _syncInProgress = false;
@@ -56,26 +49,16 @@ export class SyncModule extends BaseModule {
     this.productSync = new ProductSync();
     this.orderSync = new OrderSync();
     this.billiardSync = new BilliardSync();
-    this.checkinSync = new CheckinSync();
-    this.changeFeedSync = new ChangeFeedSync();
-    this.invoiceSync = new InvoiceSync();
     this.staffSync = new StaffSync();
     this.syncLogService = new SyncLogService();
     this.container.set(SERVICE_TOKENS.PRODUCT_SYNC, this.productSync);
     this.container.set(SERVICE_TOKENS.ORDER_SYNC, this.orderSync);
     this.container.set(SERVICE_TOKENS.BILLIARD_SYNC, this.billiardSync);
-    this.container.set(SERVICE_TOKENS.CHECKIN_SYNC, this.checkinSync);
-    this.container.set(SERVICE_TOKENS.CHANGE_FEED_SYNC, this.changeFeedSync);
-    this.container.set(SERVICE_TOKENS.INVOICE_SYNC, this.invoiceSync);
     this.container.set(SERVICE_TOKENS.STAFF_SYNC, this.staffSync);
     this.container.set(SERVICE_TOKENS.SYNC_LOG_SERVICE, this.syncLogService);
 
-    // Start HTTP-based sync timers immediately — they don't depend on socket.
-    // If socket dies, HTTP can still reach backend. Each sync call no-ops when
-    // offline or token missing, so it's safe to run continuously.
+    // Path A outbound timers start as fallback — stopped once Path B push detected.
     this.orderSync.startPeriodicSync();
-    this.checkinSync.startPeriodicSync();
-    this.invoiceSync.startPeriodicSync();
 
     this.setState(ModuleState.READY);
   }
@@ -92,14 +75,6 @@ export class SyncModule extends BaseModule {
       try {
         const summary = await this.orderSync?.syncPendingOrders();
         return { success: true, summary };
-      } catch (e: any) { return { success: false, error: e.message }; }
-    });
-
-    ipcMain.handle('pos:sync:checkins', async () => {
-      try {
-        this.checkinSync?.resetEndpointAvailability();
-        const result = await this.checkinSync?.syncPending();
-        return { success: true, ...result };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -408,32 +383,14 @@ export class SyncModule extends BaseModule {
           this.syncLogService!.startPeriodicPull();
         }
 
-        // ── Path A ChangeFeedSync: only when NOT using Path B pull ──
-        if (!usePathBPull) {
-          if (this.changeFeedSync) {
-            this.changeFeedSync.resetEndpointAvailability();
-            try { await this.changeFeedSync.catchUp(); } catch (err) { logger.debug('[SyncModule] Change feed catch-up failed:', err); }
-            this.changeFeedSync.startPeriodicCatchUp();
-          }
+        // ── Path A OrderSync: flush pending if Path B push not active ──
+        if (!usePathBPush) {
+          try { await this.orderSync?.syncPendingOrders(); } catch (err: any) { logger.debug('[SyncModule] sync pending orders failed:', err?.message); }
         }
 
-        // ── OrderSync + CheckinSync + InvoiceSync: trigger immediate sync ──
-        // Periodic timers already started in init() (socket-independent).
-        // Here we just flush pending items right after reconnect.
-        try { await this.orderSync?.syncPendingOrders(); } catch (err: any) { logger.debug('[SyncModule] sync pending orders failed:', err?.message); }
-
-        if (this.checkinSync) {
-          this.checkinSync.resetEndpointAvailability();
-          try { await this.checkinSync.syncPending(); } catch (err: any) { logger.debug('[SyncModule] sync pending checkins failed:', err?.message); }
-        }
-
-        if (this.invoiceSync) {
-          this.invoiceSync.resetEndpointAvailability();
-          try { await this.invoiceSync.syncPending(); } catch (err) { logger.debug('[SyncModule] Invoice sync failed:', err); }
-        }
-
-        // ── Path B Push: for future use (sync log push) ──
+        // ── Path B Push ──
         if (usePathBPush) {
+          this.orderSync?.stop();
           try { await this.syncLogService!.pushToServer(); } catch (err: any) { logger.debug('[SyncModule] Path B push failed:', err?.message); }
           this.syncLogService!.startPeriodicPush();
         }
@@ -472,9 +429,6 @@ export class SyncModule extends BaseModule {
     });
 
     bus.on('socket:disconnected', () => {
-      // Keep HTTP-based sync timers running — they use REST, not socket.
-      // They will retry naturally and succeed when connectivity returns.
-      this.changeFeedSync?.stop();
       this.syncLogService?.stop();
       if (this.billiardSync) {
         this.billiardSync.setOnline(false);
@@ -489,24 +443,6 @@ export class SyncModule extends BaseModule {
   setupSocketHandlers(socket: SocketClient): void {
     const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
 
-    socket.on('catalog:updated', (data: { variantId: string; changes: any }) => {
-      // Path B handles this via sync:entry
-      if (this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_FULL)) return;
-
-      if (data.changes) productRepo.upsertMany([data.changes]);
-      const posWindow = wm?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:catalog-updated', data);
-    });
-
-    socket.on('stock:updated', (data: { variantId: string; newStock: number }) => {
-      // Path B handles this via sync:entry
-      if (this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_FULL)) return;
-
-      database.run('UPDATE product_variants SET in_stock = ? WHERE id = ?', [data.newStock, data.variantId]);
-      const posWindow = wm?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:stock-updated', data);
-    });
-
     // Billiard real-time events
     socket.on('billiard:session-updated', () => {
       this.billiardSync?.refreshDashboard().catch((e: any) => { logger.debug('[SyncModule] billiard dashboard refresh failed:', e?.message); });
@@ -514,53 +450,6 @@ export class SyncModule extends BaseModule {
 
     socket.on('billiard:resource-updated', () => {
       this.billiardSync?.fullSync().catch((e: any) => { logger.debug('[SyncModule] billiard full sync failed:', e?.message); });
-    });
-
-    // Phase 3: Server→Client push events
-    socket.on('order:status-changed', (data: any) => {
-      // Path B handles this via sync:entry
-      if (this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_FULL)) return;
-
-      // Pass flat data directly — processOrderStatusChange expects { orderId, status, updatedAt } at top level
-      this.changeFeedSync?.processOrderStatusChange(data);
-      const posWindow = wm?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:order-status-changed', data);
-    });
-
-    socket.on('staff:updated', (data: any) => {
-      // Path B handles this via sync:entry
-      if (this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_FULL)) return;
-
-      // Map camelCase from backend → snake_case for staffRepo
-      const s = data.changes || data;
-      if (s && s.id) {
-        const { staffRepo } = require('../database/repos/staff-repo');
-        staffRepo.upsertMany([{
-          id: s.id,
-          name: s.name || s.fullName || 'Staff',
-          commission_rate: s.commissionRate ?? s.commission_rate ?? 0,
-          is_active: s.isActive !== false ? 1 : 0,
-          updated_at: s.updatedAt ?? null,
-          role: s.role ?? null,
-          backend_synced_at: new Date().toISOString(),
-        }]);
-        database.save();
-      }
-      const posWindow = wm?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:staff-updated', data);
-    });
-
-    socket.on('invoice:updated', (data: any) => {
-      // Path B handles this via sync:entry — skip if in full mode
-      if (this.syncLogService?.isModeAtLeast(SYNC_MODES.PATH_B_FULL)) return;
-
-      // Pass flat invoice data — processInvoiceChange expects { id, status } at top level
-      const invoice = data.changes || data;
-      if (invoice) {
-        // Ensure id is set (backend may send invoiceId instead)
-        if (!invoice.id && data.invoiceId) invoice.id = data.invoiceId;
-        this.changeFeedSync?.processInboundInvoice(invoice);
-      }
     });
 
     // ── Path B: Real-time sync log entries ──────────────────
@@ -604,17 +493,13 @@ export class SyncModule extends BaseModule {
 
   async stop(): Promise<void> {
     this.orderSync?.stop();
-    this.checkinSync?.stop();
-    this.invoiceSync?.stop();
-    this.changeFeedSync?.stop();
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.setState(ModuleState.STOPPED);
   }
 
   async destroy(): Promise<void> {
-    this.invoiceSync?.stop();
-    this.changeFeedSync?.stop();
+    this.orderSync?.stop();
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.setState(ModuleState.STOPPED);

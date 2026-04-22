@@ -960,46 +960,6 @@ export class ApiClient {
     return data;
   }
 
-  // ==========================================
-  // Sync — Phase 3: Change Feed + Staff + Invoice
-  // ==========================================
-
-  /**
-   * Per-entity change feed endpoints (Path A — 3 separate endpoints).
-   * Each returns null if not deployed (404/501) — dark launch safe.
-   */
-  private async getEntityChanges(
-    token: string,
-    entityPath: string,
-    since: string,
-  ): Promise<{ items: any[]; nextSince?: string } | null> {
-    const params = new URLSearchParams({ since });
-    const url = `${this.baseUrl}/api/v1/print-agent/changes/${entityPath}?${params}`;
-
-    const response = await fetchWithTimeout(url, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    });
-
-    if (response.status === 404 || response.status === 501) return null;
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${response.status}`);
-    }
-    return response.json();
-  }
-
-  async getOrderChanges(token: string, since: string) {
-    return this.getEntityChanges(token, 'orders', since);
-  }
-
-  async getStaffChanges(token: string, since: string) {
-    return this.getEntityChanges(token, 'staff', since);
-  }
-
-  async getInvoiceChanges(token: string, since: string) {
-    return this.getEntityChanges(token, 'invoices', since);
-  }
-
   /**
    * Push a locally-created invoice to the server.
    * Returns null if endpoint not deployed (404/501).
