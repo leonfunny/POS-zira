@@ -481,6 +481,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),
       reprintReceipt: (orderId: string) => ipcRenderer.invoke('pos:reprint-receipt', orderId),
+      printRefundReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-refund-receipt', orderId),
       openCashDrawer: () => ipcRenderer.invoke(IPC_CHANNELS.POS_OPEN_CASH_DRAWER),
       cardPayment: (data: { amount: number; orderId: string }) => ipcRenderer.invoke(IPC_CHANNELS.POS_PAYMENT_CARD, data),
       onElavonStatus: (callback: (data: any) => void) => {

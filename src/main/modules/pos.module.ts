@@ -505,6 +505,11 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
+    ipcMain.handle('pos:print-refund-receipt', async (_e, orderId: string) => {
+      try { const printed = await this.paymentController?.printRefundReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
+      catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
+    });
+
     ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: {
       type: 'FULL' | 'PARTIAL'; reason?: string;
       lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
@@ -515,6 +520,11 @@ export class PosModule extends BaseModule {
         if (!order) return { success: false, error: 'Order not found' };
         if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
         if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
+
+        const activeShift = database.get<{ id: string }>(
+          'SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+        );
+        if (!activeShift) return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
 
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
@@ -808,6 +818,15 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
+
+        // Check shift exists in DB — if not, clear the ghost session and return gracefully
+        const shiftExists = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ?', [data.shiftId]);
+        if (!shiftExists) {
+          logger.warn(`[PosModule] Ghost shift ${data.shiftId.substring(0, 8)} — not in DB, clearing session`);
+          this.posStore?.dispatch({ type: 'session/close' });
+          return { success: true, report: null };
+        }
+
         // Attempt to sync pending orders before closing shift
         const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
         if (orderSync) {

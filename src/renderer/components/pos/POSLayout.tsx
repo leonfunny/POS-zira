@@ -174,21 +174,19 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       staffName: data.staffName || t('pos.cashier'),
       openingCash: data.openingCash ?? 0,
     });
-    if (result.success) {
-      setShowShiftModal(null);
-    }
+    if (!result.success) throw new Error(result.error || 'Failed to open shift');
+    setShowShiftModal(null);
   };
 
   const handleShiftClose = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
-    if (!session.shiftId) return;
+    if (!session.shiftId) throw new Error('No active shift');
     const result = await window.electronAPI.pos.shift.close({
       shiftId: session.shiftId,
       closingCash: data.closingCash ?? 0,
     });
-    if (result.success) {
-      setShowShiftModal(null);
-      setShiftReport(result.report);
-    }
+    if (!result.success) throw new Error(result.error || 'Failed to close shift');
+    setShowShiftModal(null);
+    if (result.report) setShiftReport(result.report);
   };
 
   if (!state) {

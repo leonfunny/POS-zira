@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 interface ShiftModalProps {
   mode: 'open' | 'close';
   shiftId?: string | null;
-  onSubmit: (data: { staffName?: string; openingCash?: number; closingCash?: number }) => void;
+  onSubmit: (data: { staffName?: string; openingCash?: number; closingCash?: number }) => Promise<void>;
   onClose: () => void;
   t: (key: string) => string;
 }
@@ -12,17 +12,23 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
   const [staffName, setStaffName] = useState('');
   const [cashAmount, setCashAmount] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (saving) return;
     setSaving(true);
-
-    const amount = Math.round(parseFloat(cashAmount || '0') * 100);
-
-    if (mode === 'open') {
-      onSubmit({ staffName: staffName || t('pos.cashier'), openingCash: amount });
-    } else {
-      onSubmit({ closingCash: amount });
+    setError(null);
+    try {
+      const amount = Math.round(parseFloat(cashAmount || '0') * 100);
+      if (mode === 'open') {
+        await onSubmit({ staffName: staffName || t('pos.cashier'), openingCash: amount });
+      } else {
+        await onSubmit({ closingCash: amount });
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Operation failed');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -99,6 +105,12 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
             </div>
           </div>
         </div>
+
+        {error && (
+          <div className="mx-5 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="px-5 pb-5 pt-1">
           <button

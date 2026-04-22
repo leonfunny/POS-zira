@@ -525,13 +525,14 @@ interface ElectronAPI {
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
+      printRefundReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       openCashDrawer: () => Promise<{ success: boolean }>;
       cardPayment: (data: { amount: number; orderId: string }) => Promise<{ success: boolean; error?: string }>;
       onElavonStatus: (callback: (data: any) => void) => () => void;
     };
     shift: {
-      open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string }>;
-      close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any }>;
+      open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
+      close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any; error?: string }>;
       getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
     };
     sync: {

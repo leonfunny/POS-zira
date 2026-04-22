@@ -725,12 +725,15 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
   };
 
-  const handleReprint = async (orderId: string) => {
+  const handleReprint = async (orderId: string, order: OrderRow) => {
     if (reprinting) return;
     setReprinting(true);
     setReprintStatus(null);
     try {
-      const result = await window.electronAPI.pos.payment.reprintReceipt(orderId);
+      const isRefunded = order.status === 'REFUNDED' || order.status === 'PARTIAL_REFUND';
+      const result = isRefunded
+        ? await window.electronAPI.pos.payment.printRefundReceipt(orderId)
+        : await window.electronAPI.pos.payment.reprintReceipt(orderId);
       if (result?.success && result.receiptPrinted !== false) {
         setReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.reprinted', 'Receipt sent to printer') });
       } else {
@@ -933,7 +936,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <h3 className="text-sm font-extrabold text-slate-900">Receipt</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">Send this order receipt to the configured printer.</p>
                 <button
-                  onClick={() => handleReprint(order.id)}
+                  onClick={() => handleReprint(order.id, order)}
                   disabled={reprinting}
                   className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >

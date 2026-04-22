@@ -18,6 +18,7 @@ export interface ShiftReport {
   cardTotal: number;
   blikTotal: number;
   transferTotal: number;
+  totalRefunds: number;
   difference: number; // closingCash - (openingCash + cashTotal)
   unsyncedOrders: number;
 }
@@ -68,7 +69,7 @@ export class ShiftController {
 
     // Get orders for this shift — handle split payments
     const orders = orderRepo.getByShift(shiftId);
-    const totalSales = orders.reduce((sum, o) => sum + o.total, 0);
+    const grossSales = orders.reduce((sum, o) => sum + o.total, 0);
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
@@ -95,6 +96,18 @@ export class ShiftController {
       else if (o.payment_method === 'TRANSFER') transferTotal += o.total;
     }
 
+    let totalRefunds = 0;
+    for (const o of orders) {
+      if (o.refund_amount && o.refund_amount > 0) {
+        totalRefunds += o.refund_amount;
+        if (o.payment_method === 'CASH') cashTotal -= o.refund_amount;
+        else if (o.payment_method === 'CARD') cardTotal -= o.refund_amount;
+        else if (o.payment_method === 'BLIK') blikTotal -= o.refund_amount;
+        else if (o.payment_method === 'TRANSFER') transferTotal -= o.refund_amount;
+      }
+    }
+
+    const totalSales = grossSales - totalRefunds;
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
     database.run(
@@ -116,6 +129,7 @@ export class ShiftController {
       cardTotal,
       blikTotal,
       transferTotal,
+      totalRefunds,
       difference,
       unsyncedOrders,
     };
@@ -144,7 +158,7 @@ export class ShiftController {
       date: report.closedAt.split('T')[0],
       transactionCount: report.totalOrders,
       grossSales: report.totalSales,
-      discounts: 0,
+      discounts: report.totalRefunds,
       netSales: report.totalSales,
       paymentSummary: [
         { method: 'CASH', amount: report.cashTotal },
