@@ -129,7 +129,7 @@ After drafting the request:
 ## Commands
 
 ```bash
-# Development (hot-reload: tsc --watch + Vite dev server on port 3100)
+# Development (hot-reload: tsc --watch + Vite dev server on port 3100) ($env:NODE_ENV="development"; npx electron .)
 npm run dev
 
 # Build (main → dist/main/, renderer → dist/renderer/)
@@ -138,7 +138,9 @@ npm run build:main        # Main process only (tsc)
 npm run build:renderer    # Renderer only (Vite)
 
 # Run built app
-npm run start             # electron .
+npm run start             
+or
+npx electron . (dev mode)
 
 # Build Windows NSIS installer → release/Zira AI Setup X.X.X.exe
 npm run dist:win
