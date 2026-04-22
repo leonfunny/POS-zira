@@ -44,6 +44,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Receipts',
     'printer.RECEIPT.desc': 'Receipts and invoices',
+    'printer.FISCAL': 'Fiscal',
+    'printer.FISCAL.desc': 'Posnet fiscal printer',
     'printer.LABEL': 'Labels',
     'printer.LABEL.desc': 'Labels and barcodes',
     'printer.A4': 'A4',
@@ -1019,6 +1021,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Hóa đơn',
     'printer.RECEIPT.desc': 'Hóa đơn và phiếu thu',
+    'printer.FISCAL': 'Tài chính',
+    'printer.FISCAL.desc': 'Máy in hóa đơn Posnet',
     'printer.LABEL': 'Nhãn',
     'printer.LABEL.desc': 'Nhãn và mã vạch',
     'printer.A4': 'A4',
@@ -1952,6 +1956,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Fişler',
     'printer.RECEIPT.desc': 'Fişler ve faturalar',
+    'printer.FISCAL': 'Mali',
+    'printer.FISCAL.desc': 'Posnet mali yazıcı',
     'printer.LABEL': 'Etiketler',
     'printer.LABEL.desc': 'Etiketler ve barkodlar',
     'printer.A4': 'A4',
@@ -2864,6 +2870,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': '收据',
     'printer.RECEIPT.desc': '收据和发票',
+    'printer.FISCAL': '财务',
+    'printer.FISCAL.desc': 'Posnet财务打印机',
     'printer.LABEL': '标签',
     'printer.LABEL.desc': '标签和条码',
     'printer.A4': 'A4',
@@ -3776,6 +3784,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Чеки',
     'printer.RECEIPT.desc': 'Чеки та рахунки',
+    'printer.FISCAL': 'Фіскальний',
+    'printer.FISCAL.desc': 'Фіскальний принтер Posnet',
     'printer.LABEL': 'Етикетки',
     'printer.LABEL.desc': 'Етикетки та штрих-коди',
     'printer.A4': 'A4',
@@ -4688,6 +4698,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Чеки',
     'printer.RECEIPT.desc': 'Чеки и счета',
+    'printer.FISCAL': 'Фискальный',
+    'printer.FISCAL.desc': 'Фискальный принтер Posnet',
     'printer.LABEL': 'Этикетки',
     'printer.LABEL.desc': 'Этикетки и штрих-коды',
     'printer.A4': 'A4',
@@ -5602,6 +5614,8 @@ export const translations: Record<Language, Record<string, string>> = {
     // Printer types
     'printer.RECEIPT': 'Paragony',
     'printer.RECEIPT.desc': 'Paragony i faktury',
+    'printer.FISCAL': 'Fiskalny',
+    'printer.FISCAL.desc': 'Drukarka fiskalna Posnet',
     'printer.LABEL': 'Etykiety',
     'printer.LABEL.desc': 'Etykiety i kody kreskowe',
     'printer.A4': 'A4',
@@ -6545,6 +6559,7 @@ export function getTranslation(lang: Language) {
 // Printer type icons (language-independent)
 export const printerTypeIcons: Record<string, string> = {
   RECEIPT: '🧾',
+  FISCAL: '🏛️',
   LABEL: '🏷️',
   A4: '📄',
   TICKET: '🎫',

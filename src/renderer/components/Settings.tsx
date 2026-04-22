@@ -12,7 +12,7 @@ interface SettingsProps {
 }
 
 // Printer types - defined locally for Vite compatibility
-const PRINTER_TYPES = ['RECEIPT', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
+const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
 
 // Default printer config
@@ -1036,7 +1036,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 ['HP', 'Canon', 'Samsung'].includes(brand) && dev.connectionType !== 'SERIAL';
 
               // Determine target type
-              const fallbackTargetType: PrinterTypeValue = isPosnet ? 'RECEIPT' :
+              const fallbackTargetType: PrinterTypeValue = isPosnet ? 'FISCAL' :
                 isLabelPrinter ? 'LABEL' :
                 isA4Printer ? 'A4' : 'RECEIPT';
               const fallbackTargetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
@@ -1312,6 +1312,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     <div className="flex items-center gap-2">
                       <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 text-slate-600">
                         {printerType === 'RECEIPT' && <Printer size={16} />}
+                        {printerType === 'FISCAL' && <Shield size={16} />}
                         {printerType === 'LABEL' && <Tag size={16} />}
                         {printerType === 'A4' && <FileText size={16} />}
                         {printerType === 'TICKET' && <Ticket size={16} />}

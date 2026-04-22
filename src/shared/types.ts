@@ -15,7 +15,8 @@ export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ZEBRA' | 'WINDOWS';
 // Printer types - used for routing jobs to correct printer
 // Using const object instead of enum for better Vite/browser compatibility
 export const PrinterType = {
-  RECEIPT: 'RECEIPT',   // Máy in hóa đơn thermal (80mm paper)
+  RECEIPT: 'RECEIPT',   // Thermal ESC/POS receipt printers (Xprinter, Epson, Star...)
+  FISCAL: 'FISCAL',     // Fiscal printers (Posnet) — legally required fiscal receipts
   LABEL: 'LABEL',       // Máy in nhãn/barcode (Zebra, TSC...)
   A4: 'A4',             // Máy in A4 thường (HP, Canon...)
   TICKET: 'TICKET',     // Máy in vé
@@ -33,7 +34,8 @@ export type PrinterType = typeof PrinterType[keyof typeof PrinterType];
  * Keep this map in sync between both processes — do not duplicate it.
  */
 export const ALLOWED_PROTOCOLS_BY_TYPE: Record<PrinterType, PrinterProtocol[]> = {
-  RECEIPT: ['POSNET', 'THERMAL', 'WINDOWS'],
+  RECEIPT: ['THERMAL', 'WINDOWS'],
+  FISCAL:  ['POSNET'],
   LABEL:   ['ZEBRA', 'WINDOWS'],
   A4:      ['WINDOWS'],
   TICKET:  ['POSNET', 'THERMAL', 'WINDOWS'],

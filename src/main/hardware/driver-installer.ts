@@ -706,7 +706,7 @@ const LABEL_PATTERNS = [
  * Returns the recommended PrinterType and protocol for auto-setup.
  */
 export function classifyPrinterCategory(device: DetectedDevice): {
-  targetType: 'RECEIPT' | 'LABEL' | 'A4';
+  targetType: 'RECEIPT' | 'FISCAL' | 'LABEL' | 'A4';
   protocol: 'POSNET' | 'ZEBRA' | 'THERMAL' | 'WINDOWS';
 } {
   const brand = device.brand.toUpperCase();
@@ -714,12 +714,12 @@ export function classifyPrinterCategory(device: DetectedDevice): {
   const driver = (device.windowsPrinterName || '').toLowerCase();
   const combined = `${model} ${driver}`;
 
-  // POSNET — always receipt, always POSNET protocol
+  // POSNET — always FISCAL slot, always POSNET protocol
   // POSNET fiscal support here is POSNET v2 only. Some Thermal HD/XL devices
   // can also be configured for a printer-side THEMAL protocol, so discovery
   // disables auto-setup for those PIDs until the printer menu is verified.
   if (brand === 'POSNET' || device.vid === POSNET_VID) {
-    return { targetType: 'RECEIPT', protocol: 'POSNET' };
+    return { targetType: 'FISCAL', protocol: 'POSNET' };
   }
 
   // Zebra — check if it's a label printer (most are) vs receipt

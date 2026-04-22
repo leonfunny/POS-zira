@@ -549,6 +549,18 @@ export class HardwareModule extends BaseModule {
 
   getPrinterForType(printerType: PrinterType): PrinterDriver | null {
     if (this.printers[printerType]) return this.printers[printerType]!;
+
+    // FISCAL fallback: if no dedicated FISCAL, try RECEIPT (backward compat for pre-migration configs)
+    if (printerType === PrinterType.FISCAL && this.printers[PrinterType.RECEIPT]) {
+      const receiptDriver = this.printers[PrinterType.RECEIPT];
+      if (receiptDriver instanceof PosnetDriver) return receiptDriver;
+    }
+
+    // RECEIPT fallback: if no dedicated RECEIPT, try FISCAL (single-printer Posnet-only setup)
+    if (printerType === PrinterType.RECEIPT && this.printers[PrinterType.FISCAL]) {
+      return this.printers[PrinterType.FISCAL]!;
+    }
+
     if (printerType === PrinterType.LABEL && this.labelPrinter) return this.labelPrinter;
     if ((printerType === PrinterType.RECEIPT || printerType === PrinterType.TICKET || printerType === PrinterType.KITCHEN) && this.receiptPrinter) {
       return this.receiptPrinter;
@@ -869,7 +881,8 @@ export class HardwareModule extends BaseModule {
   }
 
   /** POSNET auto-setup: install CDC driver → detect COM port → configure */
-  private async autoSetupPosnet(printerType: string): Promise<{ success: boolean; port?: string; message: string; action?: string }> {
+  private async autoSetupPosnet(_printerType: string): Promise<{ success: boolean; port?: string; message: string; action?: string }> {
+    const printerType = 'FISCAL';
     // Step 1: Check/install driver
     const driverStatus = await getPosnetDriverStatus();
     if (!driverStatus.posnetDriverInstalled) {
@@ -1080,6 +1093,42 @@ export class HardwareModule extends BaseModule {
   }
 
   async reinitializePrinter(): Promise<void> {
+    // One-time migration: split merged RECEIPT config into FISCAL + RECEIPT
+    const preConfig = getConfig();
+    const receiptCfg = preConfig.printers?.RECEIPT;
+    if (receiptCfg?.protocol === 'POSNET' && !preConfig.printers?.FISCAL) {
+      const updatedPrinters = { ...(preConfig.printers || {}) };
+
+      updatedPrinters.FISCAL = {
+        enabled: true,
+        protocol: 'POSNET' as PrinterProtocol,
+        port: receiptCfg.port,
+        baudRate: receiptCfg.baudRate || 115200,
+        paperWidth: receiptCfg.paperWidth || 80,
+        charsPerLine: receiptCfg.charsPerLine || 48,
+      };
+
+      if (receiptCfg.windowsPrinter) {
+        updatedPrinters.RECEIPT = {
+          enabled: true,
+          protocol: 'THERMAL' as PrinterProtocol,
+          windowsPrinter: receiptCfg.windowsPrinter,
+          baudRate: 9600,
+          paperWidth: receiptCfg.paperWidth || 80,
+          charsPerLine: receiptCfg.charsPerLine || 48,
+          supportsCut: receiptCfg.supportsCut ?? true,
+          supportsCashDrawer: receiptCfg.supportsCashDrawer ?? true,
+          charset: receiptCfg.charset || 'utf8',
+          cutMode: receiptCfg.cutMode || 'partial',
+        };
+      } else {
+        delete updatedPrinters.RECEIPT;
+      }
+
+      setConfig({ printers: updatedPrinters });
+      logger.info('[HardwareModule] Migrated POSNET from RECEIPT → FISCAL, restored RECEIPT for thermal');
+    }
+
     const config = getConfig();
     const initErrors: string[] = [];
 
