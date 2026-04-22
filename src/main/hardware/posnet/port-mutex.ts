@@ -21,11 +21,7 @@ class PortLock {
     }
 
     return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        const idx = this.queue.findIndex(e => e.resolve === entry.resolve);
-        if (idx !== -1) this.queue.splice(idx, 1);
-        resolve(false);
-      }, timeoutMs);
+      let timer: ReturnType<typeof setTimeout>;
 
       const entry = {
         resolve: () => {
@@ -33,6 +29,13 @@ class PortLock {
           resolve(true);
         },
       };
+
+      timer = setTimeout(() => {
+        const idx = this.queue.findIndex(e => e.resolve === entry.resolve);
+        if (idx !== -1) this.queue.splice(idx, 1);
+        resolve(false);
+      }, timeoutMs);
+
       this.queue.push(entry);
     });
   }

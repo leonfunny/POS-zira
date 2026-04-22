@@ -376,11 +376,8 @@ export class ThermalDriver {
 
     try {
       // Write data to temp file
-      if (typeof data === 'string') {
-        fs.writeFileSync(tempFile, data, 'binary');
-      } else {
-        fs.writeFileSync(tempFile, data);
-      }
+      const buf = typeof data === 'string' ? Buffer.from(data, 'latin1') : data;
+      fs.writeFileSync(tempFile, buf);
 
       if (this.connectionType === 'USB') {
         const safeName = sanitizePrinterName(this.printerNameOrPort);

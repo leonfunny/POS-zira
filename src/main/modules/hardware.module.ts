@@ -550,13 +550,15 @@ export class HardwareModule extends BaseModule {
   getPrinterForType(printerType: PrinterType): PrinterDriver | null {
     if (this.printers[printerType]) return this.printers[printerType]!;
 
-    // FISCAL fallback: if no dedicated FISCAL, try RECEIPT (backward compat for pre-migration configs)
+    // FISCAL fallback: only if RECEIPT slot holds a PosnetDriver (pre-migration compat)
     if (printerType === PrinterType.FISCAL && this.printers[PrinterType.RECEIPT]) {
       const receiptDriver = this.printers[PrinterType.RECEIPT];
       if (receiptDriver instanceof PosnetDriver) return receiptDriver;
     }
 
-    // RECEIPT fallback: if no dedicated RECEIPT, try FISCAL (single-printer Posnet-only setup)
+    // RECEIPT fallback: FISCAL slot is always Posnet (ALLOWED_PROTOCOLS_BY_TYPE enforces this),
+    // and PosnetDriver.printReceipt() prints via non-fiscal transaction — safe for receipts.
+    // No instanceof check needed here (asymmetry with FISCAL→RECEIPT above is intentional).
     if (printerType === PrinterType.RECEIPT && this.printers[PrinterType.FISCAL]) {
       return this.printers[PrinterType.FISCAL]!;
     }

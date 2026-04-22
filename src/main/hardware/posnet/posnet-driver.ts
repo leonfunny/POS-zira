@@ -2,7 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import logger from '../../logger';
 import { ReceiptFormatter } from './receipt-formatter';
-import { ReceiptData, PrinterStatusInfo, PosnetDiagnoseResult } from '../../../shared/types';
+import { ReceiptData, PrinterStatusInfo, PosnetDiagnoseResult, DailyReportData } from '../../../shared/types';
 import { listSerialPorts, sanitizePortName } from '../port-utils';
 import { POSNET_PRODUCT_IDS } from './probe-profiles';
 import { withPortLock } from './port-mutex';
@@ -457,6 +457,31 @@ export class PosnetDriver {
 
     await this.sendPosnetSequence(frames);
     logger.info('[PosnetDriver] Receipt printed');
+  }
+
+  async printZReport(data: DailyReportData): Promise<void> {
+    if (!this.isConnected()) throw new Error('Printer not connected');
+    logger.info('[PosnetDriver] Printing Z-report...');
+
+    const frames: string[][] = [];
+    frames.push(['trinit', 'bm0']);
+
+    frames.push(['trline', 'na=== Z-REPORT ===', 'vt0', 'pr0', 'il1.000']);
+    frames.push(['trline', `naDate: ${data.date}`, 'vt0', 'pr0', 'il1.000']);
+    if (data.cashierName) {
+      frames.push(['trline', `naCashier: ${data.cashierName}`, 'vt0', 'pr0', 'il1.000']);
+    }
+    frames.push(['trline', `naOrders: ${data.transactionCount}`, 'vt0', 'pr0', 'il1.000']);
+    frames.push(['trline', `naTotal: ${(data.grossSales / 100).toFixed(2)}`, 'vt0', 'pr0', 'il1.000']);
+
+    for (const p of data.paymentSummary ?? []) {
+      frames.push(['trline', `na${p.method}: ${(p.amount / 100).toFixed(2)}`, 'vt0', 'pr0', 'il1.000']);
+    }
+
+    frames.push(['trend', 'to0']);
+
+    await this.sendPosnetSequence(frames);
+    logger.info('[PosnetDriver] Z-report printed');
   }
 
   /** Display message on customer display */

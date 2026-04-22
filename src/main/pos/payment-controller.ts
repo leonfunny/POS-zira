@@ -202,8 +202,10 @@ export class PaymentController {
       return { success: false, receiptPrinted: false, error: error || 'Order not found' };
     }
 
-    const receiptPrinted = await this.printReceipt(orderId);
-    const drawerOpened = await this.openCashDrawer();
+    const [receiptPrinted, drawerOpened] = await Promise.all([
+      this.printReceipt(orderId),
+      this.openCashDrawer(),
+    ]);
     return { success: true, receiptPrinted, drawerOpened };
   }
 
