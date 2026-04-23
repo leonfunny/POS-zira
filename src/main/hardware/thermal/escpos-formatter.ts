@@ -150,136 +150,141 @@ export class EscPosFormatter {
    */
   formatReceipt(data: ReceiptData): Buffer {
     const parts: Buffer[] = [];
-
-    // Initialize printer
     parts.push(ESCPOS.INIT);
-
-    // Header
-    parts.push(ESCPOS.ALIGN_CENTER);
 
     // Refund banner
     if (data.isRefund) {
+      parts.push(ESCPOS.ALIGN_CENTER);
       parts.push(ESCPOS.BOLD_ON);
       parts.push(this.text('*** ZWROT / REFUND ***'));
       parts.push(ESCPOS.BOLD_OFF);
-      if (data.originalOrderNumber) {
-        parts.push(this.text(`Original: #${data.originalOrderNumber}`));
-      }
-      if (data.refundReason) {
-        parts.push(this.text(`Reason: ${data.refundReason}`));
-      }
+      if (data.originalOrderNumber) parts.push(this.text(`Oryginal: #${data.originalOrderNumber}`));
+      if (data.refundReason) parts.push(this.text(`Powod: ${data.refundReason}`));
       parts.push(this.text(''));
     }
 
     // Reprint banner
     if (data.isReprint) {
+      parts.push(ESCPOS.ALIGN_CENTER);
       parts.push(ESCPOS.BOLD_ON);
       parts.push(this.text('*** KOPIA / REPRINT ***'));
       parts.push(ESCPOS.BOLD_OFF);
       parts.push(this.text(''));
     }
 
+    // Seller header (centered)
+    parts.push(ESCPOS.ALIGN_CENTER);
     parts.push(ESCPOS.DOUBLE_SIZE_ON);
     parts.push(this.text(data.salonName || 'Zira AI POS'));
     parts.push(ESCPOS.NORMAL_SIZE);
+    if (data.sellerName) parts.push(this.text(data.sellerName));
+    if (data.sellerAddress) parts.push(this.text(data.sellerAddress));
+    if (data.sellerNip) parts.push(this.text(`NIP: ${data.sellerNip}`));
     parts.push(this.text(''));
 
-    // Order number
-    if (data.orderNumber) {
-      parts.push(ESCPOS.BOLD_ON);
-      parts.push(this.text(`Order #${data.orderNumber}`));
-      parts.push(ESCPOS.BOLD_OFF);
-    }
-
-    // Date/Time — use original date for reprints
-    const receiptDate = data.isReprint && data.originalDate
-      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z').toLocaleString()
-      : new Date().toLocaleString();
-    parts.push(this.text(receiptDate));
-    if (data.isReprint) {
-      parts.push(this.text(`Reprinted: ${new Date().toLocaleString()}`));
-    }
+    // Title (centered, bold)
+    parts.push(ESCPOS.BOLD_ON);
+    parts.push(this.text('PARAGON NIEFISKALNY'));
+    parts.push(ESCPOS.BOLD_OFF);
+    if (data.orderNumber) parts.push(this.text(`nr: ${data.orderNumber}`));
+    const origDate = data.isReprint && data.originalDate
+      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z')
+      : new Date();
+    parts.push(this.text(this.formatDatePl(origDate)));
+    if (data.isReprint) parts.push(this.text(`Wydruk powtorny: ${this.formatDatePl(new Date())}`));
     parts.push(this.text(''));
 
-    // Separator
+    // Items (left aligned)
     parts.push(ESCPOS.ALIGN_LEFT);
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
-
-    // Items
     for (const item of data.items) {
       parts.push(this.formatItem(item));
     }
-
-    // Separator
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
 
-    // Subtotal
-    if (data.subtotal) {
-      parts.push(this.formatLine('Subtotal:', this.formatMoney(data.subtotal)));
+    // PTU breakdown
+    const ptu = this.computePtuBreakdown(data.items);
+    let totalVat = 0;
+    for (const row of ptu) {
+      parts.push(this.formatLine(`Sprzedaz opodatkowana ${row.letter}`, this.formatMoney(row.gross)));
+      const rateStr = row.rate >= 0 ? `${String(row.rate).padStart(2, ' ')}%` : 'ZW';
+      parts.push(this.formatLine(`PTU ${row.letter}  ${rateStr}`, this.formatMoney(row.vat)));
+      totalVat += row.vat;
+    }
+    if (ptu.length > 0) {
+      parts.push(this.formatLine('SUMA PTU', this.formatMoney(totalVat)));
     }
 
-    // Discount
-    if (data.discount && data.discount > 0) {
-      parts.push(this.formatLine('Discount:', `-${this.formatMoney(data.discount)}`));
+    // Totals
+    parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
+    if (data.isRefund) {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+      parts.push(this.formatLine('ZWROT PLN', `-${this.formatMoney(data.total)}`));
+      parts.push(ESCPOS.NORMAL_SIZE);
+      parts.push(ESCPOS.BOLD_OFF);
+    } else if (data.discount && data.discount > 0) {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.formatLine('SUMA PLN', this.formatMoney(data.subtotal)));
+      parts.push(ESCPOS.BOLD_OFF);
+      parts.push(this.formatLine('Rabat:', `-${this.formatMoney(data.discount)}`));
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+      parts.push(this.formatLine('DO ZAPLATY PLN', this.formatMoney(data.total)));
+      parts.push(ESCPOS.NORMAL_SIZE);
+      parts.push(ESCPOS.BOLD_OFF);
+    } else {
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+      parts.push(this.formatLine('SUMA PLN', this.formatMoney(data.total)));
+      parts.push(ESCPOS.NORMAL_SIZE);
+      parts.push(ESCPOS.BOLD_OFF);
     }
-
-    // Total
-    parts.push(ESCPOS.BOLD_ON);
-    parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
-    parts.push(this.formatLine('TOTAL:', this.formatMoney(data.total)));
-    parts.push(ESCPOS.NORMAL_SIZE);
-    parts.push(ESCPOS.BOLD_OFF);
-
-    // Separator
     parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
 
-    // Payment — split or single
-    if (data.tenders && data.tenders.length > 1) {
-      parts.push(this.formatLine('Payment:', 'SPLIT'));
+    // Payment section
+    if (data.isRefund) {
+      parts.push(this.formatLine('Zwrot na:', this.paymentMethodPl(data.payment.method)));
+      parts.push(this.formatLine('Kwota zwrotu:', `-${this.formatMoney(data.payment.amount)}`));
+    } else if (data.tenders && data.tenders.length > 1) {
+      parts.push(this.text('ROZLICZENIE PLATNOSCI'));
       for (const tender of data.tenders) {
-        parts.push(this.formatLine(`  ${tender.method}:`, this.formatMoney(tender.amount)));
+        parts.push(this.formatLine(`  ${this.paymentMethodPl(tender.method)}:`, this.formatMoney(tender.amount)));
       }
-      // Change from cash tender
       const cashTender = data.tenders.find(t => t.method.toUpperCase() === 'CASH');
       if (cashTender) {
         const totalNonCash = data.tenders.filter(t => t.method.toUpperCase() !== 'CASH').reduce((s, t) => s + t.amount, 0);
         const cashNeeded = data.total - totalNonCash;
         if (cashTender.amount > cashNeeded && cashNeeded > 0) {
-          parts.push(this.formatLine('Change:', this.formatMoney(cashTender.amount - cashNeeded)));
+          parts.push(this.formatLine('  Reszta:', this.formatMoney(cashTender.amount - cashNeeded)));
         }
       }
     } else {
-      parts.push(this.formatLine('Payment:', data.payment.method));
-      parts.push(this.formatLine('Amount:', this.formatMoney(data.payment.amount)));
-      if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
-        const change = data.payment.amount - data.total;
-        parts.push(this.formatLine('Change:', this.formatMoney(change)));
+      const method = data.payment.method.toUpperCase();
+      if (method === 'CASH') {
+        parts.push(this.formatLine('Gotowka', this.formatMoney(data.total)));
+        if (data.payment.amount > data.total) {
+          parts.push(this.formatLine('Zaplacono:', this.formatMoney(data.payment.amount)));
+          parts.push(this.formatLine('Reszta:', this.formatMoney(data.payment.amount - data.total)));
+        }
+      } else {
+        parts.push(this.formatLine(this.paymentMethodPl(data.payment.method), this.formatMoney(data.total)));
       }
     }
 
-    // Footer
+    // Footer (centered)
     parts.push(this.text(''));
     parts.push(ESCPOS.ALIGN_CENTER);
-
-    // Customer info (if invoice)
     if (data.customerNip) {
-      parts.push(this.text(`NIP: ${data.customerNip}`));
-      if (data.customerName) {
-        parts.push(this.text(data.customerName));
-      }
+      parts.push(this.text(`NIP nabywcy: ${data.customerNip}`));
+      if (data.customerName) parts.push(this.text(data.customerName));
     }
-
-    // Cashier
-    if (data.cashierName) {
-      parts.push(this.text(`Served by: ${data.cashierName}`));
-    }
-
-    // Thank you message
+    if (data.cashierName) parts.push(this.text(`Kasjer: ${data.cashierName}`));
     parts.push(this.text(''));
-    parts.push(this.text('Thank you for your visit!'));
-    parts.push(this.text('See you again!'));
+    parts.push(this.text('Dziekujemy za zakupy!'));
+    parts.push(this.text('Zapraszamy ponownie'));
 
-    // Feed and cut
+    // Feed + cut
     parts.push(ESCPOS.FEED_LINES(4));
     parts.push(this.cutBytes());
 
@@ -287,22 +292,22 @@ export class EscPosFormatter {
   }
 
   /**
-   * Format a single item line
+   * Format a single item line (paragon style: name on first line, qty/price/total
+   * on second line with right-aligned PTU letter).
    */
   private formatItem(item: ReceiptItem): Buffer {
     const parts: Buffer[] = [];
-
-    // Item name
-    const name = this.truncate(item.name, this.charsPerLine - 15);
+    const name = this.truncate(item.name, this.charsPerLine);
     parts.push(this.text(name));
 
-    // Quantity x Price = Total (with unit if available)
-    const unit = item.unit ? ` ${item.unit}` : '';
-    const qty = `${item.quantity}${unit}`;
+    const unit = item.unit || 'szt.';
+    const qty = `${item.quantity} ${unit}`;
     const price = this.formatMoney(item.unitPrice);
     const total = this.formatMoney(item.totalPrice);
+    const letter = this.ptuLetter(item.vatRate);
     const detail = `  ${qty} x ${price} = ${total}`;
-    parts.push(this.text(detail));
+    const padding = this.charsPerLine - detail.length - letter.length;
+    parts.push(this.text(detail + ' '.repeat(Math.max(1, padding)) + letter));
 
     return Buffer.concat(parts);
   }
@@ -355,69 +360,114 @@ export class EscPosFormatter {
     const lr = (left: string, right: string, opts?: Partial<Line>): Line =>
       ({ text: left, rightText: right, ...opts });
 
+    // Refund banner
     if (data.isRefund) {
       lines.push({ text: '*** ZWROT / REFUND ***', bold: true, center: true });
-      if (data.originalOrderNumber) lines.push({ text: `Original: #${data.originalOrderNumber}`, center: true });
-      if (data.refundReason) lines.push({ text: `Reason: ${data.refundReason}`, center: true });
+      if (data.originalOrderNumber) lines.push({ text: `Oryginal: #${data.originalOrderNumber}`, center: true });
+      if (data.refundReason) lines.push({ text: `Powod: ${data.refundReason}`, center: true });
+      lines.push({ text: '' });
     }
+    // Reprint banner
     if (data.isReprint) {
       lines.push({ text: '*** KOPIA / REPRINT ***', bold: true, center: true });
+      lines.push({ text: '' });
     }
+
+    // Seller header
     lines.push({ text: data.salonName || 'Zira AI POS', big: true, center: true });
+    if (data.sellerName) lines.push({ text: data.sellerName, center: true });
+    if (data.sellerAddress) lines.push({ text: data.sellerAddress, center: true });
+    if (data.sellerNip) lines.push({ text: `NIP: ${data.sellerNip}`, center: true });
     lines.push({ text: '' });
-    if (data.orderNumber) lines.push({ text: `Order #${data.orderNumber}`, bold: true, center: true });
-    const receiptDate = data.isReprint && data.originalDate
-      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z').toLocaleString()
-      : new Date().toLocaleString();
-    lines.push({ text: receiptDate, center: true });
-    if (data.isReprint) lines.push({ text: `Reprinted: ${new Date().toLocaleString()}`, center: true });
+
+    // Title
+    lines.push({ text: 'PARAGON NIEFISKALNY', bold: true, center: true });
+    if (data.orderNumber) lines.push({ text: `nr: ${data.orderNumber}`, center: true });
+    const origDate = data.isReprint && data.originalDate
+      ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z')
+      : new Date();
+    lines.push({ text: this.formatDatePl(origDate), center: true });
+    if (data.isReprint) lines.push({ text: `Wydruk powtorny: ${this.formatDatePl(new Date())}`, center: true });
     lines.push({ text: '' });
+
+    // Items
+    lines.push({ separator: true, text: '' });
+    for (const item of data.items) {
+      const name = this.truncate(item.name, this.charsPerLine);
+      lines.push({ text: name });
+      const unit = item.unit || 'szt.';
+      const qty = `${item.quantity} ${unit}`;
+      const detail = `  ${qty} x ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}`;
+      lines.push(lr(detail, this.ptuLetter(item.vatRate)));
+    }
     lines.push({ separator: true, text: '' });
 
-    for (const item of data.items) {
-      const name = this.truncate(item.name, 40);
-      lines.push({ text: name });
-      const unit = item.unit ? ` ${item.unit}` : '';
-      const qty = `${item.quantity}${unit}`;
-      lines.push({ text: `  ${qty} x ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}` });
+    // PTU breakdown
+    const ptu = this.computePtuBreakdown(data.items);
+    let totalVat = 0;
+    for (const row of ptu) {
+      lines.push(lr(`Sprzedaz opodatkowana ${row.letter}`, this.formatMoney(row.gross)));
+      const rateStr = row.rate >= 0 ? `${String(row.rate).padStart(2, ' ')}%` : 'ZW';
+      lines.push(lr(`PTU ${row.letter}  ${rateStr}`, this.formatMoney(row.vat)));
+      totalVat += row.vat;
+    }
+    if (ptu.length > 0) {
+      lines.push(lr('SUMA PTU', this.formatMoney(totalVat)));
     }
 
+    // Totals
     lines.push({ separator: true, text: '' });
-    if (data.subtotal) lines.push(lr('Subtotal:', this.formatMoney(data.subtotal)));
-    if (data.discount && data.discount > 0) lines.push(lr('Discount:', `-${this.formatMoney(data.discount)}`));
-    lines.push(lr('TOTAL:', this.formatMoney(data.total), { bold: true, big: true }));
+    if (data.isRefund) {
+      lines.push(lr('ZWROT PLN', `-${this.formatMoney(data.total)}`, { bold: true, big: true }));
+    } else if (data.discount && data.discount > 0) {
+      lines.push(lr('SUMA PLN', this.formatMoney(data.subtotal), { bold: true }));
+      lines.push(lr('Rabat:', `-${this.formatMoney(data.discount)}`));
+      lines.push(lr('DO ZAPLATY PLN', this.formatMoney(data.total), { bold: true, big: true }));
+    } else {
+      lines.push(lr('SUMA PLN', this.formatMoney(data.total), { bold: true, big: true }));
+    }
     lines.push({ separator: true, text: '' });
 
-    if (data.tenders && data.tenders.length > 1) {
-      lines.push(lr('Payment:', 'SPLIT'));
+    // Payment
+    if (data.isRefund) {
+      lines.push(lr('Zwrot na:', this.paymentMethodPl(data.payment.method)));
+      lines.push(lr('Kwota zwrotu:', `-${this.formatMoney(data.payment.amount)}`));
+    } else if (data.tenders && data.tenders.length > 1) {
+      lines.push({ text: 'ROZLICZENIE PLATNOSCI' });
       for (const tender of data.tenders) {
-        lines.push(lr(`  ${tender.method}:`, this.formatMoney(tender.amount)));
+        lines.push(lr(`  ${this.paymentMethodPl(tender.method)}:`, this.formatMoney(tender.amount)));
       }
       const cashTender = data.tenders.find(t => t.method.toUpperCase() === 'CASH');
       if (cashTender) {
         const totalNonCash = data.tenders.filter(t => t.method.toUpperCase() !== 'CASH').reduce((s, t) => s + t.amount, 0);
         const cashNeeded = data.total - totalNonCash;
         if (cashTender.amount > cashNeeded && cashNeeded > 0) {
-          lines.push(lr('Change:', this.formatMoney(cashTender.amount - cashNeeded)));
+          lines.push(lr('  Reszta:', this.formatMoney(cashTender.amount - cashNeeded)));
         }
       }
     } else {
-      lines.push(lr('Payment:', data.payment.method));
-      lines.push(lr('Amount:', this.formatMoney(data.payment.amount)));
-      if (data.payment.method.toUpperCase() === 'CASH' && data.payment.amount > data.total) {
-        lines.push(lr('Change:', this.formatMoney(data.payment.amount - data.total)));
+      const method = data.payment.method.toUpperCase();
+      if (method === 'CASH') {
+        lines.push(lr('Gotowka', this.formatMoney(data.total)));
+        if (data.payment.amount > data.total) {
+          lines.push(lr('Zaplacono:', this.formatMoney(data.payment.amount)));
+          lines.push(lr('Reszta:', this.formatMoney(data.payment.amount - data.total)));
+        }
+      } else {
+        lines.push(lr(this.paymentMethodPl(data.payment.method), this.formatMoney(data.total)));
       }
     }
 
+    // Footer
     lines.push({ text: '' });
     if (data.customerNip) {
-      lines.push({ text: `NIP: ${data.customerNip}`, center: true });
+      lines.push({ text: `NIP nabywcy: ${data.customerNip}`, center: true });
       if (data.customerName) lines.push({ text: data.customerName, center: true });
     }
-    if (data.cashierName) lines.push({ text: `Served by: ${data.cashierName}`, center: true });
+    if (data.cashierName) lines.push({ text: `Kasjer: ${data.cashierName}`, center: true });
     lines.push({ text: '' });
-    lines.push({ text: 'Thank you for your visit!', center: true });
-    lines.push({ text: 'See you again!', center: true });
+    lines.push({ text: 'Dziekujemy za zakupy!', center: true });
+    lines.push({ text: 'Zapraszamy ponownie', center: true });
 
     return lines;
   }
@@ -447,11 +497,57 @@ export class EscPosFormatter {
   }
 
   /**
-   * Format money value (grosze to zł)
+   * Format money value (grosze → złote) in Polish paragon style: comma decimal,
+   * no currency suffix (currency is in labels like "SUMA PLN"). Negative amounts
+   * get a leading minus.
    */
   private formatMoney(grosze: number): string {
-    const zl = grosze / 100;
-    return zl.toFixed(2) + ' zl';
+    const abs = Math.abs(grosze);
+    const zl = (abs / 100).toFixed(2).replace('.', ',');
+    return grosze < 0 ? `-${zl}` : zl;
+  }
+
+  private static readonly PTU_MAP: Record<number, string> = {
+    23: 'A', 8: 'B', 5: 'C', 0: 'D',
+  };
+
+  private ptuLetter(vatRate: number): string {
+    if (vatRate < 0) return 'E';   // ZW (exempt)
+    return EscPosFormatter.PTU_MAP[vatRate] || 'A';
+  }
+
+  private paymentMethodPl(method: string): string {
+    const names: Record<string, string> = {
+      CASH: 'Gotowka', CARD: 'Karta', BLIK: 'BLIK',
+      TRANSFER: 'Przelew', BANK_TRANSFER: 'Przelew', P24: 'Przelewy24', INVOICE: 'Faktura',
+    };
+    return names[method.toUpperCase()] || method;
+  }
+
+  private formatDatePl(date?: Date): string {
+    const d = date || new Date();
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}.${mm}.${yyyy}  ${hh}:${min}`;
+  }
+
+  private computePtuBreakdown(items: ReceiptItem[]): Array<{letter: string; rate: number; gross: number; net: number; vat: number}> {
+    const map = new Map<number, number>();
+    for (const item of items) {
+      const rate = item.vatRate ?? 23;
+      map.set(rate, (map.get(rate) || 0) + Math.abs(item.totalPrice));
+    }
+    const result: Array<{letter: string; rate: number; gross: number; net: number; vat: number}> = [];
+    for (const [rate, gross] of map) {
+      const net = rate > 0 ? Math.round(gross * 100 / (100 + rate)) : gross;
+      const vat = gross - net;
+      result.push({ letter: this.ptuLetter(rate), rate, gross, net, vat });
+    }
+    result.sort((a, b) => a.letter.localeCompare(b.letter));
+    return result;
   }
 
   /**
@@ -540,6 +636,10 @@ export class EscPosFormatter {
       parts.push(this.formatLine('Rabaty:', `-${this.formatMoney(reportData.discounts)}`));
     }
 
+    if (reportData.refunds && reportData.refunds > 0) {
+      parts.push(this.formatLine('Zwroty:', `-${this.formatMoney(reportData.refunds)}`));
+    }
+
     parts.push(this.formatLine('Sprzedaz netto:', this.formatMoney(reportData.netSales)));
 
     // VAT Summary
@@ -617,6 +717,9 @@ export class EscPosFormatter {
     parts.push(this.formatLine('Transakcje:', reportData.transactionCount.toString()));
     parts.push(this.formatLine('Sprzedaz:', this.formatMoney(reportData.grossSales)));
     parts.push(this.formatLine('Rabaty:', this.formatMoney(reportData.discounts)));
+    if (reportData.refunds && reportData.refunds > 0) {
+      parts.push(this.formatLine('Zwroty:', this.formatMoney(reportData.refunds)));
+    }
     parts.push(this.formatLine('Netto:', this.formatMoney(reportData.netSales)));
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
 
@@ -643,9 +746,6 @@ export class EscPosFormatter {
     parts.push(this.text('(Raport dobowy fiskalny)'));
     parts.push(this.text(''));
 
-    // This is the same as daily report but marked as Z report
-    const dailyReport = this.formatDailyReport(reportData);
-
     // Remove the header part and add Z report header
     parts.push(ESCPOS.ALIGN_LEFT);
     parts.push(this.text(`Nr raportu: ${reportData.reportNumber || 'N/A'}`));
@@ -655,6 +755,9 @@ export class EscPosFormatter {
     parts.push(this.formatLine('Transakcje:', reportData.transactionCount.toString()));
     parts.push(this.formatLine('Sprzedaz brutto:', this.formatMoney(reportData.grossSales)));
     parts.push(this.formatLine('Rabaty:', this.formatMoney(reportData.discounts)));
+    if (reportData.refunds && reportData.refunds > 0) {
+      parts.push(this.formatLine('Zwroty:', `-${this.formatMoney(reportData.refunds)}`));
+    }
     parts.push(ESCPOS.BOLD_ON);
     parts.push(this.formatLine('SUMA NETTO:', this.formatMoney(reportData.netSales)));
     parts.push(ESCPOS.BOLD_OFF);
@@ -688,6 +791,7 @@ export interface DailyReportData {
   transactionCount: number;
   grossSales: number;      // In grosze
   discounts: number;       // In grosze
+  refunds?: number;        // In grosze
   netSales: number;        // In grosze
   vatSummary?: Array<{
     rate: number;          // VAT rate (23, 8, 5, 0)

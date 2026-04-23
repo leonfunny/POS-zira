@@ -177,6 +177,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
+  const [receiptSellerName, setReceiptSellerName] = useState(config?.receiptSellerName || '');
+  const [receiptSellerAddress, setReceiptSellerAddress] = useState(config?.receiptSellerAddress || '');
+  const [receiptSellerNip, setReceiptSellerNip] = useState(config?.receiptSellerNip || '');
   const [customerDisplayEnabled, setCustomerDisplayEnabled] = useState(config?.customerDisplayEnabled ?? false);
   const [customerDisplayProfile, setCustomerDisplayProfile] = useState<LiveCustomerDisplayProfile>(
     resolveCustomerDisplayProfile(config),
@@ -243,6 +246,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posEnabled,
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
+    receiptSellerName,
+    receiptSellerAddress,
+    receiptSellerNip,
     customerDisplayEnabled,
     customerDisplayProfile,
     customerDisplayMonitor,
@@ -254,6 +260,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   }), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage,
+    receiptSellerName, receiptSellerAddress, receiptSellerNip,
     customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
     promoFolder, promoInterval, idleTimeout,
   ]);
@@ -376,6 +383,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosEnabled(config.posEnabled ?? false);
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
+      setReceiptSellerName(config.receiptSellerName || '');
+      setReceiptSellerAddress(config.receiptSellerAddress || '');
+      setReceiptSellerNip(config.receiptSellerNip || '');
       setCustomerDisplayEnabled(config.customerDisplayEnabled ?? false);
       const nextProfile = resolveCustomerDisplayProfile(config);
       customerDisplayProfileRef.current = nextProfile;
@@ -1967,6 +1977,65 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 ))}
               </select>
               <p className="text-xs text-slate-500 mt-1">{t('settings.posLanguageDesc')}</p>
+            </div>
+
+            {/* Receipt / Paragon Settings */}
+            <div className="border-t border-slate-200 pt-4 mt-4">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">
+                {t('settings.receiptHeader')}
+              </h3>
+              <p className="text-xs text-slate-500 mb-3">
+                {t('settings.receiptHeaderDesc')}
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">
+                    {t('settings.receiptSellerName')}
+                  </label>
+                  <input
+                    type="text"
+                    value={receiptSellerName}
+                    onChange={(e) => setReceiptSellerName(e.target.value)}
+                    placeholder="P.T.H. BAKS Sławomir Chądzyński"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">
+                    {t('settings.receiptSellerAddress')}
+                  </label>
+                  <input
+                    type="text"
+                    value={receiptSellerAddress}
+                    onChange={(e) => setReceiptSellerAddress(e.target.value)}
+                    placeholder="ul. Łączności 35, 32-020 Wieliczka"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">
+                    {t('settings.receiptSellerNip')}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={receiptSellerNip}
+                    onChange={(e) => setReceiptSellerNip(e.target.value)}
+                    placeholder="522-005-23-49"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                  />
+                </div>
+                {(!receiptSellerName || !receiptSellerNip) && (
+                  <div className="flex items-start gap-2 p-2 bg-amber-50 rounded-lg border border-amber-200">
+                    <svg className="w-4 h-4 mt-0.5 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    <p className="text-xs text-amber-700">
+                      {t('settings.receiptSellerWarning')}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Customer Display */}
