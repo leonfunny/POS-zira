@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { translations } from '../../i18n/translations';
 
 interface OrderRow {
   id: string;
@@ -267,7 +268,7 @@ function RefundPanel({
     try {
       const reasonText = reason === 'other' && customReason.trim()
         ? customReason.trim()
-        : tOr(t, `pos.refund.${reason}`, reason);
+        : translations.pl[`pos.refund.${reason}`] || tOr(t, `pos.refund.${reason}`, reason);
       let refundItems = selectedRefundLines as any[];
       if (refundType === 'FULL') {
         refundItems = refundableItems.map(item => ({
@@ -819,7 +820,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             <div className="grid grid-cols-4 gap-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Total</div>
-                <div className="mt-2 text-2xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.total, currency)}</div>
+                <div className={`mt-2 text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-slate-950'}`}>{formatMoney(order.total - (order.refund_amount ?? 0), currency)}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Paid</div>
@@ -924,7 +925,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-3">
                 <span className="text-base font-extrabold text-slate-950">{tOr(t, 'pos.cart.total', 'Total')}</span>
-                <span className="text-2xl font-extrabold tabular-nums text-brand-700">{formatMoney(order.total, currency)}</span>
+                <span className={`text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-brand-700'}`}>{formatMoney(order.total - (order.refund_amount ?? 0), currency)}</span>
               </div>
             </section>
           </main>
