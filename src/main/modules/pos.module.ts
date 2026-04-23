@@ -66,6 +66,9 @@ export class PosModule extends BaseModule {
       getPrinterForType,
       isConnected,
       () => getConfig().salonName,
+      () => getConfig().receiptSellerName,
+      () => getConfig().receiptSellerAddress,
+      () => getConfig().receiptSellerNip,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,
@@ -520,6 +523,15 @@ export class PosModule extends BaseModule {
         if (!order) return { success: false, error: 'Order not found' };
         if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
         if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
+        if (order.status === 'PARTIAL_REFUND') {
+          const alreadyRefunded = order.refund_amount ?? 0;
+          const requestedAmount = data.type === 'FULL'
+            ? order.total - alreadyRefunded
+            : (data.lines ?? []).reduce((s, l) => s + l.refundAmount, 0);
+          if (alreadyRefunded + requestedAmount > order.total) {
+            return { success: false, error: `Refund would exceed order total (${order.total} grosze). Already refunded: ${alreadyRefunded}` };
+          }
+        }
 
         const activeShift = database.get<{ id: string }>(
           'SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
@@ -563,11 +575,25 @@ export class PosModule extends BaseModule {
             ? Math.round(result.refundAmount * 100)
             : data.type === 'FULL' ? order.total : lines.reduce((s, l) => s + Math.round(l.refundAmount * 100), 0);
         const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
-        orderRepo.markRefunded(orderId, refundedAmount, data.reason || '', status);
+        const localRefundLines = (data.lines ?? []).map(l => ({
+          name: l.name || '',
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          refundAmount: l.refundAmount,
+          vatRate: 0,
+          sku: l.sku || undefined,
+        }));
+        const orderItems = orderRepo.getItemsByOrderId(orderId);
+        for (const rl of localRefundLines) {
+          const match = orderItems.find(oi => oi.variant_id === (data.lines ?? []).find(dl => dl.name === rl.name)?.variantId || oi.name === rl.name);
+          if (match) rl.vatRate = match.vat_rate;
+        }
+        orderRepo.markRefunded(orderId, refundedAmount, data.reason || '', status, localRefundLines.length > 0 ? localRefundLines : undefined);
         database.save();
 
         // Print refund receipt
-        try { await this.paymentController?.printRefundReceipt(orderId); } catch (e: any) {
+        let receiptPrinted = false;
+        try { receiptPrinted = await this.paymentController?.printRefundReceipt(orderId) ?? false; } catch (e: any) {
           logger.warn(`[PosModule] Refund receipt print failed: ${e.message}`);
         }
 
@@ -585,7 +611,7 @@ export class PosModule extends BaseModule {
 
         logger.info(`[PosModule] Order ${order.order_number} refunded: ${data.type}, backend status=${result.status}`);
         const { success: _s, ...rest } = result;
-        return { success: true, ...rest };
+        return { success: true, receiptPrinted, ...rest };
       } catch (e: any) {
         logger.error(`[PosModule] Refund failed for order ${orderId}: ${e.message}`);
         return { success: false, error: e.message };

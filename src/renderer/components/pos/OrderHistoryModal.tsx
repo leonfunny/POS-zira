@@ -206,6 +206,7 @@ function RefundPanel({
   const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
   const [restock, setRestock] = useState(true);
   const [reason, setReason] = useState('customerRequest');
+  const [customReason, setCustomReason] = useState('');
   const [confirmStep, setConfirmStep] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -233,9 +234,10 @@ function RefundPanel({
     ? order.total - alreadyRefunded
     : selectedRefundLines.reduce((sum, l) => sum + l.refundAmount, 0);
 
-  const isValid = refundType === 'FULL'
+  const isValid = (refundType === 'FULL'
     ? (order.total - alreadyRefunded) > 0
-    : selectedRefundLines.length > 0 && computedRefundTotal > 0;
+    : selectedRefundLines.length > 0 && computedRefundTotal > 0)
+    && (reason !== 'other' || customReason.trim().length > 0);
 
   const setType = (next: 'FULL' | 'PARTIAL') => {
     setRefundType(next);
@@ -263,7 +265,9 @@ function RefundPanel({
     setLoading(true);
     setError(null);
     try {
-      const reasonText = tOr(t, `pos.refund.${reason}`, reason);
+      const reasonText = reason === 'other' && customReason.trim()
+        ? customReason.trim()
+        : tOr(t, `pos.refund.${reason}`, reason);
       let refundItems = selectedRefundLines as any[];
       if (refundType === 'FULL') {
         refundItems = refundableItems.map(item => ({
@@ -382,13 +386,28 @@ function RefundPanel({
           {tOr(t, 'pos.refund.reason', 'Reason')}
         </label>
         <select id="refund-reason" value={reason}
-          onChange={(e) => { setReason(e.target.value); setConfirmStep(false); setError(null); }}
+          onChange={(e) => { setReason(e.target.value); setCustomReason(''); setConfirmStep(false); setError(null); }}
           className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
           {REFUND_REASONS.map((r) => (
             <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
           ))}
         </select>
       </div>
+
+      {reason === 'other' && (
+        <div className="mt-3">
+          <textarea
+            value={customReason}
+            onChange={(e) => { setCustomReason(e.target.value); setConfirmStep(false); setError(null); }}
+            placeholder={tOr(t, 'pos.refund.otherPlaceholder', 'Describe the reason...')}
+            maxLength={200}
+            className="min-h-[80px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          />
+          <div className="mt-1 text-right text-xs font-medium text-slate-400">
+            {customReason.length}/200
+          </div>
+        </div>
+      )}
 
       {confirmStep && (
         <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">

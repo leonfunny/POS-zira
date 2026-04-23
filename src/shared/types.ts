@@ -98,6 +98,7 @@ export interface DailyReportData {
   transactionCount: number;
   grossSales: number;      // In grosze/cents
   discounts: number;       // In grosze/cents
+  refunds?: number;        // In grosze/cents
   netSales: number;        // In grosze/cents
   vatSummary?: Array<{
     rate: number;          // VAT rate (23, 8, 5, 0)
@@ -299,6 +300,10 @@ export interface AgentConfig {
   // POS settings
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
+  // Receipt seller info (Polish paragon compliance)
+  receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
+  receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
+  receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
@@ -373,6 +378,9 @@ export interface ReceiptPayment {
 export interface ReceiptData {
   orderNumber?: string;
   salonName?: string;
+  sellerName?: string;      // Legal entity name (paragon header)
+  sellerAddress?: string;   // Business address (paragon header)
+  sellerNip?: string;       // Seller NIP (paragon header)
   items: ReceiptItem[];
   payment: ReceiptPayment;
   subtotal: number;

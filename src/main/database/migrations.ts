@@ -885,4 +885,11 @@ export const migrations: Migration[] = [
       ALTER TABLE orders ADD COLUMN payment_tenders TEXT;
     `,
   },
+  {
+    version: 21,
+    name: 'order_refund_lines',
+    up: `
+      ALTER TABLE orders ADD COLUMN refund_lines TEXT;
+    `,
+  },
 ];

@@ -37,6 +37,7 @@ export interface OrderRow {
   refund_amount: number | null;
   refund_reason: string | null;
   refunded_at: string | null;
+  refund_lines: string | null;
 }
 
 export interface OrderItemRow {
@@ -147,11 +148,11 @@ export const orderRepo = {
   /**
    * Mark an order as refunded (full or partial).
    */
-  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL'): void {
+  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}>): void {
     const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
     database.run(
-      "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now') WHERE id = ?",
-      [status, amount, reason, id],
+      "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now'), refund_lines = ? WHERE id = ?",
+      [status, amount, reason, refundLines ? JSON.stringify(refundLines) : null, id],
     );
   },
 

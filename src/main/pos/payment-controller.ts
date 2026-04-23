@@ -23,6 +23,9 @@ export class PaymentController {
     private getPrinter: GetPrinter,
     private isOnline: () => boolean,
     private getSalonName?: () => string | undefined,
+    private getSellerName?: () => string | undefined,
+    private getSellerAddress?: () => string | undefined,
+    private getSellerNip?: () => string | undefined,
   ) {}
 
   /**
@@ -78,6 +81,9 @@ export class PaymentController {
     const receiptData: ReceiptData = {
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
+      sellerName: this.getSellerName?.(),
+      sellerAddress: this.getSellerAddress?.(),
+      sellerNip: this.getSellerNip?.(),
       items: items.map((i) => {
         // Look up sale_unit from product catalog
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
@@ -135,6 +141,9 @@ export class PaymentController {
     const receiptData: ReceiptData = {
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
+      sellerName: this.getSellerName?.(),
+      sellerAddress: this.getSellerAddress?.(),
+      sellerNip: this.getSellerNip?.(),
       items: items.map((i) => {
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
@@ -224,7 +233,8 @@ export class PaymentController {
   }
 
   /**
-   * Print a refund receipt — shows "ZWROT / REFUND" banner with negative amounts.
+   * Print a refund receipt — shows "ZWROT / REFUND" banner.
+   * Uses stored refund_lines for accurate per-item data; falls back to all items for older orders.
    */
   async printRefundReceipt(orderId: string): Promise<boolean> {
     const order = orderRepo.getById(orderId);
@@ -233,39 +243,62 @@ export class PaymentController {
       return false;
     }
 
-    const items = orderRepo.getItemsByOrderId(orderId);
     const printer = this.getPrinter(PrinterType.RECEIPT);
-
     if (!printer || !printer.isConnected()) {
       logger.warn('[Payment] No receipt printer connected, cannot print refund receipt');
       return false;
     }
 
     const refundAmount = order.refund_amount ?? order.total;
-    const isFullRefund = refundAmount >= order.total;
 
-    const receiptData: ReceiptData = {
-      orderNumber: `R-${order.order_number || orderId.substring(0, 8)}`,
-      salonName: this.getSalonName?.(),
-      items: items.map((i) => {
+    let receiptItems: ReceiptData['items'];
+    let refundSubtotal: number;
+
+    let storedLines: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}> | null = null;
+    if (order.refund_lines) {
+      try { storedLines = JSON.parse(order.refund_lines); } catch {}
+    }
+
+    if (storedLines && storedLines.length > 0) {
+      receiptItems = storedLines.map(l => ({
+        name: l.name,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        totalPrice: l.refundAmount,
+        vatRate: l.vatRate ?? 23,
+        sku: l.sku || undefined,
+      }));
+      refundSubtotal = storedLines.reduce((s, l) => s + l.refundAmount, 0);
+    } else {
+      const items = orderRepo.getItemsByOrderId(orderId);
+      receiptItems = items.map(i => {
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
           name: i.name,
-          quantity: isFullRefund ? -i.quantity : i.quantity,
+          quantity: i.quantity,
           unitPrice: i.price,
-          totalPrice: isFullRefund ? -i.total : i.total,
+          totalPrice: i.total,
           vatRate: i.vat_rate,
           sku: i.sku || undefined,
           unit: product?.sale_unit || undefined,
         };
-      }),
+      });
+      refundSubtotal = refundAmount;
+    }
+
+    const receiptData: ReceiptData = {
+      orderNumber: `R-${order.order_number || orderId.substring(0, 8)}`,
+      salonName: this.getSalonName?.(),
+      sellerName: this.getSellerName?.(),
+      sellerAddress: this.getSellerAddress?.(),
+      sellerNip: this.getSellerNip?.(),
+      items: receiptItems,
       payment: {
         method: order.payment_method || 'CASH',
-        amount: -refundAmount,
+        amount: refundAmount,
       },
-      subtotal: isFullRefund ? -order.subtotal : order.subtotal,
-      discount: order.discount > 0 ? order.discount : undefined,
-      total: -refundAmount,
+      subtotal: refundSubtotal,
+      total: refundAmount,
       cashierName: order.staff_name || undefined,
       isRefund: true,
       refundReason: order.refund_reason || undefined,
