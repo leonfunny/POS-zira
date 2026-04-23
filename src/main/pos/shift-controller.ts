@@ -19,6 +19,7 @@ export interface ShiftReport {
   blikTotal: number;
   transferTotal: number;
   totalRefunds: number;
+  totalDiscounts: number;
   difference: number; // closingCash - (openingCash + cashTotal)
   unsyncedOrders: number;
 }
@@ -96,10 +97,36 @@ export class ShiftController {
       else if (o.payment_method === 'TRANSFER') transferTotal += o.total;
     }
 
+    const totalDiscounts = orders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
+
     let totalRefunds = 0;
     for (const o of orders) {
       if (o.refund_amount && o.refund_amount > 0) {
         totalRefunds += o.refund_amount;
+
+        const tendersJson = o.payment_tenders;
+        if (tendersJson) {
+          try {
+            const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
+            const orderTotal = tenders.reduce((s, t) => s + t.amount, 0);
+            if (orderTotal > 0) {
+              let distributed = 0;
+              for (let i = 0; i < tenders.length; i++) {
+                const isLast = i === tenders.length - 1;
+                const share = isLast
+                  ? o.refund_amount - distributed
+                  : Math.round(o.refund_amount * (tenders[i].amount / orderTotal));
+                distributed += share;
+                if (tenders[i].method === 'CASH') cashTotal -= share;
+                else if (tenders[i].method === 'CARD') cardTotal -= share;
+                else if (tenders[i].method === 'BLIK') blikTotal -= share;
+                else if (tenders[i].method === 'TRANSFER') transferTotal -= share;
+              }
+              continue;
+            }
+          } catch { /* fall through to single method */ }
+        }
+
         if (o.payment_method === 'CASH') cashTotal -= o.refund_amount;
         else if (o.payment_method === 'CARD') cardTotal -= o.refund_amount;
         else if (o.payment_method === 'BLIK') blikTotal -= o.refund_amount;
@@ -107,7 +134,7 @@ export class ShiftController {
       }
     }
 
-    const totalSales = grossSales - totalRefunds;
+    const totalSales = grossSales - totalRefunds - totalDiscounts;
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
     database.run(
@@ -130,6 +157,7 @@ export class ShiftController {
       blikTotal,
       transferTotal,
       totalRefunds,
+      totalDiscounts,
       difference,
       unsyncedOrders,
     };
@@ -157,8 +185,9 @@ export class ShiftController {
     const reportData: DailyReportData = {
       date: report.closedAt.split('T')[0],
       transactionCount: report.totalOrders,
-      grossSales: report.totalSales,
-      discounts: report.totalRefunds,
+      grossSales: report.totalSales + report.totalRefunds + report.totalDiscounts,
+      discounts: report.totalDiscounts,
+      refunds: report.totalRefunds,
       netSales: report.totalSales,
       paymentSummary: [
         { method: 'CASH', amount: report.cashTotal },
