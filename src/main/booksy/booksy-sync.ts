@@ -64,6 +64,7 @@ export class BooksySync extends EventEmitter {
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
   private chromeConnected = false;
+  private _capturePromise: Promise<string> | null = null;
 
   constructor(config: BooksySyncConfig) {
     super();
@@ -127,6 +128,16 @@ export class BooksySync extends EventEmitter {
    */
   getToken(): string | null {
     return this.lastToken;
+  }
+
+  setToken(token: string | null): void {
+    this.lastToken = token;
+  }
+
+  private getBusinessId(): string {
+    const id = this.config.businessId;
+    if (!id) throw new Error('Business ID not configured');
+    return id;
   }
 
   /**
@@ -241,6 +252,16 @@ export class BooksySync extends EventEmitter {
   // ============ TOKEN CAPTURE ============
 
   private async captureTokenFromChrome(): Promise<string> {
+    if (this._capturePromise) return this._capturePromise;
+    this._capturePromise = this._doCaptureToken();
+    try {
+      return await this._capturePromise;
+    } finally {
+      this._capturePromise = null;
+    }
+  }
+
+  private async _doCaptureToken(): Promise<string> {
     let chromium: any;
     try {
       chromium = (await import('rebrowser-playwright-core')).chromium;
@@ -259,29 +280,13 @@ export class BooksySync extends EventEmitter {
     }
 
     let targetPage: any = null;
-    let openedNewTab = false;
 
     try {
       let capturedToken: string | null = null;
       const contexts = browser.contexts();
 
-      // Find existing Booksy tab
-      for (const ctx of contexts) {
-        for (const page of ctx.pages()) {
-          if (page.url().includes('booksy.com')) {
-            targetPage = page;
-            break;
-          }
-        }
-        if (targetPage) break;
-      }
-
-      // Open new tab if no Booksy tab found
-      if (!targetPage && contexts.length > 0) {
-        targetPage = await contexts[0].newPage();
-        openedNewTab = true;
-      }
-      if (!targetPage) throw new Error('No browser context');
+      if (contexts.length === 0) throw new Error('No browser context');
+      targetPage = await contexts[0].newPage();
 
       // Intercept API responses to capture token
       const tokenPromise = new Promise<string | null>((resolve) => {
@@ -310,7 +315,7 @@ export class BooksySync extends EventEmitter {
 
       // Navigate to calendar
       const today = new Date().toISOString().split('T')[0];
-      const businessId = this.config.businessId || '304504';
+      const businessId = this.getBusinessId();
       await targetPage.goto(
         `https://booksy.com/pro/en-pl/${businessId}/calendar?date=${today}&view=day&staffers=working`,
         { waitUntil: 'networkidle', timeout: 30000 },
@@ -335,17 +340,17 @@ export class BooksySync extends EventEmitter {
       return capturedToken;
     } finally {
       // Close the tab we opened to avoid leaking Chrome tabs
-      if (openedNewTab && targetPage) {
+      if (targetPage) {
         try { await targetPage.close(); } catch { /* ignore */ }
       }
-      browser.disconnect();
+      try { await browser.close(); } catch { /* ignore */ }
     }
   }
 
   // ============ BOOKSY API ============
 
   private fetchCalendar(token: string, date: string): Promise<any> {
-    const businessId = this.config.businessId || '304504';
+    const businessId = this.getBusinessId();
     return new Promise((resolve, reject) => {
       const url = `https://pl.booksy.com/core/v2/business_api/me/businesses/${businessId}/calendar?start_date=${date}&end_date=${date}&include_unconfirmed=true&version=3&resources_per_page=50`;
 
@@ -687,7 +692,7 @@ export class BooksySync extends EventEmitter {
   }
 
   private fetchCustomerPage(token: string, page: number, perPage: number): Promise<any> {
-    const businessId = this.config.businessId || '304504';
+    const businessId = this.getBusinessId();
     return new Promise((resolve, reject) => {
       const url = `https://pl.booksy.com/core/v2/business_api/me/businesses/${businessId}/customers?page=${page}&per_page=${perPage}&compact=true`;
 
@@ -835,7 +840,7 @@ export class BooksySync extends EventEmitter {
   }
 
   private fetchResources(token: string): Promise<any[]> {
-    const businessId = this.config.businessId || '304504';
+    const businessId = this.getBusinessId();
     return new Promise((resolve, reject) => {
       const url = `https://pl.booksy.com/core/v2/business_api/me/businesses/${businessId}/resources`;
 
@@ -1075,7 +1080,7 @@ export class BooksySync extends EventEmitter {
   }
 
   private fetchServiceCategories(token: string): Promise<BooksyServiceCategory[]> {
-    const businessId = this.config.businessId || '304504';
+    const businessId = this.getBusinessId();
     return new Promise((resolve, reject) => {
       const url = `https://pl.booksy.com/core/v2/business_api/me/businesses/${businessId}/service_categories?with_combos=true`;
 
@@ -1230,7 +1235,7 @@ export class BooksySync extends EventEmitter {
   }
 
   private fetchAddons(token: string): Promise<BooksyAddon[]> {
-    const businessId = this.config.businessId || '304504';
+    const businessId = this.getBusinessId();
     return new Promise((resolve, reject) => {
       const url = `https://pl.booksy.com/core/v2/business_api/me/businesses/${businessId}/addons`;
 
@@ -1267,6 +1272,8 @@ export class BooksySync extends EventEmitter {
             } catch {
               reject(new Error('Invalid JSON response'));
             }
+          } else if (res.statusCode === 404) {
+            resolve([]);
           } else if (res.statusCode === 401 || res.statusCode === 403) {
             reject(new Error('TOKEN_EXPIRED'));
           } else {
@@ -1328,10 +1335,15 @@ export class BooksySync extends EventEmitter {
    */
   async syncAllNow(): Promise<BooksySyncAllReport> {
     logger.info('[Booksy] Sync All starting...');
+    const delay = () => new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 3000)));
     const staffReport = await this.syncStaffNow();
+    await delay();
     const customerReport = await this.syncCustomersNow();
+    await delay();
     const resourceReport = await this.syncResourcesNow();
+    await delay();
     const servicesReport = await this.syncServicesNow();
+    await delay();
     const addonsReport = await this.syncAddonsNow();
     logger.info('[Booksy] Sync All completed');
     return { staff: staffReport, customers: customerReport, resources: resourceReport, services: servicesReport, addons: addonsReport };

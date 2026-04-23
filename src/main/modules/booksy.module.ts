@@ -49,8 +49,7 @@ export class BooksyModule extends BaseModule {
     }
 
     if (!jwt) {
-      logger.warn('[BooksyModule] No JWT configured');
-      return;
+      logger.info('[BooksyModule] No eNail JWT — Booksy fetch will work, push to eNail will skip');
     }
 
     this.booksySync = new BooksySync({ ...booksyConfig, enailJwt: jwt });
@@ -65,12 +64,21 @@ export class BooksyModule extends BaseModule {
   }
 
   private restartBooksySync(): void {
-    if (this.booksySync) { this.booksySync.stop(); }
+    const cachedToken = this.booksySync?.getToken() || null;
+    if (this.booksySync) {
+      if (this.booksySync.getStatus().running) {
+        logger.info('[BooksyModule] Sync in progress, stopping for restart...');
+      }
+      this.booksySync.stop();
+    }
     this.booksySync = null;
     this.initializeBooksySync();
     // TS can't track that initializeBooksySync() may have set this.booksySync
     const sync: BooksySync | null = this.booksySync as unknown as BooksySync | null;
-    if (sync) sync.start();
+    if (sync) {
+      if (cachedToken) sync.setToken(cachedToken);
+      sync.start();
+    }
     this.container.set(SERVICE_TOKENS.BOOKSY_SYNC, sync);
   }
 
@@ -97,6 +105,7 @@ export class BooksyModule extends BaseModule {
       }
 
       setConfig({ booksy: updated });
+      this.restartBooksySync();
       return { success: true };
     });
 
