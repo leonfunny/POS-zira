@@ -6,7 +6,8 @@ import { useConfig } from '../hooks/useConfig';
 
 export default function BooksySync() {
   const { config: appConfig } = useConfig();
-  const { t } = useTranslation(appConfig?.language || 'en');
+  const language = appConfig?.language || 'en';
+  const { t } = useTranslation(language);
   const [status, setStatus] = useState<BooksySyncStatus | null>(null);
   const [config, setConfig] = useState<BooksySyncConfig | null>(null);
   const [bookings, setBookings] = useState<BooksyBookingSummary[]>([]);
@@ -182,21 +183,28 @@ export default function BooksySync() {
 
   const formatRelative = (iso: string) => {
     const diff = Date.now() - new Date(iso).getTime();
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return new Date(iso).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
+    if (diff < 60000) return t('booksy.time.justNow');
+    if (diff < 3600000) return t('booksy.time.minutesAgo').replace('{n}', String(Math.floor(diff / 60000)));
+    if (diff < 86400000) return t('booksy.time.hoursAgo').replace('{n}', String(Math.floor(diff / 3600000)));
+    return new Date(iso).toLocaleDateString(language, { day: '2-digit', month: '2-digit' });
   };
 
   const formatDateTime = (iso: string | null) => {
-    if (!iso) return 'Never';
+    if (!iso) return t('booksy.time.never');
     try {
-      return new Date(iso).toLocaleString('en-US', {
+      return new Date(iso).toLocaleString(language, {
         day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
       });
     } catch {
       return iso;
     }
+  };
+
+  const pushReasonLabel = (reason?: string) => {
+    if (!reason) return null;
+    const key = `booksy.pushReason.${reason.replace(/-/g, '_')}`;
+    const label = t(key);
+    return label !== key ? label : reason;
   };
 
   if (showSettings) {
@@ -220,7 +228,7 @@ export default function BooksySync() {
               value={config?.businessId || ''}
               onChange={(e) => setConfig({ ...config!, businessId: e.target.value })}
               className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-brand-400"
-              placeholder="304504"
+              placeholder={t('booksy.businessIdHint')}
             />
           </div>
 
@@ -356,8 +364,14 @@ export default function BooksySync() {
         <div className="bg-amber-50 border-l-4 border-amber-400 p-3 flex items-start gap-2">
           <span aria-hidden>&#9888;&#65039;</span>
           <div className="flex-1 text-sm text-amber-900">
-            eNail JWT expired. Re-copy from Chrome DevTools:
-            Application &rarr; Local Storage &rarr; https://enail.pro &rarr; <code className="bg-amber-100 px-1 rounded">access_token</code> &rarr; paste into <b>eNail JWT</b> field below.
+            {t('booksy.jwtExpiredBanner')}
+            {' '}
+            <button
+              onClick={() => { setShowSettings(true); setJwtExpiredVisible(false); }}
+              className="underline text-amber-900 hover:text-amber-700 font-medium"
+            >
+              {t('booksy.openSettings')}
+            </button>
           </div>
           <button onClick={() => setJwtExpiredVisible(false)} className="text-amber-700 hover:text-amber-900 text-lg leading-none">&times;</button>
         </div>
@@ -517,7 +531,7 @@ export default function BooksySync() {
                       : report.pushed && (report.pushErrors ?? 0) > 0
                         ? `+${report.pushErrors} rows failed`
                         : !report.pushed
-                          ? (report.pushReason || report.error || '—')
+                          ? (pushReasonLabel(report.pushReason) || report.error || '—')
                           : '—'
                     }
                   </td>
