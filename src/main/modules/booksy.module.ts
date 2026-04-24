@@ -52,7 +52,13 @@ export class BooksyModule extends BaseModule {
       logger.info('[BooksyModule] No eNail JWT — Booksy fetch will work, push to eNail will skip');
     }
 
-    this.booksySync = new BooksySync({ ...booksyConfig, enailJwt: jwt });
+    this.booksySync = new BooksySync({ ...booksyConfig, enailJwt: jwt }, (ids) => {
+      setConfigValue('booksy.knownCustomerIds' as any, ids);
+    });
+
+    if (booksyConfig.knownCustomerIds && booksyConfig.knownCustomerIds.length > 0) {
+      this.booksySync.restoreKnownCustomerIds(booksyConfig.knownCustomerIds);
+    }
 
     this.booksySync.on('statusChanged', (status: any) => {
       const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);

@@ -13,7 +13,7 @@ import { EventEmitter } from 'events';
 import * as https from 'https';
 import * as http from 'http';
 import logger from '../logger';
-import { BooksySyncConfig, BooksySyncStatus, BooksySyncReport, BooksyBookingSummary, BooksyCustomer, BooksyCustomerSyncReport, BooksyStaff, BooksyStaffSyncReport, BooksyEquipment, BooksyResourceSyncReport, BooksySyncAllReport, BooksyServiceCategory, BooksyServiceSyncReport, BooksyAddon, BooksyAddonSyncReport } from '../../shared/types';
+import { BooksySyncConfig, BooksySyncStatus, BooksySyncReport, BooksyBookingSummary, BooksyCustomer, BooksyCustomerSyncReport, BooksyStaff, BooksyStaffSyncReport, BooksyEquipment, BooksyResourceSyncReport, BooksySyncAllReport, BooksyServiceCategory, BooksyServiceSyncReport, BooksyAddon, BooksyAddonSyncReport, BooksyPushResult } from '../../shared/types';
 
 // SECURITY: Booksy API key - loaded from environment or use default public key
 // This is a Booksy front desk public API key (not secret), but still best practice to externalize
@@ -66,9 +66,23 @@ export class BooksySync extends EventEmitter {
   private chromeConnected = false;
   private _capturePromise: Promise<string> | null = null;
 
-  constructor(config: BooksySyncConfig) {
+  private onPersistKnownCustomerIds?: (ids: number[]) => void;
+
+  constructor(config: BooksySyncConfig, onPersistKnownCustomerIds?: (ids: number[]) => void) {
     super();
     this.config = config;
+    this.onPersistKnownCustomerIds = onPersistKnownCustomerIds;
+  }
+
+  restoreKnownCustomerIds(ids: number[]): void {
+    this.knownCustomerIds = new Set(ids);
+    logger.info(`[Booksy] Restored ${ids.length} known customer IDs`);
+  }
+
+  private persistKnownCustomerIds(): void {
+    if (this.onPersistKnownCustomerIds) {
+      this.onPersistKnownCustomerIds(Array.from(this.knownCustomerIds));
+    }
   }
 
   updateConfig(config: BooksySyncConfig): void {
@@ -394,17 +408,17 @@ export class BooksySync extends EventEmitter {
 
   // ============ PUSH TO ENAIL ============
 
-  private pushBookingsToEnail(calendarData: any, date: string): Promise<boolean> {
+  private pushToEnail(entity: string, endpoint: string, payload: object): Promise<BooksyPushResult> {
     const apiUrl = this.config.enailApiUrl;
     const jwt = this.config.enailJwt;
     if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping push');
-      return Promise.resolve(false);
+      logger.debug(`[Booksy] No eNail API URL/JWT configured, skipping ${entity} push`);
+      return Promise.resolve({ ok: false, reason: 'not-configured' });
     }
 
     return new Promise((resolve) => {
-      const payload = JSON.stringify({ calendarData, date, source: 'print-agent-booksy-sync' });
-      const url = new URL(`${apiUrl}/booksy/calendar/push`);
+      const body = JSON.stringify({ ...payload, source: 'print-agent-booksy-sync' });
+      const url = new URL(`${apiUrl}${endpoint}`);
       const proto = url.protocol === 'https:' ? https : http;
 
       const req = proto.request({
@@ -412,22 +426,59 @@ export class BooksySync extends EventEmitter {
         port: url.port || (url.protocol === 'https:' ? 443 : 80),
         path: url.pathname,
         method: 'POST',
+        timeout: 30000,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
+          'Content-Length': Buffer.byteLength(body),
         },
       }, (res) => {
         let data = '';
         res.on('data', (chunk: string) => (data += chunk));
         res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
+          if (res.statusCode === 401) {
+            logger.error(`[Booksy] ${entity} push: 401 — eNail JWT expired`);
+            this.emit('jwtExpired');
+            resolve({ ok: false, status: res.statusCode, reason: 'jwt-expired' });
+            return;
+          }
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+            logger.error(`[Booksy] ${entity} push: ${res.statusCode} — ${data.substring(0, 500)}`);
+            let parsedBody: any;
+            try { parsedBody = JSON.parse(data); } catch { parsedBody = data.substring(0, 500); }
+            resolve({ ok: false, status: res.statusCode, reason: 'non-2xx', body: parsedBody });
+            return;
+          }
+          let parsed: any;
+          try { parsed = JSON.parse(data); } catch { parsed = null; }
+          const errors = Array.isArray(parsed?.errors) ? parsed.errors : undefined;
+          if (errors && errors.length > 0) {
+            for (const err of errors) {
+              logger.warn(`[Booksy] ${entity} push: row-level error — external_id=${err.external_id}, reason=${err.reason || err.error || 'unknown'}`);
+            }
+            resolve({ ok: true, status: res.statusCode!, errors, body: parsed });
+          } else {
+            logger.info(`[Booksy] ${entity} push: OK (${res.statusCode})`);
+            resolve({ ok: true, status: res.statusCode!, body: parsed });
+          }
         });
       });
-      req.on('error', () => resolve(false));
-      req.write(payload);
+      req.on('timeout', () => {
+        req.destroy();
+        logger.error(`[Booksy] ${entity} push: timeout`);
+        resolve({ ok: false, reason: 'timeout' });
+      });
+      req.on('error', (err) => {
+        logger.error(`[Booksy] ${entity} push: network error — ${err.message}`);
+        resolve({ ok: false, reason: 'network-error', error: err.message });
+      });
+      req.write(body);
       req.end();
     });
+  }
+
+  private pushBookingsToEnail(calendarData: any, date: string): Promise<BooksyPushResult> {
+    return this.pushToEnail('calendar', '/booksy/calendar/push', { calendarData, date });
   }
 
   // ============ TELEGRAM ALERT ============
@@ -479,9 +530,9 @@ export class BooksySync extends EventEmitter {
           logger.info(`[Booksy] OK! ${bookingCount} bookings (cached token)`);
 
           this.extractBookingSummaries(data);
-          const pushed = await this.pushBookingsToEnail(data, today);
+          const pushResult = await this.pushBookingsToEnail(data, today);
           this.lastSyncTime = new Date().toISOString();
-          this.lastSyncReport = { date: today, bookings: bookingCount, pushed, time: this.lastSyncTime };
+          this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime };
           this.isRunning = false;
           this.emitStatus();
           return;
@@ -525,11 +576,10 @@ export class BooksySync extends EventEmitter {
       logger.info(`[Booksy] OK! ${bookingCount} bookings`);
 
       this.extractBookingSummaries(data);
-      const pushed = await this.pushBookingsToEnail(data, today);
-      if (pushed) logger.info('[Booksy] Pushed to eNail server');
+      const pushResult = await this.pushBookingsToEnail(data, today);
 
       this.lastSyncTime = new Date().toISOString();
-      this.lastSyncReport = { date: today, bookings: bookingCount, pushed, time: this.lastSyncTime };
+      this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime };
 
       // Notify recovery if was expired
       if (this.sessionExpired) {
@@ -594,23 +644,22 @@ export class BooksySync extends EventEmitter {
       logger.info(`[Booksy] Customer sync starting (${isFirstSync ? 'full' : 'incremental'})...`);
 
       const allCustomers = await this.fetchAllCustomers(token);
-      const newCustomers: BooksyCustomer[] = [];
-
-      for (const c of allCustomers) {
-        if (!this.knownCustomerIds.has(c.id)) {
-          newCustomers.push(c);
-          this.knownCustomerIds.add(c.id);
-        }
-      }
+      const newCustomers = allCustomers.filter(c => !this.knownCustomerIds.has(c.id));
 
       this.lastCustomers = allCustomers;
       logger.info(`[Booksy] Customers: ${allCustomers.length} total, ${newCustomers.length} new`);
 
-      // Push new customers to eNail
       let pushed = false;
       if (newCustomers.length > 0) {
-        pushed = await this.pushCustomersToEnail(newCustomers, isFirstSync);
-        if (pushed) logger.info(`[Booksy] Pushed ${newCustomers.length} customers to eNail`);
+        const pushResult = await this.pushCustomersToEnail(newCustomers, isFirstSync);
+        pushed = pushResult.ok;
+        if (pushResult.ok) {
+          const failedIds = new Set((pushResult.errors || []).map(e => Number(e.external_id)));
+          for (const c of newCustomers) {
+            if (!failedIds.has(c.id)) this.knownCustomerIds.add(c.id);
+          }
+          this.persistKnownCustomerIds();
+        }
       }
 
       this.lastCustomerSyncReport = {
@@ -734,44 +783,8 @@ export class BooksySync extends EventEmitter {
     });
   }
 
-  private pushCustomersToEnail(customers: BooksyCustomer[], isFullSync: boolean): Promise<boolean> {
-    const apiUrl = this.config.enailApiUrl;
-    const jwt = this.config.enailJwt;
-    if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping customer push');
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const payload = JSON.stringify({
-        customers,
-        isFullSync,
-        source: 'print-agent-booksy-sync',
-      });
-      const url = new URL(`${apiUrl}/booksy/customers/push`);
-      const proto = url.protocol === 'https:' ? https : http;
-
-      const req = proto.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: string) => (data += chunk));
-        res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.write(payload);
-      req.end();
-    });
+  private pushCustomersToEnail(customers: BooksyCustomer[], isFullSync: boolean): Promise<BooksyPushResult> {
+    return this.pushToEnail('customers', '/booksy/customers/push', { customers, isFullSync });
   }
 
   // ============ STAFF SYNC ============
@@ -811,13 +824,12 @@ export class BooksySync extends EventEmitter {
 
       logger.info(`[Booksy] Staff: ${this.lastStaff.length} members (${allResources.length} total resources)`);
 
-      const pushed = await this.pushStaffToEnail(this.lastStaff);
-      if (pushed) logger.info('[Booksy] Pushed staff to eNail');
+      const pushResult = await this.pushStaffToEnail(this.lastStaff);
 
       this.lastStaffSyncReport = {
         time: new Date().toISOString(),
         totalFetched: this.lastStaff.length,
-        pushed,
+        pushed: pushResult.ok,
       };
 
       return this.lastStaffSyncReport;
@@ -884,43 +896,8 @@ export class BooksySync extends EventEmitter {
     });
   }
 
-  private pushStaffToEnail(staff: BooksyStaff[]): Promise<boolean> {
-    const apiUrl = this.config.enailApiUrl;
-    const jwt = this.config.enailJwt;
-    if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping staff push');
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const payload = JSON.stringify({
-        staff,
-        source: 'print-agent-booksy-sync',
-      });
-      const url = new URL(`${apiUrl}/booksy/staff/push`);
-      const proto = url.protocol === 'https:' ? https : http;
-
-      const req = proto.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: string) => (data += chunk));
-        res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.write(payload);
-      req.end();
-    });
+  private pushStaffToEnail(staff: BooksyStaff[]): Promise<BooksyPushResult> {
+    return this.pushToEnail('staff', '/booksy/staff/push', { staff });
   }
 
   // ============ RESOURCES SYNC ============
@@ -956,13 +933,12 @@ export class BooksySync extends EventEmitter {
 
       logger.info(`[Booksy] Resources: ${this.lastResources.length} equipment items`);
 
-      const pushed = await this.pushResourcesToEnail(this.lastResources);
-      if (pushed) logger.info('[Booksy] Pushed resources to eNail');
+      const pushResult = await this.pushResourcesToEnail(this.lastResources);
 
       this.lastResourceSyncReport = {
         time: new Date().toISOString(),
         totalFetched: this.lastResources.length,
-        pushed,
+        pushed: pushResult.ok,
       };
 
       return this.lastResourceSyncReport;
@@ -984,43 +960,8 @@ export class BooksySync extends EventEmitter {
     }
   }
 
-  private pushResourcesToEnail(resources: BooksyEquipment[]): Promise<boolean> {
-    const apiUrl = this.config.enailApiUrl;
-    const jwt = this.config.enailJwt;
-    if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping resources push');
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const payload = JSON.stringify({
-        resources,
-        source: 'print-agent-booksy-sync',
-      });
-      const url = new URL(`${apiUrl}/booksy/resources/push`);
-      const proto = url.protocol === 'https:' ? https : http;
-
-      const req = proto.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: string) => (data += chunk));
-        res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.write(payload);
-      req.end();
-    });
+  private pushResourcesToEnail(resources: BooksyEquipment[]): Promise<BooksyPushResult> {
+    return this.pushToEnail('resources', '/booksy/resources/push', { resources });
   }
 
   // ============ SERVICES SYNC ============
@@ -1049,14 +990,13 @@ export class BooksySync extends EventEmitter {
       const totalServices = categories.reduce((sum, c) => sum + (c.services?.length || 0), 0);
       logger.info(`[Booksy] Services: ${categories.length} categories, ${totalServices} services`);
 
-      const pushed = await this.pushServicesToEnail(categories);
-      if (pushed) logger.info('[Booksy] Pushed services to eNail');
+      const pushResult = await this.pushServicesToEnail(categories);
 
       this.lastServiceSyncReport = {
         time: new Date().toISOString(),
         categoriesFetched: categories.length,
         servicesFetched: totalServices,
-        pushed,
+        pushed: pushResult.ok,
       };
 
       return this.lastServiceSyncReport;
@@ -1142,43 +1082,8 @@ export class BooksySync extends EventEmitter {
     });
   }
 
-  private pushServicesToEnail(categories: BooksyServiceCategory[]): Promise<boolean> {
-    const apiUrl = this.config.enailApiUrl;
-    const jwt = this.config.enailJwt;
-    if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping services push');
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const payload = JSON.stringify({
-        categories,
-        source: 'print-agent-booksy-sync',
-      });
-      const url = new URL(`${apiUrl}/booksy/services/push`);
-      const proto = url.protocol === 'https:' ? https : http;
-
-      const req = proto.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: string) => (data += chunk));
-        res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.write(payload);
-      req.end();
-    });
+  private pushServicesToEnail(categories: BooksyServiceCategory[]): Promise<BooksyPushResult> {
+    return this.pushToEnail('services', '/booksy/services/push', { categories });
   }
 
   // ============ ADDONS SYNC ============
@@ -1206,13 +1111,12 @@ export class BooksySync extends EventEmitter {
       this.lastAddons = addons;
       logger.info(`[Booksy] Addons: ${addons.length} items`);
 
-      const pushed = await this.pushAddonsToEnail(addons);
-      if (pushed) logger.info('[Booksy] Pushed addons to eNail');
+      const pushResult = await this.pushAddonsToEnail(addons);
 
       this.lastAddonSyncReport = {
         time: new Date().toISOString(),
         totalFetched: addons.length,
-        pushed,
+        pushed: pushResult.ok,
       };
 
       return this.lastAddonSyncReport;
@@ -1289,43 +1193,8 @@ export class BooksySync extends EventEmitter {
     });
   }
 
-  private pushAddonsToEnail(addons: BooksyAddon[]): Promise<boolean> {
-    const apiUrl = this.config.enailApiUrl;
-    const jwt = this.config.enailJwt;
-    if (!apiUrl || !jwt) {
-      logger.debug('[Booksy] No eNail API URL/JWT configured, skipping addons push');
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const payload = JSON.stringify({
-        addons,
-        source: 'print-agent-booksy-sync',
-      });
-      const url = new URL(`${apiUrl}/booksy/addons/push`);
-      const proto = url.protocol === 'https:' ? https : http;
-
-      const req = proto.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jwt}`,
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: string) => (data += chunk));
-        res.on('end', () => {
-          resolve(res.statusCode === 200 || res.statusCode === 201);
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.write(payload);
-      req.end();
-    });
+  private pushAddonsToEnail(addons: BooksyAddon[]): Promise<BooksyPushResult> {
+    return this.pushToEnail('addons', '/booksy/addons/push', { addons });
   }
 
   // ============ SYNC ALL ============

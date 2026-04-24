@@ -1204,6 +1204,15 @@ export interface AIChatMessage {
 // Booksy Sync Types
 // ==========================================
 
+export type BooksyPushResult = {
+  ok: boolean;
+  status?: number;
+  reason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  body?: any;
+  errors?: Array<{ external_id: string | number; reason?: string; error?: string }>;
+  error?: string;
+};
+
 export interface BooksySyncConfig {
   enabled: boolean;
   businessId: string;
@@ -1219,6 +1228,7 @@ export interface BooksySyncConfig {
   workEndHour: number;                // Business hours end (default: 18)
   workEndMin: number;                 // Business hours end minutes (default: 30)
   workDays: number[];                 // Days of week (1=Mon, 6=Sat) default: [1,2,3,4,5,6]
+  knownCustomerIds?: number[];
 }
 
 export interface BooksySyncStatus {
