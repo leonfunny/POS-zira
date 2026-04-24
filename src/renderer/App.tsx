@@ -11,6 +11,7 @@ import AuthScreen from './components/AuthScreen';
 import InvoicingTab from './components/invoicing/InvoicingTab';
 import SecurityTab from './components/security/SecurityTab';
 import CheckinWizard from './components/checkin/CheckinWizard';
+import BookingsTodayScreen from './components/booking/BookingsTodayScreen';
 import POSLayout from './components/pos/POSLayout';
 import BilliardFloorPlan from './components/billiard/BilliardFloorPlan';
 import Sidebar from './components/Sidebar';
@@ -36,6 +37,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   telegram: false,
   security: true,
   checkin: true,
+  bookings: true,    // Dashboard-synced appointments
 };
 
 // Tab to feature key mapping
@@ -46,6 +48,7 @@ const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   status: 'status',
   booksy: 'booksy',
   checkin: 'checkin',
+  bookings: 'bookings',
   invoicing: 'invoicing',
   security: 'security',
   settings: 'settings',
@@ -108,7 +111,7 @@ export default function App() {
 
   // Get visible tabs based on entitlements and user preferences
   const visibleTabs = useMemo((): Tab[] => {
-    const allTabs: Tab[] = ['pos', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'invoicing', 'security', 'settings', 'debug'];
+    const allTabs: Tab[] = ['pos', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'security', 'settings', 'debug'];
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
     return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
   }, [isFeatureEnabled, config?.hiddenTabs]);
@@ -433,6 +436,7 @@ export default function App() {
               )}
               {activeTab === 'booksy' && isFeatureEnabled('booksy') && <BooksySyncTab />}
               {activeTab === 'checkin' && isFeatureEnabled('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'bookings' && isFeatureEnabled('bookings') && <BookingsTodayScreen />}
               {activeTab === 'invoicing' && isFeatureEnabled('invoicing') && (
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
               )}

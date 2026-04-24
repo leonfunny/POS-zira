@@ -892,4 +892,89 @@ export const migrations: Migration[] = [
       ALTER TABLE orders ADD COLUMN refund_lines TEXT;
     `,
   },
+  {
+    version: 22,
+    name: 'bookings',
+    up: `
+      -- Nail-salon appointments pulled from the dashboard via sync_log.
+      -- Phase 1: read-only cache (dashboard is authoritative). Prices in
+      -- grosze (INT) to match orders/products. Names denormalized so the
+      -- calendar renders without joins when offline.
+      CREATE TABLE IF NOT EXISTS bookings (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT,
+        owner_full_name TEXT,
+        owner_phone TEXT,
+        staff_user_id TEXT,
+        staff_full_name TEXT,
+        service_id TEXT,
+        service_name TEXT,
+        rule_id TEXT,
+        resource_id TEXT,
+        resource_name TEXT,
+        status TEXT DEFAULT 'BOOKED',
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        duration_minutes INTEGER,
+        processing_start TEXT,
+        processing_end TEXT,
+        base_price_pln INTEGER DEFAULT 0,
+        extras_price_pln INTEGER DEFAULT 0,
+        total_price_pln INTEGER DEFAULT 0,
+        deposit_paid INTEGER DEFAULT 0,
+        customer_notes TEXT,
+        internal_notes TEXT,
+        confirmed_at TEXT,
+        cancelled_at TEXT,
+        cancel_reason TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        server_updated_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_bookings_starts_at ON bookings(starts_at);
+      CREATE INDEX IF NOT EXISTS idx_bookings_staff_starts ON bookings(staff_user_id, starts_at);
+      CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+    `,
+  },
+  {
+    version: 23,
+    name: 'services_service_rules',
+    up: `
+      -- Salon services + pricing tiers, pulled from dashboard via sync_log.
+      -- POS reads these when composing a walk-in booking (service picker +
+      -- rule picker). Prices stored in grosze to match other price columns.
+      CREATE TABLE IF NOT EXISTS services (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        icon_url TEXT,
+        is_active INTEGER DEFAULT 1,
+        base_price_pln INTEGER DEFAULT 0,
+        price_net_pln INTEGER,
+        tax_rate_id TEXT,
+        base_duration_minutes INTEGER DEFAULT 60,
+        processing_time_minutes INTEGER DEFAULT 0,
+        processing_start_after INTEGER DEFAULT 0,
+        buffer_before INTEGER DEFAULT 0,
+        buffer_after INTEGER DEFAULT 0,
+        display_order INTEGER DEFAULT 0,
+        category_id TEXT,
+        updated_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_services_active ON services(is_active);
+      CREATE INDEX IF NOT EXISTS idx_services_category ON services(category_id);
+
+      CREATE TABLE IF NOT EXISTS service_rules (
+        id TEXT PRIMARY KEY,
+        service_id TEXT NOT NULL,
+        size_category TEXT,
+        duration_min INTEGER NOT NULL DEFAULT 60,
+        base_price_pln INTEGER NOT NULL DEFAULT 0,
+        deposit_pln INTEGER DEFAULT 0,
+        name TEXT,
+        updated_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_service_rules_service ON service_rules(service_id);
+    `,
+  },
 ];

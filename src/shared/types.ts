@@ -973,6 +973,21 @@ export const IPC_CHANNELS = {
   BILLIARD_PRINT_RECEIPT: 'billiard:print:receipt',
   BILLIARD_PRINT_OPEN_DRAWER: 'billiard:print:open-drawer',
 
+  // Bookings (dashboard-synced appointments — distinct from Booksy bookings)
+  BOOKINGS_GET_TODAY: 'bookings:get-today',
+  BOOKINGS_GET_BY_DATE: 'bookings:get-by-date',
+  BOOKINGS_GET_BY_DATE_RANGE: 'bookings:get-by-date-range',
+  BOOKINGS_GET_BY_ID: 'bookings:get-by-id',
+  BOOKINGS_CREATE: 'bookings:create',
+  BOOKINGS_STATUS_CHANGE: 'bookings:status-change',
+  BOOKINGS_CANCEL: 'bookings:cancel',
+  BOOKINGS_UPDATE: 'bookings:update',
+
+  // Services (master data synced from dashboard — for walk-in pickers)
+  SERVICES_GET_ALL_ACTIVE: 'services:get-all-active',
+  SERVICES_GET_BY_ID: 'services:get-by-id',
+  SERVICE_RULES_GET_BY_SERVICE: 'service-rules:get-by-service',
+
   // Generic API proxy
   API_CALL: 'api:call',
 } as const;
@@ -1887,10 +1902,11 @@ export type FeatureKey =
   | 'telegram'    // Telegram bot
   | 'security'    // Security camera AI
   | 'checkin'     // Check-in management
+  | 'bookings'    // Dashboard-synced appointments calendar
   | 'billiard';   // Billiard floor plan
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'invoicing' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -1927,6 +1943,7 @@ export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   telegram: false,
   security: false,
   checkin: true,
+  bookings: true,    // Dashboard-synced appointments — free
   billiard: true,
 };
 

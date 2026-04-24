@@ -9,6 +9,9 @@ import { productRepo } from '../database/repos/product-repo';
 import { staffRepo } from '../database/repos/staff-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { salonCustomerRepo } from '../database/repos/salon-customer-repo';
+import { bookingRepo } from '../database/repos/booking-repo';
+import { serviceRepo } from '../database/repos/service-repo';
+import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
 import logger from '../logger';
 
@@ -46,6 +49,12 @@ export function applyEntry(entry: SyncLogEntry): boolean {
         return applyCustomer(entry);
       case 'category':
         return applyCategory(entry);
+      case 'booking':
+        return applyBooking(entry);
+      case 'service':
+        return applyService(entry);
+      case 'service_rule':
+        return applyServiceRule(entry);
       default:
         logger.debug(`[EntityApplicator] Unknown entity_type: ${entry.entity_type}, skipping`);
         return false;
@@ -273,6 +282,147 @@ function applyCustomer(entry: SyncLogEntry): boolean {
     );
   }
 
+  return true;
+}
+
+// ─── Booking ────────────────────────────────────────────────
+
+/**
+ * Convert PLN (float) → grosze (INT). Booking prices always arrive in PLN
+ * from the backend's buildBookingSyncPayload (Number(basePricePln)), so a
+ * straight *100 round is correct. Do NOT reuse applyProduct's ≥500 grosze
+ * heuristic — a 500 PLN manicure would be under-priced 100× by it.
+ */
+function plnToGrosze(value: any): number {
+  if (value == null) return 0;
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  if (!isFinite(num)) return 0;
+  return Math.round(num * 100);
+}
+
+function applyBooking(entry: SyncLogEntry): boolean {
+  const p = entry.payload;
+  if (!p || !entry.entity_id) return false;
+
+  // Status-only events: don't overwrite richer fields (price, notes) that
+  // a prior `updated`/`created` might have carried. Payload in this branch
+  // is typically just {id, status, cancelled_at, ...}.
+  if (entry.event === 'status_changed') {
+    if (!bookingRepo.getById(entry.entity_id)) {
+      // Row doesn't exist yet — status_changed arrived before `created`.
+      // Fall through to full upsert so we don't lose the event.
+    } else {
+      bookingRepo.updateStatus(entry.entity_id, p.status ?? 'BOOKED', {
+        cancelled_at: p.cancelled_at ?? null,
+        cancel_reason: p.cancel_reason ?? null,
+        confirmed_at: p.confirmed_at ?? null,
+        updated_at: p.updated_at ?? entry.created_at,
+        server_updated_at: p.updated_at ?? entry.created_at,
+      });
+      return true;
+    }
+  }
+
+  // Full upsert for created / updated (and for status_changed on a missing row).
+  bookingRepo.upsert({
+    id: entry.entity_id,
+    owner_id: p.owner_id ?? p.ownerId ?? null,
+    owner_full_name: p.owner_full_name ?? p.ownerFullName ?? null,
+    owner_phone: p.owner_phone ?? p.ownerPhone ?? null,
+    staff_user_id: p.staff_user_id ?? p.staffUserId ?? null,
+    staff_full_name: p.staff_full_name ?? p.staffFullName ?? null,
+    service_id: p.service_id ?? p.serviceId ?? null,
+    service_name: p.service_name ?? p.serviceName ?? null,
+    rule_id: p.rule_id ?? p.ruleId ?? null,
+    resource_id: p.resource_id ?? p.resourceId ?? null,
+    resource_name: p.resource_name ?? p.resourceName ?? null,
+    status: p.status ?? 'BOOKED',
+    starts_at: p.starts_at ?? p.startsAt,
+    ends_at: p.ends_at ?? p.endsAt,
+    duration_minutes: p.duration_minutes ?? p.durationMinutes ?? null,
+    processing_start: p.processing_start ?? p.processingStart ?? null,
+    processing_end: p.processing_end ?? p.processingEnd ?? null,
+    base_price_pln: plnToGrosze(p.base_price_pln ?? p.basePricePln),
+    extras_price_pln: plnToGrosze(p.extras_price_pln ?? p.extrasPricePln),
+    total_price_pln: plnToGrosze(p.total_price_pln ?? p.totalPricePln),
+    deposit_paid: (p.deposit_paid ?? p.depositPaid) ? 1 : 0,
+    customer_notes: p.customer_notes ?? p.customerNotes ?? null,
+    internal_notes: p.internal_notes ?? p.internalNotes ?? null,
+    confirmed_at: p.confirmed_at ?? p.confirmedAt ?? null,
+    cancelled_at: p.cancelled_at ?? p.cancelledAt ?? null,
+    cancel_reason: p.cancel_reason ?? p.cancelReason ?? null,
+    updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
+    server_updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
+  });
+
+  return true;
+}
+
+// ─── Service + ServiceRule ──────────────────────────────────
+
+function applyService(entry: SyncLogEntry): boolean {
+  const p = entry.payload;
+  if (!p || !entry.entity_id) return false;
+
+  if (entry.event === 'deleted') {
+    serviceRepo.softDelete(entry.entity_id);
+    return true;
+  }
+
+  serviceRepo.upsert({
+    id: entry.entity_id,
+    name: p.name ?? '',
+    description: p.description ?? null,
+    icon_url: p.icon_url ?? p.iconUrl ?? null,
+    is_active: (p.is_active ?? p.isActive) === false ? 0 : 1,
+    base_price_pln: plnToGrosze(p.base_price_pln ?? p.basePricePln ?? p.base_price ?? p.basePrice),
+    price_net_pln:
+      p.price_net_pln != null
+        ? plnToGrosze(p.price_net_pln)
+        : p.priceNet != null
+          ? plnToGrosze(p.priceNet)
+          : null,
+    tax_rate_id: p.tax_rate_id ?? p.taxRateId ?? null,
+    base_duration_minutes:
+      p.base_duration_minutes ?? p.baseDurationMinutes ?? 60,
+    processing_time_minutes:
+      p.processing_time_minutes ?? p.processingTimeMinutes ?? 0,
+    processing_start_after:
+      p.processing_start_after ?? p.processingStartAfter ?? 0,
+    buffer_before: p.buffer_before ?? p.bufferBefore ?? 0,
+    buffer_after: p.buffer_after ?? p.bufferAfter ?? 0,
+    display_order: p.display_order ?? p.displayOrder ?? 0,
+    category_id: p.category_id ?? p.categoryId ?? null,
+    updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
+  });
+  return true;
+}
+
+function applyServiceRule(entry: SyncLogEntry): boolean {
+  const p = entry.payload;
+  if (!p || !entry.entity_id) return false;
+
+  if (entry.event === 'deleted') {
+    serviceRuleRepo.delete(entry.entity_id);
+    return true;
+  }
+
+  const serviceId = p.service_id ?? p.serviceId;
+  if (!serviceId) {
+    logger.warn(`[EntityApplicator] service_rule ${entry.entity_id} missing service_id`);
+    return false;
+  }
+
+  serviceRuleRepo.upsert({
+    id: entry.entity_id,
+    service_id: serviceId,
+    size_category: p.size_category ?? p.sizeCategory ?? null,
+    duration_min: p.duration_min ?? p.durationMin ?? 60,
+    base_price_pln: plnToGrosze(p.base_price_pln ?? p.basePricePln),
+    deposit_pln: plnToGrosze(p.deposit_pln ?? p.depositPln),
+    name: p.name ?? null,
+    updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
+  });
   return true;
 }
 

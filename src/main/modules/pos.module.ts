@@ -24,14 +24,25 @@ import { staffRepo } from '../database/repos/staff-repo';
 import { holdOrderRepo } from '../database/repos/hold-repo';
 import { quickKeyLayoutRepo } from '../database/repos/quickkey-layout-repo';
 import { checkinRepo } from '../database/repos/checkin-repo';
+import { bookingRepo } from '../database/repos/booking-repo';
+import { serviceRepo } from '../database/repos/service-repo';
+import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
 import { apiClient } from '../network/api-client';
 import { getConfig, getSecureAuthToken } from '../config/store';
 import type { SelectedService } from '../../shared/types';
-import { PrinterType } from '../../shared/types';
+import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
 import type { SyncLogService } from '../sync/sync-log-service';
+import {
+  writeBookingStatusChanged,
+  writeBookingCancelled,
+  writeBookingUpdated,
+  writeBookingCreated,
+  type BookingUpdatePatch,
+  type WalkInBookingInput,
+} from '../sync/booking-sync';
 import logger from '../logger';
 
 export class PosModule extends BaseModule {
@@ -321,6 +332,110 @@ export class PosModule extends BaseModule {
       this.posStore?.handleInteractionPing();
       return { success: true };
     });
+
+    // ── Bookings (dashboard-synced appointments) ──────────────────
+    // Reads hit the local `bookings` table (populated by applyBooking
+    // from sync_log). Writes apply locally + enqueue sync_log so the
+    // backend receives them on the next push cycle.
+    ipcMain.handle(IPC_CHANNELS.BOOKINGS_GET_TODAY, () => bookingRepo.getToday());
+    ipcMain.handle(IPC_CHANNELS.BOOKINGS_GET_BY_ID, (_e, id: string) =>
+      bookingRepo.getById(id),
+    );
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_GET_BY_DATE,
+      (_e, dateIso: string) => {
+        const start = new Date(dateIso);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start.getTime() + 86_400_000);
+        return bookingRepo.getByDateRange(start.toISOString(), end.toISOString());
+      },
+    );
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_GET_BY_DATE_RANGE,
+      (_e, fromIso: string, toIso: string) =>
+        bookingRepo.getByDateRange(fromIso, toIso),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_STATUS_CHANGE,
+      (_e, id: string, status: string, opts?: { note?: string }) => {
+        const sync = this.container.getOptional<SyncLogService>(
+          SERVICE_TOKENS.SYNC_LOG_SERVICE,
+        );
+        if (!sync) return { success: false, error: 'sync-unavailable' };
+        try {
+          writeBookingStatusChanged(sync, id, status, opts);
+          return { success: true };
+        } catch (err: any) {
+          logger.error(`[pos.bookings.status] ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_CANCEL,
+      (_e, id: string, reason: string) => {
+        const sync = this.container.getOptional<SyncLogService>(
+          SERVICE_TOKENS.SYNC_LOG_SERVICE,
+        );
+        if (!sync) return { success: false, error: 'sync-unavailable' };
+        try {
+          writeBookingCancelled(sync, id, reason || 'Cancelled at POS');
+          return { success: true };
+        } catch (err: any) {
+          logger.error(`[pos.bookings.cancel] ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_UPDATE,
+      (_e, id: string, patch: BookingUpdatePatch) => {
+        const sync = this.container.getOptional<SyncLogService>(
+          SERVICE_TOKENS.SYNC_LOG_SERVICE,
+        );
+        if (!sync) return { success: false, error: 'sync-unavailable' };
+        try {
+          writeBookingUpdated(sync, id, patch);
+          return { success: true };
+        } catch (err: any) {
+          logger.error(`[pos.bookings.update] ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.BOOKINGS_CREATE,
+      (_e, input: WalkInBookingInput) => {
+        const sync = this.container.getOptional<SyncLogService>(
+          SERVICE_TOKENS.SYNC_LOG_SERVICE,
+        );
+        if (!sync) return { success: false, error: 'sync-unavailable' };
+        try {
+          const bookingId = writeBookingCreated(sync, input);
+          return { success: true, bookingId };
+        } catch (err: any) {
+          logger.error(`[pos.bookings.create] ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      },
+    );
+
+    // ── Services master data (read-only, fed by sync_log applicator) ─
+    ipcMain.handle(IPC_CHANNELS.SERVICES_GET_ALL_ACTIVE, () =>
+      serviceRepo.getAllActive(),
+    );
+    ipcMain.handle(
+      IPC_CHANNELS.SERVICES_GET_BY_ID,
+      (_e, id: string) => serviceRepo.getById(id),
+    );
+    ipcMain.handle(
+      IPC_CHANNELS.SERVICE_RULES_GET_BY_SERVICE,
+      (_e, serviceId: string) => serviceRuleRepo.getByService(serviceId),
+    );
 
     // Products
     ipcMain.handle('pos:products:getAll', () => productRepo.getAll());

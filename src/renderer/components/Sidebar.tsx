@@ -57,6 +57,7 @@ const MENU_GROUPS: MenuGroup[] = [
     labelKey: 'sidebar.operations',
     items: [
       { tab: 'booksy', icon: <CalendarDays size={18} />, labelKey: 'sidebar.booksy' },
+      { tab: 'bookings', icon: <CalendarDays size={18} />, labelKey: 'sidebar.bookings' },
       { tab: 'checkin', icon: <UserCheck size={18} />, labelKey: 'sidebar.checkin' },
     ],
   },

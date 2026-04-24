@@ -355,6 +355,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     printConfirmation: (data: any) => ipcRenderer.invoke(IPC_CHANNELS.CHECKIN_PRINT_CONFIRMATION, data),
   },
 
+  // Bookings (dashboard-synced appointments — distinct from Booksy)
+  bookings: {
+    getToday: () => ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_GET_TODAY),
+    getByDate: (dateIso: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_GET_BY_DATE, dateIso),
+    getByDateRange: (fromIso: string, toIso: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_GET_BY_DATE_RANGE, fromIso, toIso),
+    getById: (id: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_GET_BY_ID, id),
+    create: (input: any) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_CREATE, input),
+    changeStatus: (id: string, status: string, opts?: { note?: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_STATUS_CHANGE, id, status, opts),
+    cancel: (id: string, reason: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_CANCEL, id, reason),
+    update: (id: string, patch: any) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_UPDATE, id, patch),
+  },
+
+  // Services master data (for walk-in booking pickers)
+  services: {
+    getAllActive: () => ipcRenderer.invoke(IPC_CHANNELS.SERVICES_GET_ALL_ACTIVE),
+    getById: (id: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SERVICES_GET_BY_ID, id),
+    getRulesByService: (serviceId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SERVICE_RULES_GET_BY_SERVICE, serviceId),
+  },
+
   // Salon Customers (check-in wizard)
   salonCustomer: {
     search: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.SALON_CUSTOMER_SEARCH, query),
