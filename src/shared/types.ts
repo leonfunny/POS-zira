@@ -727,6 +727,7 @@ export const IPC_CHANNELS = {
   BOOKSY_SYNC_ADDONS: 'booksy:sync-addons',
   BOOKSY_GET_ADDONS: 'booksy:get-addons',
   BOOKSY_STATUS_CHANGED: 'booksy:status-changed',
+  BOOKSY_JWT_EXPIRED: 'booksy:jwt-expired',
 
   // POS - Core
   POS_GET_STATE: 'pos:get-state',
@@ -1259,6 +1260,8 @@ export interface BooksySyncReport {
   pushed: boolean;
   time: string;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 export interface BooksyBookingSummary {
@@ -1305,6 +1308,8 @@ export interface BooksyStaffSyncReport {
   totalFetched: number;
   pushed: boolean;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 export interface BooksyEquipment {
@@ -1319,6 +1324,8 @@ export interface BooksyResourceSyncReport {
   totalFetched: number;
   pushed: boolean;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 export interface BooksyServiceCategory {
@@ -1359,6 +1366,8 @@ export interface BooksyServiceSyncReport {
   servicesFetched: number;
   pushed: boolean;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 export interface BooksyAddonSyncReport {
@@ -1366,6 +1375,8 @@ export interface BooksyAddonSyncReport {
   totalFetched: number;
   pushed: boolean;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 export interface BooksySyncAllReport {
@@ -1382,6 +1393,8 @@ export interface BooksyCustomerSyncReport {
   newCustomers: number;
   pushed: boolean;
   error?: string;
+  pushReason?: 'not-configured' | 'network-error' | 'timeout' | 'non-2xx' | 'jwt-expired';
+  pushErrors?: number;
 }
 
 // ==========================================

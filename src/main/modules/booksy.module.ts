@@ -65,6 +65,11 @@ export class BooksyModule extends BaseModule {
       mainWindow?.webContents.send(IPC_CHANNELS.BOOKSY_STATUS_CHANGED, status);
     });
 
+    this.booksySync.on('jwtExpired', () => {
+      const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
+      mainWindow?.webContents.send(IPC_CHANNELS.BOOKSY_JWT_EXPIRED);
+    });
+
     // BooksySync.start() is deferred to the module start() lifecycle phase
     logger.info('[BooksyModule] Booksy sync configured (will start in start() phase)');
   }

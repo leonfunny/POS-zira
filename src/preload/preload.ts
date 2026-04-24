@@ -222,6 +222,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on(IPC_CHANNELS.BOOKSY_STATUS_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.BOOKSY_STATUS_CHANGED, listener);
     },
+    onBooksyJwtExpired: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on(IPC_CHANNELS.BOOKSY_JWT_EXPIRED, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.BOOKSY_JWT_EXPIRED, listener);
+    },
   },
 
   // Auth functions (Telegram Login)

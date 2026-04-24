@@ -454,11 +454,15 @@ export class BooksySync extends EventEmitter {
           const errors = Array.isArray(parsed?.errors) ? parsed.errors : undefined;
           if (errors && errors.length > 0) {
             for (const err of errors) {
-              logger.warn(`[Booksy] ${entity} push: row-level error — external_id=${err.external_id}, reason=${err.reason || err.error || 'unknown'}`);
+              const msg = err.message ? `, msg="${err.message}"` : '';
+              logger.warn(`[Booksy] ${entity} push: row-level error — external_id=${err.external_id}, reason=${err.reason || err.error || 'unknown'}${msg}`);
             }
             resolve({ ok: true, status: res.statusCode!, errors, body: parsed });
           } else {
-            logger.info(`[Booksy] ${entity} push: OK (${res.statusCode})`);
+            const stats = parsed && typeof parsed === 'object'
+              ? ` — created=${parsed.created || 0} updated=${parsed.updated || 0} skipped=${parsed.skipped || 0} unchanged=${parsed.unchanged || 0}`
+              : '';
+            logger.info(`[Booksy] ${entity} push: OK (${res.statusCode})${stats}`);
             resolve({ ok: true, status: res.statusCode!, body: parsed });
           }
         });
@@ -532,7 +536,7 @@ export class BooksySync extends EventEmitter {
           this.extractBookingSummaries(data);
           const pushResult = await this.pushBookingsToEnail(data, today);
           this.lastSyncTime = new Date().toISOString();
-          this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime };
+          this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime, pushReason: pushResult.reason, pushErrors: pushResult.errors?.length };
           this.isRunning = false;
           this.emitStatus();
           return;
@@ -579,7 +583,7 @@ export class BooksySync extends EventEmitter {
       const pushResult = await this.pushBookingsToEnail(data, today);
 
       this.lastSyncTime = new Date().toISOString();
-      this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime };
+      this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime, pushReason: pushResult.reason, pushErrors: pushResult.errors?.length };
 
       // Notify recovery if was expired
       if (this.sessionExpired) {
@@ -640,8 +644,7 @@ export class BooksySync extends EventEmitter {
         token = await this.captureTokenFromChrome();
       }
 
-      const isFirstSync = this.knownCustomerIds.size === 0;
-      logger.info(`[Booksy] Customer sync starting (${isFirstSync ? 'full' : 'incremental'})...`);
+      logger.info('[Booksy] Customer sync starting...');
 
       const allCustomers = await this.fetchAllCustomers(token);
       const newCustomers = allCustomers.filter(c => !this.knownCustomerIds.has(c.id));
@@ -649,10 +652,9 @@ export class BooksySync extends EventEmitter {
       this.lastCustomers = allCustomers;
       logger.info(`[Booksy] Customers: ${allCustomers.length} total, ${newCustomers.length} new`);
 
-      let pushed = false;
+      let pushResult: BooksyPushResult | undefined;
       if (newCustomers.length > 0) {
-        const pushResult = await this.pushCustomersToEnail(newCustomers, isFirstSync);
-        pushed = pushResult.ok;
+        pushResult = await this.pushCustomersToEnail(newCustomers);
         if (pushResult.ok) {
           const failedIds = new Set((pushResult.errors || []).map(e => Number(e.external_id)));
           for (const c of newCustomers) {
@@ -666,7 +668,9 @@ export class BooksySync extends EventEmitter {
         time: new Date().toISOString(),
         totalFetched: allCustomers.length,
         newCustomers: newCustomers.length,
-        pushed,
+        pushed: pushResult?.ok ?? false,
+        pushReason: pushResult?.reason,
+        pushErrors: pushResult?.errors?.length,
       };
 
       return this.lastCustomerSyncReport;
@@ -783,8 +787,8 @@ export class BooksySync extends EventEmitter {
     });
   }
 
-  private pushCustomersToEnail(customers: BooksyCustomer[], isFullSync: boolean): Promise<BooksyPushResult> {
-    return this.pushToEnail('customers', '/booksy/customers/push', { customers, isFullSync });
+  private pushCustomersToEnail(customers: BooksyCustomer[]): Promise<BooksyPushResult> {
+    return this.pushToEnail('customers', '/booksy/customers/push', { customers });
   }
 
   // ============ STAFF SYNC ============
@@ -830,6 +834,8 @@ export class BooksySync extends EventEmitter {
         time: new Date().toISOString(),
         totalFetched: this.lastStaff.length,
         pushed: pushResult.ok,
+        pushReason: pushResult.reason,
+        pushErrors: pushResult.errors?.length,
       };
 
       return this.lastStaffSyncReport;
@@ -939,6 +945,8 @@ export class BooksySync extends EventEmitter {
         time: new Date().toISOString(),
         totalFetched: this.lastResources.length,
         pushed: pushResult.ok,
+        pushReason: pushResult.reason,
+        pushErrors: pushResult.errors?.length,
       };
 
       return this.lastResourceSyncReport;
@@ -997,6 +1005,8 @@ export class BooksySync extends EventEmitter {
         categoriesFetched: categories.length,
         servicesFetched: totalServices,
         pushed: pushResult.ok,
+        pushReason: pushResult.reason,
+        pushErrors: pushResult.errors?.length,
       };
 
       return this.lastServiceSyncReport;
@@ -1117,6 +1127,8 @@ export class BooksySync extends EventEmitter {
         time: new Date().toISOString(),
         totalFetched: addons.length,
         pushed: pushResult.ok,
+        pushReason: pushResult.reason,
+        pushErrors: pushResult.errors?.length,
       };
 
       return this.lastAddonSyncReport;

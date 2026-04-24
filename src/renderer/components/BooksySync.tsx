@@ -19,6 +19,12 @@ export default function BooksySync() {
   const [syncingServices, setSyncingServices] = useState(false);
   const [syncingAddons, setSyncingAddons] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [jwtExpiredVisible, setJwtExpiredVisible] = useState(false);
+
+  useEffect(() => {
+    const off = window.electronAPI.booksy.onBooksyJwtExpired(() => setJwtExpiredVisible(true));
+    return off;
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -172,6 +178,14 @@ export default function BooksySync() {
     } catch {
       return iso;
     }
+  };
+
+  const formatRelative = (iso: string) => {
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return new Date(iso).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
   };
 
   const formatDateTime = (iso: string | null) => {
@@ -338,6 +352,17 @@ export default function BooksySync() {
         </button>
       </div>
 
+      {jwtExpiredVisible && (
+        <div className="bg-amber-50 border-l-4 border-amber-400 p-3 flex items-start gap-2">
+          <span aria-hidden>&#9888;&#65039;</span>
+          <div className="flex-1 text-sm text-amber-900">
+            eNail JWT expired. Re-copy from Chrome DevTools:
+            Application &rarr; Local Storage &rarr; https://enail.pro &rarr; <code className="bg-amber-100 px-1 rounded">access_token</code> &rarr; paste into <b>eNail JWT</b> field below.
+          </div>
+          <button onClick={() => setJwtExpiredVisible(false)} className="text-amber-700 hover:text-amber-900 text-lg leading-none">&times;</button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div className="panel p-3">
           <div className="flex items-center gap-2 mb-2">
@@ -460,6 +485,48 @@ export default function BooksySync() {
       >
         {syncingAll ? 'Syncing everything...' : 'Sync everything (staff + customers + resources + services + addons)'}
       </button>
+
+      {status && (
+        <div className="panel p-4">
+          <h3 className="text-sm font-semibold mb-2">Push Status</h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-500">
+                <th className="text-left pb-1">Entity</th>
+                <th className="text-left pb-1">Last Push</th>
+                <th className="text-left pb-1">Status</th>
+                <th className="text-left pb-1">Reason</th>
+              </tr>
+            </thead>
+            <tbody className="text-slate-700">
+              {[
+                { name: 'Calendar', report: status.lastSyncReport },
+                { name: 'Customers', report: status.lastCustomerSyncReport },
+                { name: 'Staff', report: status.lastStaffSyncReport },
+                { name: 'Resources', report: status.lastResourceSyncReport },
+                { name: 'Services', report: status.lastServiceSyncReport },
+                { name: 'Addons', report: status.lastAddonSyncReport },
+              ].map(({ name, report }) => (
+                <tr key={name} className="border-t border-slate-100">
+                  <td className="py-1.5">{name}</td>
+                  <td className="py-1.5">{report?.time ? formatRelative(report.time) : '—'}</td>
+                  <td className="py-1.5">{report ? (report.pushed ? '✅' : '❌') : '—'}</td>
+                  <td className="py-1.5 text-xs">
+                    {!report
+                      ? '—'
+                      : report.pushed && (report.pushErrors ?? 0) > 0
+                        ? `+${report.pushErrors} rows failed`
+                        : !report.pushed
+                          ? (report.pushReason || report.error || '—')
+                          : '—'
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="panel p-3">
         <div className="flex items-center justify-between mb-2">

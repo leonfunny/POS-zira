@@ -284,6 +284,7 @@ interface ElectronAPI {
     getAddons: () => Promise<BooksyAddon[]>;
     syncAll: () => Promise<BooksySyncAllReport | null>;
     onStatusChanged: (callback: (status: BooksySyncStatus) => void) => () => void;
+    onBooksyJwtExpired: (callback: () => void) => () => void;
   };
 
   // Auth
