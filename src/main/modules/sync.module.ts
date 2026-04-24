@@ -459,27 +459,35 @@ export class SyncModule extends BaseModule {
       try {
         await this.syncLogService.processRealtimeEntry(entry);
 
+        // Backend gateway emits socket payloads with TypeORM-style
+        // camelCase keys (`entityType`, `entityId`) — not the snake_case
+        // the existing branches below were written against. Normalize
+        // once here so every branch can rely on a single shape, and so
+        // the notifications actually fire (they never did before).
+        const entityType = entry.entityType ?? entry.entity_type;
+        const entityId = entry.entityId ?? entry.entity_id;
+
         // Notify renderer about the change
         const posWindow = wm?.getWindow('pos');
         if (posWindow && !posWindow.isDestroyed()) {
           // Targeted notification based on entity type
-          if (entry.entity_type === 'product' || entry.entity_type === 'category') {
+          if (entityType === 'product' || entityType === 'category') {
             posWindow.webContents.send('pos:products-synced');
-          } else if (entry.entity_type === 'stock') {
+          } else if (entityType === 'stock') {
             posWindow.webContents.send('pos:stock-updated', {
-              variantId: entry.entity_id,
+              variantId: entityId,
               newStock: entry.payload?.newStock,
             });
-          } else if (entry.entity_type === 'order') {
+          } else if (entityType === 'order') {
             posWindow.webContents.send('pos:order-status-changed', entry.payload);
-          } else if (entry.entity_type === 'staff') {
+          } else if (entityType === 'staff') {
             posWindow.webContents.send('pos:staff-updated', entry.payload);
-          } else if (entry.entity_type === 'booking') {
+          } else if (entityType === 'booking') {
             posWindow.webContents.send('pos:bookings-updated', {
-              bookingId: entry.entity_id,
+              bookingId: entityId,
               event: entry.event,
             });
-          } else if (entry.entity_type === 'service' || entry.entity_type === 'service_rule') {
+          } else if (entityType === 'service' || entityType === 'service_rule') {
             posWindow.webContents.send('pos:services-updated');
           }
 

@@ -191,6 +191,12 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
 
       {editing && (
         <BookingEditForm
+          // Keyed by booking id so switching to a different row —
+          // possible if keyboard focus escapes the modal and the user
+          // triggers Edit on another row — forces a fresh mount with
+          // the new booking's seed values instead of leaking the
+          // previous form state.
+          key={editing.id}
           t={t}
           booking={editing}
           onClose={() => setEditing(null)}
