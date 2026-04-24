@@ -10,11 +10,13 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import BookingCreateForm from './BookingCreateForm';
+import BookingEditForm, { type EditableBooking } from './BookingEditForm';
 
 export interface BookingRowVM {
   id: string;
   owner_full_name: string | null;
   owner_phone: string | null;
+  staff_user_id: string | null;
   staff_full_name: string | null;
   service_name: string | null;
   resource_name: string | null;
@@ -24,6 +26,7 @@ export interface BookingRowVM {
   duration_minutes: number | null;
   total_price_pln: number; // grosze
   customer_notes: string | null;
+  internal_notes: string | null;
 }
 
 function formatTime(iso: string): string {
@@ -75,6 +78,7 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
   const [actionId, setActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<EditableBooking | null>(null);
 
   const api = (window as any).electronAPI?.bookings;
 
@@ -98,12 +102,23 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
 
   useEffect(() => {
     refresh();
-    // Light polling — sync_log writes won't notify the renderer directly.
-    // A proper event bridge is a Phase 3 concern; 15s is fine for a UI
-    // surface that changes on the order of minutes.
-    const h = setInterval(refresh, 15_000);
-    return () => clearInterval(h);
-  }, [refresh]);
+
+    // Realtime: subscribe to the socket-bridged booking event. When
+    // another agent (or the dashboard) pushes a booking mutation, the
+    // main process applies it locally and fires `pos:bookings-updated`;
+    // we refresh the list immediately so cashiers see the change
+    // without waiting for the next poll tick.
+    const off = api?.onUpdated?.(() => refresh());
+
+    // Fallback poll — catches anything the socket missed (offline
+    // reconnect, pull window, etc.). Slower now that socket handles
+    // the common path.
+    const h = setInterval(refresh, 30_000);
+    return () => {
+      clearInterval(h);
+      if (typeof off === 'function') off();
+    };
+  }, [refresh, api]);
 
   const runAction = useCallback(
     async (id: string, fn: () => Promise<any>) => {
@@ -174,6 +189,15 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
         />
       )}
 
+      {editing && (
+        <BookingEditForm
+          t={t}
+          booking={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => refresh()}
+        />
+      )}
+
       {error && (
         <div className="mx-6 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded">
           {error}
@@ -237,17 +261,39 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
 
                   <div className="flex gap-2">
                     {b.status === 'BOOKED' || b.status === 'PENDING' ? (
-                      <button
-                        disabled={busy || !api}
-                        onClick={() =>
-                          runAction(b.id, () =>
-                            api.changeStatus(b.id, 'CHECKED_IN'),
-                          )
-                        }
-                        className="px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-                      >
-                        {label('bookings.action.checkin', 'Check in')}
-                      </button>
+                      <>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            setEditing({
+                              id: b.id,
+                              starts_at: b.starts_at,
+                              staff_user_id: b.staff_user_id,
+                              staff_full_name: b.staff_full_name,
+                              service_name: b.service_name,
+                              owner_full_name: b.owner_full_name,
+                              owner_phone: b.owner_phone,
+                              customer_notes: b.customer_notes,
+                              internal_notes: b.internal_notes,
+                              status: b.status,
+                            })
+                          }
+                          className="px-3 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200 disabled:opacity-50"
+                        >
+                          {label('bookings.action.edit', 'Edit')}
+                        </button>
+                        <button
+                          disabled={busy || !api}
+                          onClick={() =>
+                            runAction(b.id, () =>
+                              api.changeStatus(b.id, 'CHECKED_IN'),
+                            )
+                          }
+                          className="px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {label('bookings.action.checkin', 'Check in')}
+                        </button>
+                      </>
                     ) : null}
 
                     {b.status === 'CHECKED_IN' || b.status === 'IN_SERVICE' ? (

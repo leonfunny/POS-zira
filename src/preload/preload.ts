@@ -372,6 +372,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_CANCEL, id, reason),
     update: (id: string, patch: any) =>
       ipcRenderer.invoke(IPC_CHANNELS.BOOKINGS_UPDATE, id, patch),
+    /**
+     * Realtime hook — fires when sync_log applies a booking event
+     * received over the socket. The renderer should use this to
+     * refresh its list immediately; the 15s poll then only runs as a
+     * fallback for missed socket frames.
+     */
+    onUpdated: (cb: (data: { bookingId: string; event: string }) => void) => {
+      const listener = (_e: any, data: { bookingId: string; event: string }) => cb(data);
+      ipcRenderer.on('pos:bookings-updated', listener);
+      return () => ipcRenderer.removeListener('pos:bookings-updated', listener);
+    },
   },
 
   // Services master data (for walk-in booking pickers)

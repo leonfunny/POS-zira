@@ -474,6 +474,13 @@ export class SyncModule extends BaseModule {
             posWindow.webContents.send('pos:order-status-changed', entry.payload);
           } else if (entry.entity_type === 'staff') {
             posWindow.webContents.send('pos:staff-updated', entry.payload);
+          } else if (entry.entity_type === 'booking') {
+            posWindow.webContents.send('pos:bookings-updated', {
+              bookingId: entry.entity_id,
+              event: entry.event,
+            });
+          } else if (entry.entity_type === 'service' || entry.entity_type === 'service_rule') {
+            posWindow.webContents.send('pos:services-updated');
           }
 
           // Always send generic sync event
