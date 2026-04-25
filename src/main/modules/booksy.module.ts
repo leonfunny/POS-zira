@@ -100,24 +100,31 @@ export class BooksyModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_GET_CONFIG, () => {
       const config = getConfig();
-      const bc = config.booksy || {};
-      return { ...bc, enailJwt: undefined, encryptedEnailJwt: undefined }; // Don't expose JWT
+      const bc = (config.booksy || {}) as Partial<BooksySyncConfig>;
+      const hasJwt = !!(bc.encryptedEnailJwt || bc.enailJwt);
+      return { ...bc, enailJwt: undefined, encryptedEnailJwt: undefined, hasJwt };
     });
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_SET_CONFIG, (_, data: Partial<BooksySyncConfig>) => {
       const config = getConfig();
       const current = config.booksy || {};
-      const updated = { ...current, ...data } as BooksySyncConfig;
 
-      // Encrypt JWT if provided
-      if (data.enailJwt && safeStorage.isEncryptionAvailable()) {
-        updated.encryptedEnailJwt = safeStorage.encryptString(data.enailJwt).toString('base64');
+      const { enailJwt, encryptedEnailJwt: _ignored, hasJwt: _hasJwt, ...safeData } = data;
+      const updated = { ...current, ...safeData } as BooksySyncConfig;
+
+      if (enailJwt && safeStorage.isEncryptionAvailable()) {
+        updated.encryptedEnailJwt = safeStorage.encryptString(enailJwt).toString('base64');
         delete (updated as any).enailJwt;
       }
 
       setConfig({ booksy: updated });
       this.restartBooksySync();
-      return { success: true };
+      return {
+        ...(updated as Partial<BooksySyncConfig>),
+        enailJwt: undefined,
+        encryptedEnailJwt: undefined,
+        hasJwt: !!(updated.encryptedEnailJwt || updated.enailJwt),
+      };
     });
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_SYNC_NOW, async () => {

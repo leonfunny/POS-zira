@@ -1245,6 +1245,7 @@ export interface BooksySyncConfig {
   workEndMin: number;                 // Business hours end minutes (default: 30)
   workDays: number[];                 // Days of week (1=Mon, 6=Sat) default: [1,2,3,4,5,6]
   knownCustomerIds?: number[];
+  hasJwt?: boolean;             // Derived by GET_CONFIG handler — never persisted
 }
 
 export interface BooksySyncStatus {

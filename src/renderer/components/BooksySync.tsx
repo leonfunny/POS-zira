@@ -260,7 +260,7 @@ export default function BooksySync() {
               value={config?.enailJwt || ''}
               onChange={(e) => setConfig({ ...config!, enailJwt: e.target.value })}
               className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-brand-400"
-              placeholder="Bearer token"
+              placeholder={config?.hasJwt && !config?.enailJwt ? t('booksy.jwtConfigured') : 'Bearer token'}
             />
           </div>
 

@@ -804,6 +804,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Timeout',
     'booksy.pushReason.non_2xx': 'Server rejected',
     'booksy.pushReason.jwt_expired': 'JWT expired',
+    'booksy.jwtConfigured': 'JWT configured — paste new to replace',
 
     // Billiard
     'billiard.floorPlan': 'Floor Plan',
@@ -1761,6 +1762,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Hết thời gian',
     'booksy.pushReason.non_2xx': 'Server từ chối',
     'booksy.pushReason.jwt_expired': 'JWT hết hạn',
+    'booksy.jwtConfigured': 'JWT đã được cấu hình — dán cái mới để thay',
 
     // Billiard
     'billiard.floorPlan': 'Sơ đồ tầng',
@@ -2695,6 +2697,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Zaman aşımı',
     'booksy.pushReason.non_2xx': 'Sunucu reddetti',
     'booksy.pushReason.jwt_expired': 'JWT s\xfcresi doldu',
+    'booksy.jwtConfigured': 'JWT yapılandırıldı — değiştirmek için yenisini yapıştırın',
 
     // Billiard
     'billiard.floorPlan': 'Kat Planı',
@@ -3629,6 +3632,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': '超时',
     'booksy.pushReason.non_2xx': '服务器拒绝',
     'booksy.pushReason.jwt_expired': 'JWT已过期',
+    'booksy.jwtConfigured': '已配置 JWT — 粘贴新令牌以替换',
 
     // Billiard
     'billiard.floorPlan': '楼层平面图',
@@ -4563,6 +4567,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Тайм-аут',
     'booksy.pushReason.non_2xx': 'Сервер відхилив',
     'booksy.pushReason.jwt_expired': 'JWT прострочений',
+    'booksy.jwtConfigured': 'JWT налаштовано — вставте новий, щоб замінити',
 
     // Billiard
     'billiard.floorPlan': 'План приміщення',
@@ -5497,6 +5502,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Тайм-аут',
     'booksy.pushReason.non_2xx': 'Сервер отклонил',
     'booksy.pushReason.jwt_expired': 'JWT истёк',
+    'booksy.jwtConfigured': 'JWT настроен — вставьте новый для замены',
 
     // Billiard
     'billiard.floorPlan': 'План помещения',
@@ -6483,6 +6489,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'booksy.pushReason.timeout': 'Przekroczono limit czasu',
     'booksy.pushReason.non_2xx': 'Serwer odrzucił',
     'booksy.pushReason.jwt_expired': 'JWT wygasł',
+    'booksy.jwtConfigured': 'JWT skonfigurowany — wklej nowy, aby zastąpić',
 
     // Billiard
     'billiard.floorPlan': 'Plan sali',
