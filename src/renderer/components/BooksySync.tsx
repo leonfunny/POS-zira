@@ -169,7 +169,16 @@ export default function BooksySync() {
     if (!config) return;
     const updated = await window.electronAPI.booksy.setConfig(config);
     setConfig(updated);
-    setShowSettings(false);
+    if (!updated.jwtSalonMismatch) {
+      setShowSettings(false);
+    }
+  }, [config]);
+
+  const handleClearJwt = useCallback(async () => {
+    if (!config) return;
+    const updated = await window.electronAPI.booksy.setConfig({ ...config, enailJwt: '', clearJwt: true });
+    setConfig(updated);
+    setJwtExpiredVisible(false);
   }, [config]);
 
   const formatTime = (iso: string) => {
@@ -221,6 +230,20 @@ export default function BooksySync() {
         </div>
 
         <div className="panel p-4 space-y-3">
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+            <div className="font-medium text-slate-700">Current eNail account</div>
+            <div>Salon: {config?.appSalonName || 'Unknown'} {config?.appSalonId ? `(${config.appSalonId})` : ''}</div>
+            <div>Email: {config?.appAuthEmail || 'Unknown'}</div>
+            <div>Booksy business ID: {config?.businessId || 'Not configured'}</div>
+            {config?.jwtSalonId && <div>JWT salon ID: {config.jwtSalonId}</div>}
+          </div>
+
+          {config?.jwtSalonMismatch && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              {config.jwtSalonWarning || 'The eNail JWT salon does not match the current app salon. The JWT was not saved.'}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Business ID</label>
             <input
@@ -255,13 +278,23 @@ export default function BooksySync() {
 
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">eNail JWT Token</label>
-            <input
-              type="password"
-              value={config?.enailJwt || ''}
-              onChange={(e) => setConfig({ ...config!, enailJwt: e.target.value })}
-              className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-brand-400"
-              placeholder={config?.hasJwt && !config?.enailJwt ? t('booksy.jwtConfigured') : 'Bearer token'}
-            />
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={config?.enailJwt || ''}
+                onChange={(e) => setConfig({ ...config!, enailJwt: e.target.value, jwtSalonId: null, jwtSalonMismatch: false, jwtSalonWarning: undefined })}
+                className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-brand-400"
+                placeholder={config?.hasJwt && !config?.enailJwt ? t('booksy.jwtConfigured') : 'Bearer token'}
+              />
+              <button
+                type="button"
+                onClick={handleClearJwt}
+                disabled={!config?.hasJwt && !config?.enailJwt}
+                className="px-3 py-1.5 text-xs rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                Clear JWT
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -441,6 +474,21 @@ export default function BooksySync() {
           <p className="text-xs text-red-600 mt-1">
             Log in to booksy.com in Chrome; sync will resume automatically.
           </p>
+        </div>
+      )}
+
+      {status?.enabled && !status?.chromeConnected && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-amber-900">Chrome CDP disconnected</p>
+            <p className="text-xs text-amber-700 mt-1">Open Chrome with the configured debug port so Booksy token capture can resume.</p>
+          </div>
+          <button
+            onClick={handleLaunchChrome}
+            className="px-3 py-1.5 bg-amber-100 text-amber-900 text-xs rounded-lg hover:bg-amber-200 transition-colors flex-shrink-0"
+          >
+            {t('booksy.setup.openChrome')}
+          </button>
         </div>
       )}
 
@@ -821,7 +869,7 @@ export default function BooksySync() {
       )}
 
       {/* Quick setup panel when not connected */}
-      {!status?.chromeConnected && !status?.hasToken && !showSetupWizard && (
+      {!status?.enabled && !status?.chromeConnected && !status?.hasToken && !showSetupWizard && (
         <div className="panel p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center">

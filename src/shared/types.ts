@@ -1247,6 +1247,13 @@ export interface BooksySyncConfig {
   workDays: number[];                 // Days of week (1=Mon, 6=Sat) default: [1,2,3,4,5,6]
   knownCustomerIds?: number[];
   hasJwt?: boolean;             // Derived by GET_CONFIG handler — never persisted
+  clearJwt?: boolean;           // Action-only SET_CONFIG sentinel; never persisted
+  appSalonId?: string | null;   // Derived by GET_CONFIG handler; never persisted
+  appSalonName?: string | null; // Derived by GET_CONFIG handler; never persisted
+  appAuthEmail?: string | null; // Derived by GET_CONFIG handler; never persisted
+  jwtSalonId?: string | null;   // Derived by local JWT payload decode; never persisted
+  jwtSalonMismatch?: boolean;   // Derived warning flag; never persisted
+  jwtSalonWarning?: string;     // Derived warning text; never persisted
 }
 
 export interface BooksySyncStatus {

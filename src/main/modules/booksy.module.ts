@@ -14,6 +14,7 @@ import { BooksySync } from '../booksy/booksy-sync';
 import { IPC_CHANNELS, BooksySyncConfig } from '../../shared/types';
 import { getConfig, getConfigValue, setConfig, setConfigValue } from '../config/store';
 import logger from '../logger';
+import { applyBooksyConfigUpdate, getBooksyJwtSalonCheck, sanitizeBooksyConfigForRenderer } from './booksy-config';
 
 export class BooksyModule extends BaseModule {
   readonly name = 'booksy';
@@ -40,32 +41,34 @@ export class BooksyModule extends BaseModule {
       return;
     }
 
-    // Decrypt JWT if encrypted
-    let jwt = booksyConfig.enailJwt || '';
-    if (booksyConfig.encryptedEnailJwt && safeStorage.isEncryptionAvailable()) {
-      try {
-        jwt = safeStorage.decryptString(Buffer.from(booksyConfig.encryptedEnailJwt, 'base64'));
-      } catch { logger.error('[BooksyModule] JWT decrypt failed'); }
+    let jwt = this.decryptBooksyJwt(booksyConfig);
+    const jwtCheck = getBooksyJwtSalonCheck(jwt, config);
+    if (jwtCheck.jwtSalonMismatch) {
+      logger.warn(`[BooksyModule] Stored eNail JWT salon mismatch: ${jwtCheck.jwtSalonWarning}`);
+      jwt = '';
     }
 
     if (!jwt) {
       logger.info('[BooksyModule] No eNail JWT — Booksy fetch will work, push to eNail will skip');
     }
 
-    this.booksySync = new BooksySync({ ...booksyConfig, enailJwt: jwt }, (ids) => {
+    const sync = new BooksySync({ ...booksyConfig, enailJwt: jwt }, (ids) => {
       setConfigValue('booksy.knownCustomerIds' as any, ids);
     });
+    this.booksySync = sync;
 
     if (booksyConfig.knownCustomerIds && booksyConfig.knownCustomerIds.length > 0) {
-      this.booksySync.restoreKnownCustomerIds(booksyConfig.knownCustomerIds);
+      sync.restoreKnownCustomerIds(booksyConfig.knownCustomerIds);
     }
 
-    this.booksySync.on('statusChanged', (status: any) => {
+    sync.on('statusChanged', (status: any) => {
+      if (this.booksySync !== sync) return;
       const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
       mainWindow?.webContents.send(IPC_CHANNELS.BOOKSY_STATUS_CHANGED, status);
     });
 
-    this.booksySync.on('jwtExpired', () => {
+    sync.on('jwtExpired', () => {
+      if (this.booksySync !== sync) return;
       const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
       mainWindow?.webContents.send(IPC_CHANNELS.BOOKSY_JWT_EXPIRED);
     });
@@ -75,12 +78,15 @@ export class BooksyModule extends BaseModule {
   }
 
   private restartBooksySync(): void {
-    const cachedToken = this.booksySync?.getToken() || null;
-    if (this.booksySync) {
-      if (this.booksySync.getStatus().running) {
+    const oldSync = this.booksySync;
+    const cachedToken = oldSync?.getToken() || null;
+    if (oldSync) {
+      if (oldSync.getStatus().running) {
         logger.info('[BooksyModule] Sync in progress, stopping for restart...');
       }
-      this.booksySync.stop();
+      oldSync.stop();
+      oldSync.removeAllListeners('statusChanged');
+      oldSync.removeAllListeners('jwtExpired');
     }
     this.booksySync = null;
     this.initializeBooksySync();
@@ -93,6 +99,17 @@ export class BooksyModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.BOOKSY_SYNC, sync);
   }
 
+  private decryptBooksyJwt(booksyConfig: Partial<BooksySyncConfig> | undefined): string {
+    if (!booksyConfig) return '';
+    let jwt = booksyConfig.enailJwt || '';
+    if (booksyConfig.encryptedEnailJwt && safeStorage.isEncryptionAvailable()) {
+      try {
+        jwt = safeStorage.decryptString(Buffer.from(booksyConfig.encryptedEnailJwt, 'base64'));
+      } catch { logger.error('[BooksyModule] JWT decrypt failed'); }
+    }
+    return jwt;
+  }
+
   registerIpcHandlers(): void {
     ipcMain.handle(IPC_CHANNELS.BOOKSY_GET_STATUS, () => {
       return this.booksySync?.getStatus() || { running: false };
@@ -101,30 +118,26 @@ export class BooksyModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.BOOKSY_GET_CONFIG, () => {
       const config = getConfig();
       const bc = (config.booksy || {}) as Partial<BooksySyncConfig>;
-      const hasJwt = !!(bc.encryptedEnailJwt || bc.enailJwt);
-      return { ...bc, enailJwt: undefined, encryptedEnailJwt: undefined, hasJwt };
+      return sanitizeBooksyConfigForRenderer(bc, config, this.decryptBooksyJwt(bc));
     });
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_SET_CONFIG, (_, data: Partial<BooksySyncConfig>) => {
       const config = getConfig();
       const current = config.booksy || {};
 
-      const { enailJwt, encryptedEnailJwt: _ignored, hasJwt: _hasJwt, ...safeData } = data;
-      const updated = { ...current, ...safeData } as BooksySyncConfig;
-
-      if (enailJwt && safeStorage.isEncryptionAvailable()) {
-        updated.encryptedEnailJwt = safeStorage.encryptString(enailJwt).toString('base64');
-        delete (updated as any).enailJwt;
-      }
+      const { updated, response } = applyBooksyConfigUpdate(
+        current,
+        data,
+        config,
+        (jwt) => safeStorage.isEncryptionAvailable()
+          ? safeStorage.encryptString(jwt).toString('base64')
+          : undefined,
+        this.decryptBooksyJwt(current),
+      );
 
       setConfig({ booksy: updated });
       this.restartBooksySync();
-      return {
-        ...(updated as Partial<BooksySyncConfig>),
-        enailJwt: undefined,
-        encryptedEnailJwt: undefined,
-        hasJwt: !!(updated.encryptedEnailJwt || updated.enailJwt),
-      };
+      return response;
     });
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_SYNC_NOW, async () => {
@@ -193,7 +206,10 @@ export class BooksyModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.BOOKSY_STOP, () => {
-      this.booksySync?.stop();
+      const sync = this.booksySync;
+      sync?.stop();
+      sync?.removeAllListeners('statusChanged');
+      sync?.removeAllListeners('jwtExpired');
       this.booksySync = null;
       setConfigValue('booksy.enabled' as any, false);
       return { success: true };
@@ -290,7 +306,10 @@ export class BooksyModule extends BaseModule {
 
     bus.on('user:logged-out', () => {
       logger.info('[BooksyModule] User logged out, stopping sync');
-      this.booksySync?.stop();
+      const sync = this.booksySync;
+      sync?.stop();
+      sync?.removeAllListeners('statusChanged');
+      sync?.removeAllListeners('jwtExpired');
       this.booksySync = null;
       this.container.set(SERVICE_TOKENS.BOOKSY_SYNC, null);
     });
@@ -306,7 +325,10 @@ export class BooksyModule extends BaseModule {
   }
 
   async stop(): Promise<void> {
-    this.booksySync?.stop();
+    const sync = this.booksySync;
+    sync?.stop();
+    sync?.removeAllListeners('statusChanged');
+    sync?.removeAllListeners('jwtExpired');
     this.setState(ModuleState.STOPPED);
   }
 
