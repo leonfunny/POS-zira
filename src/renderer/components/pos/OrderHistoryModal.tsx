@@ -742,13 +742,14 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     if (localResult.status === 'fulfilled') {
       const localOrders: OrderRow[] = localResult.value?.orders || [];
       if (source === 'local+server') {
-        const serverIds = new Set(merged.map((o) => o.id));
-        for (const lo of localOrders) {
-          if (lo.backend_id && serverIds.has(lo.backend_id)) continue;
-          if (serverIds.has(lo.id)) continue;
-          if (lo.synced === 1 && lo.backend_id) continue;
-          merged.push(lo);
-        }
+        const localIds = new Set(localOrders.map((lo) => lo.id));
+        const localBackendIds = new Set(
+          localOrders.map((lo) => lo.backend_id).filter((v): v is string => Boolean(v))
+        );
+        merged = merged.filter(
+          (s) => !localIds.has(s.id) && !localBackendIds.has(s.id)
+        );
+        for (const lo of localOrders) merged.push(lo);
       } else {
         merged = localOrders;
         total = localResult.value?.total || localOrders.length;
