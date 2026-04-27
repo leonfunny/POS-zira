@@ -69,7 +69,14 @@ export function adaptServerOrder(s: any): any {
     refund_reason: s.refundReason ?? null,
     refunded_at: s.refundedLines?.[0]?.refundedAt ?? null,
     refund_lines: s.refundedLines && Array.isArray(s.refundedLines) && s.refundedLines.length > 0
-      ? JSON.stringify(s.refundedLines) : null,
+      ? JSON.stringify(s.refundedLines.map((l: any) => ({
+          name: l.name ?? '',
+          quantity: typeof l.quantity === 'number' ? l.quantity : (parseInt(String(l.quantity)) || 1),
+          unitPrice: toGrosze(l.unitPrice),
+          refundAmount: toGrosze(l.refundAmount),
+          vatRate: typeof l.taxRate === 'string' ? (parseFloat(l.taxRate) || 23) : (l.taxRate ?? 23),
+          sku: l.sku ?? undefined,
+        }))) : null,
     customer_id: s.customerId ?? null,
     customer_nip: s.customerNip ?? null,
     customer_name: s.customerName ?? null,

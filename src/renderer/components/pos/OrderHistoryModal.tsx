@@ -54,6 +54,8 @@ const PAYMENT_METHODS = [
   { value: 'CARD', label: 'Card' },
   { value: 'BLIK', label: 'BLIK' },
   { value: 'TRANSFER', label: 'Transfer' },
+  { value: 'BANK_TRANSFER', label: 'Bank Transfer' },
+  { value: 'SPLIT', label: 'Split' },
   { value: 'INVOICE', label: 'Invoice' },
 ];
 
@@ -129,6 +131,8 @@ function paymentLabel(method: string | null | undefined): string {
     case 'CARD': return 'Card';
     case 'BLIK': return 'BLIK';
     case 'TRANSFER': return 'Transfer';
+    case 'BANK_TRANSFER': return 'Bank Transfer';
+    case 'SPLIT': return 'Split';
     case 'INVOICE': return 'Invoice';
     default: return 'Unknown';
   }
@@ -777,6 +781,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff]);
+  useEffect(() => { setMirrorError(null); setMirrorSplit(false); }, [detail?.order.id]);
 
   useEffect(() => {
     const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data) => {
@@ -890,7 +895,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
     const isServerOnly = order._origin === 'server';
-    const canRefund = Boolean(order.backend_id || isServerOnly) && refundStatus === 'none';
+    const canRefund = Boolean(order.backend_id) && refundStatus === 'none';
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
 
@@ -1139,7 +1144,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </button>
               )}
 
-              {(order.backend_id || isServerOnly) && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
+              {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
                 <button
                   disabled={cancelling || isMirroring}
                   onClick={async () => {
@@ -1173,7 +1178,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </div>
               )}
 
-              {(order.backend_id || isServerOnly) && (
+              {order.backend_id && (
                 <ServerActionsPanel
                   order={order as any}
                   t={t}

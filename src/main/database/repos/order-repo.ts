@@ -196,9 +196,6 @@ export const orderRepo = {
 
   upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
     const existing = orderRepo.getById(adaptedOrder.id);
-    if (existing && existing.refund_amount && existing.refund_amount > 0) {
-      return { inserted: false, localOrderId: existing.id };
-    }
     if (existing) {
       return { inserted: false, localOrderId: existing.id };
     }
