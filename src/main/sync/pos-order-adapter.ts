@@ -38,7 +38,18 @@ export function adaptServerOrder(s: any): any {
   return {
     id: s.id,
     order_number: s.orderNumber ?? null,
-    status: s.status === 'DELIVERED' ? 'COMPLETED' : (s.status ?? 'COMPLETED'),
+    status: (() => {
+      if (s.status === 'REFUNDED' || s.status === 'PARTIAL_REFUND' || s.status === 'CANCELLED') {
+        return s.status;
+      }
+      const ref = parseFloat(String(s.refundAmount ?? '0'));
+      const tot = parseFloat(String(s.total ?? '0'));
+      if (isFinite(ref) && isFinite(tot) && tot > 0) {
+        if (ref >= tot) return 'REFUNDED';
+        if (ref > 0) return 'PARTIAL_REFUND';
+      }
+      return s.status === 'DELIVERED' ? 'COMPLETED' : (s.status ?? 'COMPLETED');
+    })(),
     subtotal: toGrosze(s.subtotal),
     discount: toGrosze(s.discountAmount),
     tax: toGrosze(s.taxAmount),

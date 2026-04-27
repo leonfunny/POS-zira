@@ -506,12 +506,23 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => {
       const limit = filters.limit || 20;
       const page = filters.page || 1;
-      const offset = (page - 1) * limit;
-      const result = orderRepo.getByDateRange(filters.from, filters.to, limit, offset);
-      let orders = result.orders;
+      const hasFilter = Boolean(filters.paymentMethod || filters.staffName);
+
+      if (!hasFilter) {
+        const offset = (page - 1) * limit;
+        const result = orderRepo.getByDateRange(filters.from, filters.to, limit, offset);
+        return { orders: result.orders, total: result.total, page, limit };
+      }
+
+      // Filter path: fetch wider window, filter in JS, then paginate.
+      // 1000 cap — single-day POS rarely exceeds 500 orders.
+      const wide = orderRepo.getByDateRange(filters.from, filters.to, 1000, 0);
+      let orders = wide.orders;
       if (filters.paymentMethod) orders = orders.filter(o => o.payment_method === filters.paymentMethod);
       if (filters.staffName) orders = orders.filter(o => o.staff_name === filters.staffName);
-      return { orders, total: result.total, page, limit };
+      const total = orders.length;
+      const offset = (page - 1) * limit;
+      return { orders: orders.slice(offset, offset + limit), total, page, limit };
     });
 
     ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {

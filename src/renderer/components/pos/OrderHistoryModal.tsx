@@ -715,7 +715,8 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const { from, to } = periodToDateRange(selectedPeriod);
 
     const [localResult, serverResult] = await Promise.allSettled([
-      window.electronAPI.pos.orders.getHistory({ from, to, page: 1, limit: PAGE_SIZE }),
+      window.electronAPI.pos.orders.getHistory({ from, to, page, limit: PAGE_SIZE,
+        paymentMethod: filterMethod || undefined, staffName: filterStaff || undefined }),
       window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE }),
     ]);
 
