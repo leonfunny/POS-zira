@@ -211,8 +211,6 @@ export const orderRepo = {
 
     const { _origin, ...dbRow } = adaptedOrder;
 
-    const localShift = database.get<{ id: string }>('SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1');
-
     database.transaction(() => {
       database.run(
         `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
@@ -233,7 +231,7 @@ export const orderRepo = {
           dbRow.customer_id ?? null,
           dbRow.customer_name ?? null,
           dbRow.customer_nip ?? null,
-          localShift?.id ?? null,
+          dbRow.shift_id ?? null,
           'SERVER',
           null, // table_id
           null, // covers

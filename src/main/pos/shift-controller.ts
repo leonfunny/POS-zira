@@ -29,6 +29,10 @@ type PrinterDriver = {
   printZReport(data: DailyReportData): Promise<void>;
 };
 
+function isTransferMethod(method: string | null | undefined): boolean {
+  return method === 'TRANSFER' || method === 'BANK_TRANSFER';
+}
+
 export class ShiftController {
   constructor(
     private getPrinter: (type: string) => PrinterDriver | null,
@@ -85,7 +89,7 @@ export class ShiftController {
             if (t.method === 'CASH') cashTotal += t.amount;
             else if (t.method === 'CARD') cardTotal += t.amount;
             else if (t.method === 'BLIK') blikTotal += t.amount;
-            else if (t.method === 'TRANSFER') transferTotal += t.amount;
+            else if (isTransferMethod(t.method)) transferTotal += t.amount;
           }
           continue; // skip single-method fallback
         } catch { /* fall through */ }
@@ -94,7 +98,7 @@ export class ShiftController {
       if (o.payment_method === 'CASH') cashTotal += o.total;
       else if (o.payment_method === 'CARD') cardTotal += o.total;
       else if (o.payment_method === 'BLIK') blikTotal += o.total;
-      else if (o.payment_method === 'TRANSFER') transferTotal += o.total;
+      else if (isTransferMethod(o.payment_method)) transferTotal += o.total;
     }
 
     const totalDiscounts = orders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
@@ -120,7 +124,7 @@ export class ShiftController {
                 if (tenders[i].method === 'CASH') cashTotal -= share;
                 else if (tenders[i].method === 'CARD') cardTotal -= share;
                 else if (tenders[i].method === 'BLIK') blikTotal -= share;
-                else if (tenders[i].method === 'TRANSFER') transferTotal -= share;
+                else if (isTransferMethod(tenders[i].method)) transferTotal -= share;
               }
               continue;
             }
@@ -130,7 +134,7 @@ export class ShiftController {
         if (o.payment_method === 'CASH') cashTotal -= o.refund_amount;
         else if (o.payment_method === 'CARD') cardTotal -= o.refund_amount;
         else if (o.payment_method === 'BLIK') blikTotal -= o.refund_amount;
-        else if (o.payment_method === 'TRANSFER') transferTotal -= o.refund_amount;
+        else if (isTransferMethod(o.payment_method)) transferTotal -= o.refund_amount;
       }
     }
 
