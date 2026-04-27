@@ -194,6 +194,86 @@ export const orderRepo = {
     return { orders, total };
   },
 
+  upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
+    const existing = orderRepo.getById(adaptedOrder.id);
+    if (existing && existing.refund_amount && existing.refund_amount > 0) {
+      return { inserted: false, localOrderId: existing.id };
+    }
+    if (existing) {
+      return { inserted: false, localOrderId: existing.id };
+    }
+
+    if (!items || items.length < 1) {
+      throw new Error('Server order has invalid items: empty array');
+    }
+    for (const item of items) {
+      if (!item.name || item.name.length === 0) throw new Error(`Server order has invalid items: missing name`);
+      if (typeof item.price !== 'number' || item.price < 0) throw new Error(`Server order has invalid items: bad price for "${item.name}"`);
+      if (typeof item.total !== 'number' || item.total < 0) throw new Error(`Server order has invalid items: bad total for "${item.name}"`);
+    }
+
+    const { _origin, ...dbRow } = adaptedOrder;
+
+    const localShift = database.get<{ id: string }>('SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1');
+
+    database.transaction(() => {
+      database.run(
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
+        [
+          dbRow.id,
+          dbRow.order_number ?? null,
+          dbRow.status ?? 'COMPLETED',
+          dbRow.subtotal ?? 0,
+          dbRow.discount ?? 0,
+          dbRow.tax ?? 0,
+          dbRow.total ?? 0,
+          dbRow.payment_method ?? null,
+          dbRow.payment_amount ?? 0,
+          dbRow.change_amount ?? 0,
+          dbRow.staff_id ?? null,
+          dbRow.staff_name ?? null,
+          dbRow.customer_id ?? null,
+          dbRow.customer_name ?? null,
+          dbRow.customer_nip ?? null,
+          localShift?.id ?? null,
+          'SERVER',
+          null, // table_id
+          null, // covers
+          'standard', // order_type
+          0, // tip
+          dbRow.mode ?? 'retail',
+          dbRow.payment_tenders ?? null,
+          1, // synced
+          dbRow.id, // backend_id = server order id
+          dbRow.refund_amount ?? 0,
+          dbRow.refund_reason ?? null,
+          dbRow.refunded_at ?? null,
+          dbRow.refund_lines ?? null,
+          dbRow.created_at ?? new Date().toISOString(),
+        ],
+      );
+
+      database.run('DELETE FROM order_items WHERE order_id = ?', [dbRow.id]);
+
+      for (const item of items) {
+        database.run(
+          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
+            item.price, item.quantity, item.total, item.vat_rate ?? 23,
+            item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
+          ],
+        );
+      }
+    });
+
+    database.save();
+    logger.info(`[OrderRepo] Mirrored server order ${dbRow.id} (${items.length} items)`);
+    return { inserted: true, localOrderId: dbRow.id };
+  },
+
   generateOrderNumber(): string {
     // Use atomic sequence counter to prevent race conditions
     const dateRow = database.get<{ d: string }>("SELECT strftime('%Y%m%d', 'now') as d");
