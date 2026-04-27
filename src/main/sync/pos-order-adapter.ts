@@ -31,6 +31,7 @@ export function adaptServerOrder(s: any): any {
   if (s.taxAmount === undefined) warnOnce('taxAmount', s);
   if (s.total === undefined) warnOnce('total', s);
   if (s.paidAmount === undefined) warnOnce('paidAmount', s);
+  if (s.posMode === undefined && s.mode === undefined) warnOnce('posMode', s);
   if ((s.status === 'REFUNDED' || s.status === 'PARTIAL_REFUND') && s.refundAmount === undefined) {
     warnOnce('refundAmount', s);
   }
@@ -61,12 +62,15 @@ export function adaptServerOrder(s: any): any {
     staff_id: s.staffId ?? null,
     shift_id: s.shiftId ?? null,
     created_at: s.createdAt ?? new Date().toISOString(),
-    mode: s.mode ?? null,
+    mode: s.posMode ?? s.mode ?? null,
     backend_id: s.id,
     synced: 1,
     refund_amount: toGrosze(s.refundAmount),
     refund_reason: s.refundReason ?? null,
-    refunded_at: null,
+    refunded_at: s.refundedLines?.[0]?.refundedAt ?? null,
+    refund_lines: s.refundedLines && Array.isArray(s.refundedLines) && s.refundedLines.length > 0
+      ? JSON.stringify(s.refundedLines) : null,
+    customer_id: s.customerId ?? null,
     customer_nip: s.customerNip ?? null,
     customer_name: s.customerName ?? null,
     payment_tenders: null,
