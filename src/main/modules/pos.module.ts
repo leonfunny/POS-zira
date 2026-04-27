@@ -927,6 +927,37 @@ export class PosModule extends BaseModule {
       }
     });
 
+    ipcMain.handle('pos:orders:mirrorFromServer', async (_e, orderId: string, kind: 'cash' | 'invoiced') => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        let detail = await apiClient.getServerOrderDetail(token, orderId, kind);
+        if (!detail) {
+          const fallbackKind = kind === 'cash' ? 'invoiced' : 'cash';
+          detail = await apiClient.getServerOrderDetail(token, orderId, fallbackKind);
+        }
+        if (!detail) return { success: false, error: 'Order not found on server' };
+
+        const adaptedItems = detail.items;
+        if (!Array.isArray(adaptedItems) || adaptedItems.length === 0) {
+          return { success: false, error: 'Server response missing items array' };
+        }
+
+        const adapted = adaptServerOrder(detail);
+        const items = adaptedItems.map((i: any) => adaptServerOrderItem(i, adapted.id));
+
+        const result = orderRepo.upsertFromServer(adapted, items);
+        const wasSplit = detail.paymentMethod === 'SPLIT';
+
+        logger.info(`[PosModule] Mirrored ${orderId} from server (kind=${kind})`);
+        return { success: true, localOrderId: result.localOrderId, wasSplit };
+      } catch (err: any) {
+        logger.warn(`[PosModule] Mirror failed for ${orderId}: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
     ipcMain.handle('pos:shift:getActive', async () => {
       try {
         const token = getSecureAuthToken();

@@ -521,6 +521,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       repairStockFailures: () => ipcRenderer.invoke('pos:orders:repairStockFailures'),
       getServerList: (params: any) => ipcRenderer.invoke('pos:orders:getServerList', params),
       getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
+      mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') =>
+        ipcRenderer.invoke('pos:orders:mirrorFromServer', orderId, kind),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),

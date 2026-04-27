@@ -746,6 +746,7 @@ export const IPC_CHANNELS = {
   // POS - Orders
   POS_ORDERS_CREATE: 'pos:orders:create',
   POS_ORDERS_GET_DAILY_STATS: 'pos:orders:getDailyStats',
+  POS_ORDERS_MIRROR_FROM_SERVER: 'pos:orders:mirrorFromServer',
 
   // POS - Payment
   POS_PRINT_RECEIPT: 'pos:print-receipt',
