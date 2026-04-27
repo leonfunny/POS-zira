@@ -238,7 +238,7 @@ export const orderRepo = {
           null, // table_id
           null, // covers
           'standard', // order_type
-          0, // tip
+          dbRow.tip ?? 0,
           dbRow.mode ?? 'retail',
           dbRow.payment_tenders ?? null,
           1, // synced

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { translations } from '../../i18n/translations';
 
 interface OrderRow {
@@ -142,6 +142,20 @@ function getRefundStatus(order: OrderRow): RefundStatus {
   if (order.status === 'REFUNDED') return 'full';
   if (order.status === 'PARTIAL_REFUND') return 'partial';
   return 'none';
+}
+
+// Catches both shapes: server orders use payment_method='SPLIT' literal,
+// local orders save the primary tender (CASH/CARD/etc.) with details in
+// payment_tenders JSON. The filter dropdown's "Split" option needs to match
+// both — equality alone misses local splits.
+function isSplit(order: OrderRow): boolean {
+  if (order.payment_method === 'SPLIT') return true;
+  try {
+    const t = order.payment_tenders ? JSON.parse(order.payment_tenders) : null;
+    return Array.isArray(t) && t.length > 1;
+  } catch {
+    return false;
+  }
 }
 
 function StatusBadge({ order, t }: { order: OrderRow; t: (key: string) => string }) {
@@ -529,14 +543,12 @@ function ServerActionsPanel({
   order,
   t,
   onOrderUpdated,
-  isServerOnly = false,
   ensureMirrored,
   isMirroring = false,
 }: {
   order: OrderRow & { customer_nip?: string | null };
   t: (key: string) => string;
   onOrderUpdated: () => void;
-  isServerOnly?: boolean;
   ensureMirrored?: () => Promise<boolean>;
   isMirroring?: boolean;
 }) {
@@ -708,6 +720,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [mirroringId, setMirroringId] = useState<string | null>(null);
   const [mirrorError, setMirrorError] = useState<string | null>(null);
   const [mirrorSplit, setMirrorSplit] = useState(false);
+  const detailIdRef = useRef<string | undefined>(undefined);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
@@ -768,7 +781,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
-    if (filterMethod) merged = merged.filter((o) => o.payment_method === filterMethod);
+    if (filterMethod === 'SPLIT') {
+      merged = merged.filter(isSplit);
+    } else if (filterMethod) {
+      merged = merged.filter((o) => o.payment_method === filterMethod && !isSplit(o));
+    }
     if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
     merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -781,7 +798,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff]);
-  useEffect(() => { setMirrorError(null); setMirrorSplit(false); }, [detail?.order.id]);
+  useEffect(() => {
+    detailIdRef.current = detail?.order.id;
+    setMirrorError(null);
+    setMirrorSplit(false);
+  }, [detail?.order.id]);
 
   useEffect(() => {
     const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data) => {
@@ -861,41 +882,46 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
   const ensureMirrored = async (order: OrderRow): Promise<boolean> => {
     if (order._origin !== 'server') return true;
-    setMirroringId(order.id);
+    const startId = order.id;
+    setMirroringId(startId);
     setMirrorError(null);
     setMirrorSplit(false);
     try {
       const kind: 'cash' | 'invoiced' = order.customer_nip ? 'invoiced' : 'cash';
-      const res = await window.electronAPI.pos.orders.mirrorFromServer(order.id, kind);
+      const res = await window.electronAPI.pos.orders.mirrorFromServer(startId, kind);
+      const stillFocused = () => detailIdRef.current === startId;
       if (!res.success) {
-        setMirrorError(res.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+        if (stillFocused()) setMirrorError(res.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
         return false;
       }
-      if (res.wasSplit) setMirrorSplit(true);
+      if (res.wasSplit && stillFocused()) setMirrorSplit(true);
       setServerItemsMap((prev) => {
         const next = { ...prev };
-        delete next[order.id];
+        delete next[startId];
         return next;
       });
       setOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, _origin: undefined, synced: 1, backend_id: o.backend_id ?? order.id } : o)),
+        prev.map((o) => (o.id === startId ? { ...o, _origin: undefined, synced: 1, backend_id: o.backend_id ?? startId } : o)),
       );
-      const fresh = await window.electronAPI.pos.orders.getDetail(order.id);
-      if (fresh) setDetail(fresh);
+      const fresh = await window.electronAPI.pos.orders.getDetail(startId);
+      if (fresh) {
+        setDetail((current) => (current?.order.id === startId ? fresh : current));
+      }
       return true;
     } catch (err: any) {
-      setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+      if (detailIdRef.current === startId) {
+        setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+      }
       return false;
     } finally {
-      setMirroringId(null);
+      setMirroringId((cur) => (cur === startId ? null : cur));
     }
   };
 
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
-    const isServerOnly = order._origin === 'server';
-    const canRefund = Boolean(order.backend_id) && refundStatus === 'none';
+    const canRefund = Boolean(order.backend_id) && refundStatus === 'none' && order.status !== 'CANCELLED';
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
 
@@ -1183,7 +1209,6 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   order={order as any}
                   t={t}
                   onOrderUpdated={() => { handleSelectOrder(order.id); loadOrders(); }}
-                  isServerOnly={isServerOnly}
                   ensureMirrored={() => ensureMirrored(order)}
                   isMirroring={isMirroring}
                 />

@@ -25,6 +25,15 @@ function toGrosze(value: unknown): number {
   return Math.round(n * 100);
 }
 
+// Resolves VAT rate while preserving legitimate 0% (export sales). Falls back
+// only when value is missing or non-numeric — avoids the `parseFloat('0') || 23`
+// trap that would silently rewrite legitimate 0% products to 23%.
+function toVatRate(value: unknown, fallback: number): number {
+  if (value == null) return fallback;
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  return isFinite(n) ? n : fallback;
+}
+
 export function adaptServerOrder(s: any): any {
   if (s.subtotal === undefined) warnOnce('subtotal', s);
   if (s.discountAmount === undefined) warnOnce('discountAmount', s);
@@ -58,6 +67,7 @@ export function adaptServerOrder(s: any): any {
     payment_method: s.paymentMethod ?? null,
     payment_amount: toGrosze(s.paidAmount),
     change_amount: toGrosze(s.changeAmount),
+    tip: toGrosze(s.tip),
     staff_name: s.staffName ?? null,
     staff_id: s.staffId ?? null,
     shift_id: s.shiftId ?? null,
@@ -74,7 +84,7 @@ export function adaptServerOrder(s: any): any {
           quantity: typeof l.quantity === 'number' ? l.quantity : (parseInt(String(l.quantity)) || 1),
           unitPrice: toGrosze(l.unitPrice),
           refundAmount: toGrosze(l.refundAmount),
-          vatRate: typeof l.taxRate === 'string' ? (parseFloat(l.taxRate) || 23) : (l.taxRate ?? 23),
+          vatRate: toVatRate(l.taxRate, 23),
           sku: l.sku ?? undefined,
         }))) : null,
     customer_id: s.customerId ?? null,
@@ -97,6 +107,6 @@ export function adaptServerOrderItem(item: any, orderId: string): any {
     price: toGrosze(item.unitPrice),
     quantity: item.packQuantity ?? 1,
     total: toGrosze(item.totalPrice),
-    vat_rate: typeof item.taxRate === 'string' ? parseFloat(item.taxRate) || 0 : (item.taxRate ?? 0),
+    vat_rate: toVatRate(item.taxRate, 23),
   };
 }

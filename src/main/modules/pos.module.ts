@@ -929,6 +929,7 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle('pos:orders:mirrorFromServer', async (_e, orderId: string, kind: 'cash' | 'invoiced') => {
       try {
+        if (!getConfig().serverUrl) return { success: false, error: 'Server URL not configured' };
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
 
