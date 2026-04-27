@@ -125,6 +125,7 @@ interface PosOrderRow {
   shift_id: string | null;
   created_at: string;
   mode: string | null;
+  _origin?: 'server';
 }
 
 interface PosOrderItemRow {
@@ -520,7 +521,7 @@ interface ElectronAPI {
       cancel: (orderId: string) => Promise<{ success: boolean; error?: string }>;
       retrySync: (orderId: string) => Promise<{ success: boolean; result?: any; summary?: any; error?: string }>;
       repairStockFailures: () => Promise<{ success: boolean; resetCount?: number; summary?: any; error?: string }>;
-      getServerList: (params: { period?: string; page?: number; limit?: number }) => Promise<{ success: boolean; data?: { orders: any[]; total: number; page: number; limit: number }; error?: string }>;
+      getServerList: (params: { period: string; paymentStatus?: string; page?: number; limit?: number }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
       getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
     };
     payment: {

@@ -34,6 +34,7 @@ import { getConfig, getSecureAuthToken } from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
+import { adaptServerOrder, adaptServerOrderItem } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
 import {
   writeBookingStatusChanged,
@@ -879,14 +880,28 @@ export class PosModule extends BaseModule {
       }
     });
 
-    ipcMain.handle('pos:orders:getServerList', async (_e, params: { period?: string; page?: number; limit?: number }) => {
+    ipcMain.handle('pos:orders:getServerList', async (_e, params: { period?: string; paymentStatus?: string; page?: number; limit?: number }) => {
+      const serverUrl = getConfig().serverUrl;
+      if (!serverUrl) {
+        return { orders: [], items: {}, total: 0, page: 1, limit: params.limit ?? 20, source: 'unconfigured' };
+      }
+      const token = getSecureAuthToken();
+      if (!token) {
+        return { orders: [], items: {}, total: 0, page: 1, limit: params.limit ?? 20, source: 'unconfigured' };
+      }
       try {
-        const token = getSecureAuthToken();
-        if (!token) return { success: false, error: 'Not authenticated' };
         const data = await apiClient.getServerOrders(token, params);
-        return { success: true, data };
+        const itemsMap: Record<string, any[]> = {};
+        const orders = data.orders.map((s: any) => {
+          const adapted = adaptServerOrder(s);
+          if (Array.isArray(s.items)) {
+            itemsMap[adapted.id] = s.items.map((item: any) => adaptServerOrderItem(item, adapted.id));
+          }
+          return adapted;
+        });
+        return { orders, items: itemsMap, total: data.total, page: data.page, limit: data.limit, source: 'server' };
       } catch (err: any) {
-        return { success: false, error: err.message };
+        return { orders: [], items: {}, total: 0, page: 1, limit: params.limit ?? 20, source: 'network-error', error: err.message };
       }
     });
 

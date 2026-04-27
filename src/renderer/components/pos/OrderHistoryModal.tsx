@@ -24,6 +24,7 @@ interface OrderRow {
   payment_tenders?: string | null;
   sync_error?: string | null;
   sync_attempts?: number;
+  _origin?: 'server';
 }
 
 interface OrderItemRow {
@@ -100,6 +101,18 @@ function formatDate(iso: string): string {
 function formatDateInput(value: string): string {
   const [year, month, day] = value.split('-');
   return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
+const PERIOD_LABELS: Record<string, string> = { today: 'Today', week: 'This Week', month: 'This Month', all: 'All Time' };
+
+function periodToDateRange(period: string): { from: string; to: string } {
+  const today = todayISO();
+  switch (period) {
+    case 'week': { const d = new Date(); d.setDate(d.getDate() - 7); return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: today }; }
+    case 'month': { const d = new Date(); d.setMonth(d.getMonth() - 1); return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: today }; }
+    case 'all': return { from: '2000-01-01', to: '2099-12-31' };
+    default: return { from: today, to: today };
+  }
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -512,10 +525,12 @@ function ServerActionsPanel({
   order,
   t,
   onOrderUpdated,
+  isServerOnly = false,
 }: {
   order: OrderRow & { customer_nip?: string | null };
   t: (key: string) => string;
   onOrderUpdated: () => void;
+  isServerOnly?: boolean;
 }) {
   const [nip, setNip] = useState((order as any).customer_nip || '');
   const [busy, setBusy] = useState<string | null>(null);
@@ -588,9 +603,15 @@ function ServerActionsPanel({
         {tOr(t, 'pos.history.server.subtitle', 'Actions performed on the server for this order.')}
       </p>
 
+      {isServerOnly && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-bold text-amber-800">
+          {tOr(t, 'pos.history.serverOnlyExplain', 'This order was created on another device. Open the eNail dashboard to refund, cancel, or print.')}
+        </div>
+      )}
+
       <button
         onClick={handleDownload}
-        disabled={busy !== null}
+        disabled={busy !== null || isServerOnly}
         className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
       >
         {busy === 'download' ? '...' : tOr(t, hasInvoice ? 'pos.history.server.downloadInvoice' : 'pos.history.server.downloadReceipt', hasInvoice ? 'Download Invoice PDF' : 'Download Receipt PDF')}
@@ -612,7 +633,7 @@ function ServerActionsPanel({
             />
             <button
               onClick={handleLookupNip}
-              disabled={!nipValid || busy !== null}
+              disabled={!nipValid || busy !== null || isServerOnly}
               className="h-11 shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs font-extrabold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy === 'nip' ? '...' : 'GUS'}
@@ -628,7 +649,7 @@ function ServerActionsPanel({
 
           <button
             onClick={handleAddInvoice}
-            disabled={!nipValid || busy !== null}
+            disabled={!nipValid || busy !== null || isServerOnly}
             className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
           >
             {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
@@ -638,7 +659,7 @@ function ServerActionsPanel({
 
       <button
         onClick={handleProforma}
-        disabled={busy !== null}
+        disabled={busy !== null || isServerOnly}
         className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
       >
         {busy === 'proforma' ? '...' : tOr(t, 'pos.history.server.proforma', 'Generate Proforma')}
@@ -665,7 +686,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'week' | 'month' | 'all'>('today');
   const [filterMethod, setFilterMethod] = useState('');
   const [filterStaff, setFilterStaff] = useState('');
   const [detail, setDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
@@ -674,10 +695,12 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [reprinting, setReprinting] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
+  const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
-  const hasActiveFilters = selectedDate !== todayISO() || filterMethod !== '' || filterStaff !== '';
+  const hasActiveFilters = selectedPeriod !== 'today' || filterMethod !== '' || filterStaff !== '';
 
   const staffNames = useMemo(
     () => Array.from(new Set(orders.map((o) => o.staff_name).filter((name): name is string => Boolean(name)))).sort(),
@@ -688,28 +711,63 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const loadOrders = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
-    try {
-      const result = await window.electronAPI.pos.orders.getHistory({
-        from: selectedDate,
-        to: selectedDate,
-        paymentMethod: filterMethod || undefined,
-        staffName: filterStaff || undefined,
-        page,
-        limit: PAGE_SIZE,
-      });
-      setOrders(result?.orders || []);
-      setTotalOrders(result?.total || 0);
-    } catch (e: any) {
-      setOrders([]);
-      setTotalOrders(0);
-      setLoadError(e?.message || 'Could not load orders');
-    } finally {
-      setLoading(false);
+
+    const { from, to } = periodToDateRange(selectedPeriod);
+
+    const [localResult, serverResult] = await Promise.allSettled([
+      window.electronAPI.pos.orders.getHistory({ from, to, page: 1, limit: PAGE_SIZE }),
+      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE }),
+    ]);
+
+    let merged: OrderRow[] = [];
+    let total = 0;
+    let source: 'local+server' | 'local-only' | 'server-unreachable' = 'local-only';
+    let newItemsMap: Record<string, OrderItemRow[]> = {};
+
+    if (serverResult.status === 'fulfilled') {
+      const sr = serverResult.value;
+      if (sr.source === 'server') {
+        merged = [...sr.orders];
+        total = sr.total;
+        newItemsMap = sr.items || {};
+        source = 'local+server';
+      } else if (sr.source === 'network-error') {
+        source = 'server-unreachable';
+      }
+    } else {
+      source = 'server-unreachable';
     }
-  }, [selectedDate, filterMethod, filterStaff, page]);
+
+    if (localResult.status === 'fulfilled') {
+      const localOrders: OrderRow[] = localResult.value?.orders || [];
+      if (source === 'local+server') {
+        const serverIds = new Set(merged.map((o) => o.id));
+        for (const lo of localOrders) {
+          if (lo.backend_id && serverIds.has(lo.backend_id)) continue;
+          if (serverIds.has(lo.id)) continue;
+          if (lo.synced === 1 && lo.backend_id) continue;
+          merged.push(lo);
+        }
+      } else {
+        merged = localOrders;
+        total = localResult.value?.total || localOrders.length;
+      }
+    }
+
+    merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
+    if (filterMethod) merged = merged.filter((o) => o.payment_method === filterMethod);
+    if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
+    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setOrders(merged);
+    setTotalOrders(total);
+    setServerItemsMap(newItemsMap);
+    setDataSource(source);
+    setLoading(false);
+  }, [selectedPeriod, filterMethod, filterStaff, page]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
-  useEffect(() => { setPage(1); }, [selectedDate, filterMethod, filterStaff]);
+  useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff]);
 
   useEffect(() => {
     const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data) => {
@@ -735,6 +793,14 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setDetailLoadingId(orderId);
     setReprintStatus(null);
     try {
+      if (serverItemsMap[orderId] && serverItemsMap[orderId].length > 0) {
+        const order = orders.find((o) => o.id === orderId);
+        if (order) {
+          setDetail({ order, items: serverItemsMap[orderId] });
+          setShowRefund(false);
+          return;
+        }
+      }
       const result = await window.electronAPI.pos.orders.getDetail(orderId);
       if (result) {
         setDetail(result);
@@ -773,7 +839,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   };
 
   const resetFilters = () => {
-    setSelectedDate(todayISO());
+    setSelectedPeriod('today');
     setFilterMethod('');
     setFilterStaff('');
     setPage(1);
@@ -782,7 +848,8 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
-    const canRefund = Boolean(order.backend_id) && refundStatus === 'none';
+    const isServerOnly = order._origin === 'server';
+    const canRefund = Boolean(order.backend_id) && refundStatus === 'none' && !isServerOnly;
     const notSynced = !order.backend_id && order.synced !== 1;
 
     return (
@@ -957,7 +1024,8 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <p className="mt-1 text-xs font-medium text-slate-500">Send this order receipt to the configured printer.</p>
                 <button
                   onClick={() => handleReprint(order.id, order)}
-                  disabled={reprinting}
+                  disabled={reprinting || isServerOnly}
+                  title={isServerOnly ? tOr(t, 'pos.history.serverOnlyTooltip', 'Created on another device — open dashboard') : undefined}
                   className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   {reprinting && (
@@ -1010,7 +1078,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </button>
               )}
 
-              {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
+              {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && !isServerOnly && (
                 <button
                   disabled={cancelling}
                   onClick={async () => {
@@ -1048,6 +1116,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   order={order as any}
                   t={t}
                   onOrderUpdated={() => { handleSelectOrder(order.id); loadOrders(); }}
+                  isServerOnly={isServerOnly}
                 />
               )}
 
@@ -1064,7 +1133,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
         <div className="min-w-0">
           <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            {formatDateInput(selectedDate)} - {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} - page total {formatMoney(pageTotal, currency)}
+            {PERIOD_LABELS[selectedPeriod] || 'Today'} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} — page total {formatMoney(pageTotal, currency)}
+            <span className={`ml-2 inline-flex items-center gap-1 text-xs font-bold ${dataSource === 'local+server' ? 'text-emerald-600' : dataSource === 'server-unreachable' ? 'text-amber-600' : 'text-slate-400'}`}>
+              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: 'currentColor' }} />
+              {dataSource === 'local+server' ? 'Local + Server' : dataSource === 'server-unreachable' ? 'Server unreachable — showing local data' : 'Local only (offline)'}
+            </span>
           </p>
         </div>
         <CloseButton onClose={onClose} />
@@ -1073,13 +1146,17 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-3">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[168px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
-            Date
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+            Period
+            <select
+              value={selectedPeriod}
+              onChange={(e) => setSelectedPeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-            />
+            >
+              <option value="today">Today</option>
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+              <option value="all">All Time</option>
+            </select>
           </label>
 
           <label className="min-w-[184px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
