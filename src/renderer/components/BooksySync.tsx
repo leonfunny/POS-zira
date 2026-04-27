@@ -3,6 +3,7 @@ import { BooksySyncStatus, BooksySyncConfig, BooksyBookingSummary } from '../../
 import rlog from '../utils/logger';
 import { useTranslation } from '../i18n/useTranslation';
 import { useConfig } from '../hooks/useConfig';
+import { deriveBooksyPushWarning } from './booksyPushWarning';
 
 export default function BooksySync() {
   const { config: appConfig } = useConfig();
@@ -216,6 +217,20 @@ export default function BooksySync() {
     return label !== key ? label : reason;
   };
 
+  const pushWarning = deriveBooksyPushWarning(status);
+  const pushWarningEntity = pushWarning
+    ? t(`booksy.entity.${pushWarning.entity.toLowerCase()}`)
+    : '';
+  const pushWarningMessage = pushWarning
+    ? pushWarning.partial
+      ? t('booksy.pushWarning.partial')
+        .replace('{entity}', pushWarningEntity)
+        .replace('{errors}', String(pushWarning.errors))
+      : pushWarning.reason === 'non-2xx'
+        ? t('booksy.pushWarning.non2xx').replace('{entity}', pushWarningEntity)
+        : t('booksy.pushWarning.connection').replace('{entity}', pushWarningEntity)
+    : '';
+
   if (showSettings) {
     return (
       <div className="space-y-4">
@@ -407,6 +422,33 @@ export default function BooksySync() {
             </button>
           </div>
           <button onClick={() => setJwtExpiredVisible(false)} className="text-amber-700 hover:text-amber-900 text-lg leading-none">&times;</button>
+        </div>
+      )}
+
+      {pushWarning && (
+        <div className={`border rounded-lg p-3 flex items-center justify-between gap-3 ${
+          pushWarning.partial
+            ? 'bg-amber-50 border-amber-200'
+            : 'bg-red-50 border-red-200'
+        }`}>
+          <div>
+            <p className={`text-sm font-medium ${pushWarning.partial ? 'text-amber-900' : 'text-red-800'}`}>
+              {pushWarning.partial ? t('booksy.pushWarning.partialTitle') : t('booksy.pushWarning.title')}
+            </p>
+            <p className={`text-xs mt-1 ${pushWarning.partial ? 'text-amber-700' : 'text-red-600'}`}>
+              {pushWarningMessage}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-colors flex-shrink-0 ${
+              pushWarning.partial
+                ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
+                : 'bg-red-100 text-red-800 hover:bg-red-200'
+            }`}
+          >
+            {t('booksy.openSettings')}
+          </button>
         </div>
       )}
 
