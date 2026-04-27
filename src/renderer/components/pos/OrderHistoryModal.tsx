@@ -526,11 +526,15 @@ function ServerActionsPanel({
   t,
   onOrderUpdated,
   isServerOnly = false,
+  ensureMirrored,
+  isMirroring = false,
 }: {
   order: OrderRow & { customer_nip?: string | null };
   t: (key: string) => string;
   onOrderUpdated: () => void;
   isServerOnly?: boolean;
+  ensureMirrored?: () => Promise<boolean>;
+  isMirroring?: boolean;
 }) {
   const [nip, setNip] = useState((order as any).customer_nip || '');
   const [busy, setBusy] = useState<string | null>(null);
@@ -558,13 +562,15 @@ function ServerActionsPanel({
     }
   };
 
-  const handleDownload = () =>
+  const handleDownload = async () => {
+    if (ensureMirrored && !(await ensureMirrored())) return;
     run('download', async () => {
       const res = await window.electronAPI.pos.orders.downloadPdf(order.id, kind, 'VAT');
       return res.success
         ? { success: true, message: tOr(t, 'pos.history.server.pdfSaved', 'PDF saved') }
         : { success: false, error: res.error };
     });
+  };
 
   const handleLookupNip = () =>
     run('nip', async () => {
@@ -575,7 +581,8 @@ function ServerActionsPanel({
       return { success: true, message: tOr(t, 'pos.history.server.nipFound', 'Company found') };
     });
 
-  const handleAddInvoice = () =>
+  const handleAddInvoice = async () => {
+    if (ensureMirrored && !(await ensureMirrored())) return;
     run('invoice', async () => {
       const res = await window.electronAPI.pos.orders.addInvoice(order.id, { customerNip: nip, invoiceType: 'VAT' });
       if (res.success) onOrderUpdated();
@@ -583,8 +590,10 @@ function ServerActionsPanel({
         ? { success: true, message: tOr(t, 'pos.history.server.invoiceAdded', 'Invoice attached') }
         : { success: false, error: res.error };
     });
+  };
 
-  const handleProforma = () =>
+  const handleProforma = async () => {
+    if (ensureMirrored && !(await ensureMirrored())) return;
     run('proforma', async () => {
       const res = await window.electronAPI.pos.orders.generateProforma(order.id);
       if (res.success) onOrderUpdated();
@@ -592,6 +601,7 @@ function ServerActionsPanel({
         ? { success: true, message: tOr(t, 'pos.history.server.proformaOk', 'Proforma generated') }
         : { success: false, error: res.error };
     });
+  };
 
   const nipDigits = nip.replace(/\D/g, '');
   const nipValid = nipDigits.length === 10;
@@ -603,15 +613,9 @@ function ServerActionsPanel({
         {tOr(t, 'pos.history.server.subtitle', 'Actions performed on the server for this order.')}
       </p>
 
-      {isServerOnly && (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-bold text-amber-800">
-          {tOr(t, 'pos.history.serverOnlyExplain', 'This order was created on another device. Open the eNail dashboard to refund, cancel, or print.')}
-        </div>
-      )}
-
       <button
         onClick={handleDownload}
-        disabled={busy !== null || isServerOnly}
+        disabled={busy !== null || isMirroring}
         className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
       >
         {busy === 'download' ? '...' : tOr(t, hasInvoice ? 'pos.history.server.downloadInvoice' : 'pos.history.server.downloadReceipt', hasInvoice ? 'Download Invoice PDF' : 'Download Receipt PDF')}
@@ -633,7 +637,7 @@ function ServerActionsPanel({
             />
             <button
               onClick={handleLookupNip}
-              disabled={!nipValid || busy !== null || isServerOnly}
+              disabled={!nipValid || busy !== null || isMirroring}
               className="h-11 shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs font-extrabold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy === 'nip' ? '...' : 'GUS'}
@@ -649,7 +653,7 @@ function ServerActionsPanel({
 
           <button
             onClick={handleAddInvoice}
-            disabled={!nipValid || busy !== null || isServerOnly}
+            disabled={!nipValid || busy !== null || isMirroring}
             className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
           >
             {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
@@ -659,7 +663,7 @@ function ServerActionsPanel({
 
       <button
         onClick={handleProforma}
-        disabled={busy !== null || isServerOnly}
+        disabled={busy !== null || isMirroring}
         className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
       >
         {busy === 'proforma' ? '...' : tOr(t, 'pos.history.server.proforma', 'Generate Proforma')}
@@ -697,6 +701,9 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [cancelling, setCancelling] = useState(false);
   const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
+  const [mirroringId, setMirroringId] = useState<string | null>(null);
+  const [mirrorError, setMirrorError] = useState<string | null>(null);
+  const [mirrorSplit, setMirrorSplit] = useState(false);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
@@ -847,11 +854,44 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setPage(1);
   };
 
+  const ensureMirrored = async (order: OrderRow): Promise<boolean> => {
+    if (order._origin !== 'server') return true;
+    setMirroringId(order.id);
+    setMirrorError(null);
+    setMirrorSplit(false);
+    try {
+      const kind: 'cash' | 'invoiced' = order.customer_nip ? 'invoiced' : 'cash';
+      const res = await window.electronAPI.pos.orders.mirrorFromServer(order.id, kind);
+      if (!res.success) {
+        setMirrorError(res.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+        return false;
+      }
+      if (res.wasSplit) setMirrorSplit(true);
+      setServerItemsMap((prev) => {
+        const next = { ...prev };
+        delete next[order.id];
+        return next;
+      });
+      setOrders((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, _origin: undefined, synced: 1, backend_id: o.backend_id ?? order.id } : o)),
+      );
+      const fresh = await window.electronAPI.pos.orders.getDetail(order.id);
+      if (fresh) setDetail(fresh);
+      return true;
+    } catch (err: any) {
+      setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+      return false;
+    } finally {
+      setMirroringId(null);
+    }
+  };
+
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
     const isServerOnly = order._origin === 'server';
-    const canRefund = Boolean(order.backend_id) && refundStatus === 'none' && !isServerOnly;
+    const canRefund = Boolean(order.backend_id || isServerOnly) && refundStatus === 'none';
+    const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
 
     return (
@@ -1021,16 +1061,34 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 />
               )}
 
+              {isMirroring && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800">
+                  {tOr(t, 'pos.history.mirroring', 'Loading order details from server...')}
+                </div>
+              )}
+              {mirrorError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800">
+                  {mirrorError}
+                  <button onClick={() => { setMirrorError(null); ensureMirrored(order); }} className="ml-2 underline">
+                    {tOr(t, 'pos.history.mirrorRetry', 'Retry')}
+                  </button>
+                </div>
+              )}
+              {mirrorSplit && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
+                  {tOr(t, 'pos.history.mirrorSplitWarning', 'Original payment was split across methods. Refund will be issued as a single payment method.')}
+                </div>
+              )}
+
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-extrabold text-slate-900">Receipt</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">Send this order receipt to the configured printer.</p>
                 <button
-                  onClick={() => handleReprint(order.id, order)}
-                  disabled={reprinting || isServerOnly}
-                  title={isServerOnly ? tOr(t, 'pos.history.serverOnlyTooltip', 'Created on another device — open dashboard') : undefined}
+                  onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
+                  disabled={reprinting || isMirroring}
                   className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
-                  {reprinting && (
+                  {(reprinting || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
                   )}
                   {reprinting ? 'Sending...' : tOr(t, 'pos.history.reprint', 'Reprint Receipt')}
@@ -1073,17 +1131,19 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
               {canRefund && !showRefund && (
                 <button
-                  onClick={() => setShowRefund(true)}
-                  className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
+                  onClick={async () => { if (await ensureMirrored(order)) setShowRefund(true); }}
+                  disabled={isMirroring}
+                  className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
                 >
                   {tOr(t, 'pos.refund.title', 'Refund Order')}
                 </button>
               )}
 
-              {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && !isServerOnly && (
+              {(order.backend_id || isServerOnly) && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
                 <button
-                  disabled={cancelling}
+                  disabled={cancelling || isMirroring}
                   onClick={async () => {
+                    if (!(await ensureMirrored(order))) return;
                     if (!confirm(tOr(t, 'pos.history.cancelConfirm', 'Cancel this order? This cannot be undone.'))) return;
                     setCancelling(true);
                     try {
@@ -1113,12 +1173,14 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </div>
               )}
 
-              {order.backend_id && (
+              {(order.backend_id || isServerOnly) && (
                 <ServerActionsPanel
                   order={order as any}
                   t={t}
                   onOrderUpdated={() => { handleSelectOrder(order.id); loadOrders(); }}
                   isServerOnly={isServerOnly}
+                  ensureMirrored={() => ensureMirrored(order)}
+                  isMirroring={isMirroring}
                 />
               )}
 
