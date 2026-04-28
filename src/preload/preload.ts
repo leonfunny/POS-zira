@@ -169,7 +169,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backup: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_GET_STATUS),
     runNow: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_RUN_NOW),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_LIST),
+    prepareRestore: (backupPath: string) => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_PREPARE_RESTORE, backupPath),
     openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_OPEN_FOLDER),
+    openDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_OPEN_DATA_FOLDER),
   },
 
   // Auto-start functions

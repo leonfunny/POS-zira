@@ -246,6 +246,14 @@ interface ElectronAPI {
       lastSuccessAt?: string;
       lastPath?: string;
       lastError?: string;
+      pendingRestorePath?: string;
+      pendingRestoreSourcePath?: string;
+      pendingRestoreRequestedAt?: string;
+      restoreLastStatus?: 'pending' | 'success' | 'failed';
+      restoreLastError?: string;
+      restoreLastSourcePath?: string;
+      restoreLastSafetyBackupPath?: string;
+      restoreLastAppliedAt?: string;
     } | null>;
     runNow: () => Promise<{
       success: boolean;
@@ -253,7 +261,16 @@ interface ElectronAPI {
       error?: string;
       createdAt: string;
     }>;
+    list: () => Promise<Array<{
+      name: string;
+      path: string;
+      createdAt: string;
+      sizeBytes: number;
+      isLatest: boolean;
+    }>>;
+    prepareRestore: (path: string) => Promise<{ success: boolean; error?: string }>;
     openFolder: () => Promise<{ success: boolean; error?: string }>;
+    openDataFolder: () => Promise<{ success: boolean; error?: string }>;
   };
 
   // Auto-start

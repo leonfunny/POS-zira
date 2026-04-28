@@ -14,6 +14,7 @@ const electronDts = readFileSync(join(__dirname, '../src/shared/electron.d.ts'),
 const preloadMain = readFileSync(join(__dirname, '../src/preload/preload.ts'), 'utf-8');
 const preloadPos = readFileSync(join(__dirname, '../src/preload/preload-pos.ts'), 'utf-8');
 const preloadDisplay = readFileSync(join(__dirname, '../src/preload/preload-display.ts'), 'utf-8');
+const sharedTypes = readFileSync(join(__dirname, '../src/shared/types.ts'), 'utf-8');
 
 describe('IPC channel contracts - main preload', () => {
   const topLevelGroups = [
@@ -30,6 +31,21 @@ describe('IPC channel contracts - main preload', () => {
     });
     it(`preload.ts exposes "${group}"`, () => {
       expect(preloadMain).toContain(group);
+    });
+  }
+
+  const backupMethods = [
+    { method: 'list', ipc: 'backup:list', constant: 'BACKUP_LIST' },
+    { method: 'prepareRestore', ipc: 'backup:prepare-restore', constant: 'BACKUP_PREPARE_RESTORE' },
+    { method: 'openDataFolder', ipc: 'backup:open-data-folder', constant: 'BACKUP_OPEN_DATA_FOLDER' },
+  ];
+
+  for (const { method, ipc, constant } of backupMethods) {
+    it(`backup bridge exposes ${method}`, () => {
+      expect(preloadMain).toContain(method);
+      expect(preloadMain).toContain(constant);
+      expect(sharedTypes).toContain(ipc);
+      expect(electronDts).toContain(method);
     });
   }
 });

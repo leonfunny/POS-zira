@@ -16,6 +16,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { join } from 'path';
+import fs from 'fs';
 import { createHash, randomUUID } from 'crypto';
 import { execSync } from 'child_process';
 
@@ -27,10 +28,12 @@ import type { AppModule } from './module';
 
 import SocketClient from '../network/socket-client';
 import { database } from '../database/database';
+import { applyPendingDatabaseRestore } from '../database/backup-service';
 import { seedIfEmpty } from '../database/seed';
 import {
   getConfig,
   getConfigValue,
+  setConfig,
   setConfigValue,
 } from '../config/store';
 import { getIconPath } from '../paths';
@@ -143,6 +146,21 @@ export class AgentOrchestrator implements TrayManagerHost {
       this.container.set(SERVICE_TOKENS.TOOL_REGISTRY, this.toolRegistry);
 
       // Initialize database
+      this.logStep('Applying pending database restore if needed...');
+      const userDataDir = app.getPath('userData');
+      const backupDir = process.env.ELECTRON_USER_DATA_DIR
+        ? join(process.env.ELECTRON_USER_DATA_DIR, 'Zira AI Backups')
+        : join(app.getPath('documents'), 'Zira AI Backups');
+      await applyPendingDatabaseRestore({
+        backupDir,
+        dbPath: join(userDataDir, 'pos.db'),
+        now: () => new Date(),
+        getConfig,
+        setConfig,
+        fs,
+        logger,
+      });
+
       this.logStep('Initializing SQLite database...');
       await database.initialize();
       seedIfEmpty();

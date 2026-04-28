@@ -349,6 +349,14 @@ export interface AgentConfig {
   backupLastSuccessAt?: string;
   backupLastPath?: string;
   backupLastError?: string;
+  backupPendingRestorePath?: string;
+  backupPendingRestoreSourcePath?: string;
+  backupPendingRestoreRequestedAt?: string;
+  backupRestoreLastStatus?: 'pending' | 'success' | 'failed';
+  backupRestoreLastError?: string;
+  backupRestoreLastSourcePath?: string;
+  backupRestoreLastSafetyBackupPath?: string;
+  backupRestoreLastAppliedAt?: string;
 
   // User-hidden tabs (locally controlled, independent of entitlements)
   hiddenTabs?: Tab[];
@@ -838,7 +846,10 @@ export const IPC_CHANNELS = {
   // Local database backup
   BACKUP_GET_STATUS: 'backup:get-status',
   BACKUP_RUN_NOW: 'backup:run-now',
+  BACKUP_LIST: 'backup:list',
+  BACKUP_PREPARE_RESTORE: 'backup:prepare-restore',
   BACKUP_OPEN_FOLDER: 'backup:open-folder',
+  BACKUP_OPEN_DATA_FOLDER: 'backup:open-data-folder',
 
   // App
   APP_SET_AUTO_START: 'app:set-auto-start',

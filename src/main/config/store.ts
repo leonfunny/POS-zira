@@ -267,6 +267,14 @@ const store = new Store<AgentConfig>({
     backupLastSuccessAt: { type: 'string' },
     backupLastPath: { type: 'string' },
     backupLastError: { type: 'string' },
+    backupPendingRestorePath: { type: 'string' },
+    backupPendingRestoreSourcePath: { type: 'string' },
+    backupPendingRestoreRequestedAt: { type: 'string' },
+    backupRestoreLastStatus: { type: 'string', enum: ['pending', 'success', 'failed'] },
+    backupRestoreLastError: { type: 'string' },
+    backupRestoreLastSourcePath: { type: 'string' },
+    backupRestoreLastSafetyBackupPath: { type: 'string' },
+    backupRestoreLastAppliedAt: { type: 'string' },
     // User-hidden tabs
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
     // Check-in display toggles
