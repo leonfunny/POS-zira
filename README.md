@@ -114,7 +114,6 @@ print-agent-master/
 ├── assets/icons/
 ├── docs/                       # Design docs, release guide
 ├── CLAUDE.md                   # Project instructions for Claude Code agents
-├── SESSION_HANDOFF.md          # Cross-session handoff log — READ FIRST
 └── package.json
 ```
 
@@ -218,8 +217,7 @@ Copy the folder to USB / external drive.
    ```powershell
    Get-Content D:\zira-backup\vscode-extensions.txt | ForEach-Object { code --install-extension $_ }
    ```
-6. Read `SESSION_HANDOFF.md` — the most recent session entry has current WIP and "next steps".
-7. Launch the app, open Settings, paste your API key from the old `config.json`, click Connect.
+6. Launch the app, open Settings, paste your API key from the old `config.json`, click Connect.
 
 ---
 
@@ -242,7 +240,6 @@ git push public main
 ## Further reading
 
 - [`CLAUDE.md`](./CLAUDE.md) — Guidance for Claude Code agents contributing to this repo (client/server boundary, skill auto-activation, coding principles).
-- [`SESSION_HANDOFF.md`](./SESSION_HANDOFF.md) — Cross-session handoff log. Read first on a fresh session.
 - [`DESIGN.md`](./DESIGN.md) — Visual design direction.
 - [`PRINT_AGENT_API_GUIDE.md`](./PRINT_AGENT_API_GUIDE.md) — eNail server endpoints consumed by this client.
 - [`docs/RELEASE_GUIDE.md`](./docs/RELEASE_GUIDE.md) — Publishing new versions.
