@@ -68,3 +68,6 @@ scripts/enable-ts-ssh.ps1
 
 # Misc temp files
 _nul
+
+# Backend bot audit log (per skill winpc-print-agent §11)
+.backend-bot-log.md
