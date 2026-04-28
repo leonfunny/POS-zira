@@ -13,17 +13,32 @@ interface DiagnosticsData {
   scannerActive: boolean;
 }
 
+interface BackupStatus {
+  backupDir: string;
+  lastStatus?: 'success' | 'failed';
+  lastRunAt?: string;
+  lastSuccessAt?: string;
+  lastPath?: string;
+  lastError?: string;
+}
+
 export default function Debug() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [backupRunning, setBackupRunning] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const loadDiagnostics = async () => {
     try {
       rlog.info('[Debug] Loading diagnostics...');
-      const data = await window.electronAPI.debug.getDiagnostics();
+      const [data, backup] = await Promise.all([
+        window.electronAPI.debug.getDiagnostics(),
+        window.electronAPI.backup.getStatus(),
+      ]);
       rlog.info('[Debug] Diagnostics loaded:', data);
       setDiagnostics(data);
+      setBackupStatus(backup);
     } catch (error) {
       rlog.error('[Debug] Failed to load diagnostics:', error);
     } finally {
@@ -45,6 +60,23 @@ export default function Debug() {
     await window.electronAPI.debug.openLogs();
   };
 
+  const handleBackupNow = async () => {
+    setBackupRunning(true);
+    try {
+      await window.electronAPI.backup.runNow();
+      const backup = await window.electronAPI.backup.getStatus();
+      setBackupStatus(backup);
+    } catch (error) {
+      rlog.error('[Debug] Backup now failed:', error);
+    } finally {
+      setBackupRunning(false);
+    }
+  };
+
+  const handleOpenBackupFolder = async () => {
+    await window.electronAPI.backup.openFolder();
+  };
+
   const handleCopyDiagnostics = () => {
     if (!diagnostics) return;
 
@@ -61,7 +93,12 @@ User Data: ${diagnostics.userData}
 Debug Mode: ${diagnostics.debugMode}
 Server Connected: ${diagnostics.connected}
 Printer Connected: ${diagnostics.printerConnected}
-Scanner Active: ${diagnostics.scannerActive}`;
+Scanner Active: ${diagnostics.scannerActive}
+
+Backup Status: ${backupStatus?.lastStatus || 'never'}
+Last Backup Run: ${backupStatus?.lastRunAt || '-'}
+Last Successful Backup: ${backupStatus?.lastSuccessAt || '-'}
+Backup Folder: ${backupStatus?.backupDir || '-'}`;
 
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -162,6 +199,49 @@ Scanner Active: ${diagnostics.scannerActive}`;
 
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-800 mb-3">
+          Database backup
+        </h2>
+        <div className="space-y-2 mb-3">
+          <StatusRow
+            label="Last run"
+            status={backupStatus?.lastStatus === 'success'}
+            trueText={formatDateTime(backupStatus?.lastSuccessAt)}
+            falseText={backupStatus?.lastStatus === 'failed' ? 'Failed' : 'Never'}
+          />
+          {backupStatus?.lastStatus === 'failed' && (
+            <div>
+              <div className="text-xs text-slate-500 mb-0.5">Last error:</div>
+              <div className="text-xs font-mono text-red-700 bg-red-50 p-1.5 rounded break-all">
+                {backupStatus.lastError || '-'}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="text-xs text-slate-500 mb-0.5">Backup folder:</div>
+            <div className="text-xs font-mono text-slate-700 bg-slate-50 p-1.5 rounded break-all">
+              {backupStatus?.backupDir || '-'}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={handleBackupNow}
+            disabled={backupRunning}
+            className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 rounded-lg text-sm transition-colors"
+          >
+            {backupRunning ? 'Backing up...' : 'Backup now'}
+          </button>
+          <button
+            onClick={handleOpenBackupFolder}
+            className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm transition-colors"
+          >
+            Backup folder
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-4">
+        <h2 className="text-sm font-semibold text-slate-800 mb-3">
           Paths
         </h2>
         <div className="space-y-2">
@@ -188,6 +268,13 @@ Scanner Active: ${diagnostics.scannerActive}`;
       </div>
     </div>
   );
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import logger from '../logger';
 import { migrations } from './migrations';
+import type { BackupFlushResult } from './backup-service';
 
 class Database {
   private db: SqlJsDatabase | null = null;
@@ -55,9 +56,13 @@ class Database {
   private consecutiveFailures = 0;
   private saving = false;
 
-  save(): void {
-    if (!this.db) return;
-    if (this.saving) return; // Prevent concurrent saves
+  save(): BackupFlushResult {
+    if (!this.db) {
+      return { success: false, dbPath: this.dbPath || undefined, error: 'Database not initialized' };
+    }
+    if (this.saving) {
+      return { success: false, dbPath: this.dbPath || undefined, error: 'Database save already in progress' };
+    }
     this.saving = true;
 
     try {
@@ -68,6 +73,7 @@ class Database {
         logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
         this.consecutiveFailures = 0;
       }
+      return { success: true, dbPath: this.dbPath };
     } catch (error) {
       this.consecutiveFailures++;
       logger.error(`[DB] Save failed (consecutive failures: ${this.consecutiveFailures}):`, error);
@@ -86,9 +92,18 @@ class Database {
           }
         } catch { /* ignore if electron not ready */ }
       }
+      return {
+        success: false,
+        dbPath: this.dbPath || undefined,
+        error: error instanceof Error ? error.message : String(error),
+      };
     } finally {
       this.saving = false;
     }
+  }
+
+  flushToDiskForBackup(): BackupFlushResult {
+    return this.save();
   }
 
   private sanitizeParams(params?: any[]): any[] | undefined {

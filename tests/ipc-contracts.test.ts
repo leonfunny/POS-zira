@@ -21,7 +21,7 @@ describe('IPC channel contracts - main preload', () => {
     'listPorts', 'listWindowsPrinters', 'testPrint',
     'remote', 'telegram', 'ai', 'booksy', 'auth',
     'window', 'selectFolder', 'shell', 'invoice', 'entitlements',
-    'sshTunnel', 'display',
+    'sshTunnel', 'display', 'backup',
   ];
 
   for (const group of topLevelGroups) {

@@ -343,6 +343,13 @@ export interface AgentConfig {
   // UI sidebar state
   sidebarCollapsed?: boolean;
 
+  // Local database backup status
+  backupLastStatus?: 'success' | 'failed';
+  backupLastRunAt?: string;
+  backupLastSuccessAt?: string;
+  backupLastPath?: string;
+  backupLastError?: string;
+
   // User-hidden tabs (locally controlled, independent of entitlements)
   hiddenTabs?: Tab[];
 
@@ -827,6 +834,11 @@ export const IPC_CHANNELS = {
   DEBUG_OPEN_DEVTOOLS: 'debug:open-devtools',
   DEBUG_OPEN_LOGS: 'debug:open-logs',
   DEBUG_GET_DIAGNOSTICS: 'debug:get-diagnostics',
+
+  // Local database backup
+  BACKUP_GET_STATUS: 'backup:get-status',
+  BACKUP_RUN_NOW: 'backup:run-now',
+  BACKUP_OPEN_FOLDER: 'backup:open-folder',
 
   // App
   APP_SET_AUTO_START: 'app:set-auto-start',

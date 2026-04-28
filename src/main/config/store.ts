@@ -261,6 +261,12 @@ const store = new Store<AgentConfig>({
     encryptedRemotePin: { type: 'string', default: '' },
     // UI sidebar state
     sidebarCollapsed: { type: 'boolean', default: false },
+    // Local database backup status
+    backupLastStatus: { type: 'string', enum: ['success', 'failed'] },
+    backupLastRunAt: { type: 'string' },
+    backupLastSuccessAt: { type: 'string' },
+    backupLastPath: { type: 'string' },
+    backupLastError: { type: 'string' },
     // User-hidden tabs
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
     // Check-in display toggles

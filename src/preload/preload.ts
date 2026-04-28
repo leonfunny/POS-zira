@@ -166,6 +166,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.DEBUG_GET_DIAGNOSTICS),
   },
 
+  backup: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_GET_STATUS),
+    runNow: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_RUN_NOW),
+    openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_OPEN_FOLDER),
+  },
+
   // Auto-start functions
   setAutoStart: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.APP_SET_AUTO_START, enabled),
   getAutoStart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_AUTO_START),

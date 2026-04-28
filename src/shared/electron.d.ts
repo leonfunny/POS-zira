@@ -238,6 +238,24 @@ interface ElectronAPI {
     }>;
   };
 
+  backup: {
+    getStatus: () => Promise<{
+      backupDir: string;
+      lastStatus?: 'success' | 'failed';
+      lastRunAt?: string;
+      lastSuccessAt?: string;
+      lastPath?: string;
+      lastError?: string;
+    } | null>;
+    runNow: () => Promise<{
+      success: boolean;
+      path?: string;
+      error?: string;
+      createdAt: string;
+    }>;
+    openFolder: () => Promise<{ success: boolean; error?: string }>;
+  };
+
   // Auto-start
   setAutoStart: (enabled: boolean) => Promise<{ success: boolean }>;
   getAutoStart: () => Promise<{ openAtLogin: boolean }>;
