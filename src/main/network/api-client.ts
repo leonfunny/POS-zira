@@ -1013,7 +1013,7 @@ export class ApiClient {
       throw new Error(err.message || `HTTP ${response.status}`);
     }
     const data = await response.json();
-    return Array.isArray(data) ? data : data.staff ?? data.items ?? [];
+    return Array.isArray(data) ? data : data.data ?? data.staff ?? data.items ?? [];
   }
 
   // ==========================================
