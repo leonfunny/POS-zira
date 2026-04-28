@@ -38,9 +38,7 @@ export class StaffSync {
       backend_synced_at: new Date().toISOString(),
     }));
 
-    database.transaction(() => {
-      staffRepo.upsertMany(mapped);
-    });
+    staffRepo.upsertMany(mapped);
     database.save();
 
     logger.info(`[StaffSync] Pulled ${mapped.length} staff members from server`);
