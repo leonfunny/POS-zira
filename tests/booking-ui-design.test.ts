@@ -6,9 +6,10 @@ import { resolve } from 'path';
  * UX design contract for the dashboard-synced Booking tab.
  * Source-text checks pin behaviors that the spec at
  * docs/superpowers/specs/2026-04-30-booking-tab-ux-design.md commits to
- * — plus the Scope 1b touch keyboard-safety fixes (native-only phone
- * keyboard, keyboard-aware focus scroll, no backdrop close, dirty guard,
- * no auto-focus on master-data load).
+ * - plus the Scope 1b touch keyboard-safety fixes and create-modal
+ * picker rewrite (native-only phone keyboard, no native create selects,
+ * no editable start-time text field, no huge keyboard padding hack, no
+ * backdrop close, dirty guard, no auto-focus on master-data load).
  */
 
 const todaySource = readFileSync(
@@ -90,37 +91,61 @@ describe('BookingCreateForm uses one keyboard only (native-only)', () => {
     expect(createSource).not.toMatch(new RegExp(`${phoneFocusState}\\s*\\?`));
   });
 
-  it('routes phone focus through the keyboard-aware scroll handler', () => {
+  it('routes phone focus through the light focus-scroll handler', () => {
     expect(createSource).toMatch(/inputMode=["']numeric["'][\s\S]*onFocus=\{handleTextFocus\}/);
-    expect(createSource).toMatch(/inputMode=["']numeric["'][\s\S]*onBlur=\{handleTextBlur\}/);
   });
 });
 
-describe('BookingCreateForm keyboard-aware focus scroll', () => {
+describe('BookingCreateForm controlled create pickers', () => {
+  it('does not use native selects for create service/rule/staff fields', () => {
+    expect(createSource).not.toContain('<select');
+    expect(createSource).toMatch(/function\s+PickerField/);
+    expect(createSource).toMatch(/role=["']listbox["']/);
+    expect(createSource).toMatch(/aria-haspopup=["']listbox["']/);
+  });
+
+  it('does not use an editable start time field', () => {
+    expect(createSource).not.toContain('datetime-local');
+    expect(createSource).not.toMatch(/type=["']datetime-local["']/);
+    expect(createSource).toMatch(/function\s+StartTimeControl/);
+    expect(createSource).toMatch(/Today/);
+    expect(createSource).toMatch(/Tomorrow/);
+    expect(createSource).toMatch(/\+15 min/);
+    expect(createSource).toMatch(/-15 min/);
+  });
+
+  it('keeps custom picker popovers out of layout flow', () => {
+    expect(createSource).toMatch(/absolute left-0 right-0 top-full z-50/);
+    expect(createSource).toMatch(/max-h-72 overflow-y-auto/);
+    expect(createSource).toMatch(/type=["']search["']/);
+  });
+
+  it('still binds staff options to s.user_id || s.id', () => {
+    expect(createSource).toMatch(/value:\s*s\.user_id\s*\|\|\s*s\.id/);
+  });
+});
+
+describe('BookingCreateForm light focus scroll', () => {
   it('owns a body scroll ref so ensureFieldVisible can compute scrollTop', () => {
     expect(createSource).toMatch(/bodyRef\s*=\s*useRef</);
     expect(createSource).toMatch(/ref=\{bodyRef\}/);
   });
 
-  it('uses visualViewport when available and a 380px reserve fallback', () => {
-    expect(createSource).toMatch(/visualViewport/);
-    expect(createSource).toMatch(/KEYBOARD_RESERVE_FALLBACK_PX/);
-  });
-
-  it('schedules ensureFieldVisible at 0/250/600ms to ride the keyboard reveal', () => {
+  it('uses a computed tail spacer instead of fixed keyboard padding', () => {
     expect(createSource).toMatch(/function\s+ensureFieldVisible/);
+    expect(createSource).toMatch(/function\s+computeFocusTailSpacer/);
+    expect(createSource).toMatch(/focusTailSpacerRef/);
+    expect(createSource).toMatch(/focusTailSpacerPx/);
+    expect(createSource).toMatch(/style=\{\{\s*height:\s*focusTailSpacerPx\s*\}\}/);
+    expect(createSource).toMatch(/scrollHeight\s*-\s*currentTailSpacerPx/);
+    expect(createSource).toMatch(/document\.activeElement\s*!==\s*target/);
     expect(createSource).toMatch(/scheduleEnsureVisible/);
     expect(createSource).toMatch(/setTimeout/);
-    expect(createSource).toMatch(/,\s*250\s*\)/);
-    expect(createSource).toMatch(/,\s*600\s*\)/);
-  });
-
-  it('grows the body bottom padding while a keyboard-relevant field is focused', () => {
-    // Dynamic padding keeps Notes scrollable above the on-screen
-    // keyboard.
-    expect(createSource).toMatch(/keyboardActive/);
-    expect(createSource).toMatch(/setKeyboardActive/);
-    expect(createSource).toMatch(/pb-\[420px\]/);
+    expect(createSource).toMatch(/\[\s*250,\s*600,\s*1000\s*\]/);
+    expect(createSource).not.toMatch(/keyboardActive/);
+    expect(createSource).not.toMatch(/setKeyboardActive/);
+    expect(createSource).not.toMatch(/pb-\[420px\]/);
+    expect(createSource).not.toMatch(/KEYBOARD_RESERVE_FALLBACK_PX/);
   });
 });
 

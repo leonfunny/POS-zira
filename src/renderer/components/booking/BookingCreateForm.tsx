@@ -1,34 +1,15 @@
 /**
- * BookingCreateForm — POS walk-in booking create.
+ * BookingCreateForm - POS walk-in booking create.
  *
- * Pulls local master data (services, service_rules, staff) for pickers
- * and submits via electronAPI.bookings.create. The server resolves the
- * owner by phone (auto-creates if not found) so we collect phone+name
- * instead of searching for an existing Owner row.
- *
- * Touch / keyboard safety (Scope 1b):
- * - Phone field uses the native OS keyboard only. The previous custom
- *   numeric keypad created the exact failure it tried to avoid on
- *   Windows touch: native OSK plus an in-app keypad stacked together.
- *   The form now hints numeric/tel input and rejects non-digits at the
- *   input boundary.
- * - Phone, name, email, and notes get a deterministic focus
- *   scroll: ensureFieldVisible walks visualViewport when present,
- *   falls back to a 380px keyboard reserve, and re-runs at 0/250/600ms
- *   to catch the Windows on-screen keyboard's reveal animation. The
- *   scrollable body also reserves extra bottom padding while a
- *   keyboard-relevant field is focused so the field can scroll above
- *   the keyboard.
- * - Backdrop click does NOT close the modal — accidentally tapping
- *   outside used to wipe form input. Closing only happens via the
- *   explicit X / Cancel control, and a dirty guard surfaces an in-app
- *   discard confirmation (no window.confirm) when there is pending
- *   input. The default rounded-up start time is captured at mount so
- *   it does not count as user-entered.
+ * Scope: UI mechanics only. Booking creation still flows through
+ * electronAPI.bookings.create with the same payload shape, ruleless
+ * service fallback, stale-rule guard, staff user-id contract, double
+ * submit lock, and in-app dirty close guard.
  */
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -36,7 +17,11 @@ import React, {
 import {
   AlertCircle,
   CalendarClock,
+  Check,
+  ChevronDown,
+  Clock3,
   RefreshCw,
+  Search,
   StickyNote,
   User as UserIcon,
   X as CloseIcon,
@@ -74,6 +59,13 @@ interface Props {
   onCreated?: (bookingId: string) => void;
 }
 
+interface PickerOption {
+  value: string;
+  label: string;
+  description?: string;
+  meta?: string;
+}
+
 function formatGrosze(g: number): string {
   return (g / 100).toFixed(2);
 }
@@ -103,76 +95,101 @@ function roundUpTo5Min(d: Date): Date {
 }
 
 /**
- * datetime-local input wants "YYYY-MM-DDTHH:mm" in LOCAL time (no tz
- * suffix). Produce that from a Date.
+ * Produce the local timestamp shape used by existing submit logic:
+ * "YYYY-MM-DDTHH:mm" with no timezone suffix.
  */
 function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/**
- * Reserve in pixels we assume the on-screen keyboard occupies when
- * visualViewport is unavailable. Windows touch keyboard varies between
- * 320 and 420px depending on layout; 380 is a safe middle that pushes
- * Notes/email above its top edge with a comfortable margin on a
- * 533x957 / 720x1280 viewport.
- */
-const KEYBOARD_RESERVE_FALLBACK_PX = 380;
+function parseLocalInput(value: string): Date | null {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
-/**
- * ensureFieldVisible — keyboard-aware focus scroll.
- *
- * Computes the visible region as either window.visualViewport.height
- * (modern Edge/Chromium reports the keyboard-clipped area here) or
- * window.innerHeight minus a fallback reserve on small/touch viewports.
- * Adjusts the scroll
- * container so the focused field's bottom sits 24px above the safe
- * boundary. Up-scroll handles the case where a small field at the
- * very top of a long form would otherwise disappear above the visible
- * region after a keyboard reveal pushes content.
- *
- * The 0/250/600ms fan-out catches the Windows keyboard reveal
- * animation: a single immediate call lands before the keyboard renders
- * and the visualViewport metric updates; the later calls re-anchor
- * once the layout settles.
- */
+function formatLocalDisplay(value: string): string {
+  const parsed = parseLocalInput(value);
+  if (!parsed) return 'Select start time';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(parsed.getDate())}/${pad(parsed.getMonth() + 1)}/${parsed.getFullYear()} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function getVisibleBodyHeight(body: HTMLElement): number {
+  const bodyRect = body.getBoundingClientRect();
+  let visibleBottom = bodyRect.bottom;
+  const viewport = (window as any).visualViewport as
+    | { height: number; offsetTop?: number }
+    | undefined;
+  if (viewport) {
+    visibleBottom = Math.min(
+      visibleBottom,
+      (viewport.offsetTop ?? 0) + viewport.height,
+    );
+  }
+  const keyboardRect = (navigator as any).virtualKeyboard?.boundingRect as
+    | { height: number; y: number }
+    | undefined;
+  if (keyboardRect && keyboardRect.height > 0) {
+    visibleBottom = Math.min(visibleBottom, keyboardRect.y);
+  }
+  return Math.max(160, visibleBottom - bodyRect.top);
+}
+
+function computeFocusTailSpacer(
+  field: HTMLElement,
+  body: HTMLElement | null,
+  currentTailSpacerPx: number,
+): number {
+  if (!body) return 0;
+  const bodyRect = body.getBoundingClientRect();
+  const fieldRect = field.getBoundingClientRect();
+  const visibleHeight = getVisibleBodyHeight(body);
+  const fieldCenter =
+    fieldRect.top - bodyRect.top + body.scrollTop + fieldRect.height / 2;
+  const targetTop = Math.max(0, fieldCenter - visibleHeight / 2);
+  const contentScrollHeight = Math.max(
+    body.clientHeight,
+    body.scrollHeight - currentTailSpacerPx,
+  );
+  const currentMaxTop = Math.max(0, contentScrollHeight - body.clientHeight);
+  const deficit = Math.max(0, targetTop - currentMaxTop);
+  return deficit > 0 ? Math.ceil(deficit + 16) : 0;
+}
+
 function ensureFieldVisible(
   field: HTMLElement,
   body: HTMLElement | null,
 ): void {
   if (!body) return;
-  const viewport = (window as any).visualViewport as
-    | { height: number; offsetTop?: number }
-    | undefined;
-  let safeBottom: number;
-  if (viewport && viewport.height + 1 < window.innerHeight) {
-    // Keyboard is up — visualViewport reports the visible area.
-    safeBottom = (viewport.offsetTop ?? 0) + viewport.height;
-  } else {
-    const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-    const shouldReserveFallback = hasCoarsePointer || window.innerHeight <= 900;
-    safeBottom = window.innerHeight - (shouldReserveFallback ? KEYBOARD_RESERVE_FALLBACK_PX : 0);
-  }
-  const margin = 24;
+  const bodyRect = body.getBoundingClientRect();
   const fieldRect = field.getBoundingClientRect();
-  if (fieldRect.bottom > safeBottom - margin) {
-    body.scrollTop += fieldRect.bottom - (safeBottom - margin);
-  } else if (fieldRect.top < 80) {
-    body.scrollTop -= 80 - fieldRect.top;
-  }
+  const visibleHeight = getVisibleBodyHeight(body);
+  const fieldCenter =
+    fieldRect.top - bodyRect.top + body.scrollTop + fieldRect.height / 2;
+  const targetTop = Math.max(0, fieldCenter - visibleHeight / 2);
+  body.scrollTo({ top: targetTop, behavior: 'smooth' });
 }
 
 function scheduleEnsureVisible(
   target: EventTarget | null,
   body: HTMLElement | null,
+  getFocusTailSpacerPx: () => number,
+  setFocusTailSpacerPx: (px: number) => void,
 ) {
   if (!(target instanceof HTMLElement)) return;
-  // Immediate, then 250ms, then 600ms — covers the typical Windows
-  // touch keyboard reveal animation envelope.
-  ensureFieldVisible(target, body);
-  setTimeout(() => ensureFieldVisible(target, body), 250);
-  setTimeout(() => ensureFieldVisible(target, body), 600);
+  const run = () => {
+    if (!target.isConnected) return;
+    if (document.activeElement !== target) return;
+    setFocusTailSpacerPx(computeFocusTailSpacer(
+      target,
+      body,
+      getFocusTailSpacerPx(),
+    ));
+    window.requestAnimationFrame(() => ensureFieldVisible(target, body));
+  };
+  run();
+  [250, 600, 1000].forEach((delay) => setTimeout(run, delay));
 }
 
 export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
@@ -193,16 +210,12 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   const [ruleId, setRuleId] = useState<string>('');
   // Track which serviceId we're currently fetching rules for. Prevents
   // submit firing with a stale ruleId left over from a previous service
-  // selection: if the user clicks Service A → A's rules load + first
-  // rule auto-selected → user picks Service B → before B's rules
-  // arrive, ruleId still references A's rule. Without this guard the
-  // form is briefly submittable with an A-rule + B-service mismatch.
+  // selection.
   const [rulesLoadingForServiceId, setRulesLoadingForServiceId] = useState<string | null>(null);
   const [staffUserId, setStaffUserId] = useState<string>('');
 
   // Capture the initial default start time so the dirty guard does
-  // not flag a freshly-opened form as dirty (the rounded-up timestamp
-  // is set by us, not the user).
+  // not flag a freshly-opened form as dirty.
   const initialStartsAtRef = useRef<string>(
     toLocalInput(roundUpTo5Min(new Date(Date.now() + 15 * 60_000))),
   );
@@ -214,11 +227,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   const [customerEmail, setCustomerEmail] = useState<string>('');
   const [customerNotes, setCustomerNotes] = useState<string>('');
 
-  // Submission state. submittingRef locks immediately (not subject to
-  // React's state-commit delay) so a double Enter / fast click can't
-  // issue two IPC create calls with different generated UUIDs, which
-  // would otherwise create two bookings (one accepted, one
-  // SCHEDULE_CONFLICT) for the same user intent.
+  // Submission state. submittingRef locks immediately so fast double
+  // clicks cannot issue two IPC create calls before React commits state.
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -226,21 +236,13 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   // Dirty-state discard confirmation modal.
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
-  // Scrollable body container — used by ensureFieldVisible to compute
-  // the safe scroll target for any focused input.
+  // Scrollable body container used for light focus-scroll of text inputs.
   const bodyRef = useRef<HTMLDivElement | null>(null);
-
-  // Track whether ANY text-like field currently has focus so the
-  // body can reserve extra bottom padding for the on-screen keyboard.
-  const [keyboardActive, setKeyboardActive] = useState(false);
+  const focusTailSpacerRef = useRef(0);
+  const [focusTailSpacerPx, setFocusTailSpacerPx] = useState(0);
 
   const api = (window as any).electronAPI;
 
-  // Initial load: services + staff. Uses a cancellation flag so
-  // `setState` doesn't fire on an unmounted component when the user
-  // closes the modal before the IPC round-trip completes — this
-  // otherwise triggers a React warning and can leak state transitions
-  // into the next mount's initial render if React re-uses the fiber.
   useEffect(() => {
     if (!api?.services || !api?.pos?.staff) {
       setMasterError('required APIs unavailable');
@@ -267,17 +269,9 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     };
   }, [api, masterReloadTick]);
 
-  // No auto-focus on master-data load — focusing a select on touch
-  // viewport would pop the wrong keyboard layout and steal focus from
-  // a cashier mid-tap. The user picks the first field manually.
+  // No auto-focus on master-data load. Touch users should not get an
+  // unexpected keyboard or picker as soon as the modal opens.
 
-  // When service changes, load rules + auto-pick first. Two safeties
-  // against the stale-ruleId trap:
-  //   1. Clear `rules` + `ruleId` SYNCHRONOUSLY at the top so canSubmit
-  //      can't see a leftover rule from the previous service while the
-  //      new fetch is in flight.
-  //   2. `rulesLoadingForServiceId` blocks submit until we know whether
-  //      the service has rules.
   useEffect(() => {
     setRules([]);
     setRuleId('');
@@ -312,28 +306,45 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     () => services.find((s) => s.id === serviceId) ?? null,
     [services, serviceId],
   );
-  // Only honor a rule that belongs to the currently-selected service.
-  // Defensive — if a stale ruleId leaks through (eg. fast service flip
-  // before the new fetch lands) we'd otherwise read it as legitimate.
   const selectedRule = useMemo(() => {
     const r = rules.find((rr) => rr.id === ruleId) ?? null;
     if (!r) return null;
     return r.service_id === serviceId ? r : null;
   }, [rules, ruleId, serviceId]);
 
-  // Effective duration/price for display + submit. Prefer the selected
-  // rule (multi-tier services); fall back to the service's base fields
-  // for services that have no rules at all (23 active services in the
-  // current Dzai dataset). Without this fallback, canSubmit would never
-  // flip true and the cashier sees a Create button stuck disabled.
   const effectiveDurationMin = selectedRule?.duration_min ?? selectedService?.base_duration_minutes ?? null;
   const effectivePricePln = selectedRule?.base_price_pln ?? selectedService?.base_price_pln ?? null;
   const rulesAreLoading = rulesLoadingForServiceId === serviceId && !!serviceId;
   const noRulesAvailable = !!serviceId && !rulesAreLoading && rules.length === 0;
 
-  // Dirty state: ANY user-entered value diverges from the initial
-  // state. Default startsAt comes from initialStartsAtRef so re-mounting
-  // with a fresh time never marks the form dirty.
+  const serviceOptions = useMemo<PickerOption[]>(
+    () => services.map((s) => ({
+      value: s.id,
+      label: s.name,
+      description: `${s.base_duration_minutes} ${label('common.minutes', 'min')} · ${formatGrosze(s.base_price_pln)} zł`,
+    })),
+    [services, label],
+  );
+
+  const ruleOptions = useMemo<PickerOption[]>(
+    () => rules.map((r) => ({
+      value: r.id,
+      label: r.name ?? r.size_category ?? `Rule ${r.id.slice(0, 4)}`,
+      description: `${r.duration_min} ${label('common.minutes', 'min')} · ${formatGrosze(r.base_price_pln)} zł`,
+    })),
+    [rules, label],
+  );
+
+  const staffOptions = useMemo<PickerOption[]>(
+    () => staff.map((s) => ({
+      // Bind to canonical users.id when available; fall back to
+      // staff_profiles.id for older local DBs.
+      value: s.user_id || s.id,
+      label: s.name,
+    })),
+    [staff],
+  );
+
   const isDirty =
     serviceId !== '' ||
     ruleId !== '' ||
@@ -344,8 +355,6 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     customerEmail !== '' ||
     customerNotes !== '';
 
-  // Each missing-required entry feeds the inline helper so the cashier
-  // sees *why* Create is disabled instead of a mute button.
   const missingFields: string[] = [];
   if (!serviceId) missingFields.push(label('bookings.create.field.service', 'Service'));
   if (
@@ -363,14 +372,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
 
   const canSubmit =
     !!serviceId &&
-    // Block while the rule fetch for the *current* service is still in
-    // flight. Without this, the cashier could click Create after the
-    // initial render of the new service while ruleId still points at
-    // the previous service's rule.
     !rulesAreLoading &&
-    // Either an explicit rule pick (selectedRule is null when ruleId
-    // belongs to a different service — see useMemo guard above), OR a
-    // service with no rules but valid base duration+price.
     (!!selectedRule || (noRulesAvailable && effectiveDurationMin != null && effectivePricePln != null)) &&
     !!staffUserId &&
     !!startsAtLocal &&
@@ -379,8 +381,6 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     !submitting;
 
   const submit = useCallback(async () => {
-    // Ref lock — runs BEFORE state commit so a double Enter or fast
-    // double-click doesn't spawn two IPC calls (see Bug H).
     if (submittingRef.current) return;
     submittingRef.current = true;
 
@@ -392,10 +392,6 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     setSubmitting(true);
     setSubmitError(null);
 
-    // Interpret datetime-local as local time, send UTC ISO to server.
-    // Guard against Invalid Date — `toISOString()` on Invalid Date
-    // throws RangeError which would bubble as an unhandled rejection
-    // since it's outside the try.
     const parsed = new Date(startsAtLocal);
     if (Number.isNaN(parsed.getTime())) {
       setSubmitError(label('bookings.create.invalid_time', 'Invalid start time'));
@@ -442,10 +438,6 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     onCreated,
   ]);
 
-  // Explicit close path — used by both X and Cancel. Prompts an
-  // in-app discard confirmation when the form has user input. Submit
-  // in flight short-circuits the path so the cashier never abandons a
-  // running create.
   const requestClose = useCallback(() => {
     if (submittingRef.current || submitting) return;
     if (isDirty) {
@@ -455,14 +447,25 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     onClose();
   }, [submitting, isDirty, onClose]);
 
-  // Handler for keyboard-relevant fields: marks the body keyboardActive
-  // and runs the keyboard-safe scroll cascade.
   const handleTextFocus = useCallback((e: React.FocusEvent<HTMLElement>) => {
-    setKeyboardActive(true);
-    scheduleEnsureVisible(e.target, bodyRef.current);
+    scheduleEnsureVisible(
+      e.target,
+      bodyRef.current,
+      () => focusTailSpacerRef.current,
+      (px) => {
+        focusTailSpacerRef.current = px;
+        setFocusTailSpacerPx(px);
+      },
+    );
   }, []);
   const handleTextBlur = useCallback(() => {
-    setKeyboardActive(false);
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (!bodyRef.current?.contains(active)) {
+        focusTailSpacerRef.current = 0;
+        setFocusTailSpacerPx(0);
+      }
+    }, 0);
   }, []);
 
   return (
@@ -471,21 +474,25 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="booking-create-title"
-      // Backdrop click is intentionally NOT bound to close. A stray tap
-      // outside used to wipe the entire form. Close requires the
-      // explicit X / Cancel control, which respects the dirty guard.
+      // Backdrop click is intentionally not bound to close. Close goes
+      // through X / Cancel and the dirty guard.
     >
       <form
         onSubmit={(e) => {
           e.preventDefault();
           if (canSubmit) submit();
         }}
-        className="bg-white shadow-xl flex flex-col w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-[640px] sm:rounded-md"
+        className="bg-white shadow-xl flex flex-col w-full h-full sm:h-[760px] sm:max-h-[88vh] sm:max-w-[720px] sm:rounded-md"
       >
         <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200 shrink-0">
-          <h2 id="booking-create-title" className="text-lg font-semibold text-gray-900">
-            {label('bookings.create.title', 'New walk-in booking')}
-          </h2>
+          <div>
+            <h2 id="booking-create-title" className="text-lg font-semibold text-gray-900">
+              {label('bookings.create.title', 'New walk-in booking')}
+            </h2>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {formatLocalDisplay(startsAtLocal)}
+            </p>
+          </div>
           <button
             type="button"
             onClick={requestClose}
@@ -497,14 +504,9 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           </button>
         </header>
 
-        {/* Scrollable body. Bottom padding grows when a keyboard field is
-            focused (keyboardActive) so Notes/email can scroll above the
-            on-screen keyboard. */}
         <div
           ref={bodyRef}
-          className={`flex-1 overflow-y-auto px-5 py-4 space-y-6 ${
-            keyboardActive ? 'pb-[420px]' : 'pb-4'
-          }`}
+          className="flex-1 overflow-y-auto px-5 py-4 space-y-5"
         >
           {masterError && (
             <div
@@ -526,194 +528,171 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
             </div>
           )}
 
-          {/* ─── Appointment ──────────────────────────────────────── */}
           <Section
             icon={CalendarClock}
             title={label('bookings.create.section.appointment', 'Appointment')}
           >
-            <Field label={label('bookings.create.service', 'Service')} required>
-              <select
-                value={serviceId}
-                onChange={(e) => setServiceId(e.target.value)}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                className={inputClassName}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Field
+                label={label('bookings.create.service', 'Service')}
                 required
+                className="md:col-span-2"
               >
-                <option value="">— {label('common.select', 'select')} —</option>
-                {services.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            {rules.length > 1 && (
-              <Field label={label('bookings.create.rule', 'Pricing / duration')}>
-                <select
-                  value={ruleId}
-                  onChange={(e) => setRuleId(e.target.value)}
-                  onFocus={handleTextFocus}
-                  onBlur={handleTextBlur}
-                  className={inputClassName}
-                >
-                  {rules.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name ?? r.size_category ?? `Rule ${r.id.slice(0, 4)}`} ·{' '}
-                      {r.duration_min}min · {formatGrosze(r.base_price_pln)} zł
-                    </option>
-                  ))}
-                </select>
+                <PickerField
+                  label={label('bookings.create.service', 'Service')}
+                  value={serviceId}
+                  onChange={setServiceId}
+                  options={serviceOptions}
+                  placeholder={label('bookings.create.service.placeholder', 'Select service')}
+                  emptyLabel={label('bookings.create.service.empty', 'No services found')}
+                  searchable
+                  required
+                />
               </Field>
-            )}
 
-            {/* Show effective duration/price even when the service has no
-                rules — pulled from service.base_* in that case. The hint
-                clarifies the source so cashiers know it's a service-level
-                default, not a tier they picked. */}
-            {effectiveDurationMin != null && effectivePricePln != null && (
-              <div className="flex items-baseline justify-between rounded-md bg-gray-50 border border-gray-200 px-3 py-2 text-sm">
-                <span className="text-gray-600 tabular-nums">
-                  {effectiveDurationMin} {label('common.minutes', 'min')}
-                  {noRulesAvailable ? (
-                    <span className="ml-2 text-xs text-gray-500">
-                      {label('bookings.create.no_rules', '(service default)')}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="font-semibold text-gray-900 tabular-nums">
-                  {formatGrosze(effectivePricePln)} zł
-                </span>
-              </div>
-            )}
+              {rules.length > 1 && (
+                <Field
+                  label={label('bookings.create.rule', 'Pricing / duration')}
+                  className="md:col-span-2"
+                >
+                  <PickerField
+                    label={label('bookings.create.rule', 'Pricing / duration')}
+                    value={ruleId}
+                    onChange={setRuleId}
+                    options={ruleOptions}
+                    placeholder={label('bookings.create.rule.placeholder', 'Select pricing / duration')}
+                    emptyLabel={label('bookings.create.rule.empty', 'No pricing rules found')}
+                  />
+                </Field>
+              )}
 
-            <Field label={label('bookings.create.staff', 'Staff')} required>
-              <select
-                value={staffUserId}
-                onChange={(e) => setStaffUserId(e.target.value)}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                className={inputClassName}
-                required
-              >
-                <option value="">— {label('common.select', 'select')} —</option>
-                {staff.map((s) => (
-                  // Bind to canonical users.id when the backend has shipped it
-                  // (v24+); fall back to staff_profiles.id so older local DBs
-                  // still pick a usable id. The server's resolveStaffUserId
-                  // tolerates both, so any combination round-trips correctly.
-                  <option key={s.id} value={s.user_id || s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+              {effectiveDurationMin != null && effectivePricePln != null && (
+                <div className="md:col-span-2 flex items-baseline justify-between rounded-md bg-gray-50 border border-gray-200 px-3 py-2 text-sm">
+                  <span className="text-gray-600 tabular-nums">
+                    {effectiveDurationMin} {label('common.minutes', 'min')}
+                    {noRulesAvailable ? (
+                      <span className="ml-2 text-xs text-gray-500">
+                        {label('bookings.create.no_rules', '(service default)')}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="font-semibold text-gray-900 tabular-nums">
+                    {formatGrosze(effectivePricePln)} zł
+                  </span>
+                </div>
+              )}
 
-            <Field label={label('bookings.create.starts_at', 'Start time')} required>
-              <input
-                type="datetime-local"
-                value={startsAtLocal}
-                onChange={(e) => setStartsAtLocal(e.target.value)}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                step={300}
-                className={inputClassName}
-                required
-              />
-            </Field>
+              <Field label={label('bookings.create.staff', 'Staff')} required>
+                <PickerField
+                  label={label('bookings.create.staff', 'Staff')}
+                  value={staffUserId}
+                  onChange={setStaffUserId}
+                  options={staffOptions}
+                  placeholder={label('bookings.create.staff.placeholder', 'Select staff')}
+                  emptyLabel={label('bookings.create.staff.empty', 'No staff found')}
+                  searchable={staffOptions.length > 8}
+                  required
+                />
+              </Field>
+
+              <Field label={label('bookings.create.starts_at', 'Start time')} required>
+                <StartTimeControl
+                  label={label('bookings.create.starts_at', 'Start time')}
+                  value={startsAtLocal}
+                  onChange={setStartsAtLocal}
+                />
+              </Field>
+            </div>
           </Section>
 
-          {/* ─── Customer ─────────────────────────────────────────── */}
           <Section
             icon={UserIcon}
             title={label('bookings.create.section.customer', 'Customer')}
           >
-            <Field label={label('bookings.create.phone', 'Phone')} required>
-              <input
-                type="tel"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                autoComplete="tel"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(sanitizePhone(e.target.value))}
-                onKeyDown={(e) => {
-                  // Native keyboard hinting is not validation. Allow
-                  // modifier shortcuts, navigation keys, backspace/delete;
-                  // block any single character that is not a digit.
-                  if (e.ctrlKey || e.metaKey || e.altKey) return;
-                  if (e.key.length > 1) return;
-                  if (!/^\d$/.test(e.key)) {
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Field label={label('bookings.create.phone', 'Phone')} required>
+                <input
+                  aria-label={label('bookings.create.phone', 'Phone')}
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(sanitizePhone(e.target.value))}
+                  onKeyDown={(e) => {
+                    if (e.ctrlKey || e.metaKey || e.altKey) return;
+                    if (e.key.length > 1) return;
+                    if (!/^\d$/.test(e.key)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                    const data = (e.nativeEvent as InputEvent).data;
+                    if (typeof data === 'string' && /\D/.test(data)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  onPaste={(e) => {
                     e.preventDefault();
-                  }
-                }}
-                onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
-                  // IME composition / virtual-keyboard taps surface here.
-                  // Block at the input-event level so non-digits never
-                  // reach state.
-                  const data = (e.nativeEvent as InputEvent).data;
-                  if (typeof data === 'string' && /\D/.test(data)) {
-                    e.preventDefault();
-                  }
-                }}
-                onPaste={(e) => {
-                  e.preventDefault();
-                  const pastedDigits = sanitizePhone(e.clipboardData.getData('text'));
-                  const start = e.currentTarget.selectionStart ?? customerPhone.length;
-                  const end = e.currentTarget.selectionEnd ?? start;
-                  setCustomerPhone((prev) => {
-                    const safeStart = Math.max(0, Math.min(start, prev.length));
-                    const safeEnd = Math.max(safeStart, Math.min(end, prev.length));
-                    return sanitizePhone(
-                      prev.slice(0, safeStart) + pastedDigits + prev.slice(safeEnd),
-                    );
-                  });
-                }}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                placeholder="600123456"
-                className={`${inputClassName} tabular-nums`}
-                required
-              />
-            </Field>
+                    const pastedDigits = sanitizePhone(e.clipboardData.getData('text'));
+                    const start = e.currentTarget.selectionStart ?? customerPhone.length;
+                    const end = e.currentTarget.selectionEnd ?? start;
+                    setCustomerPhone((prev) => {
+                      const safeStart = Math.max(0, Math.min(start, prev.length));
+                      const safeEnd = Math.max(safeStart, Math.min(end, prev.length));
+                      return sanitizePhone(
+                        prev.slice(0, safeStart) + pastedDigits + prev.slice(safeEnd),
+                      );
+                    });
+                  }}
+                  onFocus={handleTextFocus}
+                  onBlur={handleTextBlur}
+                  placeholder="600123456"
+                  className={`${inputClassName} tabular-nums`}
+                  required
+                />
+              </Field>
 
-            <Field label={label('bookings.create.name', 'Customer name')} required>
-              <input
-                type="text"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                className={inputClassName}
-                required
-              />
-            </Field>
+              <Field label={label('bookings.create.name', 'Customer name')} required>
+                <input
+                  aria-label={label('bookings.create.name', 'Customer name')}
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  onFocus={handleTextFocus}
+                  onBlur={handleTextBlur}
+                  className={inputClassName}
+                  required
+                />
+              </Field>
 
-            <Field label={label('bookings.create.email', 'Email (optional)')}>
-              <input
-                type="email"
-                value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)}
-                onFocus={handleTextFocus}
-                onBlur={handleTextBlur}
-                className={inputClassName}
-              />
-            </Field>
+              <Field label={label('bookings.create.email', 'Email (optional)')} className="md:col-span-2">
+                <input
+                  aria-label={label('bookings.create.email', 'Email (optional)')}
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  onFocus={handleTextFocus}
+                  onBlur={handleTextBlur}
+                  className={inputClassName}
+                />
+              </Field>
+            </div>
           </Section>
 
-          {/* ─── Notes ────────────────────────────────────────────── */}
           <Section
             icon={StickyNote}
             title={label('bookings.create.section.notes', 'Notes')}
           >
             <Field label={label('bookings.create.notes', 'Customer notes (optional)')}>
               <textarea
+                aria-label={label('bookings.create.notes', 'Customer notes (optional)')}
                 value={customerNotes}
                 onChange={(e) => setCustomerNotes(e.target.value)}
                 onFocus={handleTextFocus}
                 onBlur={handleTextBlur}
-                rows={2}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                rows={3}
+                className="w-full min-h-[96px] border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </Field>
           </Section>
@@ -727,12 +706,16 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               <div>{submitError}</div>
             </div>
           )}
+
+          {focusTailSpacerPx > 0 ? (
+            <div
+              aria-hidden
+              style={{ height: focusTailSpacerPx }}
+            />
+          ) : null}
         </div>
 
         <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3 space-y-2">
-          {/* Helper line tells the user *which* fields still block submit
-              when the button is disabled. Min-height keeps the footer
-              from jumping when the message appears/disappears. */}
           <div className="min-h-[1.25rem]">
             {!canSubmit && missingFields.length > 0 && !submitting ? (
               <p className="text-xs text-gray-500">
@@ -759,7 +742,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               className="inline-flex items-center justify-center h-11 min-w-[160px] px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {submitting
-                ? label('common.submitting', 'Submitting…')
+                ? label('common.submitting', 'Submitting...')
                 : label('bookings.create.submit', 'Create booking')}
             </button>
           </div>
@@ -780,12 +763,11 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Local helpers — small enough to live alongside the form.
-// ─────────────────────────────────────────────────────────────────────
-
 const inputClassName =
   'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+
+const pickerButtonClassName =
+  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 function Section({
   icon: Icon,
@@ -810,24 +792,308 @@ function Section({
 function Field({
   label,
   required,
+  className = '',
   children,
 }: {
   label: string;
   required?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <label className="block">
-      <span className="block text-sm font-medium text-gray-700 mb-1">
+    <div className={className}>
+      <div className="block text-sm font-medium text-gray-700 mb-1">
         {label}
         {required ? (
           <span className="text-rose-600" aria-hidden>
             {' *'}
           </span>
         ) : null}
-      </span>
+      </div>
       {children}
-    </label>
+    </div>
+  );
+}
+
+function useOutsideClose(
+  ref: React.RefObject<HTMLElement>,
+  open: boolean,
+  onClose: () => void,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (target instanceof Node && ref.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [open, onClose, ref]);
+}
+
+function PickerField({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  emptyLabel,
+  searchable = false,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: PickerOption[];
+  placeholder: string;
+  emptyLabel: string;
+  searchable?: boolean;
+  required?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
+  const selected = options.find((option) => option.value === value) ?? null;
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = normalizedQuery
+    ? options.filter((option) => {
+      const haystack = `${option.label} ${option.description ?? ''} ${option.meta ?? ''}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    })
+    : options;
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+  }, []);
+
+  useOutsideClose(rootRef, open, close);
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          close();
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-required={required || undefined}
+        onClick={() => setOpen((next) => !next)}
+        className={`${pickerButtonClassName} flex items-center justify-between gap-2`}
+      >
+        <span className="min-w-0 flex-1">
+          <span className={selected ? 'block truncate text-gray-900' : 'block truncate text-gray-400'}>
+            {selected?.label ?? placeholder}
+          </span>
+          {selected?.description ? (
+            <span className="block truncate text-xs text-gray-500">
+              {selected.description}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
+          {searchable && (
+            <div className="border-b border-gray-200 p-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search"
+                  className="h-10 w-full rounded-md border border-gray-300 bg-white pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+            </div>
+          )}
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label={label}
+            className="max-h-72 overflow-y-auto py-1"
+          >
+            {filteredOptions.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
+            ) : (
+              filteredOptions.map((option) => {
+                const isSelected = option.value === value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      onChange(option.value);
+                      close();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                  >
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      {isSelected ? (
+                        <Check className="h-4 w-4 text-indigo-600" aria-hidden />
+                      ) : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-gray-900">
+                        {option.label}
+                      </span>
+                      {option.description ? (
+                        <span className="block truncate text-xs text-gray-500">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StartTimeControl({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const quickSlots = useMemo(() => {
+    const first = roundUpTo5Min(new Date());
+    return [0, 15, 30, 45].map((minutes) => {
+      const slot = new Date(first);
+      slot.setMinutes(first.getMinutes() + minutes);
+      return slot;
+    });
+  }, [open]);
+
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClose(rootRef, open, close);
+
+  const shiftMinutes = (minutes: number) => {
+    const base = parseLocalInput(value) ?? roundUpTo5Min(new Date());
+    base.setMinutes(base.getMinutes() + minutes);
+    onChange(toLocalInput(base));
+  };
+
+  const setDateOffset = (offsetDays: number) => {
+    const base = parseLocalInput(value) ?? roundUpTo5Min(new Date());
+    const now = new Date();
+    base.setFullYear(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays);
+    onChange(toLocalInput(base));
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          close();
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((next) => !next)}
+        className={`${pickerButtonClassName} flex items-center justify-between gap-2 tabular-nums`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Clock3 className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+          <span className="truncate text-gray-900">{formatLocalDisplay(value)}</span>
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
+          <div className="mb-3 text-sm font-medium text-gray-900 tabular-nums">
+            {formatLocalDisplay(value)}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <QuickTimeButton onClick={() => setDateOffset(0)}>Today</QuickTimeButton>
+            <QuickTimeButton onClick={() => setDateOffset(1)}>Tomorrow</QuickTimeButton>
+            <QuickTimeButton onClick={() => shiftMinutes(-15)}>-15 min</QuickTimeButton>
+            <QuickTimeButton onClick={() => shiftMinutes(15)}>+15 min</QuickTimeButton>
+            <QuickTimeButton onClick={() => shiftMinutes(-5)}>-5 min</QuickTimeButton>
+            <QuickTimeButton onClick={() => shiftMinutes(5)}>+5 min</QuickTimeButton>
+          </div>
+          <div className="mt-3 border-t border-gray-200 pt-3">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+              Quick slots
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {quickSlots.map((slot) => (
+                <QuickTimeButton
+                  key={slot.toISOString()}
+                  onClick={() => {
+                    onChange(toLocalInput(slot));
+                    close();
+                  }}
+                >
+                  {formatLocalDisplay(toLocalInput(slot)).slice(11)}
+                </QuickTimeButton>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuickTimeButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
+    >
+      {children}
+    </button>
   );
 }
 
