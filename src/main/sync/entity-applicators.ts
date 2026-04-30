@@ -189,6 +189,10 @@ function applyStaff(entry: SyncLogEntry): boolean {
 
   staffRepo.upsertMany([{
     id: entry.entity_id,
+    // Canonical users.id (FK target on bookings.staff_user_id). Same shape
+    // fallbacks as staff-sync.ts so a sync_log entry written before the
+    // backend exposed userId still applies cleanly with user_id=null.
+    user_id: p.userId ?? p.user_id ?? p.user?.id ?? null,
     name,
     commission_rate: p.commissionRate ?? p.commission_rate ?? 0,
     is_active: p.isActive !== false ? 1 : 0,

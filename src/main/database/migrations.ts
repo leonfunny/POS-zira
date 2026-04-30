@@ -977,4 +977,19 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_service_rules_service ON service_rules(service_id);
     `,
   },
+  {
+    version: 24,
+    name: 'pos_staff_user_id',
+    up: `
+      -- Backend booksy/booking pipeline writes bookings.staff_user_id as
+      -- users.id (canonical FK). Until v24, pos_staff.id was the only id we
+      -- kept locally and we sent it through as staff_user_id, relying on
+      -- the server's tolerant resolveStaffUserId to normalize from
+      -- staff_profiles.id. Add a nullable user_id column so the staff sync
+      -- can persist the canonical id once the backend exposes it. Existing
+      -- rows stay valid (user_id NULL = "fall back to id" for outbound writes).
+      ALTER TABLE pos_staff ADD COLUMN user_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_pos_staff_user_id ON pos_staff(user_id);
+    `,
+  },
 ];

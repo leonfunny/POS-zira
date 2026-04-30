@@ -29,6 +29,10 @@ export class StaffSync {
 
     const mapped = data.map((s: any) => ({
       id: s.id,
+      // Canonical users.id from backend. Falls back through every shape the
+      // server has ever shipped: top-level userId/user_id, nested user.id.
+      // Stays null when the backend predates the v24 contract.
+      user_id: s.userId ?? s.user_id ?? s.user?.id ?? null,
       // Handle both old shape (fullName) and new shape (name)
       name: s.name || s.fullName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Staff',
       commission_rate: s.commissionRate ?? s.commission_rate ?? 0,

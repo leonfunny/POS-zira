@@ -10,7 +10,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface StaffRow {
-  id: string;
+  id: string;                      // staff_profiles.id
+  user_id?: string | null;         // canonical users.id (post backend v24)
   name: string;
   is_active: number;
 }
@@ -219,7 +220,9 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
             >
               <option value="">— {label('common.select', 'select')} —</option>
               {staff.map((s) => (
-                <option key={s.id} value={s.id}>
+                // See BookingCreateForm for rationale: prefer canonical
+                // users.id; fall back to staff_profiles.id pre-v24.
+                <option key={s.id} value={s.user_id || s.id}>
                   {s.name}
                 </option>
               ))}

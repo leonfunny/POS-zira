@@ -165,6 +165,7 @@ interface PosCustomer {
 
 interface PosStaff {
   id: string;
+  user_id?: string | null;
   name: string;
   commission_rate: number;
   is_active: number;

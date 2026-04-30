@@ -31,7 +31,8 @@ interface ServiceRuleRow {
 }
 
 interface StaffRow {
-  id: string;
+  id: string;                      // staff_profiles.id
+  user_id?: string | null;         // canonical users.id (post backend v24)
   name: string;
   is_active: number;
 }
@@ -352,7 +353,11 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
             >
               <option value="">— {label('common.select', 'select')} —</option>
               {staff.map((s) => (
-                <option key={s.id} value={s.id}>
+                // Bind to canonical users.id when the backend has shipped it
+                // (v24+); fall back to staff_profiles.id so older local DBs
+                // still pick a usable id. The server's resolveStaffUserId
+                // tolerates both, so any combination round-trips correctly.
+                <option key={s.id} value={s.user_id || s.id}>
                   {s.name}
                 </option>
               ))}

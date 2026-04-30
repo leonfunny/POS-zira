@@ -90,7 +90,10 @@ export function writeBookingCreated(
     rule = rules[0];
   }
 
-  const staff = staffRepo.getById(input.staffUserId);
+  // Tolerant lookup: input.staffUserId may be either staff_profiles.id (legacy
+  // dropdown binding) or users.id (canonical, after backend v24 + local
+  // migration). getByBookingStaffId matches WHERE id = ? OR user_id = ?.
+  const staff = staffRepo.getByBookingStaffId(input.staffUserId);
   const startsAt = new Date(input.startsAt);
   if (Number.isNaN(startsAt.getTime())) {
     throw new Error(`Invalid starts_at: ${input.startsAt}`);
