@@ -84,6 +84,13 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   // Form state
   const [serviceId, setServiceId] = useState<string>('');
   const [ruleId, setRuleId] = useState<string>('');
+  // Track which serviceId we're currently fetching rules for. Prevents
+  // submit firing with a stale ruleId left over from a previous service
+  // selection: if the user clicks Service A → A's rules load + first
+  // rule auto-selected → user picks Service B → before B's rules
+  // arrive, ruleId still references A's rule. Without this guard the
+  // form is briefly submittable with an A-rule + B-service mismatch.
+  const [rulesLoadingForServiceId, setRulesLoadingForServiceId] = useState<string | null>(null);
   const [staffUserId, setStaffUserId] = useState<string>('');
   const [startsAtLocal, setStartsAtLocal] = useState<string>(() =>
     toLocalInput(roundUpTo5Min(new Date(Date.now() + 15 * 60_000))),
@@ -135,17 +142,21 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     };
   }, [api]);
 
-  // When service changes, load rules + auto-pick first. Uses a
-  // cancellation flag so a late response from a previously-selected
-  // service can't overwrite the current selection's rules — the user
-  // would otherwise end up submitting a ruleId that belongs to a
-  // different service, which the server would reject.
+  // When service changes, load rules + auto-pick first. Two safeties
+  // against the stale-ruleId trap:
+  //   1. Clear `rules` + `ruleId` SYNCHRONOUSLY at the top so canSubmit
+  //      can't see a leftover rule from the previous service while the
+  //      new fetch is in flight.
+  //   2. `rulesLoadingForServiceId` blocks submit until we know whether
+  //      the service has rules.
   useEffect(() => {
+    setRules([]);
+    setRuleId('');
     if (!serviceId || !api?.services) {
-      setRules([]);
-      setRuleId('');
+      setRulesLoadingForServiceId(null);
       return;
     }
+    setRulesLoadingForServiceId(serviceId);
     let cancelled = false;
     (async () => {
       try {
@@ -159,6 +170,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
         if (cancelled) return;
         setRules([]);
         setRuleId('');
+      } finally {
+        if (!cancelled) setRulesLoadingForServiceId(null);
       }
     })();
     return () => {
@@ -166,14 +179,40 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     };
   }, [serviceId, api]);
 
-  const selectedRule = useMemo(
-    () => rules.find((r) => r.id === ruleId) ?? null,
-    [rules, ruleId],
+  const selectedService = useMemo(
+    () => services.find((s) => s.id === serviceId) ?? null,
+    [services, serviceId],
   );
+  // Only honor a rule that belongs to the currently-selected service.
+  // Defensive — if a stale ruleId leaks through (eg. fast service flip
+  // before the new fetch lands) we'd otherwise read it as legitimate.
+  const selectedRule = useMemo(() => {
+    const r = rules.find((rr) => rr.id === ruleId) ?? null;
+    if (!r) return null;
+    return r.service_id === serviceId ? r : null;
+  }, [rules, ruleId, serviceId]);
+
+  // Effective duration/price for display + submit. Prefer the selected
+  // rule (multi-tier services); fall back to the service's base fields
+  // for services that have no rules at all (23 active services in the
+  // current Dzai dataset). Without this fallback, canSubmit would never
+  // flip true and the cashier sees a Create button stuck disabled.
+  const effectiveDurationMin = selectedRule?.duration_min ?? selectedService?.base_duration_minutes ?? null;
+  const effectivePricePln = selectedRule?.base_price_pln ?? selectedService?.base_price_pln ?? null;
+  const rulesAreLoading = rulesLoadingForServiceId === serviceId && !!serviceId;
+  const noRulesAvailable = !!serviceId && !rulesAreLoading && rules.length === 0;
 
   const canSubmit =
     !!serviceId &&
-    !!ruleId &&
+    // Block while the rule fetch for the *current* service is still in
+    // flight. Without this, the cashier could click Create after the
+    // initial render of the new service while ruleId still points at
+    // the previous service's rule.
+    !rulesAreLoading &&
+    // Either an explicit rule pick (selectedRule is null when ruleId
+    // belongs to a different service — see useMemo guard above), OR a
+    // service with no rules but valid base duration+price.
+    (!!selectedRule || (noRulesAvailable && effectiveDurationMin != null && effectivePricePln != null)) &&
     !!staffUserId &&
     !!startsAtLocal &&
     !!customerPhone.trim() &&
@@ -329,13 +368,22 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
             </div>
           )}
 
-          {selectedRule && (
+          {/* Show effective duration/price even when the service has no
+              rules — pulled from service.base_* in that case. Note label
+              clarifies the source so cashiers know it's a service-level
+              default, not a tier they picked. */}
+          {effectiveDurationMin != null && effectivePricePln != null && (
             <div className="flex justify-between text-sm text-gray-600">
               <span>
-                {selectedRule.duration_min} {label('common.minutes', 'min')}
+                {effectiveDurationMin} {label('common.minutes', 'min')}
+                {noRulesAvailable ? (
+                  <span className="ml-2 text-xs text-gray-500">
+                    {label('bookings.create.no_rules', '(service default)')}
+                  </span>
+                ) : null}
               </span>
               <span className="font-semibold">
-                {formatGrosze(selectedRule.base_price_pln)} zł
+                {formatGrosze(effectivePricePln)} zł
               </span>
             </div>
           )}

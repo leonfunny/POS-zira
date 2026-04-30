@@ -80,15 +80,35 @@ export function writeBookingCreated(
   }
 
   // Pick the rule: explicit → provided, else first rule for the service.
-  // Without a rule the booking has no duration/price; reject early so
-  // the cashier sees the error locally instead of a server rejection.
+  // If the service has no rules at all (23 services in current Dzai
+  // dataset), fall back to the service's base_duration_minutes /
+  // base_price_pln. The local row stores rule_id=null and the outbound
+  // payload omits rule_id so the server's BookingsService.create
+  // reuses the same fallback (it accepts missing rule_id and computes
+  // duration/price from the service row).
   let rule = input.ruleId ? serviceRuleRepo.getById(input.ruleId) : null;
+  // Guard against stale ruleId from a previous service selection in
+  // the form (BookingCreateForm has its own clear-on-change guard, but
+  // belt-and-braces). A rule whose service_id doesn't match the
+  // chosen service_id would create a booking with the wrong duration /
+  // price; throwing surfaces the bug instead of silently corrupting.
+  if (rule && rule.service_id !== input.serviceId) {
+    throw new Error(
+      `Rule ${input.ruleId} belongs to service ${rule.service_id}, not ${input.serviceId}`,
+    );
+  }
   if (!rule) {
     const rules = serviceRuleRepo.getByService(input.serviceId);
-    if (rules.length === 0) {
-      throw new Error(`No pricing rule exists for service ${input.serviceId}`);
+    if (rules.length > 0) {
+      rule = rules[0];
     }
-    rule = rules[0];
+  }
+  const durationMin = rule?.duration_min ?? service.base_duration_minutes;
+  const pricePln = rule?.base_price_pln ?? service.base_price_pln;
+  if (!durationMin || pricePln == null) {
+    throw new Error(
+      `Service ${input.serviceId} has no rules and no base duration/price; cannot create booking locally`,
+    );
   }
 
   // Tolerant lookup: input.staffUserId may be either staff_profiles.id (legacy
@@ -99,19 +119,21 @@ export function writeBookingCreated(
   if (Number.isNaN(startsAt.getTime())) {
     throw new Error(`Invalid starts_at: ${input.startsAt}`);
   }
-  const endsAt = new Date(startsAt.getTime() + rule.duration_min * 60_000);
+  const endsAt = new Date(startsAt.getTime() + durationMin * 60_000);
   const bookingId = randomUUID();
   const nowIso = new Date().toISOString();
 
   // Build outbound payload up front so the transaction body has only DB
-  // writes — easier to reason about rollback.
+  // writes — easier to reason about rollback. Omit rule_id when there
+  // is no rule; the server then computes duration/price from the
+  // service base fields.
   const payload: Record<string, any> = {
     id: bookingId,
     service_id: input.serviceId,
     staff_user_id: input.staffUserId,
     starts_at: startsAt.toISOString(),
-    rule_id: rule.id,
   };
+  if (rule) payload.rule_id = rule.id;
   if (input.ownerId) payload.owner_id = input.ownerId;
   if (input.customerPhone) payload.customer_phone = input.customerPhone;
   if (input.customerName) payload.customer_name = input.customerName;
@@ -133,18 +155,18 @@ export function writeBookingCreated(
       staff_full_name: staff?.name ?? null,
       service_id: input.serviceId,
       service_name: service.name,
-      rule_id: rule.id,
+      rule_id: rule?.id ?? null,
       resource_id: null,
       resource_name: null,
       status: 'BOOKED',
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),
-      duration_minutes: rule.duration_min,
+      duration_minutes: durationMin,
       processing_start: null,
       processing_end: null,
-      base_price_pln: rule.base_price_pln,
+      base_price_pln: pricePln,
       extras_price_pln: 0,
-      total_price_pln: rule.base_price_pln,
+      total_price_pln: pricePln,
       deposit_paid: 0,
       customer_notes: input.customerNotes ?? null,
       internal_notes: input.internalNotes ?? null,
@@ -304,9 +326,11 @@ export function writeBookingUpdated(
 //     booking, then transition its status. Avoids silently dropping
 //     these rows.
 // - Anything missing required fields (service_id, staff_user_id,
-//   starts_at, rule_id, owner_id OR owner_phone+name) → record
-//   skip reason and a manual-conflict marker via syncLogService;
-//   cashier sees the orphan in the UI and resolves it.
+//   starts_at, owner_id OR owner_phone+name) → record skip reason and
+//   a manual-conflict marker via syncLogService; cashier sees the
+//   orphan in the UI and resolves it. rule_id is intentionally NOT
+//   required — services without rules are valid and the server falls
+//   back to service base duration/price.
 // - Idempotent: if a `local_sync_log` row with `event='created'` already
 //   exists for the booking id, this run does nothing.
 
@@ -374,7 +398,10 @@ export function repairOrphanBookings(syncLogService: SyncLogService): OrphanRepa
     if (!o.service_id) { skip('missing_service_id'); continue; }
     if (!o.staff_user_id) { skip('missing_staff_user_id'); continue; }
     if (!o.starts_at) { skip('missing_starts_at'); continue; }
-    if (!o.rule_id) { skip('missing_rule_id'); continue; }
+    // rule_id is intentionally optional here — services without rules
+    // are valid (server falls back to service base fields). Mirror the
+    // writeBookingCreated contract: include rule_id in the payload only
+    // when present.
     if (!o.owner_id && (!o.owner_phone?.trim() || !o.owner_full_name?.trim())) {
       skip('missing_owner_identity');
       continue;
@@ -385,8 +412,8 @@ export function repairOrphanBookings(syncLogService: SyncLogService): OrphanRepa
       service_id: o.service_id,
       staff_user_id: o.staff_user_id,
       starts_at: o.starts_at,
-      rule_id: o.rule_id,
     };
+    if (o.rule_id) payload.rule_id = o.rule_id;
     if (o.owner_id) payload.owner_id = o.owner_id;
     if (o.owner_phone) payload.customer_phone = o.owner_phone;
     if (o.owner_full_name) payload.customer_name = o.owner_full_name;

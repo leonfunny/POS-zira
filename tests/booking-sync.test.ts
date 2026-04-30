@@ -120,6 +120,57 @@ describe('writeBookingCreated', () => {
     expect(state.rolledBack).toBe(false);
   });
 
+  it('throws when input.ruleId references a rule from a different service', () => {
+    // Mismatch surfaces stale-state bugs early instead of silently
+    // creating a booking with the wrong duration / price.
+    vi.mocked(serviceRuleRepo.getById).mockReturnValueOnce({
+      id: 'rule-OTHER',
+      service_id: 'svc-OTHER',
+      duration_min: 60,
+      base_price_pln: 9999,
+    } as any);
+
+    expect(() =>
+      writeBookingCreated(fakeSyncLog, {
+        serviceId: 'svc-1',
+        staffUserId: 'user-1',
+        startsAt: '2026-04-30T13:00:00Z',
+        ruleId: 'rule-OTHER',
+        customerPhone: '500111222',
+        customerName: 'TEST',
+      }),
+    ).toThrow(/belongs to service svc-OTHER/);
+
+    expect(state.bookings.size).toBe(0);
+    expect(state.logs).toHaveLength(0);
+  });
+
+  it('falls back to service base duration/price when the service has no rules', () => {
+    // No rules: getById returns null, getByService returns [].
+    vi.mocked(serviceRuleRepo.getById).mockReturnValueOnce(null as any);
+    vi.mocked(serviceRuleRepo.getByService).mockReturnValueOnce([]);
+
+    const id = writeBookingCreated(fakeSyncLog, {
+      serviceId: 'svc-1',
+      staffUserId: 'user-1',
+      startsAt: '2026-04-30T13:00:00Z',
+      // ruleId intentionally omitted
+      customerPhone: '500111222',
+      customerName: 'TEST',
+    });
+
+    const row = state.bookings.get(id);
+    expect(row?.rule_id).toBeNull();
+    // Booking duration/price come from the service base fields when no
+    // rule exists (base_duration_minutes=150, base_price_pln=12000).
+    expect(row?.duration_minutes).toBe(150);
+    expect(row?.base_price_pln).toBe(12000);
+    expect(row?.total_price_pln).toBe(12000);
+    // Outbound payload should omit rule_id when there is no rule so the
+    // server's BookingsService.create runs the same fallback path.
+    expect(state.logs[0]?.payload).not.toHaveProperty('rule_id');
+  });
+
   it('rolls back the booking row when sync_log insert fails', () => {
     fakeSyncLog.writeLocalEntry.mockImplementationOnce(() => {
       throw new Error('local_sync_log insert failed');
@@ -321,6 +372,36 @@ describe('repairOrphanBookings', () => {
     expect(state.logs[1]?.event).toBe('status_changed');
     expect(state.logs[1]?.entity_id).toBe('TEST123');
     expect(state.logs[1]?.payload.status).toBe('CHECKED_IN');
+  });
+
+  it('enqueues booking/created without rule_id when orphan has rule_id null', () => {
+    vi.mocked(database.all).mockReturnValueOnce([
+      {
+        id: 'no-rule-1',
+        owner_id: null,
+        owner_full_name: 'X',
+        owner_phone: '500111222',
+        staff_user_id: 'u',
+        service_id: 'svc-no-rules',
+        rule_id: null, // service has no rules
+        starts_at: '2026-04-30T13:00:00Z',
+        customer_notes: null,
+        internal_notes: null,
+        cancel_reason: null,
+        status: 'BOOKED',
+      },
+    ]);
+
+    const r = repairOrphanBookings(fakeSyncLog);
+    expect(r.scanned).toBe(1);
+    expect(r.enqueued).toBe(1);
+    expect(r.skipped).toBe(0);
+    expect(state.logs).toHaveLength(1);
+    // Outbound payload omits rule_id so the server's
+    // BookingsService.create runs the same fallback path
+    // (service.base_duration_minutes / base_price_pln).
+    expect(state.logs[0]?.payload).not.toHaveProperty('rule_id');
+    expect(state.logs[0]?.payload.service_id).toBe('svc-no-rules');
   });
 
   it('forwards cancel_reason on CANCELLED orphans', () => {
