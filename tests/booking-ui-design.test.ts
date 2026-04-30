@@ -223,14 +223,48 @@ describe('BookingsTodayScreen status-aware actions', () => {
 
 describe('BookingEditForm patch-only behavior', () => {
   it('only adds fields to the patch when the user actually changed them', () => {
-    expect(editSource).toMatch(/staffUserId\s*!==\s*booking\.staff_user_id/);
-    expect(editSource).toMatch(/customerNotes\s*!==\s*\(booking\.customer_notes/);
-    expect(editSource).toMatch(/internalNotes\s*!==\s*\(booking\.internal_notes/);
+    expect(editSource).toMatch(/staffUserId\s*!==\s*originalStaffUserId/);
+    expect(editSource).toMatch(/startsAtLocal\s*!==\s*originalStartsAtLocal/);
+    expect(editSource).toMatch(/customerNotes\s*!==\s*originalCustomerNotes/);
+    expect(editSource).toMatch(/internalNotes\s*!==\s*originalInternalNotes/);
   });
 
   it('disables Save when nothing changed (canSubmit derived from hasChanges)', () => {
     expect(editSource).toMatch(/hasChanges\s*=\s*Object\.keys\(patch\)\.length\s*>\s*0/);
     expect(editSource).toMatch(/canSubmit\s*=\s*hasChanges/);
+  });
+});
+
+describe('BookingEditForm touch-safe modal behavior', () => {
+  it('uses the same header / scrollable body / sticky footer structure as create', () => {
+    expect(editSource).toMatch(/flex flex-col w-full h-full/);
+    expect(editSource).toMatch(/ref=\{bodyRef\}/);
+    expect(editSource).toMatch(/flex-1 overflow-y-auto/);
+    expect(editSource).toMatch(/<footer className="shrink-0 border-t/);
+  });
+
+  it('scrolls focused edit fields above the native keyboard', () => {
+    expect(editSource).toMatch(/function\s+ensureFieldVisible/);
+    expect(editSource).toMatch(/visualViewport/);
+    expect(editSource).toMatch(/setTimeout/);
+    expect(editSource).toMatch(/,\s*250\s*\)/);
+    expect(editSource).toMatch(/,\s*600\s*\)/);
+    expect(editSource).toMatch(/pb-\[420px\]/);
+    expect(editSource).toMatch(/onFocus=\{handleFieldFocus\}/);
+  });
+
+  it('does not close from backdrop clicks or auto-focus the first field', () => {
+    expect(editSource).not.toMatch(/onClick=\{safeClose\}/);
+    expect(editSource).not.toMatch(/firstFieldRef/);
+    expect(editSource).not.toMatch(/\.focus\(\)/);
+  });
+
+  it('routes X and Cancel through an in-app dirty discard guard', () => {
+    expect(editSource).toMatch(/const\s+isDirty\s*=/);
+    expect(editSource).toMatch(/showDiscardConfirm/);
+    expect(editSource).toMatch(/function\s+DiscardConfirm/);
+    expect(editSource).toMatch(/onClick=\{requestClose\}/);
+    expect(editSource).not.toMatch(/window\.confirm\s*\(/);
   });
 });
 

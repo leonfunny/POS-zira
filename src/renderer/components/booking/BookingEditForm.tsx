@@ -76,6 +76,43 @@ function statusToneClass(status: string): string {
   }
 }
 
+const KEYBOARD_RESERVE_FALLBACK_PX = 380;
+
+function ensureFieldVisible(
+  field: HTMLElement,
+  body: HTMLElement | null,
+): void {
+  if (!body) return;
+  const viewport = (window as any).visualViewport as
+    | { height: number; offsetTop?: number }
+    | undefined;
+  let safeBottom: number;
+  if (viewport && viewport.height + 1 < window.innerHeight) {
+    safeBottom = (viewport.offsetTop ?? 0) + viewport.height;
+  } else {
+    const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+    const shouldReserveFallback = hasCoarsePointer || window.innerHeight <= 900;
+    safeBottom = window.innerHeight - (shouldReserveFallback ? KEYBOARD_RESERVE_FALLBACK_PX : 0);
+  }
+  const margin = 24;
+  const fieldRect = field.getBoundingClientRect();
+  if (fieldRect.bottom > safeBottom - margin) {
+    body.scrollTop += fieldRect.bottom - (safeBottom - margin);
+  } else if (fieldRect.top < 80) {
+    body.scrollTop -= 80 - fieldRect.top;
+  }
+}
+
+function scheduleEnsureVisible(
+  target: EventTarget | null,
+  body: HTMLElement | null,
+) {
+  if (!(target instanceof HTMLElement)) return;
+  ensureFieldVisible(target, body);
+  setTimeout(() => ensureFieldVisible(target, body), 250);
+  setTimeout(() => ensureFieldVisible(target, body), 600);
+}
+
 export default function BookingEditForm({ t, booking, onClose, onSaved }: Props) {
   const label = useCallback(
     (key: string, fallback: string) => (t ? t(key) : fallback),
@@ -88,19 +125,27 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Editable fields — seeded from the existing booking
-  const [staffUserId, setStaffUserId] = useState(booking.staff_user_id || '');
-  const [startsAtLocal, setStartsAtLocal] = useState(
-    isoToLocalInput(booking.starts_at),
+  const originalStaffUserId = booking.staff_user_id || '';
+  const originalStartsAtLocal = useMemo(
+    () => isoToLocalInput(booking.starts_at),
+    [booking.starts_at],
   );
-  const [customerNotes, setCustomerNotes] = useState(booking.customer_notes || '');
-  const [internalNotes, setInternalNotes] = useState(booking.internal_notes || '');
+  const originalCustomerNotes = booking.customer_notes || '';
+  const originalInternalNotes = booking.internal_notes || '';
+
+  // Editable fields — seeded from the existing booking
+  const [staffUserId, setStaffUserId] = useState(originalStaffUserId);
+  const [startsAtLocal, setStartsAtLocal] = useState(originalStartsAtLocal);
+  const [customerNotes, setCustomerNotes] = useState(originalCustomerNotes);
+  const [internalNotes, setInternalNotes] = useState(originalInternalNotes);
 
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const firstFieldRef = useRef<HTMLSelectElement | null>(null);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [keyboardActive, setKeyboardActive] = useState(false);
 
   // Load staff (same cancellation pattern as BookingCreateForm)
   useEffect(() => {
@@ -125,40 +170,61 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
     };
   }, [api]);
 
-  useEffect(() => {
-    firstFieldRef.current?.focus();
-  }, []);
-
   // Only send fields the user actually changed — prevents the server
   // from running availability checks against unchanged values.
   const patch = useMemo(() => {
     const out: Record<string, any> = {};
-    if (staffUserId && staffUserId !== booking.staff_user_id) {
+    if (staffUserId && staffUserId !== originalStaffUserId) {
       out.staffUserId = staffUserId;
     }
-    const originalLocal = isoToLocalInput(booking.starts_at);
-    if (startsAtLocal && startsAtLocal !== originalLocal) {
+    if (startsAtLocal && startsAtLocal !== originalStartsAtLocal) {
       const parsed = new Date(startsAtLocal);
       if (!Number.isNaN(parsed.getTime())) {
         out.startsAt = parsed.toISOString();
       }
     }
-    if (customerNotes !== (booking.customer_notes || '')) {
+    if (customerNotes !== originalCustomerNotes) {
       out.customerNotes = customerNotes || null;
     }
-    if (internalNotes !== (booking.internal_notes || '')) {
+    if (internalNotes !== originalInternalNotes) {
       out.internalNotes = internalNotes || null;
     }
     return out;
-  }, [staffUserId, startsAtLocal, customerNotes, internalNotes, booking]);
+  }, [
+    staffUserId,
+    startsAtLocal,
+    customerNotes,
+    internalNotes,
+    originalStaffUserId,
+    originalStartsAtLocal,
+    originalCustomerNotes,
+    originalInternalNotes,
+  ]);
 
   const hasChanges = Object.keys(patch).length > 0;
+  const isDirty =
+    staffUserId !== originalStaffUserId ||
+    startsAtLocal !== originalStartsAtLocal ||
+    customerNotes !== originalCustomerNotes ||
+    internalNotes !== originalInternalNotes;
   const canSubmit = hasChanges && !submitting;
 
-  const safeClose = useCallback(() => {
+  const requestClose = useCallback(() => {
     if (submittingRef.current || submitting) return;
+    if (isDirty) {
+      setShowDiscardConfirm(true);
+      return;
+    }
     onClose();
-  }, [submitting, onClose]);
+  }, [submitting, isDirty, onClose]);
+
+  const handleFieldFocus = useCallback((e: React.FocusEvent<HTMLElement>) => {
+    setKeyboardActive(true);
+    scheduleEnsureVisible(e.target, bodyRef.current);
+  }, []);
+  const handleFieldBlur = useCallback(() => {
+    setKeyboardActive(false);
+  }, []);
 
   const submit = useCallback(async () => {
     if (submittingRef.current) return;
@@ -202,17 +268,19 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/40 sm:flex sm:items-center sm:justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="booking-edit-title"
-      onClick={safeClose}
     >
-      <div
-        className="bg-white rounded-md shadow-xl w-full max-w-lg max-h-full overflow-auto"
-        onClick={(e) => e.stopPropagation()}
+      <form
+        className="bg-white shadow-xl flex flex-col w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-[640px] sm:rounded-md"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) submit();
+        }}
       >
-        <header className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200">
+        <header className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200 shrink-0">
           <div className="min-w-0">
             <h2 id="booking-edit-title" className="text-lg font-semibold text-gray-900">
               {label('bookings.edit.title', 'Edit booking')}
@@ -236,7 +304,7 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
           </div>
           <button
             type="button"
-            onClick={safeClose}
+            onClick={requestClose}
             disabled={submitting}
             className="inline-flex items-center justify-center h-9 w-9 text-gray-500 rounded-md hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30 shrink-0"
             aria-label={label('common.close', 'Close')}
@@ -245,23 +313,22 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
           </button>
         </header>
 
-        {loadError && (
-          <div
-            role="alert"
-            className="mx-5 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
-          >
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
-            <div>{loadError}</div>
-          </div>
-        )}
-
-        <form
-          className="p-5 space-y-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canSubmit) submit();
-          }}
+        <div
+          ref={bodyRef}
+          className={`flex-1 overflow-y-auto px-5 py-4 space-y-6 ${
+            keyboardActive ? 'pb-[420px]' : 'pb-4'
+          }`}
         >
+          {loadError && (
+            <div
+              role="alert"
+              className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
+            >
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div>{loadError}</div>
+            </div>
+          )}
+
           <section className="space-y-3">
             <SectionHeader
               icon={CalendarClock}
@@ -270,10 +337,11 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
 
             <Field label={label('bookings.create.staff', 'Staff')}>
               <select
-                ref={firstFieldRef}
                 value={staffUserId}
                 onChange={(e) => setStaffUserId(e.target.value)}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onFocus={handleFieldFocus}
+                onBlur={handleFieldBlur}
+                className={inputClassName}
               >
                 <option value="">— {label('common.select', 'select')} —</option>
                 {staff.map((s) => (
@@ -291,8 +359,10 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
                 type="datetime-local"
                 value={startsAtLocal}
                 onChange={(e) => setStartsAtLocal(e.target.value)}
+                onFocus={handleFieldFocus}
+                onBlur={handleFieldBlur}
                 step={300}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className={inputClassName}
               />
             </Field>
           </section>
@@ -306,16 +376,20 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
               <textarea
                 value={customerNotes}
                 onChange={(e) => setCustomerNotes(e.target.value)}
+                onFocus={handleFieldFocus}
+                onBlur={handleFieldBlur}
                 rows={2}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className={textareaClassName}
               />
             </Field>
             <Field label={label('bookings.edit.internal_notes', 'Internal notes')}>
               <textarea
                 value={internalNotes}
                 onChange={(e) => setInternalNotes(e.target.value)}
+                onFocus={handleFieldFocus}
+                onBlur={handleFieldBlur}
                 rows={2}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className={textareaClassName}
               />
             </Field>
           </section>
@@ -329,11 +403,13 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
               <div>{submitError}</div>
             </div>
           )}
+        </div>
 
-          <div className="flex items-center justify-end gap-2 pt-2">
+        <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3">
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={safeClose}
+              onClick={requestClose}
               disabled={submitting}
               className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
@@ -349,8 +425,19 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
                 : label('bookings.edit.save', 'Save changes')}
             </button>
           </div>
-        </form>
-      </div>
+        </footer>
+      </form>
+
+      {showDiscardConfirm && (
+        <DiscardConfirm
+          onCancel={() => setShowDiscardConfirm(false)}
+          onConfirm={() => {
+            setShowDiscardConfirm(false);
+            onClose();
+          }}
+          label={label}
+        />
+      )}
     </div>
   );
 }
@@ -358,6 +445,12 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
 // ─────────────────────────────────────────────────────────────────────
 // Local helpers — small enough to live alongside the form.
 // ─────────────────────────────────────────────────────────────────────
+
+const inputClassName =
+  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+
+const textareaClassName =
+  'w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 function SectionHeader({
   icon: Icon,
@@ -386,5 +479,54 @@ function Field({
       <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function DiscardConfirm({
+  onCancel,
+  onConfirm,
+  label,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  label: (k: string, fb: string) => string;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-discard-title"
+    >
+      <div className="bg-white rounded-md shadow-xl w-full max-w-sm">
+        <header className="px-5 py-3 border-b border-gray-200">
+          <h3 id="edit-discard-title" className="text-base font-semibold text-gray-900">
+            {label('bookings.edit.discard.title', 'Discard changes?')}
+          </h3>
+        </header>
+        <div className="px-5 py-4 text-sm text-gray-700">
+          {label(
+            'bookings.edit.discard.body',
+            'You have unsaved changes. Closing now will lose them.',
+          )}
+        </div>
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-md">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            {label('bookings.edit.discard.keep', 'Keep editing')}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-rose-600 text-white rounded-md shadow-sm hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2"
+          >
+            {label('bookings.edit.discard.confirm', 'Discard')}
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }
