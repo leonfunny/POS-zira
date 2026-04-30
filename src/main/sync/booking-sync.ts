@@ -24,6 +24,7 @@ import { bookingRepo } from '../database/repos/booking-repo';
 import { serviceRepo } from '../database/repos/service-repo';
 import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { staffRepo } from '../database/repos/staff-repo';
+import { database } from '../database/database';
 
 export const BOOKING_ENTITY_TYPE = 'booking';
 
@@ -102,41 +103,8 @@ export function writeBookingCreated(
   const bookingId = randomUUID();
   const nowIso = new Date().toISOString();
 
-  // Optimistic local row so the UI shows the booking immediately while
-  // the push cycle delivers it to the server.
-  bookingRepo.upsert({
-    id: bookingId,
-    owner_id: input.ownerId ?? null,
-    owner_full_name: input.customerName ?? null,
-    owner_phone: input.customerPhone ?? null,
-    staff_user_id: input.staffUserId,
-    staff_full_name: staff?.name ?? null,
-    service_id: input.serviceId,
-    service_name: service.name,
-    rule_id: rule.id,
-    resource_id: null,
-    resource_name: null,
-    status: 'BOOKED',
-    starts_at: startsAt.toISOString(),
-    ends_at: endsAt.toISOString(),
-    duration_minutes: rule.duration_min,
-    processing_start: null,
-    processing_end: null,
-    base_price_pln: rule.base_price_pln,
-    extras_price_pln: 0,
-    total_price_pln: rule.base_price_pln,
-    deposit_paid: 0,
-    customer_notes: input.customerNotes ?? null,
-    internal_notes: input.internalNotes ?? null,
-    confirmed_at: null,
-    cancelled_at: null,
-    cancel_reason: null,
-    updated_at: nowIso,
-    server_updated_at: null,
-  });
-
-  // Enqueue for push. Payload uses snake_case to match what
-  // processBookingCreated expects on the server.
+  // Build outbound payload up front so the transaction body has only DB
+  // writes — easier to reason about rollback.
   const payload: Record<string, any> = {
     id: bookingId,
     service_id: input.serviceId,
@@ -151,12 +119,53 @@ export function writeBookingCreated(
   if (input.customerNotes) payload.customer_notes = input.customerNotes;
   if (input.internalNotes) payload.internal_notes = input.internalNotes;
 
-  syncLogService.writeLocalEntry(
-    BOOKING_ENTITY_TYPE,
-    bookingId,
-    'created',
-    payload,
-  );
+  // Atomic: optimistic local booking row + outbound sync_log entry. If
+  // the log insert throws, the booking row is rolled back so we don't
+  // leave a ghost local-only booking that never reaches the server (the
+  // exact bug TEST123 / 5KOL hit on 2026-04-30).
+  database.transaction(() => {
+    bookingRepo.upsert({
+      id: bookingId,
+      owner_id: input.ownerId ?? null,
+      owner_full_name: input.customerName ?? null,
+      owner_phone: input.customerPhone ?? null,
+      staff_user_id: input.staffUserId,
+      staff_full_name: staff?.name ?? null,
+      service_id: input.serviceId,
+      service_name: service.name,
+      rule_id: rule.id,
+      resource_id: null,
+      resource_name: null,
+      status: 'BOOKED',
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      duration_minutes: rule.duration_min,
+      processing_start: null,
+      processing_end: null,
+      base_price_pln: rule.base_price_pln,
+      extras_price_pln: 0,
+      total_price_pln: rule.base_price_pln,
+      deposit_paid: 0,
+      customer_notes: input.customerNotes ?? null,
+      internal_notes: input.internalNotes ?? null,
+      confirmed_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      updated_at: nowIso,
+      server_updated_at: null,
+    });
+
+    syncLogService.writeLocalEntry(
+      BOOKING_ENTITY_TYPE,
+      bookingId,
+      'created',
+      payload,
+    );
+  });
+
+  // Persist sql.js in-memory DB to disk so a crash before the next push
+  // cycle still keeps the booking + log entry in sync.
+  database.save();
 
   return bookingId;
 }
@@ -177,12 +186,6 @@ export function writeBookingStatusChanged(
   const cancelled = status === 'CANCELLED';
   const confirmed = status === 'BOOKED';
 
-  bookingRepo.applyLocalStatusChange(bookingId, status, {
-    cancel_reason: cancelled ? opts.cancelReason ?? null : null,
-    cancelled_at: cancelled ? nowIso : null,
-    confirmed_at: confirmed ? nowIso : null,
-  });
-
   const payload: Record<string, any> = {
     id: bookingId,
     status,
@@ -191,12 +194,24 @@ export function writeBookingStatusChanged(
   if (cancelled && opts.cancelReason) payload.cancel_reason = opts.cancelReason;
   if (opts.note) payload.note = opts.note;
 
-  syncLogService.writeLocalEntry(
-    BOOKING_ENTITY_TYPE,
-    bookingId,
-    'status_changed',
-    payload,
-  );
+  // Atomic: status change + outbound sync_log. Same rollback contract as
+  // writeBookingCreated.
+  database.transaction(() => {
+    bookingRepo.applyLocalStatusChange(bookingId, status, {
+      cancel_reason: cancelled ? opts.cancelReason ?? null : null,
+      cancelled_at: cancelled ? nowIso : null,
+      confirmed_at: confirmed ? nowIso : null,
+    });
+
+    syncLogService.writeLocalEntry(
+      BOOKING_ENTITY_TYPE,
+      bookingId,
+      'status_changed',
+      payload,
+    );
+  });
+
+  database.save();
 }
 
 /**
@@ -225,18 +240,6 @@ export function writeBookingUpdated(
   bookingId: string,
   patch: BookingUpdatePatch,
 ): void {
-  bookingRepo.applyLocalUpdate(bookingId, {
-    staff_user_id: patch.staffUserId,
-    staff_full_name: patch.staffFullName,
-    resource_id: patch.resourceId,
-    resource_name: patch.resourceName,
-    starts_at: patch.startsAt,
-    ends_at: patch.endsAt,
-    duration_minutes: patch.durationMinutes,
-    customer_notes: patch.customerNotes,
-    internal_notes: patch.internalNotes,
-  });
-
   const payload: Record<string, any> = {
     id: bookingId,
     updated_at: new Date().toISOString(),
@@ -247,12 +250,207 @@ export function writeBookingUpdated(
   if (patch.customerNotes !== undefined) payload.customer_notes = patch.customerNotes;
   if (patch.internalNotes !== undefined) payload.internal_notes = patch.internalNotes;
 
-  syncLogService.writeLocalEntry(
-    BOOKING_ENTITY_TYPE,
-    bookingId,
-    'updated',
-    payload,
-  );
+  // Atomic: local update + outbound sync_log.
+  database.transaction(() => {
+    bookingRepo.applyLocalUpdate(bookingId, {
+      staff_user_id: patch.staffUserId,
+      staff_full_name: patch.staffFullName,
+      resource_id: patch.resourceId,
+      resource_name: patch.resourceName,
+      starts_at: patch.startsAt,
+      ends_at: patch.endsAt,
+      duration_minutes: patch.durationMinutes,
+      customer_notes: patch.customerNotes,
+      internal_notes: patch.internalNotes,
+    });
+
+    syncLogService.writeLocalEntry(
+      BOOKING_ENTITY_TYPE,
+      bookingId,
+      'updated',
+      payload,
+    );
+  });
+
+  database.save();
+}
+
+// ─── Startup repair: orphan local bookings ──────────────────────────────
+//
+// History: before the atomic-transaction fix above, writeBookingCreated
+// wrote to `bookings` first, then to `local_sync_log`. If anything
+// between those two calls threw (eg. log table briefly locked, or the
+// sync-log insert path itself silently failed) the booking row stayed
+// behind without an outbound `booking/created` queue entry — a "ghost"
+// local-only booking that the server never sees.
+//
+// The atomic wrapper above prevents new ghosts. This function repairs
+// existing ones at app start by detecting `bookings` rows that were
+// created locally (server_updated_at IS NULL) but have NO `local_sync_log`
+// row whose `event='created'`, and enqueuing a fresh `booking/created`
+// payload for them.
+//
+// Why scoped on missing-created (not missing-any-log): TEST123 on
+// 2026-04-30 had a status_changed log already (rejected NOT_FOUND because
+// the server never received the original create). Filtering on
+// "no logs at all" silently skipped it. We instead detect "no created
+// event" so any booking the server doesn't yet know about gets re-pushed.
+//
+// Per-status handling:
+// - BOOKED  → enqueue `booking/created`. Server applies it normally.
+// - CHECKED_IN / COMPLETED / IN_SERVICE / PAID / NO_SHOW / CANCELLED
+//   → enqueue `booking/created` first, THEN a `booking/status_changed`
+//     in FIFO order. Server processes them in seq order: create the
+//     booking, then transition its status. Avoids silently dropping
+//     these rows.
+// - Anything missing required fields (service_id, staff_user_id,
+//   starts_at, rule_id, owner_id OR owner_phone+name) → record
+//   skip reason and a manual-conflict marker via syncLogService;
+//   cashier sees the orphan in the UI and resolves it.
+// - Idempotent: if a `local_sync_log` row with `event='created'` already
+//   exists for the booking id, this run does nothing.
+
+export interface OrphanRepairResult {
+  scanned: number;
+  enqueued: number; // count of booking/created entries written
+  enqueued_status: number; // count of follow-up booking/status_changed entries
+  skipped: number;
+  skipped_reasons: Record<string, number>;
+}
+
+const FOLLOWUP_STATUSES = new Set([
+  'CHECKED_IN',
+  'IN_SERVICE',
+  'COMPLETED',
+  'PAID',
+  'CANCELLED',
+  'NO_SHOW',
+]);
+
+export function repairOrphanBookings(syncLogService: SyncLogService): OrphanRepairResult {
+  const result: OrphanRepairResult = {
+    scanned: 0,
+    enqueued: 0,
+    enqueued_status: 0,
+    skipped: 0,
+    skipped_reasons: {},
+  };
+
+  const orphans = database.all<{
+    id: string;
+    owner_id: string | null;
+    owner_full_name: string | null;
+    owner_phone: string | null;
+    staff_user_id: string | null;
+    service_id: string | null;
+    rule_id: string | null;
+    starts_at: string | null;
+    customer_notes: string | null;
+    internal_notes: string | null;
+    cancel_reason: string | null;
+    status: string;
+  }>(`
+    SELECT b.id, b.owner_id, b.owner_full_name, b.owner_phone,
+           b.staff_user_id, b.service_id, b.rule_id, b.starts_at,
+           b.customer_notes, b.internal_notes, b.cancel_reason, b.status
+    FROM bookings b
+    WHERE b.server_updated_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM local_sync_log l
+        WHERE l.entity_type = ?
+          AND l.entity_id = b.id
+          AND l.event = 'created'
+      )
+  `, [BOOKING_ENTITY_TYPE]);
+
+  result.scanned = orphans.length;
+
+  for (const o of orphans) {
+    const skip = (reason: string) => {
+      result.skipped++;
+      result.skipped_reasons[reason] = (result.skipped_reasons[reason] ?? 0) + 1;
+    };
+
+    if (!o.service_id) { skip('missing_service_id'); continue; }
+    if (!o.staff_user_id) { skip('missing_staff_user_id'); continue; }
+    if (!o.starts_at) { skip('missing_starts_at'); continue; }
+    if (!o.rule_id) { skip('missing_rule_id'); continue; }
+    if (!o.owner_id && (!o.owner_phone?.trim() || !o.owner_full_name?.trim())) {
+      skip('missing_owner_identity');
+      continue;
+    }
+
+    const payload: Record<string, any> = {
+      id: o.id,
+      service_id: o.service_id,
+      staff_user_id: o.staff_user_id,
+      starts_at: o.starts_at,
+      rule_id: o.rule_id,
+    };
+    if (o.owner_id) payload.owner_id = o.owner_id;
+    if (o.owner_phone) payload.customer_phone = o.owner_phone;
+    if (o.owner_full_name) payload.customer_name = o.owner_full_name;
+    if (o.customer_notes) payload.customer_notes = o.customer_notes;
+    if (o.internal_notes) payload.internal_notes = o.internal_notes;
+
+    // Wrap the per-orphan writes in a transaction so a non-BOOKED
+    // orphan never gets a `created` log without its companion
+    // `status_changed`. Without this guard, a transient error between
+    // the two writes would leave the queue in a half-state that
+    // applies the wrong status server-side.
+    const isFollowup =
+      o.status !== 'BOOKED' && FOLLOWUP_STATUSES.has(o.status);
+    let enqueuedCreated = false;
+    let enqueuedStatus = false;
+    try {
+      database.transaction(() => {
+        syncLogService.writeLocalEntry(
+          BOOKING_ENTITY_TYPE,
+          o.id,
+          'created',
+          payload,
+        );
+        enqueuedCreated = true;
+
+        if (isFollowup) {
+          // For non-BOOKED orphans, the local row is already past the
+          // initial booked state (the cashier hit Check-in / Cancel /
+          // etc. at some point). Append a status_changed entry AFTER
+          // the created so the server replays the transition in FIFO
+          // order. The local_sync_log table's autoincrement id
+          // preserves enqueue order, which the push batcher uses as
+          // the seq.
+          const statusPayload: Record<string, any> = {
+            id: o.id,
+            status: o.status,
+            updated_at: new Date().toISOString(),
+          };
+          if (o.status === 'CANCELLED' && o.cancel_reason) {
+            statusPayload.cancel_reason = o.cancel_reason;
+          }
+          syncLogService.writeLocalEntry(
+            BOOKING_ENTITY_TYPE,
+            o.id,
+            'status_changed',
+            statusPayload,
+          );
+          enqueuedStatus = true;
+        }
+      });
+      if (enqueuedCreated) result.enqueued++;
+      if (enqueuedStatus) result.enqueued_status++;
+    } catch (err: any) {
+      // Per-orphan failure is logged via skip-reasons + continues so
+      // one bad row doesn't block the rest of the queue.
+      skip(`enqueue_failed:${err?.message ?? 'unknown'}`);
+    }
+  }
+
+  if (result.enqueued > 0) {
+    database.save();
+  }
+
+  return result;
 }
 
 /**

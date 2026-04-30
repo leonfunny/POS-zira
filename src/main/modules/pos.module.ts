@@ -12,6 +12,7 @@ import type { ServiceContainer } from '../core/container';
 import type { EventBus } from '../core/event-bus';
 import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
+import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
 import { ShiftController } from '../pos/shift-controller';
@@ -105,6 +106,34 @@ export class PosModule extends BaseModule {
     }
     // NOTE: shelved orders (synced = -1) are NOT auto-reset. They require an explicit
     // retry via `pos:orders:retrySync` or one-time repair via `pos:orders:repairStockFailures`.
+
+    // Orphan booking repair: bookings created via the Booking tab BEFORE
+    // the atomic write fix (TEST123 / 5KOL on 2026-04-30) ended up in
+    // `bookings` with no matching `local_sync_log` entry of
+    // event='created', so the server never received them. Detect those
+    // rows at boot and enqueue a fresh `booking/created` (plus a
+    // follow-up `status_changed` for non-BOOKED orphans) so the next
+    // push cycle delivers them.
+    //
+    // Idempotent: the SQL filters on
+    //   NOT EXISTS (SELECT FROM local_sync_log WHERE event='created')
+    // so a booking that already has a created log — even if its
+    // companion status_changed got rejected — is left alone.
+    try {
+      const syncLog = this.container.getOptional<SyncLogService>(SERVICE_TOKENS.SYNC_LOG_SERVICE);
+      if (syncLog) {
+        const repair = repairOrphanBookings(syncLog);
+        if (repair.scanned > 0) {
+          logger.warn(
+            `[PosModule] Orphan booking repair: scanned=${repair.scanned} enqueued=${repair.enqueued} enqueued_status=${repair.enqueued_status} skipped=${repair.skipped} reasons=${JSON.stringify(repair.skipped_reasons)}`,
+          );
+        }
+      }
+    } catch (err: any) {
+      // Non-fatal — repair is a best-effort cleanup. A failure here must
+      // not block the rest of POS init.
+      logger.error(`[PosModule] Orphan booking repair failed: ${err?.message ?? err}`);
+    }
 
     // Finish any synced orders that were created before the /finish call was added.
     // Non-blocking — runs in background after init completes.
