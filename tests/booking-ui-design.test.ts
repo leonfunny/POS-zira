@@ -5,10 +5,10 @@ import { resolve } from 'path';
 /**
  * UX design contract for the dashboard-synced Booking tab.
  * Source-text checks pin behaviors that the spec at
- * docs/superpowers/specs/2026-04-30-booking-tab-ux-design.md commits to:
- * digits-only phone input, in-app numeric keypad, action visibility per
- * status, edit-form patch-only behavior, and the missing-fields hint
- * that explains why Create stays disabled.
+ * docs/superpowers/specs/2026-04-30-booking-tab-ux-design.md commits to
+ * — plus the Scope 1b touch keyboard-safety fixes (custom-only numeric
+ * keypad, keyboard-aware focus scroll, no backdrop close, dirty guard,
+ * no auto-focus on master-data load).
  */
 
 const todaySource = readFileSync(
@@ -26,9 +26,9 @@ const editSource = readFileSync(
 
 describe('BookingCreateForm phone is digits-only', () => {
   it('sanitizePhone strips every non-digit via /\\D/g', () => {
-    // Product decision (Scope 1): the stored phone is digits only — no
-    // `+`, no spaces, no dashes. The regex literal must remain so any
-    // future refactor cannot silently re-introduce formatting.
+    // Product decision: the stored phone is digits only — no `+`, no
+    // spaces, no dashes. The regex literal must remain so any future
+    // refactor cannot silently re-introduce formatting.
     expect(createSource).toMatch(/function\s+sanitizePhone/);
     expect(createSource).toMatch(/replace\(\s*\/\\D\/g/);
   });
@@ -40,38 +40,49 @@ describe('BookingCreateForm phone is digits-only', () => {
   });
 
   it('intercepts paste so formatted clipboard content is sanitized before state', () => {
-    // The paste handler must preventDefault and pipe through
-    // sanitizePhone — without this, pasting "+48 600 123-456" would
-    // briefly land in the input value before onChange strips it,
-    // and any IME composition could leak letters into state.
     expect(createSource).toMatch(/onPaste/);
     expect(createSource).toMatch(/e\.preventDefault\(\)/);
     expect(createSource).toMatch(/clipboardData\.getData/);
   });
 
   it('blocks alphabetic input at the input-event level via onBeforeInput', () => {
-    // Belt-and-braces against virtual keyboards (Windows touch
-    // keyboard QWERTY) and IME composition: preventDefault on
-    // onBeforeInput when the inserted data contains non-digits.
     expect(createSource).toMatch(/onBeforeInput/);
     expect(createSource).toMatch(/InputEvent/);
     expect(createSource).toMatch(/\/\\D\/\.test/);
   });
 
-  it('declares numeric input attributes so native keyboards offer digits first', () => {
-    expect(createSource).toMatch(/inputMode=["']numeric["']/);
-    expect(createSource).toMatch(/pattern=["']\[0-9\]\*["']/);
-    expect(createSource).toMatch(/autoComplete=["']tel["']/);
-    // type=tel keeps the semantic role intact (autofill, etc.).
-    expect(createSource).toMatch(/type=["']tel["']/);
+  it('blocks letter keys from a physical keyboard via onKeyDown', () => {
+    // inputMode="none" suppresses only the on-screen keyboard. A USB
+    // or Bluetooth keyboard still fires keydown, so the form must
+    // explicitly reject letter keypresses.
+    expect(createSource).toMatch(/onKeyDown/);
+    expect(createSource).toMatch(/\^\\d\$/);
   });
 });
 
-describe('BookingCreateForm in-app numeric keypad', () => {
-  it('renders a NumericKeypad component while the phone field is focused', () => {
+describe('BookingCreateForm uses one keyboard only (custom-only)', () => {
+  it('declares inputMode="none" on the phone input so the native OSK does not appear', () => {
+    expect(createSource).toMatch(/inputMode=["']none["']/);
+    // pattern + autoComplete + type=tel remain for accessibility and
+    // autofill semantics.
+    expect(createSource).toMatch(/pattern=["']\[0-9\]\*["']/);
+    expect(createSource).toMatch(/autoComplete=["']tel["']/);
+    expect(createSource).toMatch(/type=["']tel["']/);
+  });
+
+  it('does NOT declare inputMode="numeric" anymore (would race the native OSK)', () => {
+    expect(createSource).not.toMatch(/inputMode=["']numeric["']/);
+  });
+
+  it('renders the keypad as a bottom dock — only when phone is focused', () => {
     expect(createSource).toMatch(/function\s+NumericKeypad/);
-    expect(createSource).toMatch(/phoneFocused\s*&&/);
-    expect(createSource).toMatch(/<NumericKeypad/);
+    // Conditional render replaces the footer slot:
+    // `phoneFocused ? <NumericKeypad …/> : <footer …/>`
+    expect(createSource).toMatch(/phoneFocused\s*\?\s*[\s\S]*<NumericKeypad/);
+  });
+
+  it('keypad container is tagged so the phone field can detect focus moves into it', () => {
+    expect(createSource).toMatch(/data-numeric-keypad/);
   });
 
   it('exposes digit / backspace / clear / done handlers to the keypad', () => {
@@ -82,41 +93,82 @@ describe('BookingCreateForm in-app numeric keypad', () => {
   });
 
   it('keypad buttons preventDefault on mouseDown so taps do not blur the input', () => {
-    // Without onMouseDown preventDefault, tapping a digit blurs the
-    // phone input → the keypad re-closes on every tap.
     expect(createSource).toMatch(/onMouseDown=\{\(e\)\s*=>\s*e\.preventDefault\(\)/);
-  });
-
-  it('keypad container is tagged so the input blur handler can detect it', () => {
-    // The phone input's onBlur checks relatedTarget for this attribute
-    // to keep the keypad open while the user moves between buttons.
-    expect(createSource).toMatch(/data-numeric-keypad/);
   });
 });
 
-describe('BookingCreateForm keyboard-safe layout', () => {
-  it('uses a flex column with a scrollable body so sticky header/footer remain visible', () => {
-    expect(createSource).toMatch(/flex\s+flex-col/);
-    expect(createSource).toMatch(/overflow-y-auto/);
+describe('BookingCreateForm keyboard-aware focus scroll', () => {
+  it('owns a body scroll ref so ensureFieldVisible can compute scrollTop', () => {
+    expect(createSource).toMatch(/bodyRef\s*=\s*useRef</);
+    expect(createSource).toMatch(/ref=\{bodyRef\}/);
   });
 
-  it('inputs scroll the focused field into view to dodge the on-screen keyboard', () => {
-    expect(createSource).toMatch(/function\s+scrollFocusedIntoView/);
-    expect(createSource).toMatch(/scrollIntoView\(\s*\{\s*block:\s*['"]center['"]/);
+  it('uses visualViewport when available and a 380px reserve fallback', () => {
+    expect(createSource).toMatch(/visualViewport/);
+    expect(createSource).toMatch(/KEYBOARD_RESERVE_FALLBACK_PX/);
   });
 
-  it('submit footer is sticky/structured separately so it stays reachable', () => {
-    // The footer lives in its own <footer> with shrink-0 so the
-    // scrollable body can grow without pushing the action group off
-    // screen.
-    expect(createSource).toMatch(/<footer[^>]*shrink-0/);
+  it('schedules ensureFieldVisible at 0/250/600ms to ride the keyboard reveal', () => {
+    expect(createSource).toMatch(/function\s+ensureFieldVisible/);
+    expect(createSource).toMatch(/scheduleEnsureVisible/);
+    expect(createSource).toMatch(/setTimeout/);
+    expect(createSource).toMatch(/,\s*250\s*\)/);
+    expect(createSource).toMatch(/,\s*600\s*\)/);
+  });
+
+  it('grows the body bottom padding while a text field is focused', () => {
+    // Dynamic padding keeps Notes scrollable above the on-screen
+    // keyboard; the static fallback only handles the sticky footer.
+    expect(createSource).toMatch(/keyboardActive/);
+    expect(createSource).toMatch(/setKeyboardActive/);
+    expect(createSource).toMatch(/pb-\[420px\]/);
+  });
+});
+
+describe('BookingCreateForm close discipline', () => {
+  it('does not bind onClick to the backdrop overlay', () => {
+    // A stray tap on the dimmed backdrop used to wipe the entire form.
+    // Closing now goes only through the explicit X / Cancel control.
+    expect(createSource).not.toMatch(/role=["']dialog["'][^>]*onClick=\{safeClose\}/);
+    expect(createSource).not.toMatch(/onClick=\{safeClose\}/);
+  });
+
+  it('renders an in-app DiscardConfirm modal instead of window.confirm', () => {
+    expect(createSource).toMatch(/function\s+DiscardConfirm/);
+    expect(createSource).toMatch(/showDiscardConfirm/);
+    expect(createSource).not.toMatch(/window\.confirm\s*\(/);
+    expect(createSource).not.toMatch(/window\.prompt\s*\(/);
+    expect(createSource).not.toMatch(/window\.alert\s*\(/);
+  });
+
+  it('captures the initial start time so a default-only form is not dirty', () => {
+    expect(createSource).toMatch(/initialStartsAtRef\s*=\s*useRef/);
+    expect(createSource).toMatch(/startsAtLocal\s*!==\s*initialStartsAtRef\.current/);
+  });
+
+  it('exposes an isDirty derivation covering every user-entered field', () => {
+    expect(createSource).toMatch(/isDirty\s*=/);
+    expect(createSource).toMatch(/customerPhone\s*!==\s*['"]{2}/);
+    expect(createSource).toMatch(/customerName\s*!==\s*['"]{2}/);
+    expect(createSource).toMatch(/customerNotes\s*!==\s*['"]{2}/);
+  });
+
+  it('routes X / Cancel through requestClose (which honours the dirty guard)', () => {
+    expect(createSource).toMatch(/function[\s\S]*requestClose|const\s+requestClose/);
+    expect(createSource).toMatch(/onClick=\{requestClose\}/);
+  });
+});
+
+describe('BookingCreateForm no automatic focus', () => {
+  it('does not call firstFieldRef.current?.focus() in any effect', () => {
+    // Auto-focusing service after master data load would steal focus
+    // mid-tap on touch viewports and pop the wrong keyboard layout.
+    expect(createSource).not.toMatch(/firstFieldRef\.current\?\.focus\(\)/);
   });
 });
 
 describe('BookingCreateForm missing-required hint', () => {
   it('exposes a missingFields list driving the inline hint copy', () => {
-    // The disabled-state hint must explain *which* fields are still
-    // required, not leave the cashier guessing at a mute button.
     expect(createSource).toMatch(/missingFields/);
     expect(createSource).toMatch(/missingFields\.join/);
   });
@@ -140,8 +192,6 @@ describe('BookingsTodayScreen status-aware actions', () => {
   });
 
   it('renders a status badge with text + icon, not color alone', () => {
-    // statusMeta returns { label, className, Icon } so the badge has a
-    // readable label even for users who can't distinguish colors.
     expect(todaySource).toMatch(/function\s+statusMeta/);
     expect(todaySource).toMatch(/Icon:\s*\w+/);
     expect(todaySource).toMatch(/label:\s*label\(/);
