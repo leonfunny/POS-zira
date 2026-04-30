@@ -200,6 +200,25 @@ describe('BookingsTodayScreen status-aware actions', () => {
     expect(todaySource).toMatch(/function\s+deriveCounts/);
     expect(todaySource).toMatch(/SummaryStrip/);
   });
+
+  it('renders compact metric tiles instead of a flat summary text strip', () => {
+    expect(todaySource).toMatch(/grid-cols-2/);
+    expect(todaySource).toMatch(/md:grid-cols-5/);
+    expect(todaySource).toMatch(/min-h-\[56px\]/);
+  });
+
+  it('empty state includes a clear New walk-in CTA', () => {
+    expect(todaySource).toMatch(/function\s+EmptyState/);
+    expect(todaySource).toMatch(/No appointments today/);
+    expect(todaySource).toMatch(/New walk-in/);
+    expect(todaySource).toMatch(/onCreate/);
+  });
+
+  it('booking rows wrap actions for touch viewports instead of requiring a fixed desktop width', () => {
+    expect(todaySource).toMatch(/flex-wrap/);
+    expect(todaySource).toMatch(/xl:grid-cols/);
+    expect(todaySource).not.toMatch(/min-w-\[300px\]/);
+  });
 });
 
 describe('BookingEditForm patch-only behavior', () => {

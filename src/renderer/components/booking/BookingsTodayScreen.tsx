@@ -273,8 +273,8 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
-      <header className="flex items-center justify-between gap-4 px-6 py-4 bg-white border-b border-gray-200">
-        <div className="flex items-baseline gap-3 min-w-0">
+      <header className="flex flex-col gap-3 px-4 py-3 bg-white border-b border-gray-200 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
             {label('bookings.today.title', 'Bookings')}
           </h1>
@@ -288,7 +288,7 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
             {counts.total} {label('bookings.today.count', 'appointments')}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button
             type="button"
             onClick={() => setShowCreate(true)}
@@ -357,7 +357,7 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
         </div>
       )}
 
-      <main className="flex-1 overflow-auto px-6 py-4">
+      <main className="flex-1 overflow-auto px-4 py-4 sm:px-6">
         {loading && !rows.length ? (
           <ListSkeleton />
         ) : sorted.length === 0 ? (
@@ -448,43 +448,64 @@ function SummaryStrip({
   counts: SummaryCounts;
   label: (k: string, fb: string) => string;
 }) {
-  const items: Array<{ key: string; value: number; tone: string }> = [
+  const items: Array<{
+    key: string;
+    value: number;
+    tone: string;
+    Icon: LucideIcon;
+  }> = [
     {
       key: label('bookings.summary.total', 'Total'),
       value: counts.total,
-      tone: 'text-gray-700',
+      tone: 'text-gray-700 bg-gray-50 border-gray-200',
+      Icon: CalendarDays,
     },
     {
       key: label('bookings.summary.pending', 'Booked / pending'),
       value: counts.pending,
-      tone: 'text-blue-700',
+      tone: 'text-blue-700 bg-blue-50 border-blue-100',
+      Icon: Clock,
     },
     {
       key: label('bookings.summary.in_service', 'In service'),
       value: counts.inService,
-      tone: 'text-violet-700',
+      tone: 'text-violet-700 bg-violet-50 border-violet-100',
+      Icon: Sparkles,
     },
     {
       key: label('bookings.summary.completed', 'Completed / paid'),
       value: counts.completed,
-      tone: 'text-emerald-700',
+      tone: 'text-emerald-700 bg-emerald-50 border-emerald-100',
+      Icon: CheckCircle2,
     },
     {
       key: label('bookings.summary.cancelled', 'Cancelled / no show'),
       value: counts.cancelled,
-      tone: 'text-rose-700',
+      tone: 'text-rose-700 bg-rose-50 border-rose-100',
+      Icon: XCircle,
     },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2 bg-white border-b border-gray-200">
-      {items.map((it) => (
-        <div key={it.key} className="flex items-baseline gap-1.5 text-sm">
-          <span className="text-gray-500">{it.key}</span>
-          <span className={`font-semibold tabular-nums ${it.tone}`}>
-            {it.value}
-          </span>
-        </div>
-      ))}
+    <div className="grid grid-cols-2 gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 sm:px-6 md:grid-cols-5">
+      {items.map((it) => {
+        const Icon = it.Icon;
+        return (
+          <div
+            key={it.key}
+            className={`flex min-h-[56px] items-center gap-2 rounded-md border px-3 py-2 ${it.tone}`}
+          >
+            <Icon className="h-4 w-4 shrink-0" aria-hidden />
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium text-gray-500">
+                {it.key}
+              </div>
+              <div className="text-lg font-semibold tabular-nums text-gray-900">
+                {it.value}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -495,8 +516,20 @@ function ListSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <li
           key={i}
-          className="h-24 rounded-md border border-gray-200 bg-white animate-pulse"
-        />
+          className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border border-gray-200 bg-white p-4 sm:grid-cols-[84px_minmax(0,1fr)_96px_220px]"
+        >
+          <div className="space-y-2">
+            <div className="h-7 w-16 rounded bg-gray-100 animate-pulse" />
+            <div className="h-3 w-12 rounded bg-gray-100 animate-pulse" />
+          </div>
+          <div className="min-w-0 space-y-2">
+            <div className="h-4 w-44 max-w-full rounded bg-gray-100 animate-pulse" />
+            <div className="h-3 w-72 max-w-full rounded bg-gray-100 animate-pulse" />
+            <div className="h-3 w-56 max-w-full rounded bg-gray-100 animate-pulse" />
+          </div>
+          <div className="hidden h-5 w-20 rounded bg-gray-100 animate-pulse sm:block" />
+          <div className="hidden h-10 w-full rounded bg-gray-100 animate-pulse sm:block" />
+        </li>
       ))}
     </ul>
   );
@@ -512,16 +545,21 @@ function EmptyState({
   onCreate: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 py-16 text-center">
-      <CalendarDays className="h-8 w-8 text-gray-300" aria-hidden />
-      <p className="text-sm text-gray-500">
+    <div className="rounded-md border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500">
+        <CalendarDays className="h-6 w-6" aria-hidden />
+      </div>
+      <h2 className="mt-4 text-base font-semibold text-gray-900">
         {label('bookings.today.empty', 'No appointments today')}
+      </h2>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-gray-500">
+        {label('bookings.today.empty_hint', 'Walk-ins can still be added from this screen.')}
       </p>
       <button
         type="button"
         onClick={onCreate}
         disabled={disabled}
-        className="inline-flex items-center gap-2 h-11 px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+        className="mt-4 inline-flex items-center justify-center gap-2 h-11 px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
       >
         <Plus className="h-4 w-4" aria-hidden />
         {label('bookings.action.new_walkin', 'New walk-in')}
@@ -529,7 +567,6 @@ function EmptyState({
     </div>
   );
 }
-
 interface BookingRowProps {
   row: BookingRowVM;
   busy: boolean;
@@ -564,7 +601,7 @@ function BookingRow({
 
   return (
     <li
-      className={`grid grid-cols-[88px_minmax(0,1fr)_auto_auto] items-center gap-4 rounded-md border bg-white p-4 ${
+      className={`grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border bg-white p-3 shadow-sm transition-colors hover:bg-gray-50 sm:grid-cols-[84px_minmax(0,1fr)_96px] sm:p-4 xl:grid-cols-[84px_minmax(0,1fr)_96px_minmax(220px,auto)] ${
         isTerminal ? 'border-gray-200 opacity-75' : 'border-gray-200'
       }`}
     >
@@ -581,20 +618,20 @@ function BookingRow({
 
       {/* Identity + service + notes */}
       <div className="min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
           <UserIcon
             className="h-4 w-4 text-gray-400 shrink-0"
             aria-hidden
           />
           <span
-            className="font-semibold text-gray-900 truncate"
+            className="max-w-full truncate font-semibold text-gray-900"
             title={row.owner_full_name ?? undefined}
           >
             {row.owner_full_name || '—'}
           </span>
           {row.owner_phone ? (
             <span
-              className="inline-flex items-center gap-1 text-xs text-gray-500 tabular-nums truncate"
+              className="inline-flex max-w-full items-center gap-1 truncate text-xs text-gray-500 tabular-nums"
               title={row.owner_phone}
             >
               <PhoneIcon className="h-3 w-3" aria-hidden />
@@ -602,7 +639,7 @@ function BookingRow({
             </span>
           ) : null}
           <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium border rounded-full ${meta.className}`}
+            className={`inline-flex shrink-0 items-center gap-1 px-2 py-0.5 text-xs font-medium border rounded-full ${meta.className}`}
           >
             <StatusIcon className="h-3 w-3" aria-hidden />
             {meta.label}
@@ -633,7 +670,7 @@ function BookingRow({
       </div>
 
       {/* Price */}
-      <div className="text-right">
+      <div className="col-start-2 text-left sm:col-auto sm:text-right">
         <div className="font-semibold text-gray-900 tabular-nums">
           {formatPriceGrosze(row.total_price_pln)} zł
         </div>
@@ -641,7 +678,7 @@ function BookingRow({
 
       {/* Actions — fixed-width slots so layout doesn't shift between
           terminal / active rows or while a row is busy. */}
-      <div className="flex items-center gap-2 justify-end min-w-[300px]">
+      <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-start gap-2 sm:col-span-3 xl:col-span-1 xl:justify-end">
         {isActive ? (
           <>
             {canCheckIn ? (
