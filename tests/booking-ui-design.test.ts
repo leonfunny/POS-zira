@@ -6,9 +6,9 @@ import { resolve } from 'path';
  * UX design contract for the dashboard-synced Booking tab.
  * Source-text checks pin behaviors that the spec at
  * docs/superpowers/specs/2026-04-30-booking-tab-ux-design.md commits to:
- * phone sanitization, action visibility per status, edit-form
- * patch-only behavior, and the missing-fields hint that explains why
- * Create stays disabled.
+ * digits-only phone input, in-app numeric keypad, action visibility per
+ * status, edit-form patch-only behavior, and the missing-fields hint
+ * that explains why Create stays disabled.
  */
 
 const todaySource = readFileSync(
@@ -24,14 +24,13 @@ const editSource = readFileSync(
   'utf-8',
 );
 
-describe('BookingCreateForm phone sanitization', () => {
-  it('strips alphabetic characters via a sanitizePhone helper', () => {
-    // The helper drops anything that isn't digits or +/-/space/parens.
-    // The regex literal must remain so paste-via-typing flows go
-    // through it — without this guard a paste of "+48 600 abc 123"
-    // would land alphabetic characters in state.
+describe('BookingCreateForm phone is digits-only', () => {
+  it('sanitizePhone strips every non-digit via /\\D/g', () => {
+    // Product decision (Scope 1): the stored phone is digits only — no
+    // `+`, no spaces, no dashes. The regex literal must remain so any
+    // future refactor cannot silently re-introduce formatting.
     expect(createSource).toMatch(/function\s+sanitizePhone/);
-    expect(createSource).toMatch(/replace\(\s*\/\[\^[^/]*0-9[^/]*\]/);
+    expect(createSource).toMatch(/replace\(\s*\/\\D\/g/);
   });
 
   it('runs onChange through sanitizePhone', () => {
@@ -40,16 +39,77 @@ describe('BookingCreateForm phone sanitization', () => {
     );
   });
 
-  it('handles paste via onPaste so multi-char alphabetic content cannot land', () => {
-    // onChange alone cannot block a paste that the input element
-    // accepts at IME level, so the paste handler intercepts and
-    // sanitizes before commit.
+  it('intercepts paste so formatted clipboard content is sanitized before state', () => {
+    // The paste handler must preventDefault and pipe through
+    // sanitizePhone — without this, pasting "+48 600 123-456" would
+    // briefly land in the input value before onChange strips it,
+    // and any IME composition could leak letters into state.
     expect(createSource).toMatch(/onPaste/);
-    expect(createSource).toMatch(/clipboardData/);
+    expect(createSource).toMatch(/e\.preventDefault\(\)/);
+    expect(createSource).toMatch(/clipboardData\.getData/);
   });
 
-  it('uses inputMode="tel" so the on-screen keyboard offers digits', () => {
-    expect(createSource).toMatch(/inputMode=["']tel["']/);
+  it('blocks alphabetic input at the input-event level via onBeforeInput', () => {
+    // Belt-and-braces against virtual keyboards (Windows touch
+    // keyboard QWERTY) and IME composition: preventDefault on
+    // onBeforeInput when the inserted data contains non-digits.
+    expect(createSource).toMatch(/onBeforeInput/);
+    expect(createSource).toMatch(/InputEvent/);
+    expect(createSource).toMatch(/\/\\D\/\.test/);
+  });
+
+  it('declares numeric input attributes so native keyboards offer digits first', () => {
+    expect(createSource).toMatch(/inputMode=["']numeric["']/);
+    expect(createSource).toMatch(/pattern=["']\[0-9\]\*["']/);
+    expect(createSource).toMatch(/autoComplete=["']tel["']/);
+    // type=tel keeps the semantic role intact (autofill, etc.).
+    expect(createSource).toMatch(/type=["']tel["']/);
+  });
+});
+
+describe('BookingCreateForm in-app numeric keypad', () => {
+  it('renders a NumericKeypad component while the phone field is focused', () => {
+    expect(createSource).toMatch(/function\s+NumericKeypad/);
+    expect(createSource).toMatch(/phoneFocused\s*&&/);
+    expect(createSource).toMatch(/<NumericKeypad/);
+  });
+
+  it('exposes digit / backspace / clear / done handlers to the keypad', () => {
+    expect(createSource).toMatch(/appendDigit/);
+    expect(createSource).toMatch(/backspacePhone/);
+    expect(createSource).toMatch(/clearPhone/);
+    expect(createSource).toMatch(/dismissKeypad/);
+  });
+
+  it('keypad buttons preventDefault on mouseDown so taps do not blur the input', () => {
+    // Without onMouseDown preventDefault, tapping a digit blurs the
+    // phone input → the keypad re-closes on every tap.
+    expect(createSource).toMatch(/onMouseDown=\{\(e\)\s*=>\s*e\.preventDefault\(\)/);
+  });
+
+  it('keypad container is tagged so the input blur handler can detect it', () => {
+    // The phone input's onBlur checks relatedTarget for this attribute
+    // to keep the keypad open while the user moves between buttons.
+    expect(createSource).toMatch(/data-numeric-keypad/);
+  });
+});
+
+describe('BookingCreateForm keyboard-safe layout', () => {
+  it('uses a flex column with a scrollable body so sticky header/footer remain visible', () => {
+    expect(createSource).toMatch(/flex\s+flex-col/);
+    expect(createSource).toMatch(/overflow-y-auto/);
+  });
+
+  it('inputs scroll the focused field into view to dodge the on-screen keyboard', () => {
+    expect(createSource).toMatch(/function\s+scrollFocusedIntoView/);
+    expect(createSource).toMatch(/scrollIntoView\(\s*\{\s*block:\s*['"]center['"]/);
+  });
+
+  it('submit footer is sticky/structured separately so it stays reachable', () => {
+    // The footer lives in its own <footer> with shrink-0 so the
+    // scrollable body can grow without pushing the action group off
+    // screen.
+    expect(createSource).toMatch(/<footer[^>]*shrink-0/);
   });
 });
 
@@ -118,5 +178,10 @@ describe('Booking modals accessibility', () => {
     expect(createSource).toMatch(/role=["']alert["']/);
     expect(editSource).toMatch(/role=["']alert["']/);
     expect(todaySource).toMatch(/role=["']alert["']/);
+  });
+
+  it('numeric keypad buttons each carry an explicit aria-label', () => {
+    expect(createSource).toMatch(/ariaLabel/);
+    expect(createSource).toMatch(/aria-label=\{ariaLabel\}/);
   });
 });

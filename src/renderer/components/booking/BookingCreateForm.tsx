@@ -6,14 +6,27 @@
  * owner by phone (auto-creates if not found) so we collect phone+name
  * instead of searching for an existing Owner row.
  *
- * Scope: minimal booking flow. Reschedule, existing-owner search, and
- * deposit/extras pickers are out of scope — Phase 1/2 deliver those
- * elsewhere.
+ * Touch / keyboard safety (V2):
+ * - Phone field is digits-only; the local sanitizer guarantees no
+ *   alphabetic content lands in state regardless of how it arrived
+ *   (keystroke, paste, IME composition, virtual keyboard). The product
+ *   stores phones as digits — no `+`, no spaces, no dashes — so the
+ *   server-side phone lookup matches reliably.
+ * - The Windows on-screen keyboard does not always honor inputMode=tel,
+ *   so we render an in-app numeric keypad while the phone field has
+ *   focus. The keypad uses mouseDown-preventDefault to keep focus on
+ *   the input while the user taps digits, and physical-keyboard input
+ *   still works in parallel.
+ * - The container is a flex column with a sticky header, a scrollable
+ *   body, and a sticky footer. Inputs scrollIntoView on focus so the
+ *   field never sits behind the on-screen keyboard.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CalendarClock,
+  Check,
+  Delete,
   RefreshCw,
   StickyNote,
   User as UserIcon,
@@ -57,14 +70,16 @@ function formatGrosze(g: number): string {
 }
 
 /**
- * Phone sanitization: digits + practical formatting characters only.
- * Stripping letters here means a paste of "+48 600 abc 123" lands as
- * "+48 600  123" — the cashier sees the trim immediately and never
- * submits a phone with alphabetic noise. Keeps `+`, space, `-`, `(`,
- * `)` per spec so `+48 (600) 123-456` style numbers round-trip.
+ * Phone sanitization: digits only.
+ *
+ * Product decision (Scope 1, V2): the stored phone is `\d+`, no
+ * `+`, space, dash, or parentheses. Removing the formatting characters
+ * means a paste of "+48 (600) 123-456" lands as "48600123456" — the
+ * server treats the canonical digit string as the lookup key, and the
+ * cashier never has to think about formatting.
  */
 function sanitizePhone(input: string): string {
-  return input.replace(/[^0-9+\-() ]/g, '');
+  return input.replace(/\D/g, '');
 }
 
 /**
@@ -87,6 +102,21 @@ function roundUpTo5Min(d: Date): Date {
 function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Pull a focused field into the visible part of the scroll container
+ * after the on-screen keyboard has had time to lay out. 200ms is a
+ * compromise between Edge's slow keyboard reveal and not making the
+ * scroll feel laggy on desktop where there is no keyboard.
+ */
+function scrollFocusedIntoView(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return;
+  setTimeout(() => {
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, 200);
 }
 
 export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
@@ -129,6 +159,13 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Phone-focus tracker drives the in-app numeric keypad. Toggled in
+  // onFocus / onBlur of the phone input, but the keypad buttons use
+  // mouseDown-preventDefault to keep focus on the input even as the
+  // user taps the buttons.
+  const [phoneFocused, setPhoneFocused] = useState(false);
+  const phoneInputRef = useRef<HTMLInputElement | null>(null);
 
   const api = (window as any).electronAPI;
 
@@ -337,19 +374,40 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     onClose();
   }, [submitting, onClose]);
 
+  // Numeric keypad handlers — ref-based mutation keeps the keypad
+  // taps cheap (no React state churn per digit) while remaining in
+  // sync because each handler ends with setCustomerPhone.
+  const appendDigit = useCallback((digit: string) => {
+    setCustomerPhone((prev) => sanitizePhone(prev + digit));
+  }, []);
+  const backspacePhone = useCallback(() => {
+    setCustomerPhone((prev) => prev.slice(0, -1));
+  }, []);
+  const clearPhone = useCallback(() => {
+    setCustomerPhone('');
+  }, []);
+  const dismissKeypad = useCallback(() => {
+    setPhoneFocused(false);
+    phoneInputRef.current?.blur();
+  }, []);
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/40 sm:flex sm:items-center sm:justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="booking-create-title"
       onClick={safeClose}
     >
-      <div
-        className="bg-white rounded-md shadow-xl w-full max-w-lg max-h-full overflow-auto"
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) submit();
+        }}
         onClick={(e) => e.stopPropagation()}
+        className="bg-white shadow-xl flex flex-col w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-[640px] sm:rounded-md"
       >
-        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200 shrink-0">
           <h2 id="booking-create-title" className="text-lg font-semibold text-gray-900">
             {label('bookings.create.title', 'New walk-in booking')}
           </h2>
@@ -364,46 +422,43 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           </button>
         </header>
 
-        {masterError && (
-          <div
-            role="alert"
-            className="mx-5 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
-          >
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
-            <div className="flex-1 min-w-0">
-              <div className="break-words">{masterError}</div>
-              <button
-                type="button"
-                onClick={() => setMasterReloadTick((n) => n + 1)}
-                className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
-              >
-                <RefreshCw className="h-3 w-3" aria-hidden />
-                {label('common.retry', 'Retry')}
-              </button>
+        {/* Scrollable body. Keep large bottom padding so the sticky
+            footer + on-screen keyboard never cover the active field; the
+            input's onFocus also triggers scrollIntoView for belt-and-
+            braces. */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 pb-32 space-y-6">
+          {masterError && (
+            <div
+              role="alert"
+              className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
+            >
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div className="flex-1 min-w-0">
+                <div className="break-words">{masterError}</div>
+                <button
+                  type="button"
+                  onClick={() => setMasterReloadTick((n) => n + 1)}
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
+                >
+                  <RefreshCw className="h-3 w-3" aria-hidden />
+                  {label('common.retry', 'Retry')}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <form
-          className="p-5 space-y-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canSubmit) submit();
-          }}
-        >
-          {/* ─── Appointment ───────────────────────────────────────── */}
-          <section className="space-y-3">
-            <SectionHeader
-              icon={CalendarClock}
-              title={label('bookings.create.section.appointment', 'Appointment')}
-            />
-
+          {/* ─── Appointment ──────────────────────────────────────── */}
+          <Section
+            icon={CalendarClock}
+            title={label('bookings.create.section.appointment', 'Appointment')}
+          >
             <Field label={label('bookings.create.service', 'Service')} required>
               <select
                 ref={firstFieldRef}
                 value={serviceId}
                 onChange={(e) => setServiceId(e.target.value)}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
+                className={inputClassName}
                 required
               >
                 <option value="">— {label('common.select', 'select')} —</option>
@@ -420,7 +475,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 <select
                   value={ruleId}
                   onChange={(e) => setRuleId(e.target.value)}
-                  className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  onFocus={(e) => scrollFocusedIntoView(e.target)}
+                  className={inputClassName}
                 >
                   {rules.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -456,7 +512,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               <select
                 value={staffUserId}
                 onChange={(e) => setStaffUserId(e.target.value)}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
+                className={inputClassName}
                 required
               >
                 <option value="">— {label('common.select', 'select')} —</option>
@@ -477,39 +534,74 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 type="datetime-local"
                 value={startsAtLocal}
                 onChange={(e) => setStartsAtLocal(e.target.value)}
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
                 step={300}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className={inputClassName}
                 required
               />
             </Field>
-          </section>
+          </Section>
 
-          {/* ─── Customer ──────────────────────────────────────────── */}
-          <section className="space-y-3">
-            <SectionHeader
-              icon={UserIcon}
-              title={label('bookings.create.section.customer', 'Customer')}
-            />
-
+          {/* ─── Customer ─────────────────────────────────────────── */}
+          <Section
+            icon={UserIcon}
+            title={label('bookings.create.section.customer', 'Customer')}
+          >
             <Field label={label('bookings.create.phone', 'Phone')} required>
               <input
+                ref={phoneInputRef}
                 type="tel"
-                inputMode="tel"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 autoComplete="tel"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(sanitizePhone(e.target.value))}
-                onPaste={(e) => {
-                  const pasted = e.clipboardData.getData('text');
-                  const cleaned = sanitizePhone(pasted);
-                  if (cleaned !== pasted) {
+                onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                  // Block alphabetic characters at the input-event level
+                  // so IME composition / Windows touch keyboard QWERTY
+                  // taps cannot insert letters into state. preventDefault
+                  // here is more reliable than relying on onChange to
+                  // strip after-the-fact.
+                  const data = (e.nativeEvent as InputEvent).data;
+                  if (typeof data === 'string' && /\D/.test(data)) {
                     e.preventDefault();
-                    setCustomerPhone((prev) => sanitizePhone(prev + cleaned));
                   }
                 }}
-                placeholder="+48 600 123 456"
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onPaste={(e) => {
+                  // Always intercept paste — the digits-only rule applies
+                  // to the canonical state, so we never let `+`, space,
+                  // or punctuation through even if the user pastes a
+                  // formatted number.
+                  e.preventDefault();
+                  const pasted = e.clipboardData.getData('text');
+                  setCustomerPhone((prev) => sanitizePhone(prev + pasted));
+                }}
+                onFocus={(e) => {
+                  setPhoneFocused(true);
+                  scrollFocusedIntoView(e.target);
+                }}
+                onBlur={(e) => {
+                  // If focus moved into the keypad (one of its buttons
+                  // intercepts mouseDown so the input never actually
+                  // blurs), keep the keypad open. Otherwise close it.
+                  const next = e.relatedTarget as HTMLElement | null;
+                  if (!next || !next.closest?.('[data-numeric-keypad]')) {
+                    setPhoneFocused(false);
+                  }
+                }}
+                placeholder="600123456"
+                className={`${inputClassName} tabular-nums`}
                 required
               />
+              {phoneFocused && (
+                <NumericKeypad
+                  onDigit={appendDigit}
+                  onBackspace={backspacePhone}
+                  onClear={clearPhone}
+                  onDone={dismissKeypad}
+                  label={label}
+                />
+              )}
             </Field>
 
             <Field label={label('bookings.create.name', 'Customer name')} required>
@@ -517,7 +609,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
+                className={inputClassName}
                 required
               />
             </Field>
@@ -527,26 +620,27 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 type="email"
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
-                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
+                className={inputClassName}
               />
             </Field>
-          </section>
+          </Section>
 
-          {/* ─── Notes ─────────────────────────────────────────────── */}
-          <section className="space-y-3">
-            <SectionHeader
-              icon={StickyNote}
-              title={label('bookings.create.section.notes', 'Notes')}
-            />
+          {/* ─── Notes ────────────────────────────────────────────── */}
+          <Section
+            icon={StickyNote}
+            title={label('bookings.create.section.notes', 'Notes')}
+          >
             <Field label={label('bookings.create.notes', 'Customer notes (optional)')}>
               <textarea
                 value={customerNotes}
                 onChange={(e) => setCustomerNotes(e.target.value)}
+                onFocus={(e) => scrollFocusedIntoView(e.target)}
                 rows={2}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </Field>
-          </section>
+          </Section>
 
           {submitError && (
             <div
@@ -557,21 +651,26 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               <div>{submitError}</div>
             </div>
           )}
+        </div>
 
+        {/* Sticky footer — always visible above the on-screen keyboard
+            so Create is reachable from any focused field. */}
+        <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3 space-y-2">
           {/* Helper line tells the user *which* fields still block submit
-              when the button is disabled. Stable height keeps the footer
-              from jumping. */}
-          {!canSubmit && missingFields.length > 0 && !submitting ? (
-            <p className="text-xs text-gray-500">
-              {label('bookings.create.required_hint', 'Fill in')}{' '}
-              <span className="font-medium text-gray-700">
-                {missingFields.join(', ')}
-              </span>{' '}
-              {label('bookings.create.required_hint_suffix', 'to enable Create.')}
-            </p>
-          ) : null}
-
-          <div className="flex items-center justify-end gap-2 pt-2">
+              when the button is disabled. Min-height keeps the footer
+              from jumping when the message appears/disappears. */}
+          <div className="min-h-[1.25rem]">
+            {!canSubmit && missingFields.length > 0 && !submitting ? (
+              <p className="text-xs text-gray-500">
+                {label('bookings.create.required_hint', 'Fill in')}{' '}
+                <span className="font-medium text-gray-700">
+                  {missingFields.join(', ')}
+                </span>{' '}
+                {label('bookings.create.required_hint_suffix', 'to enable Create.')}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={safeClose}
@@ -590,8 +689,8 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 : label('bookings.create.submit', 'Create booking')}
             </button>
           </div>
-        </form>
-      </div>
+        </footer>
+      </form>
     </div>
   );
 }
@@ -600,18 +699,26 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
 // Local helpers — small enough to live alongside the form.
 // ─────────────────────────────────────────────────────────────────────
 
-function SectionHeader({
+const inputClassName =
+  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+
+function Section({
   icon: Icon,
   title,
+  children,
 }: {
   icon: LucideIcon;
   title: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-      <Icon className="h-3.5 w-3.5" aria-hidden />
-      <span>{title}</span>
-    </div>
+    <section className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <Icon className="h-3.5 w-3.5" aria-hidden />
+        <span>{title}</span>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -636,5 +743,105 @@ function Field({
       </span>
       {children}
     </label>
+  );
+}
+
+interface KeypadProps {
+  onDigit: (digit: string) => void;
+  onBackspace: () => void;
+  onClear: () => void;
+  onDone: () => void;
+  label: (k: string, fb: string) => string;
+}
+
+/**
+ * In-app numeric keypad. Rendered below the phone input while it has
+ * focus. Each button uses onMouseDown/onPointerDown with preventDefault
+ * so tapping a button does not blur the input — the keypad remains
+ * open, the cursor stays in the field, and the physical/native keyboard
+ * is not disrupted for users who prefer it. Buttons are 44px+ for
+ * touch.
+ */
+function NumericKeypad({
+  onDigit,
+  onBackspace,
+  onClear,
+  onDone,
+  label,
+}: KeypadProps) {
+  const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+  return (
+    <div
+      data-numeric-keypad
+      className="mt-2 rounded-md border border-gray-200 bg-gray-50 p-2 grid grid-cols-3 gap-2"
+      // Capture mouseDown at container level too — guards against
+      // padding-area taps that would otherwise hit the parent label
+      // and bubble focus changes.
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {digits.map((d) => (
+        <KeypadButton
+          key={d}
+          ariaLabel={label('bookings.create.keypad.digit', `Digit ${d}`).replace(
+            '{digit}',
+            d,
+          )}
+          onPress={() => onDigit(d)}
+        >
+          <span className="text-lg font-semibold tabular-nums">{d}</span>
+        </KeypadButton>
+      ))}
+      <KeypadButton
+        ariaLabel={label('bookings.create.keypad.clear', 'Clear')}
+        onPress={onClear}
+      >
+        <span className="text-xs font-medium text-gray-700">
+          {label('bookings.create.keypad.clear', 'Clear')}
+        </span>
+      </KeypadButton>
+      <KeypadButton
+        ariaLabel={label('bookings.create.keypad.zero', 'Digit 0')}
+        onPress={() => onDigit('0')}
+      >
+        <span className="text-lg font-semibold tabular-nums">0</span>
+      </KeypadButton>
+      <KeypadButton
+        ariaLabel={label('bookings.create.keypad.backspace', 'Backspace')}
+        onPress={onBackspace}
+      >
+        <Delete className="h-4 w-4" aria-hidden />
+      </KeypadButton>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onDone}
+        className="col-span-3 inline-flex items-center justify-center gap-1.5 h-11 text-sm font-medium bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+      >
+        <Check className="h-4 w-4" aria-hidden />
+        {label('bookings.create.keypad.done', 'Done')}
+      </button>
+    </div>
+  );
+}
+
+function KeypadButton({
+  children,
+  onPress,
+  ariaLabel,
+}: {
+  children: React.ReactNode;
+  onPress: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onPress}
+      className="inline-flex items-center justify-center h-11 bg-white text-gray-900 border border-gray-300 rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
+    >
+      {children}
+    </button>
   );
 }
