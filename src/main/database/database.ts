@@ -221,6 +221,15 @@ class Database {
       'billiard_resources',
       'billiard_floor_plans',
       'billiard_mutation_queue',
+      // Booking pipeline (FK order: bookings ← service_rules ← services).
+      // Wiping these on salon switch / re-login matches the rest of the
+      // tenant-isolation contract: the previous behavior left bookings
+      // around while local_sync_log got cleared, so the next cancel
+      // pushed a status_changed for a booking the server had never
+      // received (NOT_FOUND on TEST123 / 5KOL on 2026-04-30).
+      'bookings',
+      'service_rules',
+      'services',
       // Sync state
       'change_feed_cursor',
       // Path B sync log tables
