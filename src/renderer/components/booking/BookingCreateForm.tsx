@@ -7,21 +7,18 @@
  * instead of searching for an existing Owner row.
  *
  * Touch / keyboard safety (Scope 1b):
- * - Phone field uses a custom in-app numeric keypad ONLY — the native
- *   on-screen keyboard is suppressed via inputMode="none" so the cashier
- *   never sees two keyboards stacked. Physical keyboard typing still
- *   works because inputMode is a virtual-keyboard hint, not a read
- *   guard. Letter keys are blocked at onKeyDown / onBeforeInput so
- *   alphabetic content cannot land in state regardless of source.
- * - The keypad is a bottom dock that replaces the action footer while
- *   the phone field has focus. It does not push the form down or sit
- *   inline behind the native keyboard.
- * - Other text fields (email, name, notes) get a deterministic focus
+ * - Phone field uses the native OS keyboard only. The previous custom
+ *   numeric keypad created the exact failure it tried to avoid on
+ *   Windows touch: native OSK plus an in-app keypad stacked together.
+ *   The form now hints numeric/tel input and rejects non-digits at the
+ *   input boundary.
+ * - Phone, name, email, and notes get a deterministic focus
  *   scroll: ensureFieldVisible walks visualViewport when present,
  *   falls back to a 380px keyboard reserve, and re-runs at 0/250/600ms
  *   to catch the Windows on-screen keyboard's reveal animation. The
- *   scrollable body also reserves extra bottom padding while a text
- *   field is focused so the field can scroll above the keyboard.
+ *   scrollable body also reserves extra bottom padding while a
+ *   keyboard-relevant field is focused so the field can scroll above
+ *   the keyboard.
  * - Backdrop click does NOT close the modal — accidentally tapping
  *   outside used to wipe form input. Closing only happens via the
  *   explicit X / Cancel control, and a dirty guard surfaces an in-app
@@ -39,8 +36,6 @@ import React, {
 import {
   AlertCircle,
   CalendarClock,
-  Check,
-  Delete,
   RefreshCw,
   StickyNote,
   User as UserIcon,
@@ -130,7 +125,8 @@ const KEYBOARD_RESERVE_FALLBACK_PX = 380;
  *
  * Computes the visible region as either window.visualViewport.height
  * (modern Edge/Chromium reports the keyboard-clipped area here) or
- * window.innerHeight minus a fallback reserve. Adjusts the scroll
+ * window.innerHeight minus a fallback reserve on small/touch viewports.
+ * Adjusts the scroll
  * container so the focused field's bottom sits 24px above the safe
  * boundary. Up-scroll handles the case where a small field at the
  * very top of a long form would otherwise disappear above the visible
@@ -154,7 +150,9 @@ function ensureFieldVisible(
     // Keyboard is up — visualViewport reports the visible area.
     safeBottom = (viewport.offsetTop ?? 0) + viewport.height;
   } else {
-    safeBottom = window.innerHeight - KEYBOARD_RESERVE_FALLBACK_PX;
+    const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+    const shouldReserveFallback = hasCoarsePointer || window.innerHeight <= 900;
+    safeBottom = window.innerHeight - (shouldReserveFallback ? KEYBOARD_RESERVE_FALLBACK_PX : 0);
   }
   const margin = 24;
   const fieldRect = field.getBoundingClientRect();
@@ -224,12 +222,6 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Phone-focus tracker drives the bottom-dock numeric keypad. When
-  // the phone input has focus, the footer is replaced by the keypad —
-  // there is at most one keyboard on screen.
-  const [phoneFocused, setPhoneFocused] = useState(false);
-  const phoneInputRef = useRef<HTMLInputElement | null>(null);
 
   // Dirty-state discard confirmation modal.
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -463,24 +455,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
     onClose();
   }, [submitting, isDirty, onClose]);
 
-  // Numeric keypad handlers — ref-based mutation keeps the keypad
-  // taps cheap (no React state churn per digit) while remaining in
-  // sync because each handler ends with setCustomerPhone.
-  const appendDigit = useCallback((digit: string) => {
-    setCustomerPhone((prev) => sanitizePhone(prev + digit));
-  }, []);
-  const backspacePhone = useCallback(() => {
-    setCustomerPhone((prev) => prev.slice(0, -1));
-  }, []);
-  const clearPhone = useCallback(() => {
-    setCustomerPhone('');
-  }, []);
-  const dismissKeypad = useCallback(() => {
-    setPhoneFocused(false);
-    phoneInputRef.current?.blur();
-  }, []);
-
-  // Handler for non-phone text fields: marks the body keyboardActive
+  // Handler for keyboard-relevant fields: marks the body keyboardActive
   // and runs the keyboard-safe scroll cascade.
   const handleTextFocus = useCallback((e: React.FocusEvent<HTMLElement>) => {
     setKeyboardActive(true);
@@ -522,13 +497,13 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           </button>
         </header>
 
-        {/* Scrollable body. Bottom padding grows when a text field is
+        {/* Scrollable body. Bottom padding grows when a keyboard field is
             focused (keyboardActive) so Notes/email can scroll above the
             on-screen keyboard. */}
         <div
           ref={bodyRef}
           className={`flex-1 overflow-y-auto px-5 py-4 space-y-6 ${
-            keyboardActive ? 'pb-[420px]' : 'pb-32'
+            keyboardActive ? 'pb-[420px]' : 'pb-4'
           }`}
         >
           {masterError && (
@@ -656,20 +631,16 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           >
             <Field label={label('bookings.create.phone', 'Phone')} required>
               <input
-                ref={phoneInputRef}
                 type="tel"
-                inputMode="none"
+                inputMode="numeric"
                 pattern="[0-9]*"
                 autoComplete="tel"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(sanitizePhone(e.target.value))}
                 onKeyDown={(e) => {
-                  // Physical-keyboard guard. inputMode="none" only
-                  // suppresses the on-screen keyboard, so a USB/BT
-                  // keyboard can still fire keydown. Allow modifier
-                  // shortcuts (paste, select-all), navigation keys,
-                  // backspace/delete; block any single character that
-                  // is not a digit.
+                  // Native keyboard hinting is not validation. Allow
+                  // modifier shortcuts, navigation keys, backspace/delete;
+                  // block any single character that is not a digit.
                   if (e.ctrlKey || e.metaKey || e.altKey) return;
                   if (e.key.length > 1) return;
                   if (!/^\d$/.test(e.key)) {
@@ -677,9 +648,9 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                   }
                 }}
                 onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
-                  // IME composition / virtual-keyboard taps surface
-                  // here even when inputMode="none". Block at the
-                  // input-event level so non-digits never reach state.
+                  // IME composition / virtual-keyboard taps surface here.
+                  // Block at the input-event level so non-digits never
+                  // reach state.
                   const data = (e.nativeEvent as InputEvent).data;
                   if (typeof data === 'string' && /\D/.test(data)) {
                     e.preventDefault();
@@ -687,13 +658,19 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 }}
                 onPaste={(e) => {
                   e.preventDefault();
-                  const pasted = e.clipboardData.getData('text');
-                  setCustomerPhone((prev) => sanitizePhone(prev + pasted));
+                  const pastedDigits = sanitizePhone(e.clipboardData.getData('text'));
+                  const start = e.currentTarget.selectionStart ?? customerPhone.length;
+                  const end = e.currentTarget.selectionEnd ?? start;
+                  setCustomerPhone((prev) => {
+                    const safeStart = Math.max(0, Math.min(start, prev.length));
+                    const safeEnd = Math.max(safeStart, Math.min(end, prev.length));
+                    return sanitizePhone(
+                      prev.slice(0, safeStart) + pastedDigits + prev.slice(safeEnd),
+                    );
+                  });
                 }}
-                onFocus={(e) => {
-                  setPhoneFocused(true);
-                  scheduleEnsureVisible(e.target, bodyRef.current);
-                }}
+                onFocus={handleTextFocus}
+                onBlur={handleTextBlur}
                 placeholder="600123456"
                 className={`${inputClassName} tabular-nums`}
                 required
@@ -752,54 +729,41 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           )}
         </div>
 
-        {/* Bottom dock — keypad replaces the action footer while the
-            phone field has focus, so the user only ever sees one
-            keyboard at a time. */}
-        {phoneFocused ? (
-          <NumericKeypad
-            onDigit={appendDigit}
-            onBackspace={backspacePhone}
-            onClear={clearPhone}
-            onDone={dismissKeypad}
-            label={label}
-          />
-        ) : (
-          <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3 space-y-2">
-            {/* Helper line tells the user *which* fields still block submit
-                when the button is disabled. Min-height keeps the footer
-                from jumping when the message appears/disappears. */}
-            <div className="min-h-[1.25rem]">
-              {!canSubmit && missingFields.length > 0 && !submitting ? (
-                <p className="text-xs text-gray-500">
-                  {label('bookings.create.required_hint', 'Fill in')}{' '}
-                  <span className="font-medium text-gray-700">
-                    {missingFields.join(', ')}
-                  </span>{' '}
-                  {label('bookings.create.required_hint_suffix', 'to enable Create.')}
-                </p>
-              ) : null}
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={requestClose}
-                disabled={submitting}
-                className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-              >
-                {label('common.cancel', 'Cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className="inline-flex items-center justify-center h-11 min-w-[160px] px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-              >
-                {submitting
-                  ? label('common.submitting', 'Submitting…')
-                  : label('bookings.create.submit', 'Create booking')}
-              </button>
-            </div>
-          </footer>
-        )}
+        <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3 space-y-2">
+          {/* Helper line tells the user *which* fields still block submit
+              when the button is disabled. Min-height keeps the footer
+              from jumping when the message appears/disappears. */}
+          <div className="min-h-[1.25rem]">
+            {!canSubmit && missingFields.length > 0 && !submitting ? (
+              <p className="text-xs text-gray-500">
+                {label('bookings.create.required_hint', 'Fill in')}{' '}
+                <span className="font-medium text-gray-700">
+                  {missingFields.join(', ')}
+                </span>{' '}
+                {label('bookings.create.required_hint_suffix', 'to enable Create.')}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={requestClose}
+              disabled={submitting}
+              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+            >
+              {label('common.cancel', 'Cancel')}
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="inline-flex items-center justify-center h-11 min-w-[160px] px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+            >
+              {submitting
+                ? label('common.submitting', 'Submitting…')
+                : label('bookings.create.submit', 'Create booking')}
+            </button>
+          </div>
+        </footer>
       </form>
 
       {showDiscardConfirm && (
@@ -864,102 +828,6 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-interface KeypadProps {
-  onDigit: (digit: string) => void;
-  onBackspace: () => void;
-  onClear: () => void;
-  onDone: () => void;
-  label: (k: string, fb: string) => string;
-}
-
-/**
- * Bottom-dock numeric keypad. Replaces the footer slot while the
- * phone input has focus so the cashier sees one keyboard, not two.
- * Buttons use onMouseDown + preventDefault to keep focus on the phone
- * input — taps don't blur the field, so the keypad stays open and
- * canonical state stays in sync.
- */
-function NumericKeypad({
-  onDigit,
-  onBackspace,
-  onClear,
-  onDone,
-  label,
-}: KeypadProps) {
-  const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-  return (
-    <div
-      data-numeric-keypad
-      className="shrink-0 border-t border-gray-200 bg-gray-50 px-5 py-3 grid grid-cols-3 gap-2"
-      onMouseDown={(e) => e.preventDefault()}
-    >
-      {digits.map((d) => (
-        <KeypadButton
-          key={d}
-          ariaLabel={label('bookings.create.keypad.digit', `Digit ${d}`).replace(
-            '{digit}',
-            d,
-          )}
-          onPress={() => onDigit(d)}
-        >
-          <span className="text-lg font-semibold tabular-nums">{d}</span>
-        </KeypadButton>
-      ))}
-      <KeypadButton
-        ariaLabel={label('bookings.create.keypad.clear', 'Clear')}
-        onPress={onClear}
-      >
-        <span className="text-xs font-medium text-gray-700">
-          {label('bookings.create.keypad.clear', 'Clear')}
-        </span>
-      </KeypadButton>
-      <KeypadButton
-        ariaLabel={label('bookings.create.keypad.zero', 'Digit 0')}
-        onPress={() => onDigit('0')}
-      >
-        <span className="text-lg font-semibold tabular-nums">0</span>
-      </KeypadButton>
-      <KeypadButton
-        ariaLabel={label('bookings.create.keypad.backspace', 'Backspace')}
-        onPress={onBackspace}
-      >
-        <Delete className="h-4 w-4" aria-hidden />
-      </KeypadButton>
-      <button
-        type="button"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={onDone}
-        className="col-span-3 inline-flex items-center justify-center gap-1.5 h-11 text-sm font-medium bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-      >
-        <Check className="h-4 w-4" aria-hidden />
-        {label('bookings.create.keypad.done', 'Done')}
-      </button>
-    </div>
-  );
-}
-
-function KeypadButton({
-  children,
-  onPress,
-  ariaLabel,
-}: {
-  children: React.ReactNode;
-  onPress: () => void;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onPress}
-      className="inline-flex items-center justify-center h-11 bg-white text-gray-900 border border-gray-300 rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
-    >
-      {children}
-    </button>
   );
 }
 

@@ -6,8 +6,8 @@ import { resolve } from 'path';
  * UX design contract for the dashboard-synced Booking tab.
  * Source-text checks pin behaviors that the spec at
  * docs/superpowers/specs/2026-04-30-booking-tab-ux-design.md commits to
- * — plus the Scope 1b touch keyboard-safety fixes (custom-only numeric
- * keypad, keyboard-aware focus scroll, no backdrop close, dirty guard,
+ * — plus the Scope 1b touch keyboard-safety fixes (native-only phone
+ * keyboard, keyboard-aware focus scroll, no backdrop close, dirty guard,
  * no auto-focus on master-data load).
  */
 
@@ -52,48 +52,47 @@ describe('BookingCreateForm phone is digits-only', () => {
   });
 
   it('blocks letter keys from a physical keyboard via onKeyDown', () => {
-    // inputMode="none" suppresses only the on-screen keyboard. A USB
-    // or Bluetooth keyboard still fires keydown, so the form must
-    // explicitly reject letter keypresses.
+    // Keyboard layout hints are not validation. A USB or Bluetooth
+    // keyboard still fires keydown, so the form must explicitly reject
+    // letter keypresses.
     expect(createSource).toMatch(/onKeyDown/);
     expect(createSource).toMatch(/\^\\d\$/);
   });
 });
 
-describe('BookingCreateForm uses one keyboard only (custom-only)', () => {
-  it('declares inputMode="none" on the phone input so the native OSK does not appear', () => {
-    expect(createSource).toMatch(/inputMode=["']none["']/);
-    // pattern + autoComplete + type=tel remain for accessibility and
-    // autofill semantics.
+describe('BookingCreateForm uses one keyboard only (native-only)', () => {
+  it('declares native phone keyboard hints on the phone input', () => {
+    expect(createSource).toMatch(/type=["']tel["']/);
+    expect(createSource).toMatch(/inputMode=["']numeric["']/);
     expect(createSource).toMatch(/pattern=["']\[0-9\]\*["']/);
     expect(createSource).toMatch(/autoComplete=["']tel["']/);
-    expect(createSource).toMatch(/type=["']tel["']/);
+    expect(createSource).not.toMatch(/inputMode=["']none["']/);
   });
 
-  it('does NOT declare inputMode="numeric" anymore (would race the native OSK)', () => {
-    expect(createSource).not.toMatch(/inputMode=["']numeric["']/);
+  it('does not render or retain a custom numeric keypad', () => {
+    for (const marker of [
+      'Numeric' + 'Keypad',
+      'Keypad' + 'Button',
+      'data-numeric-' + 'keypad',
+      'append' + 'Digit',
+      'backspace' + 'Phone',
+      'clear' + 'Phone',
+      'dismiss' + 'Keypad',
+    ]) {
+      expect(createSource).not.toContain(marker);
+    }
   });
 
-  it('renders the keypad as a bottom dock — only when phone is focused', () => {
-    expect(createSource).toMatch(/function\s+NumericKeypad/);
-    // Conditional render replaces the footer slot:
-    // `phoneFocused ? <NumericKeypad …/> : <footer …/>`
-    expect(createSource).toMatch(/phoneFocused\s*\?\s*[\s\S]*<NumericKeypad/);
+  it('keeps the action footer always rendered instead of replacing it with a keypad', () => {
+    const phoneFocusState = 'phone' + 'Focused';
+    expect(createSource).toMatch(/<footer className="shrink-0 border-t/);
+    expect(createSource).not.toContain(phoneFocusState);
+    expect(createSource).not.toMatch(new RegExp(`${phoneFocusState}\\s*\\?`));
   });
 
-  it('keypad container is tagged so the phone field can detect focus moves into it', () => {
-    expect(createSource).toMatch(/data-numeric-keypad/);
-  });
-
-  it('exposes digit / backspace / clear / done handlers to the keypad', () => {
-    expect(createSource).toMatch(/appendDigit/);
-    expect(createSource).toMatch(/backspacePhone/);
-    expect(createSource).toMatch(/clearPhone/);
-    expect(createSource).toMatch(/dismissKeypad/);
-  });
-
-  it('keypad buttons preventDefault on mouseDown so taps do not blur the input', () => {
-    expect(createSource).toMatch(/onMouseDown=\{\(e\)\s*=>\s*e\.preventDefault\(\)/);
+  it('routes phone focus through the keyboard-aware scroll handler', () => {
+    expect(createSource).toMatch(/inputMode=["']numeric["'][\s\S]*onFocus=\{handleTextFocus\}/);
+    expect(createSource).toMatch(/inputMode=["']numeric["'][\s\S]*onBlur=\{handleTextBlur\}/);
   });
 });
 
@@ -116,9 +115,9 @@ describe('BookingCreateForm keyboard-aware focus scroll', () => {
     expect(createSource).toMatch(/,\s*600\s*\)/);
   });
 
-  it('grows the body bottom padding while a text field is focused', () => {
+  it('grows the body bottom padding while a keyboard-relevant field is focused', () => {
     // Dynamic padding keeps Notes scrollable above the on-screen
-    // keyboard; the static fallback only handles the sticky footer.
+    // keyboard.
     expect(createSource).toMatch(/keyboardActive/);
     expect(createSource).toMatch(/setKeyboardActive/);
     expect(createSource).toMatch(/pb-\[420px\]/);
@@ -230,8 +229,7 @@ describe('Booking modals accessibility', () => {
     expect(todaySource).toMatch(/role=["']alert["']/);
   });
 
-  it('numeric keypad buttons each carry an explicit aria-label', () => {
-    expect(createSource).toMatch(/ariaLabel/);
-    expect(createSource).toMatch(/aria-label=\{ariaLabel\}/);
+  it('create form icon-only close control carries an explicit aria-label', () => {
+    expect(createSource).toMatch(/aria-label=\{label\('common\.close', 'Close'\)\}/);
   });
 });
