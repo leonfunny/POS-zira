@@ -79,6 +79,12 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<EditableBooking | null>(null);
+  // Cancel confirmation modal state. window.prompt is unsupported in
+  // this Electron renderer (throws "prompt() is not supported" and
+  // never reaches api.cancel), so cancel runs through a small in-app
+  // dialog instead.
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; name: string } | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   const api = (window as any).electronAPI?.bookings;
 
@@ -322,14 +328,11 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
                       <button
                         disabled={busy || !api}
                         onClick={() => {
-                          const reason = window.prompt(
-                            label('bookings.cancel.reason', 'Cancel reason'),
-                            '',
-                          );
-                          if (reason === null) return;
-                          runAction(b.id, () =>
-                            api.cancel(b.id, reason || 'Cancelled at POS'),
-                          );
+                          setCancelReason('');
+                          setCancelTarget({
+                            id: b.id,
+                            name: b.owner_full_name ?? b.id,
+                          });
                         }}
                         className="px-3 py-2 text-sm bg-rose-100 text-rose-800 rounded hover:bg-rose-200 disabled:opacity-50"
                       >
@@ -343,6 +346,70 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
           </ul>
         )}
       </main>
+
+      {cancelTarget ? (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => {
+            // Clicking the backdrop dismisses without mutating.
+            setCancelTarget(null);
+            setCancelReason('');
+          }}
+        >
+          <div
+            className="bg-white rounded-lg p-6 w-96 max-w-full shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-2">
+              {label('bookings.cancel.title', 'Cancel booking')}
+            </h3>
+            <p className="text-sm text-gray-600 mb-3 truncate">
+              {cancelTarget.name}
+            </p>
+            <label className="block text-sm font-medium mb-1">
+              {label('bookings.cancel.reason', 'Cancel reason')}
+            </label>
+            <textarea
+              autoFocus
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              className="w-full border rounded px-3 py-2 mb-4 text-sm"
+              placeholder={label(
+                'bookings.cancel.reason_placeholder',
+                'Optional — leaves "Cancelled at POS" if blank',
+              )}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 text-sm border rounded hover:bg-gray-50"
+                onClick={() => {
+                  setCancelTarget(null);
+                  setCancelReason('');
+                }}
+              >
+                {label('common.close', 'Close')}
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 text-sm bg-rose-600 text-white rounded hover:bg-rose-700"
+                onClick={() => {
+                  const target = cancelTarget;
+                  const reason = cancelReason.trim() || 'Cancelled at POS';
+                  setCancelTarget(null);
+                  setCancelReason('');
+                  if (target) {
+                    runAction(target.id, () => api.cancel(target.id, reason));
+                  }
+                }}
+              >
+                {label('bookings.action.cancel', 'Cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
