@@ -8,6 +8,13 @@
  * belong on the dashboard.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  CalendarClock,
+  StickyNote,
+  X as CloseIcon,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface StaffRow {
   id: string;                      // staff_profiles.id
@@ -48,6 +55,27 @@ function isoToLocalInput(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function statusToneClass(status: string): string {
+  switch (status) {
+    case 'PENDING':
+      return 'bg-amber-50 text-amber-800 border-amber-200';
+    case 'BOOKED':
+      return 'bg-blue-50 text-blue-800 border-blue-200';
+    case 'CHECKED_IN':
+      return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+    case 'IN_SERVICE':
+      return 'bg-violet-50 text-violet-800 border-violet-200';
+    case 'COMPLETED':
+    case 'PAID':
+      return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    case 'CANCELLED':
+    case 'NO_SHOW':
+      return 'bg-gray-100 text-gray-700 border-gray-300';
+    default:
+      return 'bg-gray-100 text-gray-700 border-gray-300';
+  }
+}
+
 export default function BookingEditForm({ t, booking, onClose, onSaved }: Props) {
   const label = useCallback(
     (key: string, fallback: string) => (t ? t(key) : fallback),
@@ -72,6 +100,8 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const firstFieldRef = useRef<HTMLSelectElement | null>(null);
+
   // Load staff (same cancellation pattern as BookingCreateForm)
   useEffect(() => {
     if (!api?.pos?.staff) {
@@ -94,6 +124,10 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
       cancelled = true;
     };
   }, [api]);
+
+  useEffect(() => {
+    firstFieldRef.current?.focus();
+  }, []);
 
   // Only send fields the user actually changed — prevents the server
   // from running availability checks against unchanged values.
@@ -171,120 +205,144 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="booking-edit-title"
       onClick={safeClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-full overflow-auto"
+        className="bg-white rounded-md shadow-xl w-full max-w-lg max-h-full overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between px-5 py-3 border-b">
-          <div>
-            <h2 className="text-lg font-semibold">
+        <header className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200">
+          <div className="min-w-0">
+            <h2 id="booking-edit-title" className="text-lg font-semibold text-gray-900">
               {label('bookings.edit.title', 'Edit booking')}
             </h2>
-            <p className="text-xs text-gray-500">
-              {booking.owner_full_name || '—'} · {booking.service_name || '—'}
-            </p>
+            <div className="mt-1 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs">
+              <span className="font-medium text-gray-700 truncate">
+                {booking.owner_full_name || '—'}
+              </span>
+              {booking.service_name ? (
+                <>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-gray-600 truncate">{booking.service_name}</span>
+                </>
+              ) : null}
+              <span
+                className={`inline-flex items-center px-2 py-0.5 border rounded-full ${statusToneClass(booking.status)}`}
+              >
+                {booking.status}
+              </span>
+            </div>
           </div>
           <button
+            type="button"
             onClick={safeClose}
             disabled={submitting}
-            className="text-gray-500 hover:text-gray-700 disabled:opacity-30"
-            aria-label="Close"
+            className="inline-flex items-center justify-center h-9 w-9 text-gray-500 rounded-md hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30 shrink-0"
+            aria-label={label('common.close', 'Close')}
           >
-            ✕
+            <CloseIcon className="h-4 w-4" aria-hidden />
           </button>
         </header>
 
         {loadError && (
-          <div className="mx-5 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded text-sm">
-            {loadError}
+          <div
+            role="alert"
+            className="mx-5 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
+          >
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+            <div>{loadError}</div>
           </div>
         )}
 
         <form
-          className="p-5 space-y-4"
+          className="p-5 space-y-5"
           onSubmit={(e) => {
             e.preventDefault();
             if (canSubmit) submit();
           }}
         >
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {label('bookings.create.staff', 'Staff')}
-            </label>
-            <select
-              value={staffUserId}
-              onChange={(e) => setStaffUserId(e.target.value)}
-              className="w-full border rounded px-3 py-2 bg-white"
-            >
-              <option value="">— {label('common.select', 'select')} —</option>
-              {staff.map((s) => (
-                // See BookingCreateForm for rationale: prefer canonical
-                // users.id; fall back to staff_profiles.id pre-v24.
-                <option key={s.id} value={s.user_id || s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {label('bookings.create.starts_at', 'Start time')}
-            </label>
-            <input
-              type="datetime-local"
-              value={startsAtLocal}
-              onChange={(e) => setStartsAtLocal(e.target.value)}
-              step={300}
-              className="w-full border rounded px-3 py-2"
+          <section className="space-y-3">
+            <SectionHeader
+              icon={CalendarClock}
+              title={label('bookings.edit.section.appointment', 'Appointment')}
             />
-          </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {label('bookings.create.notes', 'Customer notes')}
-            </label>
-            <textarea
-              value={customerNotes}
-              onChange={(e) => setCustomerNotes(e.target.value)}
-              rows={2}
-              className="w-full border rounded px-3 py-2 resize-none"
-            />
-          </div>
+            <Field label={label('bookings.create.staff', 'Staff')}>
+              <select
+                ref={firstFieldRef}
+                value={staffUserId}
+                onChange={(e) => setStaffUserId(e.target.value)}
+                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">— {label('common.select', 'select')} —</option>
+                {staff.map((s) => (
+                  // See BookingCreateForm for rationale: prefer canonical
+                  // users.id; fall back to staff_profiles.id pre-v24.
+                  <option key={s.id} value={s.user_id || s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {label('bookings.edit.internal_notes', 'Internal notes')}
-            </label>
-            <textarea
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.target.value)}
-              rows={2}
-              className="w-full border rounded px-3 py-2 resize-none"
+            <Field label={label('bookings.create.starts_at', 'Start time')}>
+              <input
+                type="datetime-local"
+                value={startsAtLocal}
+                onChange={(e) => setStartsAtLocal(e.target.value)}
+                step={300}
+                className="w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </Field>
+          </section>
+
+          <section className="space-y-3">
+            <SectionHeader
+              icon={StickyNote}
+              title={label('bookings.edit.section.notes', 'Notes')}
             />
-          </div>
+            <Field label={label('bookings.create.notes', 'Customer notes')}>
+              <textarea
+                value={customerNotes}
+                onChange={(e) => setCustomerNotes(e.target.value)}
+                rows={2}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </Field>
+            <Field label={label('bookings.edit.internal_notes', 'Internal notes')}>
+              <textarea
+                value={internalNotes}
+                onChange={(e) => setInternalNotes(e.target.value)}
+                rows={2}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </Field>
+          </section>
 
           {submitError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded text-sm">
-              {submitError}
+            <div
+              role="alert"
+              className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-md text-sm flex items-start gap-2"
+            >
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div>{submitError}</div>
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={safeClose}
               disabled={submitting}
-              className="px-4 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200 disabled:opacity-50"
+              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {label('common.cancel', 'Cancel')}
             </button>
             <button
               type="submit"
               disabled={!canSubmit}
-              className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+              className="inline-flex items-center justify-center h-11 min-w-[140px] px-4 text-sm font-medium bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {submitting
                 ? label('common.submitting', 'Submitting…')
@@ -294,5 +352,39 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
         </form>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Local helpers — small enough to live alongside the form.
+// ─────────────────────────────────────────────────────────────────────
+
+function SectionHeader({
+  icon: Icon,
+  title,
+}: {
+  icon: LucideIcon;
+  title: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <Icon className="h-3.5 w-3.5" aria-hidden />
+      <span>{title}</span>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
+      {children}
+    </label>
   );
 }
