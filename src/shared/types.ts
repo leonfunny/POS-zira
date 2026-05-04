@@ -1287,7 +1287,7 @@ export interface BooksySyncStatus {
   lastSyncTime: string | null;
   lastSyncReport: BooksySyncReport | null;
   isBusinessHours: boolean;
-  nextSyncIn: number | null;          // minutes until next sync
+  nextSyncIn: number | null;          // seconds until next calendar sync (null = loop stopped)
   chromeConnected: boolean;
   customerCount: number;
   lastCustomerSyncReport: BooksyCustomerSyncReport | null;

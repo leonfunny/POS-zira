@@ -22,6 +22,27 @@ export default function BooksySync() {
   const [syncingAddons, setSyncingAddons] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [jwtExpiredVisible, setJwtExpiredVisible] = useState(false);
+  // Local 1Hz tick that decrements the countdown shown next to the
+  // Last-sync panel. We don't trust the backend to push status every
+  // second — it only emits on real state changes — so the renderer
+  // ticks itself and re-derives `nextSyncIn` from the most recent
+  // backend snapshot plus the elapsed time since that snapshot.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [statusReceivedAt, setStatusReceivedAt] = useState<number>(() =>
+    Date.now(),
+  );
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // When the backend emits a new status (e.g. right after a sync
+  // schedules the next tick), reset the countdown anchor so the
+  // displayed "Next sync in Xs" stays in lockstep with what the
+  // backend just told us.
+  useEffect(() => {
+    setStatusReceivedAt(Date.now());
+  }, [status?.nextSyncIn, status?.lastSyncTime]);
 
   useEffect(() => {
     const off = window.electronAPI.booksy.onBooksyJwtExpired(() => setJwtExpiredVisible(true));
@@ -559,6 +580,20 @@ export default function BooksySync() {
               )}
             </div>
           </div>
+          {/* Live countdown to the next calendar sync. Derived from the
+              backend's last `nextSyncIn` snapshot minus the elapsed
+              time since we received it. Goes silent when the loop is
+              stopped (nextSyncIn === null). */}
+          {status.enabled && status.nextSyncIn != null && (() => {
+            const elapsed = Math.floor((nowTick - statusReceivedAt) / 1000);
+            const remaining = Math.max(0, status.nextSyncIn - elapsed);
+            return (
+              <p className="mt-2 text-xs text-slate-500">
+                Next sync in <span className="tabular-nums font-medium text-slate-700">{remaining}s</span>
+                {status.running ? <span className="ml-2 italic text-slate-400">(syncing…)</span> : null}
+              </p>
+            );
+          })()}
         </div>
       )}
 

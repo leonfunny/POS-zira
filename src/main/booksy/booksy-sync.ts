@@ -66,6 +66,28 @@ export class BooksySync extends EventEmitter {
   private chromeConnected = false;
   private _capturePromise: Promise<string> | null = null;
 
+  // ── Calendar auto-sync cadence ────────────────────────────────────
+  // Print Agent must surface new/cancelled Booksy bookings on the
+  // dashboard within ~1 minute (cashier UX), without hammering the
+  // Booksy private API. The numbers below are an internal contract
+  // — config.syncIntervalMin no longer drives calendar polling, only
+  // (potentially) the slower full-sync loop in the future.
+  private static readonly CALENDAR_BASE_INTERVAL_MS = 60_000; // 60s
+  private static readonly CALENDAR_JITTER_MS = 10_000;        // ±10s
+  private static readonly CALENDAR_MIN_INTERVAL_MS = 30_000;  // hard floor
+  // Failure backoff: each consecutive failure picks the next step,
+  // clamped to the cap. Reset to 0 (= base cadence) on a successful
+  // sync.
+  private static readonly CALENDAR_BACKOFF_STEPS_MS = [
+    60_000, 120_000, 240_000, 480_000, 600_000,
+  ];
+  private static readonly CALENDAR_BACKOFF_CAP_MS = 600_000;  // 10 min
+
+  private nextSyncAt: number | null = null;        // epoch ms
+  private syncFailureStreak = 0;                   // 0 = last sync OK
+  private lastSyncSucceeded = true;                // drives scheduleNext
+  private overlappedTickCount = 0;                 // telemetry only
+
   private onPersistKnownCustomerIds?: (ids: number[]) => void;
 
   constructor(config: BooksySyncConfig, onPersistKnownCustomerIds?: (ids: number[]) => void) {
@@ -98,7 +120,10 @@ export class BooksySync extends EventEmitter {
       lastSyncTime: this.lastSyncTime,
       lastSyncReport: this.lastSyncReport,
       isBusinessHours: this.isBusinessHours(),
-      nextSyncIn: this.syncTimer ? Math.round((this.config.syncIntervalMin || 30)) : null,
+      nextSyncIn:
+        this.nextSyncAt != null
+          ? Math.max(0, Math.round((this.nextSyncAt - Date.now()) / 1000))
+          : null,
       chromeConnected: this.chromeConnected,
       customerCount: this.knownCustomerIds.size,
       lastCustomerSyncReport: this.lastCustomerSyncReport,
@@ -236,6 +261,9 @@ export class BooksySync extends EventEmitter {
       clearTimeout(this.syncTimer);
       this.syncTimer = null;
     }
+    // Clear the countdown so the UI doesn't display a stale
+    // "next sync in Xs" while the loop is stopped.
+    this.nextSyncAt = null;
     logger.info('[Booksy] Stopped sync service');
     this.emitStatus();
   }
@@ -523,6 +551,11 @@ export class BooksySync extends EventEmitter {
     const today = new Date().toISOString().split('T')[0];
     logger.info(`[Booksy] Syncing ${today}...`);
 
+    // Track per-call success so the post-sync scheduleNext can reset
+    // or escalate the backoff streak. The session-expired short-circuit
+    // below leaves this false \u2192 next tick will use the streak interval
+    // and back off until the user logs in again.
+    let calendarSyncSucceeded = false;
     try {
       let token = this.lastToken;
 
@@ -537,6 +570,7 @@ export class BooksySync extends EventEmitter {
           const pushResult = await this.pushBookingsToEnail(data, today);
           this.lastSyncTime = new Date().toISOString();
           this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime, pushReason: pushResult.reason, pushErrors: pushResult.errors?.length };
+          calendarSyncSucceeded = pushResult.ok !== false;
           this.isRunning = false;
           this.emitStatus();
           return;
@@ -584,6 +618,7 @@ export class BooksySync extends EventEmitter {
 
       this.lastSyncTime = new Date().toISOString();
       this.lastSyncReport = { date: today, bookings: bookingCount, pushed: pushResult.ok, time: this.lastSyncTime, pushReason: pushResult.reason, pushErrors: pushResult.errors?.length };
+      calendarSyncSucceeded = pushResult.ok !== false;
 
       // Notify recovery if was expired
       if (this.sessionExpired) {
@@ -594,6 +629,16 @@ export class BooksySync extends EventEmitter {
       logger.error(`[Booksy] ERROR: ${e.message}`);
       this.lastSyncReport = { date: today, bookings: 0, pushed: false, time: new Date().toISOString(), error: e.message };
     } finally {
+      // Drive the scheduler's backoff streak from this attempt's
+      // outcome. Calendar sync only — full sync paths
+      // (customers/staff/etc.) intentionally do NOT touch the streak.
+      if (calendarSyncSucceeded) {
+        this.lastSyncSucceeded = true;
+        this.syncFailureStreak = 0;
+      } else {
+        this.lastSyncSucceeded = false;
+        this.syncFailureStreak++;
+      }
       this.isRunning = false;
       this.emitStatus();
     }
@@ -1230,16 +1275,65 @@ export class BooksySync extends EventEmitter {
     return { staff: staffReport, customers: customerReport, resources: resourceReport, services: servicesReport, addons: addonsReport };
   }
 
+  /**
+   * Pick the calendar-sync interval for the next tick.
+   *
+   * Healthy path: base 60s ± 10s jitter (so multiple Print Agents
+   * never march in lockstep against Booksy's API).
+   *
+   * Failure path: exponential backoff stepped through
+   * [60s, 120s, 240s, 480s, 600s], indexed by syncFailureStreak.
+   * Resets to base on the next successful sync.
+   *
+   * Always clamped to [CALENDAR_MIN_INTERVAL_MS, CALENDAR_BACKOFF_CAP_MS]
+   * so a misconfigured constant or a runaway streak can never degenerate
+   * into 3-second polling or 4-hour silence.
+   */
+  private calculateNextInterval(): number {
+    let intervalMs: number;
+    if (this.lastSyncSucceeded) {
+      const jitter = Math.floor(
+        (Math.random() - 0.5) * 2 * BooksySync.CALENDAR_JITTER_MS,
+      );
+      intervalMs = BooksySync.CALENDAR_BASE_INTERVAL_MS + jitter;
+    } else {
+      const stepIdx = Math.max(
+        0,
+        Math.min(
+          this.syncFailureStreak - 1,
+          BooksySync.CALENDAR_BACKOFF_STEPS_MS.length - 1,
+        ),
+      );
+      intervalMs = BooksySync.CALENDAR_BACKOFF_STEPS_MS[stepIdx];
+    }
+    intervalMs = Math.max(
+      BooksySync.CALENDAR_MIN_INTERVAL_MS,
+      intervalMs,
+    );
+    intervalMs = Math.min(
+      BooksySync.CALENDAR_BACKOFF_CAP_MS,
+      intervalMs,
+    );
+    return intervalMs;
+  }
+
   private scheduleNext(): void {
     if (!this.started) return;
 
-    // Random interval: base ± 5 minutes
-    const base = this.config.syncIntervalMin || 30;
-    const jitter = Math.floor(Math.random() * 10) - 5;
-    const intervalMs = Math.max(10, base + jitter) * 60 * 1000;
+    const intervalMs = this.calculateNextInterval();
+    this.nextSyncAt = Date.now() + intervalMs;
 
     this.syncTimer = setTimeout(async () => {
-      // FIX: Wrap in try-catch to ensure scheduleNext always runs
+      if (this.isRunning) {
+        // Anti-overlap: a previous tick is still in flight (slow
+        // network, in-progress token capture, etc.). Skip launching a
+        // second syncOnce — just queue the next tick at the normal
+        // cadence so the loop never piles up.
+        this.overlappedTickCount++;
+        logger.debug('[Booksy] Skipping tick — sync still running');
+        this.scheduleNext();
+        return;
+      }
       try {
         await this.syncOnce();
       } catch (e: any) {
@@ -1249,7 +1343,10 @@ export class BooksySync extends EventEmitter {
     }, intervalMs);
 
     if (this.isBusinessHours()) {
-      logger.debug(`[Booksy] Next sync in ~${Math.round(intervalMs / 60000)} min`);
+      logger.debug(
+        `[Booksy] Next calendar sync in ~${Math.round(intervalMs / 1000)}s ` +
+          `(streak=${this.syncFailureStreak})`,
+      );
     }
   }
 
