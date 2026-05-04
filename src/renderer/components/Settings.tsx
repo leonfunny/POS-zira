@@ -96,6 +96,7 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
   { tab: 'billiard',  label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
   { tab: 'invoicing', label: 'Invoicing',        icon: <FileText size={15} />,        color: 'text-purple-600 bg-purple-50' },
   { tab: 'booksy',    label: 'Booksy Sync',      icon: <CalendarDays size={15} />,    color: 'text-orange-600 bg-orange-50' },
+  { tab: 'bookings',  label: 'Bookings',         icon: <CalendarDays size={15} />,    color: 'text-indigo-600 bg-indigo-50' },
   { tab: 'checkin',   label: 'Check-in Kiosk',   icon: <UserCheck size={15} />,       color: 'text-green-600 bg-green-50' },
   { tab: 'chat',      label: 'Zira AI Chat',     icon: <Bot size={15} />,             color: 'text-brand-600 bg-brand-50' },
   { tab: 'status',    label: 'Status',           icon: <Activity size={15} />,        color: 'text-slate-600 bg-slate-100' },
