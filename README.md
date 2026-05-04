@@ -155,6 +155,10 @@ Defined in `package.json`:
 | `npm run dist:win` | NSIS installer in `release/` |
 | `npm run postinstall` | electron-builder native rebuild |
 
+Dev mode:
+| $env:NODE_ENV="development"
+| npx electron . 
+
 Helpers in `scripts/`:
 
 | Script | Use |
