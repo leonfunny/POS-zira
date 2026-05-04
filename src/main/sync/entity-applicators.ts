@@ -13,6 +13,10 @@ import { bookingRepo } from '../database/repos/booking-repo';
 import { serviceRepo } from '../database/repos/service-repo';
 import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
+import {
+  adaptServerOrder,
+  adaptServerOrderItem,
+} from './pos-order-adapter';
 import logger from '../logger';
 
 export interface SyncLogEntry {
@@ -147,8 +151,39 @@ function applyOrder(entry: SyncLogEntry): boolean {
   }
 
   if (!localId) {
-    logger.debug(`[EntityApplicator] Order ${orderId} not found locally, skipping`);
-    return false;
+    // The order does not yet exist locally — this is the cross-session
+    // mirror path (machine A creates a POS order, machine B receives
+    // the sync_log entry without ever having owned the order). Adapt
+    // the server payload and insert via orderRepo.upsertFromServer
+    // so the History UI can render it. Requires the server payload to
+    // carry items[] (b2b-pos.service.ts now emits the full order from
+    // findOrderById for created/updated/cancelled/refunded events).
+    const items = Array.isArray(p?.items) ? p.items : null;
+    if (!items || items.length === 0) {
+      logger.debug(
+        `[EntityApplicator] Order ${orderId} not found locally and ` +
+          `payload has no items[] — cannot mirror; skipping until ` +
+          `next status_changed entry rehydrates the row.`,
+      );
+      return false;
+    }
+    try {
+      const adapted = adaptServerOrder(p);
+      const adaptedItems = items.map((it: any) =>
+        adaptServerOrderItem(it, adapted.id),
+      );
+      orderRepo.upsertFromServer(adapted, adaptedItems);
+      logger.info(
+        `[EntityApplicator] Mirrored server order ${orderId} ` +
+          `(${adaptedItems.length} items, status=${adapted.status})`,
+      );
+      return true;
+    } catch (e: any) {
+      logger.error(
+        `[EntityApplicator] Failed to mirror server order ${orderId}: ${e.message}`,
+      );
+      return false;
+    }
   }
 
   // Update server-side status (don't overwrite local status)
@@ -168,6 +203,19 @@ function applyOrder(entry: SyncLogEntry): boolean {
     database.run(
       'UPDATE orders SET refund_amount = ?, refund_reason = ? WHERE id = ?',
       [refundGrosze, p.refundReason ?? null, localId],
+    );
+  }
+
+  // Mirror invoice / proforma fields when the addInvoiceToOrder /
+  // generate-proforma endpoints push them in via the full order
+  // payload. We only touch fields present in the payload so a refund
+  // event doesn't clobber invoice info and vice versa.
+  if (p.customerNip !== undefined || p.invoiceNumber !== undefined || p.proformaId !== undefined) {
+    database.run(
+      `UPDATE orders
+       SET customer_nip = COALESCE(?, customer_nip)
+       WHERE id = ?`,
+      [p.customerNip ?? null, localId],
     );
   }
 
