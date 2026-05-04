@@ -407,6 +407,7 @@ export async function getStuckPrintJobStatus(printerName: string): Promise<strin
 export interface WindowsPrinterInfo {
   name: string;
   portName: string;
+  isDefault?: boolean;
 }
 
 /**
@@ -422,7 +423,7 @@ export async function listWindowsPrintersDetailed(): Promise<WindowsPrinterInfo[
 
   try {
     const stdout = await runPowerShell(
-      'Get-Printer | ForEach-Object { "$($_.Name)|$($_.PortName)" }',
+      'Get-Printer | ForEach-Object { "$($_.Name)|$($_.PortName)|$($_.Default)" }',
     );
     const printers = stdout
       .split('\n')
@@ -430,7 +431,10 @@ export async function listWindowsPrintersDetailed(): Promise<WindowsPrinterInfo[
       .filter((l) => l.includes('|'))
       .map((l) => {
         const sep = l.indexOf('|');
-        return { name: l.slice(0, sep).trim(), portName: l.slice(sep + 1).trim() };
+        const secondSep = l.indexOf('|', sep + 1);
+        const portName = secondSep >= 0 ? l.slice(sep + 1, secondSep).trim() : l.slice(sep + 1).trim();
+        const isDefault = secondSep >= 0 ? /^true$/i.test(l.slice(secondSep + 1).trim()) : false;
+        return { name: l.slice(0, sep).trim(), portName, isDefault };
       })
       .filter((p) => p.name.length > 0);
     logger.info(`[PortUtils] Found ${printers.length} printers (detailed)`);
@@ -439,7 +443,7 @@ export async function listWindowsPrintersDetailed(): Promise<WindowsPrinterInfo[
     logger.warn('[PortUtils] Get-Printer detailed failed, trying CimInstance fallback:', error);
     try {
       const stdout = await runPowerShell(
-        'Get-CimInstance -ClassName Win32_Printer | ForEach-Object { "$($_.Name)|$($_.PortName)" }',
+        'Get-CimInstance -ClassName Win32_Printer | ForEach-Object { "$($_.Name)|$($_.PortName)|$($_.Default)" }',
       );
       const printers = stdout
         .split('\n')
@@ -447,7 +451,10 @@ export async function listWindowsPrintersDetailed(): Promise<WindowsPrinterInfo[
         .filter((l) => l.includes('|'))
         .map((l) => {
           const sep = l.indexOf('|');
-          return { name: l.slice(0, sep).trim(), portName: l.slice(sep + 1).trim() };
+          const secondSep = l.indexOf('|', sep + 1);
+          const portName = secondSep >= 0 ? l.slice(sep + 1, secondSep).trim() : l.slice(sep + 1).trim();
+          const isDefault = secondSep >= 0 ? /^true$/i.test(l.slice(secondSep + 1).trim()) : false;
+          return { name: l.slice(0, sep).trim(), portName, isDefault };
         })
         .filter((p) => p.name.length > 0);
       logger.info(`[PortUtils] CimInstance fallback found ${printers.length} printers (detailed)`);

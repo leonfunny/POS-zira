@@ -20,7 +20,7 @@ export interface AppEvents {
   'user:logged-out': { reason?: string };
 
   // Print jobs
-  'print:job-received': { jobId: string; jobType: string; printerType?: string; payload: unknown };
+  'print:job-received': { jobId: string; jobType: string; printerType?: string; printerId?: string | null; payload: unknown };
   'print:job-completed': { jobId: string };
   'print:job-failed': { jobId: string; error: string };
 

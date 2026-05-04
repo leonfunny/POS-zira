@@ -1,11 +1,118 @@
 import { app } from 'electron';
 import * as os from 'os';
 import logger from '../logger';
-import { ConnectResponse, TelegramLoginTokenResponse, TelegramLoginTokenStatus } from '../../shared/types';
+import {
+  ConnectResponse,
+  PrinterConfig,
+  PrinterProtocol,
+  PrintersConfig,
+  PrinterType,
+  TelegramLoginTokenResponse,
+  TelegramLoginTokenStatus,
+} from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
+import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
 
 // Default timeout for API requests (30 seconds)
 const DEFAULT_TIMEOUT = 30000;
+
+type ServerPrinter = NonNullable<ConnectResponse['printers']>[number];
+
+const KNOWN_PRINTER_TYPES = new Set<string>(Object.values(PrinterType));
+
+function normalizeProtocol(protocol?: string): PrinterProtocol | null {
+  const p = (protocol || '').toUpperCase();
+  if (p === 'POSNET') return 'POSNET';
+  if (p === 'ZEBRA') return 'ZEBRA';
+  if (p === 'WINDOWS' || p === 'CUPS') return 'WINDOWS';
+  if (p === 'THERMAL' || p === 'ESC_POS' || p === 'SERIAL' || p === 'USB') return 'THERMAL';
+  return null;
+}
+
+function looksLikeComPort(value?: string | null): boolean {
+  return /^COM\d{1,3}$/i.test((value || '').trim());
+}
+
+function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: PrinterConfig } | null {
+  const protocol = normalizeProtocol(item.protocol);
+  if (!protocol) return null;
+
+  const requestedType = (item.printerType || '').toUpperCase();
+  const printerType = requestedType === PrinterType.RECEIPT && protocol === 'POSNET'
+    ? PrinterType.FISCAL
+    : requestedType;
+  if (!KNOWN_PRINTER_TYPES.has(printerType)) return null;
+
+  const address = (item.address || '').trim();
+  const windowsPrinterName = (item.windowsPrinterName || '').trim();
+  const target = windowsPrinterName || address;
+  const config: PrinterConfig = {
+    enabled: item.isEnabled ?? false,
+    protocol,
+    serverPrinterId: item.id,
+    displayName: item.displayName || printerType,
+    baudRate: item.baudRate || 9600,
+    paperWidth: item.paperWidth || 80,
+    charsPerLine: item.charsPerLine || (item.paperWidth && item.paperWidth <= 58 ? 32 : 48),
+    supportsCut: item.supportsCut ?? true,
+    supportsCashDrawer: item.supportsCashDrawer ?? false,
+  };
+
+  if (protocol === 'POSNET') {
+    if (looksLikeComPort(address)) config.port = address.toUpperCase();
+  } else if (protocol === 'THERMAL') {
+    if (looksLikeComPort(address)) config.port = address.toUpperCase();
+    else if (target) config.windowsPrinter = target;
+  } else if (protocol === 'ZEBRA' || protocol === 'WINDOWS') {
+    if (target) config.windowsPrinter = target;
+  }
+
+  return { type: printerType as PrinterType, config };
+}
+
+function normalizeServerPrinters(printers?: ConnectResponse['printers']): PrintersConfig | null {
+  if (!printers?.length) return null;
+
+  const mapped: PrintersConfig = {};
+  for (const item of printers) {
+    const result = mapServerPrinter(item);
+    if (!result) {
+      logger.warn(`[ApiClient] Ignoring unsupported server printer mapping: ${JSON.stringify(item)}`);
+      continue;
+    }
+    mapped[result.type] = result.config;
+  }
+
+  return Object.keys(mapped).length > 0 ? mapped : null;
+}
+
+function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): LocalPrinterUpsert[] {
+  if (!printers?.length) return [];
+
+  const rows: LocalPrinterUpsert[] = [];
+  for (const item of printers) {
+    const result = mapServerPrinter(item);
+    if (!result) continue;
+
+    rows.push({
+      id: item.id,
+      printerType: result.type,
+      displayName: item.displayName || result.config.displayName || result.type,
+      name: item.displayName || result.type,
+      protocol: result.config.protocol,
+      windowsPrinterName: result.config.windowsPrinter || item.windowsPrinterName || null,
+      address: item.address || null,
+      port: result.config.port || null,
+      baudRate: result.config.baudRate,
+      paperWidth: result.config.paperWidth,
+      charsPerLine: result.config.charsPerLine,
+      supportsCut: result.config.supportsCut,
+      supportsCashDrawer: result.config.supportsCashDrawer,
+      isEnabled: result.config.enabled,
+    });
+  }
+  return rows;
+}
 
 /**
  * Fetch with timeout wrapper using Node.js built-in fetch.
@@ -111,8 +218,11 @@ export class ApiClient {
       salonName: data.salonName,
     }));
 
+    const serverPrinters = normalizeServerPrinters(data.printers);
+    const localPrinters = normalizeServerPrinterRows(data.printers);
+
     // Save connection info to config
-    setConfig({
+    const nextConfig: Parameters<typeof setConfig>[0] = {
       apiKey,
       agentId: data.agentId,
       salonId: data.salonId,
@@ -127,9 +237,51 @@ export class ApiClient {
       ...(data.printerConfig?.port && { printerPort: data.printerConfig.port }),
       ...(data.printerConfig?.protocol && { printerProtocol: data.printerConfig.protocol }),
       ...(data.printerConfig?.baudRate && { printerBaudRate: data.printerConfig.baudRate }),
-    });
+    };
+
+    if (serverPrinters) {
+      nextConfig.printers = serverPrinters;
+      nextConfig.multiPrinterMode = true;
+      logger.info(`[ApiClient] Applied ${Object.keys(serverPrinters).length} server printer mapping(s)`);
+    }
+
+    setConfig(nextConfig);
+    if (localPrinters.length > 0) {
+      localPrinterRepo.upsertMany(data.agentId, localPrinters);
+      logger.info(`[ApiClient] Mirrored ${localPrinters.length} server printer row(s) to local database`);
+    }
 
     return data;
+  }
+
+  /**
+   * Sync installed Windows printer names to dashboard.
+   * POST /api/v1/print-agent/windows-printers/sync
+   */
+  async syncWindowsPrinters(apiKey: string, printers: Array<{ name: string; isDefault?: boolean }>): Promise<{ success: boolean; count: number }> {
+    if (!apiKey?.startsWith('pa_')) {
+      throw new Error('Missing print-agent API key');
+    }
+
+    const url = `${this.baseUrl}/api/v1/print-agent/windows-printers/sync`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiKey,
+        printers: printers.map((printer) => ({
+          name: printer.name,
+          isDefault: !!printer.isDefault,
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
   }
 
   /**

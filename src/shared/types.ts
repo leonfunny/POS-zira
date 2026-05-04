@@ -153,6 +153,9 @@ export enum PrintJobStatus {
 export interface PrinterConfig {
   enabled: boolean;
   protocol: PrinterProtocol;
+  // Server-side mapping metadata from /print-agent/connect printers[]
+  serverPrinterId?: string;
+  displayName?: string;
   // For THERMAL/POSNET (COM port)
   port?: string;
   baudRate?: number;
@@ -426,6 +429,7 @@ export interface PrintJobEvent {
   jobId: string;
   jobType: PrintJobType;
   printerType?: PrinterType;  // NEW: Explicit printer routing from server
+  printerId?: string | null;  // Server printer mapping id
   payload: ReceiptData | LabelData | DocumentData | DailyReportData;
   referenceType: string | null;
   referenceId: string | null;
@@ -460,6 +464,20 @@ export interface ConnectResponse {
     protocol?: PrinterProtocol;
     baudRate?: number;
   };
+  printers?: Array<{
+    id: string;
+    displayName?: string | null;
+    printerType?: string | null;
+    protocol?: string;
+    windowsPrinterName?: string | null;
+    address?: string | null;
+    baudRate?: number;
+    paperWidth?: number;
+    charsPerLine?: number;
+    supportsCut?: boolean;
+    supportsCashDrawer?: boolean;
+    isEnabled?: boolean;
+  }>;
 }
 
 // ==========================================

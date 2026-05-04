@@ -30,6 +30,7 @@ import {
   PrinterProtocol,
   LabelData,
   ReceiptData,
+  DocumentData,
   DailyReportData,
   DeviceStatus,
   CheckinConfirmationData,
@@ -39,6 +40,7 @@ import {
   TestPrintResult,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
+import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
 import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -48,6 +50,7 @@ import logger from '../logger';
 
 type PrinterDriver = PosnetDriver | ZebraDriver | ThermalDriver;
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
+type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
 
 /** How often to run printer health checks (ms) */
 const HEALTH_CHECK_INTERVAL = 30_000;
@@ -67,6 +70,7 @@ export class HardwareModule extends BaseModule {
 
   // Multi-printer dictionary
   private printers: PrinterDriversMap = {};
+  private printersById: PrinterDriversById = {};
   // Legacy printers (backward compatibility)
   private receiptPrinter: PrinterDriver | null = null;
   private labelPrinter: PrinterDriver | null = null;
@@ -570,6 +574,38 @@ export class HardwareModule extends BaseModule {
     return this.printerDriver;
   }
 
+  private getPrinterConfigForJob(job: any): { printerType: PrinterType; config?: PrinterConfig } {
+    const config = getConfig();
+    const printers = config.printers || {};
+
+    if (job.printerId) {
+      const localPrinter = localPrinterRepo.getById(job.printerId);
+      if (localPrinter) {
+        return {
+          printerType: (localPrinter.printer_type || PrinterType.RECEIPT) as PrinterType,
+          config: rowToPrinterConfig(localPrinter),
+        };
+      }
+
+      for (const [pt, pc] of Object.entries(printers)) {
+        if (pc?.serverPrinterId === job.printerId) {
+          return { printerType: pt as PrinterType, config: pc };
+        }
+      }
+    }
+
+    const printerType = this.getPrinterTypeForJob(job);
+    return { printerType, config: printers[printerType] };
+  }
+
+  private getPrinterForJob(job: any): PrinterDriver | null {
+    if (job.printerId && this.printersById[job.printerId]) {
+      return this.printersById[job.printerId]!;
+    }
+    const target = this.getPrinterConfigForJob(job);
+    return this.getPrinterForType(target.printerType);
+  }
+
   getDeviceStatus(): DeviceStatus {
     const config = getConfig();
     const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
@@ -580,8 +616,18 @@ export class HardwareModule extends BaseModule {
 
     if (multiPrinterMode) {
       const connectedPrinters: string[] = [];
+      const seenPrinterIds = new Set<string>();
+      for (const row of localPrinterRepo.getEnabled()) {
+        const driver = this.printersById[row.id];
+        seenPrinterIds.add(row.id);
+        if (driver?.isConnected()) {
+          printerConnected = true;
+          connectedPrinters.push(`${row.printer_type || 'PRINTER'}:${row.display_name || row.id}`);
+        }
+      }
       for (const [pt, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
+        if (pc.serverPrinterId && seenPrinterIds.has(pc.serverPrinterId)) continue;
         const driver = this.printers[pt as PrinterType];
         if (driver?.isConnected()) {
           printerConnected = true;
@@ -616,8 +662,19 @@ export class HardwareModule extends BaseModule {
     const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
 
     if (multiPrinterMode) {
+      const seenPrinterIds = new Set<string>();
+      for (const row of localPrinterRepo.getEnabled()) {
+        seenPrinterIds.add(row.id);
+        result.push({
+          type: `${row.printer_type || 'PRINTER'}:${row.display_name || row.id}`,
+          connected: this.printersById[row.id]?.isConnected() || false,
+          protocol: row.protocol,
+          address: row.windows_printer_name || row.port || row.address || undefined,
+        });
+      }
       for (const [pt, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
+        if (pc.serverPrinterId && seenPrinterIds.has(pc.serverPrinterId)) continue;
         result.push({
           type: pt,
           connected: this.printers[pt as PrinterType]?.isConnected() || false,
@@ -1104,6 +1161,8 @@ export class HardwareModule extends BaseModule {
       updatedPrinters.FISCAL = {
         enabled: true,
         protocol: 'POSNET' as PrinterProtocol,
+        serverPrinterId: receiptCfg.serverPrinterId,
+        displayName: receiptCfg.displayName,
         port: receiptCfg.port,
         baudRate: receiptCfg.baudRate || 115200,
         paperWidth: receiptCfg.paperWidth || 80,
@@ -1137,13 +1196,43 @@ export class HardwareModule extends BaseModule {
     // Disconnect all
     for (const [pt, p] of Object.entries(this.printers)) { try { p?.disconnect(); } catch (err: any) { logger.debug(`[HardwareModule] disconnect printer ${pt} on reinit failed:`, err?.message); } }
     this.printers = {};
+    for (const [printerId, p] of Object.entries(this.printersById)) { try { p?.disconnect(); } catch (err: any) { logger.debug(`[HardwareModule] disconnect printer ${printerId} on reinit failed:`, err?.message); } }
+    this.printersById = {};
     for (const p of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { p?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on reinit failed:', err?.message); } }
 
     const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
 
     if (multiPrinterMode) {
+      const localRows = localPrinterRepo.getEnabled();
+      const registeredPrinterIds = new Set<string>();
+
+      for (const row of localRows) {
+        const pt = (row.printer_type || PrinterType.RECEIPT) as PrinterType;
+        const pc = rowToPrinterConfig(row);
+        const driver = this.createPrinterFromConfig(pc, pt);
+        if (!driver) continue;
+
+        this.printersById[row.id] = driver;
+        if (!this.printers[pt]) this.printers[pt] = driver;
+        registeredPrinterIds.add(row.id);
+
+        try {
+          const ok = await driver.connect();
+          localPrinterRepo.markOnline(row.id, ok);
+          if (!ok) {
+            initErrors.push(`${row.display_name || row.id}: failed to connect`);
+            logger.warn(`[HardwareModule] ${row.display_name || row.id}: connect failed — driver registered for health-check recovery`);
+          }
+        } catch (e: any) {
+          localPrinterRepo.markOnline(row.id, false);
+          logger.error(`[HardwareModule] ${row.display_name || row.id} connect failed:`, e);
+          initErrors.push(`${row.display_name || row.id}: ${e.message}`);
+        }
+      }
+
       for (const [ptStr, pc] of Object.entries(config.printers || {})) {
         if (!pc?.enabled) continue;
+        if (pc.serverPrinterId && registeredPrinterIds.has(pc.serverPrinterId)) continue;
         const pt = ptStr as PrinterType;
         const driver = this.createPrinterFromConfig(pc, pt);
         if (driver) {
@@ -1153,6 +1242,7 @@ export class HardwareModule extends BaseModule {
           // check never knew about them, so a config save while the printer
           // was briefly unavailable permanently lost the driver until restart.
           this.printers[pt] = driver;
+          if (pc.serverPrinterId) this.printersById[pc.serverPrinterId] = driver;
           try {
             const ok = await driver.connect();
             if (ok) {
@@ -1360,9 +1450,12 @@ export class HardwareModule extends BaseModule {
     ));
     const cachedPorts = statusSnapshot.serialPorts;
 
+    const checkedDrivers = new Set<PrinterDriver>();
+
     // Check all drivers in the printers map
     for (const [pt, driver] of Object.entries(this.printers)) {
       if (!driver) continue;
+      checkedDrivers.add(driver);
 
       // Backoff: skip if this driver has been failing repeatedly
       if (this.shouldSkipHealthCheck(pt)) continue;
@@ -1401,6 +1494,46 @@ export class HardwareModule extends BaseModule {
       } else {
         const prev = this.healthCheckFailCount.get(pt) || 0;
         this.healthCheckFailCount.set(pt, prev + 1);
+      }
+    }
+
+    for (const [printerId, driver] of Object.entries(this.printersById)) {
+      if (!driver || checkedDrivers.has(driver)) continue;
+
+      const key = `id:${printerId}`;
+      if (this.shouldSkipHealthCheck(key)) continue;
+
+      const row = localPrinterRepo.getById(printerId);
+      const printerType = (row?.printer_type || PrinterType.RECEIPT) as PrinterType;
+      const wasBefore = driver.isConnected();
+      if (driver instanceof PosnetDriver) {
+        await driver.healthCheck(cachedPorts);
+      } else if (driver instanceof ThermalDriver) {
+        await driver.healthCheck(cachedPrinters, cachedPorts);
+      } else if (driver instanceof ZebraDriver) {
+        await driver.healthCheck(cachedPrinters);
+      } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
+        await (driver as any).healthCheck();
+      }
+      const isNow = driver.isConnected();
+      localPrinterRepo.markOnline(printerId, isNow);
+      if (isNow !== wasBefore) {
+        changed = true;
+        logger.info(`[HardwareModule] Health check: ${printerId} ${isNow ? 'reconnected' : 'disconnected'}`);
+      }
+      if (isNow) {
+        this.healthCheckFailCount.delete(key);
+        continue;
+      }
+
+      const recovered = await this.attemptDriverRecovery(printerType, driver, cachedPrinters, cachedPorts);
+      if (recovered) {
+        changed = true;
+        this.healthCheckFailCount.delete(key);
+        localPrinterRepo.markOnline(printerId, true);
+      } else {
+        const prev = this.healthCheckFailCount.get(key) || 0;
+        this.healthCheckFailCount.set(key, prev + 1);
       }
     }
 
@@ -1543,6 +1676,12 @@ export class HardwareModule extends BaseModule {
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
       return null;
     }
+    if (config.protocol === 'WINDOWS' && printerTypeKey === PrinterType.LABEL) {
+      // Label printers generally expose a Windows spooler name, but still need
+      // label-language output rather than plain A4 text.
+      if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
+      return null;
+    }
     const tOpts = { charset: config.charset, cutMode: config.cutMode };
     if (config.protocol === 'WINDOWS') {
       // Regular Windows printers (A4, inkjet, laser): use ThermalDriver in
@@ -1590,6 +1729,15 @@ export class HardwareModule extends BaseModule {
   }
 
   private getPrinterTypeForJob(job: any): PrinterType {
+    if (job.printerId) {
+      const localPrinter = localPrinterRepo.getById(job.printerId);
+      if (localPrinter?.printer_type) return localPrinter.printer_type as PrinterType;
+
+      const config = getConfig();
+      for (const [pt, pc] of Object.entries(config.printers || {})) {
+        if (pc?.serverPrinterId === job.printerId) return pt as PrinterType;
+      }
+    }
     if (job.printerType) return job.printerType;
     if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE) return PrinterType.LABEL;
     return PrinterType.RECEIPT;
@@ -1606,7 +1754,7 @@ export class HardwareModule extends BaseModule {
     // Receipts and invoices printed on a POSNET fiscal printer are fiscal
     if (
       (job.jobType === PrintJobType.RECEIPT || job.jobType === PrintJobType.INVOICE) &&
-      this.getPrinterForType(this.getPrinterTypeForJob(job)) instanceof PosnetDriver
+      this.getPrinterForJob(job) instanceof PosnetDriver
     ) {
       return true;
     }
@@ -1618,43 +1766,46 @@ export class HardwareModule extends BaseModule {
    *
    * Fiscal jobs (POSNET receipts/invoices, Z-reports) use a strict retry policy:
    * - Fixed 2s delay between retries (no exponential backoff)
-   * - On final failure: status = 'BLOCKED' so the POS UI can prevent the sale
+   * - On final failure: status = 'FAILED' with a fiscal error message so the POS UI can prevent the sale
    *
    * Non-fiscal jobs use the standard retry with a 'FAILED' status on exhaustion.
    */
   private async handlePrintJob(job: any): Promise<void> {
-    const printerType = this.getPrinterTypeForJob(job);
+    const { printerType, config: printerConfig } = this.getPrinterConfigForJob(job);
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     const fiscal = this.isFiscalJob(job);
 
     for (let attempt = 0; attempt <= PRINT_JOB_MAX_RETRIES; attempt++) {
-      const targetPrinter = this.getPrinterForType(printerType);
+      const targetPrinter = this.getPrinterForJob(job);
 
       if (!targetPrinter?.isConnected()) {
         if (attempt < PRINT_JOB_MAX_RETRIES) {
           logger.warn(`[HardwareModule] Job ${job.jobId}: printer ${printerType} not connected, retry ${attempt + 1}/${PRINT_JOB_MAX_RETRIES} in ${PRINT_JOB_RETRY_DELAY}ms...`);
-          socket?.sendJobStatus(job.jobId, 'RETRYING', `Printer not connected, retry ${attempt + 1}/${PRINT_JOB_MAX_RETRIES}`);
           await new Promise(r => setTimeout(r, PRINT_JOB_RETRY_DELAY));
           await this.runHealthCheck();
           continue;
         }
-        const failStatus = fiscal ? 'BLOCKED' : 'FAILED';
         const failMsg = fiscal
           ? `FISCAL PRINTER ${printerType} NOT CONNECTED — sale must be blocked`
           : `Printer ${printerType} not connected`;
         logger.error(`[HardwareModule] Job ${job.jobId}: ${failMsg}`);
-        socket?.sendJobStatus(job.jobId, failStatus, failMsg);
+        socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
         return;
       }
 
       try {
         socket?.sendJobStatus(job.jobId, 'PRINTING');
         const isLabel = printerType === PrinterType.LABEL;
+        const isA4 = printerType === PrinterType.A4;
         const isReport = [PrintJobType.DAILY_REPORT, PrintJobType.X_REPORT, PrintJobType.Z_REPORT].includes(job.jobType);
 
         if (isLabel) {
           if (targetPrinter instanceof ZebraDriver) await targetPrinter.printLabel(job.payload as LabelData);
           else throw new Error('Label printing requires Zebra printer');
+        } else if (isA4) {
+          const printerName = printerConfig?.windowsPrinter;
+          if (!printerName) throw new Error('A4 printing requires a Windows printer name');
+          await this.printA4Document(job.payload as DocumentData, printerName);
         } else if (isReport) {
           if (targetPrinter instanceof ThermalDriver) {
             const rd = job.payload as DailyReportData;
@@ -1667,6 +1818,7 @@ export class HardwareModule extends BaseModule {
         }
 
         socket?.sendJobStatus(job.jobId, 'COMPLETED');
+        if (job.printerId) localPrinterRepo.markUsed(job.printerId);
         return; // success — exit retry loop
       } catch (error: any) {
         logger.error(`[HardwareModule] Job ${job.jobId} attempt ${attempt + 1} failed:`, error);
@@ -1675,11 +1827,71 @@ export class HardwareModule extends BaseModule {
           logger.info(`[HardwareModule] Retrying in ${PRINT_JOB_RETRY_DELAY}ms...`);
           await new Promise(r => setTimeout(r, PRINT_JOB_RETRY_DELAY));
         } else {
-          const failStatus = fiscal ? 'BLOCKED' : 'FAILED';
           const failMsg = fiscal
             ? `FISCAL PRINT FAILED — sale must be blocked: ${error.message}`
             : error.message;
-          socket?.sendJobStatus(job.jobId, failStatus, failMsg);
+          socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+        }
+      }
+    }
+  }
+
+  private async printA4Document(data: DocumentData | any, printerName: string): Promise<void> {
+    const fs = require('fs') as typeof import('fs');
+    const os = require('os') as typeof import('os');
+    const path = require('path') as typeof import('path');
+    const { pathToFileURL } = require('url') as typeof import('url');
+
+    const win = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    let tempPath: string | null = null;
+    try {
+      if (data?.type === 'PDF' && data.data) {
+        tempPath = path.join(os.tmpdir(), `zira_a4_${Date.now()}.pdf`);
+        fs.writeFileSync(tempPath, Buffer.from(String(data.data), 'base64'));
+        await win.loadURL(pathToFileURL(tempPath).toString());
+      } else {
+        const content = data?.content || data?.title || JSON.stringify(data, null, 2);
+        const html = /<\/?[a-z][\s\S]*>/i.test(content)
+          ? content
+          : `<pre style="font-family:Arial,sans-serif;white-space:pre-wrap;font-size:12pt">${String(content)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')}</pre>`;
+        await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        win.webContents.print(
+          {
+            silent: true,
+            deviceName: printerName,
+            printBackground: true,
+          },
+          (success, failureReason) => {
+            if (success) resolve();
+            else reject(new Error(failureReason || `Failed to print A4 document on ${printerName}`));
+          },
+        );
+      });
+    } finally {
+      try {
+        if (!win.isDestroyed()) win.close();
+      } catch {
+        /* ignore */
+      }
+      if (tempPath) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch {
+          /* ignore */
         }
       }
     }

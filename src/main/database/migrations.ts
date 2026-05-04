@@ -992,4 +992,37 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_pos_staff_user_id ON pos_staff(user_id);
     `,
   },
+  {
+    version: 25,
+    name: 'local_printers',
+    up: `
+      -- Mirror of eNail print_agent_printers. The id is the canonical
+      -- backend printer UUID, cached locally so print jobs can route by
+      -- printerId even when multiple local printers share one printer_type.
+      CREATE TABLE IF NOT EXISTS local_printers (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT,
+        printer_type TEXT,
+        display_name TEXT,
+        name TEXT,
+        protocol TEXT NOT NULL DEFAULT 'WINDOWS',
+        windows_printer_name TEXT,
+        address TEXT,
+        port TEXT,
+        baud_rate INTEGER DEFAULT 9600,
+        paper_width INTEGER DEFAULT 80,
+        chars_per_line INTEGER DEFAULT 48,
+        supports_cut INTEGER DEFAULT 1,
+        supports_cash_drawer INTEGER DEFAULT 0,
+        is_enabled INTEGER DEFAULT 0,
+        is_online INTEGER DEFAULT 0,
+        last_seen_at TEXT,
+        last_used_at TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_printers_agent ON local_printers(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_local_printers_type ON local_printers(printer_type);
+      CREATE INDEX IF NOT EXISTS idx_local_printers_enabled ON local_printers(is_enabled);
+    `,
+  },
 ];

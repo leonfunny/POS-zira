@@ -236,6 +236,8 @@ class Database {
       'local_sync_log',
       'sync_conflicts',
       'sync_state',
+      // Local device mirrors
+      'local_printers',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

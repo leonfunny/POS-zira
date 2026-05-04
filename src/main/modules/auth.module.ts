@@ -27,6 +27,7 @@ import {
   clearSecureTokens,
 } from '../config/store';
 import { database } from '../database/database';
+import { listWindowsPrintersDetailed } from '../hardware/port-utils';
 import logger from '../logger';
 
 /** Simple in-memory rate limiter */
@@ -430,7 +431,7 @@ export class AuthModule extends BaseModule {
 
     const apiKey = getSecureApiKey();
     if (apiKey?.startsWith('pa_')) {
-      await socket.connectWithApiKey(config.serverUrl, apiKey);
+      await this.connectWithApiKey(apiKey);
     } else {
       const machineId = config.machineId || '';
       await socket.connect(config.serverUrl, machineId, apiKey || '');
@@ -447,19 +448,54 @@ export class AuthModule extends BaseModule {
     // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug
     try {
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-      await client.connectWithApiKey(apiKey);
+      const response = await client.connectWithApiKey(apiKey);
+      if (this.eventBus) {
+        const changedKeys = ['apiKey', 'agentId', 'salonId', 'salonName', 'salonSlug', 'salonCode', 'serverUrl', 'isPaired'];
+        if (response.printers?.length) changedKeys.push('printers', 'multiPrinterMode');
+        this.eventBus.emit('config:changed', { changedKeys });
+      }
+      await this.syncWindowsPrintersWithBackend(apiKey);
     } catch (err: any) {
       logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
       setConfig({ isPaired: true });
     }
 
-    await socket.connectWithApiKey(config.serverUrl || 'https://api.enail.pro', apiKey);
+    const latestConfig = getConfig();
+    await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey);
+  }
+
+  private async syncWindowsPrintersWithBackend(apiKey?: string): Promise<void> {
+    if (process.platform !== 'win32') {
+      logger.debug('[AuthModule] Skipping Windows printer sync on non-Windows platform');
+      return;
+    }
+
+    const key = apiKey || getSecureApiKey();
+    if (!key?.startsWith('pa_')) return;
+
+    try {
+      const config = getConfig();
+      const printers = await listWindowsPrintersDetailed();
+      const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+      const result = await client.syncWindowsPrinters(
+        key,
+        printers.map((printer) => ({ name: printer.name, isDefault: !!printer.isDefault })),
+      );
+      logger.info(`[AuthModule] Synced ${result.count} Windows printer(s) to backend`);
+    } catch (err: any) {
+      logger.warn('[AuthModule] Windows printer sync failed:', err?.message);
+    }
   }
 
   getToolDefinitions(): ToolDefinition[] { return []; }
 
   registerEventHandlers(bus: EventBus): void {
     this.eventBus = bus;
+    bus.on('socket:connected', () => {
+      void this.syncWindowsPrintersWithBackend().catch((err: any) => {
+        logger.debug('[AuthModule] Windows printer sync on socket connect failed:', err?.message);
+      });
+    });
   }
 
   async start(): Promise<void> {

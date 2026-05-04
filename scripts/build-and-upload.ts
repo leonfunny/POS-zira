@@ -84,9 +84,15 @@ async function main() {
 
     // electron-builder generates files like "Zira AI Setup 1.0.1.exe"
     const files = fs.readdirSync(releaseDir);
-    const installerFile = files.find(
-      (f) => f.endsWith('.exe') && (f.includes('Setup') || f.includes('setup'))
-    );
+    const installerFiles = files
+      .filter((f) => f.endsWith('.exe') && (f.includes('Setup') || f.includes('setup')))
+      .sort((a, b) => {
+        const aVersionMatch = a.includes(version) ? 1 : 0;
+        const bVersionMatch = b.includes(version) ? 1 : 0;
+        if (aVersionMatch !== bVersionMatch) return bVersionMatch - aVersionMatch;
+        return fs.statSync(path.join(releaseDir, b)).mtimeMs - fs.statSync(path.join(releaseDir, a)).mtimeMs;
+      });
+    const installerFile = installerFiles[0];
 
     if (!installerFile) {
       console.error('ERROR: No installer file found in release/ directory');
@@ -162,6 +168,10 @@ async function main() {
       yamlContent = yamlContent.replace(
         /url: .+\.exe/,
         `url: ${versionedFilename}`
+      );
+      yamlContent = yamlContent.replace(
+        /path: .+\.exe/,
+        `path: ${versionedFilename}`
       );
 
       await s3Client.send(

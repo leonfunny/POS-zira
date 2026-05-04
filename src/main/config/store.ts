@@ -41,6 +41,8 @@ const printerConfigSchema = {
   properties: {
     enabled: { type: 'boolean', default: false },
     protocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
+    serverPrinterId: { type: 'string' },
+    displayName: { type: 'string' },
     port: { type: 'string' },
     baudRate: { type: 'number', default: 9600 },
     windowsPrinter: { type: 'string' },
@@ -60,6 +62,7 @@ const printersConfigSchema = {
   type: 'object',
   properties: {
     RECEIPT: printerConfigSchema,
+    FISCAL: printerConfigSchema,
     LABEL: printerConfigSchema,
     A4: printerConfigSchema,
     TICKET: printerConfigSchema,
