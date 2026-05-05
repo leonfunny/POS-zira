@@ -862,8 +862,19 @@ export class HardwareModule extends BaseModule {
       // STEP 5 + 6 — send and verify are combined inside printTest() because
       // the driver throws on verify failure. We report them as two entries so
       // the UI lines up with the documented 6-step flow.
+      // Pass salon/seller info so the test page renders the same header
+      // a real receipt would — a misconfigured NIP shows up here before
+      // the first sale instead of on a customer's paragon.
       const sendOk = await this.runStep(steps, 'send', async () => {
-        await driver.printTest();
+        if (typeof (driver as any).printTest === 'function' && driver instanceof ThermalDriver) {
+          await (driver as ThermalDriver).printTest({
+            salonName: (getConfigValue('salonName') as string | undefined),
+            sellerName: (getConfigValue('receiptSellerName') as string | undefined),
+            sellerNip: (getConfigValue('receiptSellerNip') as string | undefined),
+          });
+        } else {
+          await driver.printTest();
+        }
         return { detail: 'Bytes written to printer' };
       });
       if (!sendOk) return result;

@@ -702,7 +702,7 @@ export class ThermalDriver {
    *   any Windows-installed printer (A4 laser, inkjet, multi-function), which
    *   would otherwise interpret ESC/POS bytes as garbage.
    */
-  async printTest(): Promise<void> {
+  async printTest(opts?: { salonName?: string; sellerName?: string; sellerNip?: string }): Promise<void> {
     if (!this.connected) {
       throw new Error('Printer not connected');
     }
@@ -737,7 +737,12 @@ export class ThermalDriver {
     }
 
     const modelInfo = this.identifyModel();
-    const testData = this.formatter.formatTestPage({ modelName: modelInfo.modelName });
+    const testData = this.formatter.formatTestPage({
+      modelInfo: { modelName: modelInfo.modelName },
+      salonName: opts?.salonName,
+      sellerName: opts?.sellerName,
+      sellerNip: opts?.sellerNip,
+    });
     await this.printRaw(testData);
 
     // Post-flight: USB spooler jobs may stick if the printer is off/offline —

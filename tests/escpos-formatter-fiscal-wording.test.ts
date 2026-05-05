@@ -128,6 +128,55 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
     });
   });
 
+  describe('G3 / test print uses formatDatePl (not toLocaleString) and shows salon header', () => {
+    it('formatTestPage date matches DD.MM.YYYY  HH:MM, never the slash-separated locale format', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatTestPage({ modelInfo: { modelName: 'Xprinter XP-80T' } });
+      const out = bufferToString(buf);
+      // Wiki rule: "Never use locale-dependent formatting
+      // (toLocaleString) - results vary by machine". Assert the
+      // structural date format that formatDatePl emits.
+      expect(out).toMatch(/\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}/);
+      // Defensive: a US-locale `M/D/YYYY` from toLocaleString would
+      // collide with the line below. The fix replaces toLocaleString
+      // with formatDatePl entirely.
+      expect(out).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+    });
+
+    it('formatTestPage prints printer profile (paper width / chars / charset / cut)', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatTestPage({ modelInfo: { modelName: 'Xprinter XP-80T' } });
+      const out = bufferToString(buf);
+      expect(out).toContain('Xprinter XP-80T');
+      expect(out).toContain('80mm / 48 chars');
+      expect(out).toMatch(/charset:\s*utf8/);
+      expect(out).toMatch(/cut:\s*partial/);
+    });
+
+    it('formatTestPage includes salon header when opts.salonName/sellerName/sellerNip are passed', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatTestPage({
+        salonName: 'Chè Sài Gòn',
+        sellerName: 'Chè Sài Gòn Sp. z o.o.',
+        sellerNip: '5220052349',
+      });
+      const out = bufferToString(buf);
+      expect(out).toContain('Chè Sài Gòn');
+      expect(out).toContain('Chè Sài Gòn Sp. z o.o.');
+      expect(out).toContain('NIP: 5220052349');
+    });
+
+    it('formatTestPage works header-less when salon info is missing (legacy callsite)', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatTestPage({ modelInfo: { modelName: 'Generic 58mm' } });
+      const out = bufferToString(buf);
+      // Still emits diagnostic block — header is just absent.
+      expect(out).toContain('Generic 58mm');
+      expect(out).toContain('80mm / 48 chars');
+      expect(out).not.toContain('NIP:');
+    });
+  });
+
   describe('G5 / refund must reference original order WITH date (z dnia DD.MM.YYYY)', () => {
     it('formatReceipt refund banner includes "z dnia DD.MM.YYYY" when originalDate is present', () => {
       const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });

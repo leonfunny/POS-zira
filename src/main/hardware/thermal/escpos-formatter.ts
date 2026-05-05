@@ -324,25 +324,54 @@ export class EscPosFormatter {
   }
 
   /**
-   * Format test page. Model info (if provided) is printed on the receipt so
-   * users can visually verify auto-identification matches their hardware.
+   * Format a diagnostic test page. Receipt-style so the cashier can
+   * verify the printer profile (paper width, char count, charset, cut
+   * mode) AND the seller/salon header that real receipts will use —
+   * catches a mis-configured seller block before the first live sale.
+   *
+   * Date uses formatDatePl (not toLocaleString) per the wiki rule
+   * "Never use locale-dependent formatting (toLocaleString) — results
+   * vary by machine".
+   *
+   * `modelInfo`, `salonName`, `sellerNip` are all optional so the
+   * legacy callsites that don't have config access still emit a
+   * useful (if header-less) test page.
    */
-  formatTestPage(modelInfo?: { modelName?: string; firmwareVersion?: string }): Buffer {
+  formatTestPage(opts?: {
+    modelInfo?: { modelName?: string; firmwareVersion?: string };
+    salonName?: string;
+    sellerName?: string;
+    sellerNip?: string;
+  }): Buffer {
     const parts: Buffer[] = [];
 
     parts.push(ESCPOS.INIT);
     parts.push(ESCPOS.ALIGN_CENTER);
+
+    // Salon / seller header — same shape as a real receipt so a
+    // misconfigured NIP / name shows up here before the first sale.
+    if (opts?.salonName) {
+      parts.push(ESCPOS.DOUBLE_SIZE_ON);
+      parts.push(this.text(opts.salonName));
+      parts.push(ESCPOS.NORMAL_SIZE);
+    }
+    if (opts?.sellerName) parts.push(this.text(opts.sellerName));
+    if (opts?.sellerNip) parts.push(this.text(`NIP: ${opts.sellerNip}`));
+    if (opts?.salonName || opts?.sellerName || opts?.sellerNip) {
+      parts.push(this.text(''));
+    }
+
     parts.push(ESCPOS.BOLD_ON);
-    parts.push(this.text('Zira AI'));
+    parts.push(this.text('Zira AI - Test Print'));
     parts.push(ESCPOS.BOLD_OFF);
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
-    if (modelInfo?.modelName) {
-      parts.push(this.text(modelInfo.modelName));
-      if (modelInfo.firmwareVersion) parts.push(this.text(`fw ${modelInfo.firmwareVersion}`));
+    if (opts?.modelInfo?.modelName) {
+      parts.push(this.text(opts.modelInfo.modelName));
+      if (opts.modelInfo.firmwareVersion) parts.push(this.text(`fw ${opts.modelInfo.firmwareVersion}`));
     }
     parts.push(this.text(`${this.paperWidth}mm / ${this.charsPerLine} chars`));
     parts.push(this.text(`charset: ${this.charset}  cut: ${this.cutMode}`));
-    parts.push(this.text(new Date().toLocaleString()));
+    parts.push(this.text(this.formatDatePl(new Date())));
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
     parts.push(this.text('OK'));
 
