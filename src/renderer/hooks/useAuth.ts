@@ -30,6 +30,19 @@ export function useAuth() {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
+  // Drop to AuthScreen the moment the main process tells us the
+  // session is dead (refreshAccessToken rejected by backend). Without
+  // this we'd only learn on the next AUTH_GET_USER poll, which doesn't
+  // run during a session.
+  useEffect(() => {
+    const unsub = window.electronAPI.auth.onExpired(() => {
+      rlog.warn('[useAuth] Received auth:expired from main — dropping to AuthScreen');
+      setIsAuthenticated(false);
+      setUser(null);
+    });
+    return unsub;
+  }, []);
+
   const loginWithEmail = useCallback(async (email: string, password: string) => {
     const result = await window.electronAPI.auth.loginWithEmail(email, password);
     if (result.success && result.data?.user) {

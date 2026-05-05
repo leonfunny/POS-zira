@@ -20,6 +20,7 @@ import {
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
 import { ApiClient } from '../network/api-client';
+import { authEvents, AUTH_EXPIRED } from '../network/auth-refresh';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
   setSecureAuthToken, getSecureAuthToken, setSecureApiKey, getSecureApiKey,
@@ -66,6 +67,18 @@ export class AuthModule extends BaseModule {
   }
 
   async init(): Promise<void> {
+    // Subscribe to auth-expired emitted by the refresh helper. When
+    // refreshAccessToken returns refresh-rejected, the user-session
+    // is unrecoverable and we forward the signal to the renderer so
+    // useAuth can drop straight to AuthScreen without waiting for the
+    // next IPC poll cycle.
+    authEvents.on(AUTH_EXPIRED, () => {
+      const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('auth:expired');
+      }
+    });
+
     logger.info('[AuthModule] Initialized');
     this.setState(ModuleState.READY);
   }

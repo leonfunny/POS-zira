@@ -246,6 +246,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getUser: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_USER),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT),
     loginWithEmail: (email: string, password: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGIN_EMAIL, email, password),
+    // Fired by main when refreshAccessToken returns refresh-rejected.
+    // Subscribers (useAuth) drop the renderer state to AuthScreen.
+    onExpired: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('auth:expired', listener);
+      return () => ipcRenderer.removeListener('auth:expired', listener);
+    },
   },
 
   // Window management

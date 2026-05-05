@@ -332,6 +332,7 @@ interface ElectronAPI {
     getUser: () => Promise<{ success: boolean; data?: { isAuthenticated: boolean; user?: AuthUser }; error?: string }>;
     logout: () => Promise<{ success: boolean }>;
     loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; data?: { user: AuthUser }; error?: string }>;
+    onExpired: (callback: () => void) => () => void;
   };
 
   // Window management
