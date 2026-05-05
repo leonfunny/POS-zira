@@ -1684,16 +1684,32 @@ export class HardwareModule extends BaseModule {
     }
     const tOpts = { charset: config.charset, cutMode: config.cutMode };
     if (config.protocol === 'WINDOWS') {
-      // Regular Windows printers (A4, inkjet, laser): use ThermalDriver in
-      // windowsTextMode so printTest sends plain text via Out-Printer instead
-      // of ESC/POS bytes (which would print as garbage on a laser printer).
+      // protocol=WINDOWS covers two very different devices behind the same
+      // Windows-spooler API: real ESC/POS thermal receipt printers (Xprinter,
+      // Epson TM-Tx, Star, Bixolon, …) AND office printers (A4 laser /
+      // inkjet). The two need opposite output paths:
+      //   - thermal → raw ESC/POS bytes via WritePrinter (printTest uses
+      //     formatTestPage). Going through Out-Printer text instead makes the
+      //     spooler render with the driver's default page size (often A4) →
+      //     test print comes out misaligned even though receipt printing,
+      //     which always uses raw ESC/POS, prints fine.
+      //   - office → plain text via Out-Printer (printTest uses
+      //     printTestWindowsText). Sending ESC/POS bytes would print as
+      //     garbage.
+      // Auto-detect by paperWidth: 58/76/80mm = thermal POS receipt; A4 =
+      // 210mm, Letter = 216mm. There is no real-world thermal receipt above
+      // 80mm and no office paper at or below it, so this discriminates
+      // cleanly and survives the user swapping printers without re-toggling
+      // a flag they don't see in the UI.
+      const paperWidth = config.paperWidth || 80;
+      const windowsTextMode = paperWidth > 80;
       if (config.windowsPrinter) return new ThermalDriver(
         config.windowsPrinter,
         config.baudRate || 9600,
         'USB',
-        config.paperWidth || 80,
+        paperWidth,
         config.charsPerLine || 48,
-        true,  // windowsTextMode — A4/laser path
+        windowsTextMode,
         tOpts,
       );
       return null;
