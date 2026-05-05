@@ -158,7 +158,9 @@ export class EscPosFormatter {
       parts.push(ESCPOS.BOLD_ON);
       parts.push(this.text('*** ZWROT / REFUND ***'));
       parts.push(ESCPOS.BOLD_OFF);
-      if (data.originalOrderNumber) parts.push(this.text(`Oryginal: #${data.originalOrderNumber}`));
+      if (data.originalOrderNumber) {
+        parts.push(this.text(this.formatOriginalRef(data.originalOrderNumber, data.originalDate)));
+      }
       if (data.refundReason) parts.push(this.text(`Powod: ${data.refundReason}`));
       parts.push(this.text(''));
     }
@@ -206,7 +208,7 @@ export class EscPosFormatter {
     const ptu = this.computePtuBreakdown(data.items);
     let totalVat = 0;
     for (const row of ptu) {
-      parts.push(this.formatLine(`Sprzedaz opodatkowana ${row.letter}`, this.formatMoney(row.gross)));
+      parts.push(this.formatLine(`${data.isRefund ? 'Zwrot opodatkowany' : 'Sprzedaz opodatkowana'} ${row.letter}`, this.formatMoney(row.gross)));
       const rateStr = row.rate >= 0 ? `${String(row.rate).padStart(2, ' ')}%` : 'ZW';
       parts.push(this.formatLine(`PTU ${row.letter}  ${rateStr}`, this.formatMoney(row.vat)));
       totalVat += row.vat;
@@ -363,7 +365,12 @@ export class EscPosFormatter {
     // Refund banner
     if (data.isRefund) {
       lines.push({ text: '*** ZWROT / REFUND ***', bold: true, center: true });
-      if (data.originalOrderNumber) lines.push({ text: `Oryginal: #${data.originalOrderNumber}`, center: true });
+      if (data.originalOrderNumber) {
+        lines.push({
+          text: this.formatOriginalRef(data.originalOrderNumber, data.originalDate),
+          center: true,
+        });
+      }
       if (data.refundReason) lines.push({ text: `Powod: ${data.refundReason}`, center: true });
       lines.push({ text: '' });
     }
@@ -406,7 +413,7 @@ export class EscPosFormatter {
     const ptu = this.computePtuBreakdown(data.items);
     let totalVat = 0;
     for (const row of ptu) {
-      lines.push(lr(`Sprzedaz opodatkowana ${row.letter}`, this.formatMoney(row.gross)));
+      lines.push(lr(`${data.isRefund ? 'Zwrot opodatkowany' : 'Sprzedaz opodatkowana'} ${row.letter}`, this.formatMoney(row.gross)));
       const rateStr = row.rate >= 0 ? `${String(row.rate).padStart(2, ' ')}%` : 'ZW';
       lines.push(lr(`PTU ${row.letter}  ${rateStr}`, this.formatMoney(row.vat)));
       totalVat += row.vat;
@@ -522,6 +529,24 @@ export class EscPosFormatter {
       TRANSFER: 'Przelew', BANK_TRANSFER: 'Przelew', P24: 'Przelewy24', INVOICE: 'Faktura',
     };
     return names[method.toUpperCase()] || method;
+  }
+
+  /**
+   * Refund-receipt original reference. Wiki rule
+   * (zira-polish-fiscal-compliance.md "Refund / Correction Receipt"):
+   * the receipt MUST point at the original sale by id AND date —
+   * "Oryginał: POS-… z dnia DD.MM.YYYY". When the original date is
+   * unavailable (older orders before this field was wired) we fall
+   * back to the bare order id rather than printing a misleading
+   * "today" date.
+   */
+  private formatOriginalRef(orderNumber: string, originalDate?: string): string {
+    if (!originalDate) return `Oryginal: #${orderNumber}`;
+    const parsed = new Date(
+      originalDate.includes('T') ? originalDate : originalDate.replace(' ', 'T') + 'Z',
+    );
+    if (isNaN(parsed.getTime())) return `Oryginal: #${orderNumber}`;
+    return `Oryginal: #${orderNumber} z dnia ${this.formatDatePl(parsed)}`;
   }
 
   private formatDatePl(date?: Date): string {

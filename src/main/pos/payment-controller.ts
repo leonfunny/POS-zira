@@ -303,6 +303,10 @@ export class PaymentController {
       isRefund: true,
       refundReason: order.refund_reason || undefined,
       originalOrderNumber: order.order_number || orderId.substring(0, 8),
+      // Wiki: refund receipt MUST cite "Oryginał: POS-… z dnia
+      // DD.MM.YYYY". order.created_at is the original sale timestamp;
+      // formatOriginalRef in the thermal formatter renders the date.
+      originalDate: order.created_at || undefined,
     };
 
     try {
