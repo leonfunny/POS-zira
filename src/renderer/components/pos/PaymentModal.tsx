@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { CartState, PosAction } from '../../hooks/usePosStore';
 import rlog from '../../utils/logger';
+import {
+  deriveReceiptOutcome,
+  decideCloseAction,
+  type PrintReceiptResponse,
+} from './receipt-outcome';
 
 interface PaymentModalProps {
   cart: CartState;
@@ -219,16 +224,13 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
     // failure before the modal closes (sale itself already completed
     // on the IPC above; reprint lives in Order History).
     setSavingLabel(t('test.printing') || 'Printing...');
-    let receiptPrinted = true;
+    let printResult: PrintReceiptResponse | undefined;
     try {
-      const [printResult] = await Promise.all([
+      const [pr] = await Promise.all([
         window.electronAPI.pos.payment.printReceipt(orderId).catch(
           (err: unknown) => {
             rlog.warn('[PaymentModal] Receipt print failed:', err);
-            return { success: false, receiptPrinted: false } as {
-              success?: boolean;
-              receiptPrinted?: boolean;
-            };
+            return { success: false, receiptPrinted: false } as PrintReceiptResponse;
           },
         ),
         hasCash
@@ -237,26 +239,21 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
             )
           : Promise.resolve(),
       ]);
-      receiptPrinted = Boolean(
-        (printResult as { receiptPrinted?: boolean } | undefined)?.receiptPrinted,
-      );
+      printResult = pr as PrintReceiptResponse;
     } catch { /* errors already logged inside each call */ }
+
+    const outcome = deriveReceiptOutcome(printResult, t);
+    const closeAction = decideCloseAction(outcome);
 
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
 
-    if (!receiptPrinted) {
-      // Hold the modal open for ~4s so the cashier sees the inline
-      // warning — the sale itself succeeded; reprint flows through
-      // Order History (existing UI).
-      setPrintWarning(
-        t('pos.payment.receiptNotPrinted') ||
-          'Receipt not printed — reprint from Order History.',
-      );
+    if (closeAction.type === 'show-warning-then-close') {
+      setPrintWarning(closeAction.warning);
       setSavingLabel('');
       setTimeout(() => {
         if (onComplete) { onComplete(); } else { onClose(); }
-      }, 4000);
+      }, closeAction.delayMs);
       return;
     }
 
