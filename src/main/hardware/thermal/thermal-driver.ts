@@ -556,7 +556,12 @@ export class ThermalDriver {
    * regardless of printer codepage support.
    */
   private async renderTextToRaster(lines: Array<{ text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean }>): Promise<Buffer> {
-    const dotsWidth = this.paperWidth === 58 ? 384 : 576; // pixels at 203 DPI
+    // pixels at 203 DPI: 58mm→384, 76mm→432 (Epson TM-U220 / dot-matrix
+    // legacy), 80mm→576 standard. Default to 576 so paperWidth values
+    // outside this set still produce a reasonable raster (printer trims
+    // overflow rather than misaligns).
+    const dotsWidth =
+      this.paperWidth <= 58 ? 384 : this.paperWidth <= 76 ? 432 : 576;
     const bytesPerRow = dotsWidth / 8;
 
     // Escape text for PowerShell string literal

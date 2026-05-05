@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
@@ -1506,11 +1506,16 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                 value={printerConfig.paperWidth || 80}
                                 onChange={(e) => {
                                   const pw = parseInt(e.target.value);
-                                  updatePrinter(printerType, { paperWidth: pw, charsPerLine: pw === 80 ? 48 : 32 });
+                                  // Derive charsPerLine via the shared
+                                  // helper so adding a new width here
+                                  // (e.g. 76mm dot-matrix) updates char
+                                  // count consistently with the formatter.
+                                  updatePrinter(printerType, { paperWidth: pw, charsPerLine: charsPerLineFor(pw) });
                                 }}
                                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                               >
                                 <option value={80}>80mm</option>
+                                <option value={76}>76mm</option>
                                 <option value={58}>58mm</option>
                               </select>
                             </div>
