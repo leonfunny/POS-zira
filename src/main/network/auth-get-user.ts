@@ -24,6 +24,7 @@
  */
 
 import type { AuthUser } from '../../shared/types';
+import { AuthRefreshNetworkError } from './auth-refresh';
 
 export interface GetUserResult {
   success: true;
@@ -65,6 +66,20 @@ export async function resolveCurrentUser(deps: ResolveUserDeps): Promise<GetUser
     deps.onUserResolved(authUser);
     return { success: true, data: { isAuthenticated: true, user: authUser } };
   } catch (e: any) {
+    // Reviewer P1: AuthRefreshNetworkError must be checked BEFORE the
+    // /\b401\b/ regex. Otherwise a transient backend hiccup (5xx, 429,
+    // network) during refresh leaks the original 401 to this catch,
+    // misclassifies as auth-rejected, and force-logs-out the cashier.
+    // The api-client wrapper now throws this typed error specifically
+    // so the cached-user fallback can run.
+    if (e instanceof AuthRefreshNetworkError) {
+      const cached = deps.getCachedAuthUser();
+      if (cached?.id) {
+        return { success: true, data: { isAuthenticated: true, user: cached } };
+      }
+      return { success: true, data: { isAuthenticated: false } };
+    }
+
     const message = String(e?.message ?? e);
     const isAuthRejected = /\b401\b/.test(message);
 
@@ -73,11 +88,12 @@ export async function resolveCurrentUser(deps: ResolveUserDeps): Promise<GetUser
       return { success: true, data: { isAuthenticated: false } };
     }
 
-    // Network error path — backend offline, DNS blip, 5xx, timeout.
-    // Token might still be valid; do not wipe. If we have a cached
-    // profile from a prior successful login, return that so the
-    // cashier stays in POS instead of getting kicked back to AuthScreen
-    // by a transient outage.
+    // Generic network error — backend offline, DNS blip, 5xx, timeout
+    // OUTSIDE the refresh path (e.g. getMe failed before reaching the
+    // 401-retry). Token might still be valid; do not wipe. If we have
+    // a cached profile from a prior successful login, return that so
+    // the cashier stays in POS instead of getting kicked back to
+    // AuthScreen by a transient outage.
     const cached = deps.getCachedAuthUser();
     if (cached?.id) {
       return { success: true, data: { isAuthenticated: true, user: cached } };

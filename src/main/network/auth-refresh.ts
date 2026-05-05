@@ -35,6 +35,29 @@ export type RefreshResult =
   | { ok: true; accessToken: string }
   | { ok: false; reason: 'no-refresh-token' | 'refresh-rejected' | 'network' };
 
+/**
+ * Thrown by api-client.fetchWithTimeout when an access-token 401 is
+ * followed by a refresh-helper failure that cannot distinguish dead
+ * session from transient backend trouble (network blip, 5xx, 429,
+ * malformed response). Surfacing this as a plain "HTTP 401" error
+ * would let resolveCurrentUser misclassify a transient failure as
+ * auth-rejected and force a logout — exactly the regression the
+ * cached-user fallback path is supposed to prevent.
+ *
+ * resolveCurrentUser checks `instanceof AuthRefreshNetworkError`
+ * BEFORE the /\b401\b/ message regex so the typed error always wins.
+ *
+ * Message intentionally avoids any "401" substring so even a buggy
+ * future ordering of checks in some other caller cannot accidentally
+ * trip the auth-rejected path on this error.
+ */
+export class AuthRefreshNetworkError extends Error {
+  constructor(message: string = 'token refresh transiently failed') {
+    super(message);
+    this.name = 'AuthRefreshNetworkError';
+  }
+}
+
 export const authEvents = new EventEmitter();
 
 /**

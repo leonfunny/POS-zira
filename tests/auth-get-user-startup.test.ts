@@ -23,6 +23,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveCurrentUser } from '../src/main/network/auth-get-user';
+import { AuthRefreshNetworkError } from '../src/main/network/auth-refresh';
 
 // Pre-built dep stubs the tests can override per-case. Defaults are
 // shaped so a passing call doesn't accidentally satisfy a failing one.
@@ -259,6 +260,73 @@ describe('resolveCurrentUser — network error WITHOUT cached profile', () => {
     // Critical: tokens must survive a transient first-install network
     // problem; the next online attempt should succeed without forcing
     // re-login.
+    expect(deps.onAuthRejected).not.toHaveBeenCalled();
+  });
+
+  // ─── Reviewer P1 regression: refresh-network must not become 401 ────
+  //
+  // Scenario: access token expired → getMe gets 401 → fetchWithTimeout
+  // calls refreshAccessToken → refresh hits network/429/5xx → wrapper
+  // throws AuthRefreshNetworkError instead of surfacing the original
+  // 401. resolveCurrentUser catches the typed error and falls back to
+  // cached user (NOT auth-rejected). Without this, a backend hiccup at
+  // app start logs the cashier out for the rest of the day.
+
+  it('AuthRefreshNetworkError + cached user → isAuthenticated:true with cached, NO clear', async () => {
+    const cached = {
+      id: 'cached-1', email: 'c@x', firstName: 'C',
+      lastName: '', role: 'OWNER', salonId: 's', salonName: 'S',
+    };
+    const deps = makeDeps({
+      getMe: vi.fn(async () => {
+        throw new AuthRefreshNetworkError(
+          'Backend unavailable during token refresh',
+        );
+      }),
+      getCachedAuthUser: vi.fn(() => cached),
+    });
+
+    const result = await resolveCurrentUser(deps);
+
+    expect(result.data.isAuthenticated).toBe(true);
+    expect(result.data.user).toEqual(cached);
+    // Critical — must NOT clear tokens for a refresh-network failure.
+    expect(deps.onAuthRejected).not.toHaveBeenCalled();
+  });
+
+  it('AuthRefreshNetworkError + no cached user → isAuthenticated:false but DOES NOT clear tokens', async () => {
+    const deps = makeDeps({
+      getMe: vi.fn(async () => {
+        throw new AuthRefreshNetworkError('Backend unavailable');
+      }),
+      getCachedAuthUser: vi.fn(() => undefined),
+    });
+    const result = await resolveCurrentUser(deps);
+    expect(result.data.isAuthenticated).toBe(false);
+    expect(deps.onAuthRejected).not.toHaveBeenCalled();
+  });
+
+  it('AuthRefreshNetworkError whose message happens to contain "401" must NOT trigger auth-rejected', async () => {
+    // Tripwire test for the exact bug pattern: if the typed-error
+    // check is ordered AFTER the /\b401\b/ regex, and the wrapper
+    // helpfully includes the original status in the error message
+    // (e.g. "Backend unavailable during refresh (status was 401)"),
+    // resolveCurrentUser would still hit the 401 path and clear tokens.
+    const deps = makeDeps({
+      getMe: vi.fn(async () => {
+        throw new AuthRefreshNetworkError(
+          'Backend unavailable during token refresh (initial status was 401)',
+        );
+      }),
+      getCachedAuthUser: vi.fn(() => ({
+        id: 'c', email: 'x', firstName: 'C', lastName: '',
+        role: 'OWNER', salonId: 's', salonName: 'S',
+      })),
+    });
+
+    const result = await resolveCurrentUser(deps);
+
+    expect(result.data.isAuthenticated).toBe(true);
     expect(deps.onAuthRejected).not.toHaveBeenCalled();
   });
 

@@ -12,7 +12,7 @@ import {
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
-import { refreshAccessToken } from './auth-refresh';
+import { refreshAccessToken, AuthRefreshNetworkError } from './auth-refresh';
 
 // Default timeout for API requests (30 seconds)
 const DEFAULT_TIMEOUT = 30000;
@@ -137,24 +137,39 @@ function isAuthEndpoint(url: string): boolean {
 function getBearerToken(options: RequestInit): string | null {
   const headers = options.headers;
   if (!headers) return null;
-  const auth =
-    (headers as Record<string, string>).Authorization ??
-    (headers as Record<string, string>).authorization;
-  if (typeof auth !== 'string') return null;
-  const match = auth.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] : null;
+  // HTTP headers are case-insensitive. Walk every key so callers using
+  // 'AUTHORIZATION', 'authorization', 'Authorization', or any mixed
+  // case all hit the refresh path. Without this, a lowercase or
+  // uppercase variant would be invisible to the wrapper and a 401
+  // would skip retry.
+  for (const [k, v] of Object.entries(headers as Record<string, string>)) {
+    if (k.toLowerCase() === 'authorization' && typeof v === 'string') {
+      const match = v.match(/^Bearer\s+(.+)$/i);
+      if (match) return match[1];
+    }
+  }
+  return null;
 }
 
 function withBearer(options: RequestInit, accessToken: string): RequestInit {
-  // Rebuild headers with the new token. Reviewer's claim 6: must
-  // overwrite, never accidentally retain the expired token.
-  return {
-    ...options,
-    headers: {
-      ...(options.headers as Record<string, string> | undefined),
-      Authorization: `Bearer ${accessToken}`,
-    },
-  };
+  // Rebuild headers with the new token. HTTP headers are
+  // case-insensitive but a JS object holds 'Authorization' and
+  // 'authorization' as DISTINCT keys. A naive spread + add of
+  // canonical 'Authorization' would leave an old lowercase variant
+  // riding along; undici / fetch may then send the stale token, or
+  // coalesce both with a comma. Strip every case variant first, then
+  // add the canonical header with the new token.
+  const cleaned: Record<string, string> = {};
+  if (options.headers) {
+    for (const [k, v] of Object.entries(
+      options.headers as Record<string, string>,
+    )) {
+      if (k.toLowerCase() === 'authorization') continue;
+      cleaned[k] = v;
+    }
+  }
+  cleaned.Authorization = `Bearer ${accessToken}`;
+  return { ...options, headers: cleaned };
 }
 
 async function rawFetchWithTimeout(
@@ -202,8 +217,19 @@ async function fetchWithTimeout(
 
   const refresh = await refreshAccessToken();
   if (!refresh.ok) {
+    if (refresh.reason === 'network') {
+      // Reviewer P1: a transient refresh failure (5xx, 429, network,
+      // malformed response) must NOT be seen by callers as a final
+      // 401. Otherwise resolveCurrentUser will hit its 401 path,
+      // call onAuthRejected, and clear the cashier's session because
+      // the backend was unreachable for a moment. Throw a typed
+      // error so the caller can distinguish "really expired" from
+      // "temporarily unverifiable" and fall back to cached state.
+      throw new AuthRefreshNetworkError();
+    }
     // refresh-rejected: helper already cleared tokens + emitted
-    // auth-expired. network: caller's existing 401 path runs.
+    // auth-expired. no-refresh-token: pre-C1 install, no recovery.
+    // Both are final-401 cases — surface to caller.
     return initial;
   }
 

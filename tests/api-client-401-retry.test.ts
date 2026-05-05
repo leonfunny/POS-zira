@@ -27,10 +27,24 @@ vi.mock('../src/main/logger', () => ({
 
 const refreshAccessTokenMock = vi.hoisted(() => vi.fn());
 
+// Hoist a shared error class so api-client's static import + the test's
+// dynamic import both see the same constructor identity (instanceof
+// must work across both).
+const { AuthRefreshNetworkErrorMock } = vi.hoisted(() => {
+  class AuthRefreshNetworkError extends Error {
+    constructor(message: string = 'token refresh transiently failed') {
+      super(message);
+      this.name = 'AuthRefreshNetworkError';
+    }
+  }
+  return { AuthRefreshNetworkErrorMock: AuthRefreshNetworkError };
+});
+
 vi.mock('../src/main/network/auth-refresh', () => ({
   refreshAccessToken: refreshAccessTokenMock,
   authEvents: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
   AUTH_EXPIRED: 'auth-expired',
+  AuthRefreshNetworkError: AuthRefreshNetworkErrorMock,
 }));
 
 import { fetchWithTimeoutForTests } from '../src/main/network/api-client';
@@ -231,19 +245,57 @@ describe('fetchWithTimeout — refresh failures', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns the original 401 when refresh hits network error', async () => {
+  it('THROWS AuthRefreshNetworkError when refresh hits network error (P1 fix)', async () => {
+    // Reviewer P1: surfacing the original 401 makes resolveCurrentUser
+    // misclassify a transient backend hiccup as auth-rejected → forced
+    // logout. The wrapper must throw a typed error instead so callers
+    // can distinguish "really expired" from "temporarily unverifiable".
+    const { AuthRefreshNetworkError } = await import(
+      '../src/main/network/auth-refresh'
+    );
     fetchMock.mockResolvedValueOnce(new Response('', { status: 401 }));
-    refreshAccessTokenMock.mockResolvedValueOnce({ ok: false, reason: 'network' });
-
-    const r = await fetchWithTimeoutForTests('https://api.test/v1/products', {
-      headers: { Authorization: 'Bearer old' },
+    refreshAccessTokenMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'network',
     });
 
-    expect(r.status).toBe(401);
+    await expect(
+      fetchWithTimeoutForTests('https://api.test/v1/products', {
+        headers: { Authorization: 'Bearer old' },
+      }),
+    ).rejects.toBeInstanceOf(AuthRefreshNetworkError);
+
+    // Only the original request fired. No retry on transient failure.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns the original 401 when no refresh token is stored', async () => {
+  it('AuthRefreshNetworkError message must NOT include "401" substring (regex tripwire)', async () => {
+    // resolveCurrentUser uses /\b401\b/ to detect auth-rejected. If
+    // the typed error's message helpfully says "(status was 401)",
+    // a buggy ordering of checks could re-trigger the auth-rejected
+    // path. Defence in depth: make the message regex-safe.
+    const { AuthRefreshNetworkError } = await import(
+      '../src/main/network/auth-refresh'
+    );
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 401 }));
+    refreshAccessTokenMock.mockResolvedValueOnce({ ok: false, reason: 'network' });
+
+    let captured: unknown;
+    try {
+      await fetchWithTimeoutForTests('https://api.test/v1/products', {
+        headers: { Authorization: 'Bearer old' },
+      });
+    } catch (e) {
+      captured = e;
+    }
+
+    expect(captured).toBeInstanceOf(AuthRefreshNetworkError);
+    expect(String((captured as Error).message)).not.toMatch(/\b401\b/);
+  });
+
+  it('returns the original 401 when no refresh token is stored (must re-login, not transient)', async () => {
+    // no-refresh-token: pre-C1 install, no recovery path. User MUST
+    // re-login. Surface 401 so resolveCurrentUser auth-rejects.
     fetchMock.mockResolvedValueOnce(new Response('', { status: 401 }));
     refreshAccessTokenMock.mockResolvedValueOnce({
       ok: false,
@@ -256,5 +308,60 @@ describe('fetchWithTimeout — refresh failures', () => {
 
     expect(r.status).toBe(401);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fetchWithTimeout — header case normalisation on retry (P2 fix)', () => {
+  // Reviewer P2: headers are case-insensitive but a JS object can hold
+  // BOTH 'authorization' and 'Authorization' as distinct keys. If the
+  // retry spreads the original options + adds canonical 'Authorization',
+  // the lowercase `authorization: Bearer old` still rides along; undici
+  // / fetch may use either or coalesce. Result: stale token leaks.
+  it('strips lowercase "authorization" before adding canonical "Authorization" with new token', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    refreshAccessTokenMock.mockResolvedValueOnce({
+      ok: true,
+      accessToken: 'fresh',
+    });
+
+    await fetchWithTimeoutForTests('https://api.test/v1/products', {
+      headers: { authorization: 'Bearer old' }, // lowercase input
+    });
+
+    const retryInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const retryHeaders = retryInit.headers as Record<string, string>;
+
+    // Canonical header carries the new token.
+    expect(retryHeaders.Authorization).toBe('Bearer fresh');
+    // Lowercase variant of the OLD token must NOT survive.
+    expect(retryHeaders.authorization).toBeUndefined();
+    // Extra paranoia: scan ALL header keys case-insensitively for any
+    // remnant carrying the OLD token.
+    for (const [k, v] of Object.entries(retryHeaders)) {
+      if (k.toLowerCase() === 'authorization') {
+        expect(v).toBe('Bearer fresh');
+      }
+    }
+  });
+
+  it('also strips MixedCase "AUTHORIZATION" / "Authorization" duplicates', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    refreshAccessTokenMock.mockResolvedValueOnce({
+      ok: true,
+      accessToken: 'fresh',
+    });
+
+    await fetchWithTimeoutForTests('https://api.test/v1/products', {
+      headers: { AUTHORIZATION: 'Bearer old', 'X-Salon': 'cs' },
+    } as any);
+
+    const retryHeaders = fetchMock.mock.calls[1][1].headers as Record<string, string>;
+    expect(retryHeaders.Authorization).toBe('Bearer fresh');
+    expect(retryHeaders.AUTHORIZATION).toBeUndefined();
+    expect(retryHeaders['X-Salon']).toBe('cs'); // unrelated header preserved
   });
 });
