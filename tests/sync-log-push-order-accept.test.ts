@@ -229,4 +229,128 @@ describe('SyncLogService.pushToServer — order/created accept marks local order
     expect(orderUpdate, 'must not UPDATE orders on rejection').toBeUndefined();
   });
 
+  // ─── DUPLICATE handling for crash-recovery resends ───────────────
+  // Crash recovery (revertPushingToPending) can resend a source_tx
+  // after the server already accepted it. The server rejects with
+  // code='DUPLICATE'. If we treat that as a normal rejection, the
+  // local orders row stays synced=0 / backend_id=NULL forever and
+  // the refund gate (!order.backend_id) blocks the cashier from
+  // refunding a sale the backend has. Treat DUPLICATE on
+  // order/created as accepted-idempotent.
+
+  it('treats DUPLICATE on order/created as accepted: marks accepted + mirrors orders row', async () => {
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [
+        {
+          source_tx: 'tx-uuid-1',
+          accepted: false,
+          code: 'DUPLICATE',
+          detail: 'source_tx already accepted as seq=42',
+          seq: 42,
+        },
+      ],
+    } as any);
+
+    const service = new SyncLogService();
+    const result = await service.pushToServer();
+
+    expect(result.accepted).toBe(1);
+    expect(result.rejected).toBe(0);
+    expect(syncLogRepo.markAccepted).toHaveBeenCalledWith(99, 42);
+    expect(syncLogRepo.markRejected).not.toHaveBeenCalled();
+    expect(syncLogRepo.insertConflict).not.toHaveBeenCalled();
+
+    const calls = vi.mocked(database.run).mock.calls;
+    const orderUpdate = calls.find(
+      (c) =>
+        typeof c[0] === 'string' &&
+        /UPDATE\s+orders\s+SET/i.test(c[0]) &&
+        /synced\s*=\s*1/i.test(c[0]),
+    );
+    expect(
+      orderUpdate,
+      'DUPLICATE on order/created must still mirror orders row',
+    ).toBeDefined();
+    const params = orderUpdate![1] as unknown[];
+    expect(params[params.length - 1]).toBe('order-1');
+  });
+
+  it('handles DUPLICATE without a seq (server returns no original seq): markAccepted with 0', async () => {
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [
+        {
+          source_tx: 'tx-uuid-1',
+          accepted: false,
+          code: 'DUPLICATE',
+        },
+      ],
+    } as any);
+
+    const service = new SyncLogService();
+    const result = await service.pushToServer();
+
+    expect(result.accepted).toBe(1);
+    expect(syncLogRepo.markAccepted).toHaveBeenCalledWith(99, 0);
+
+    const calls = vi.mocked(database.run).mock.calls;
+    const orderUpdate = calls.find(
+      (c) =>
+        typeof c[0] === 'string' &&
+        /UPDATE\s+orders\s+SET/i.test(c[0]) &&
+        /synced/i.test(c[0]),
+    );
+    expect(orderUpdate).toBeDefined();
+  });
+
+  it('still rejects DUPLICATE on non-order entries (e.g. product) — no idempotent free pass', async () => {
+    vi.mocked(syncLogRepo.getPending)
+      .mockReset()
+      .mockReturnValueOnce([
+        makePendingOrderEntry({
+          entity_type: 'product',
+          entity_id: 'product-1',
+        }),
+      ])
+      .mockReturnValue([]);
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [
+        {
+          source_tx: 'tx-uuid-1',
+          accepted: false,
+          code: 'DUPLICATE',
+        },
+      ],
+    } as any);
+
+    const service = new SyncLogService();
+    const result = await service.pushToServer();
+
+    expect(result.rejected).toBe(1);
+    expect(result.accepted).toBe(0);
+    expect(syncLogRepo.markRejected).toHaveBeenCalledWith(
+      99,
+      'DUPLICATE',
+      '',
+    );
+  });
+
+  it('still rejects DUPLICATE on order/updated (only created is idempotent-safe)', async () => {
+    vi.mocked(syncLogRepo.getPending)
+      .mockReset()
+      .mockReturnValueOnce([
+        makePendingOrderEntry({ event: 'updated' }),
+      ])
+      .mockReturnValue([]);
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [
+        { source_tx: 'tx-uuid-1', accepted: false, code: 'DUPLICATE' },
+      ],
+    } as any);
+
+    const service = new SyncLogService();
+    const result = await service.pushToServer();
+
+    expect(result.rejected).toBe(1);
+    expect(result.accepted).toBe(0);
+  });
 });

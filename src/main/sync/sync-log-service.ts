@@ -295,8 +295,25 @@ export class SyncLogService {
             const entry = pending.find(e => e.source_tx === r.source_tx);
             if (!entry) continue;
 
-            if (r.accepted) {
-              syncLogRepo.markAccepted(entry.id, r.seq!);
+            const isOrderCreated =
+              entry.entity_type === 'order' && entry.event === 'created';
+
+            // DUPLICATE on order/created means the server already has this
+            // exact source_tx — the order DID land on the backend (just on
+            // a previous push that the client retried after a crash). If
+            // we mark it rejected, the local `orders` row stays synced=0
+            // / backend_id=NULL forever and the refund gate
+            // (!order.backend_id) blocks the cashier from refunding a
+            // sale the backend considers complete. Treat it as accepted
+            // / idempotent and run the same orders-row mirror as a fresh
+            // accept.
+            const treatAsAccepted =
+              r.accepted || (r.code === 'DUPLICATE' && isOrderCreated);
+
+            if (treatAsAccepted) {
+              // r.seq may be missing on DUPLICATE responses — fall back
+              // to 0 so the row leaves the pending queue.
+              syncLogRepo.markAccepted(entry.id, r.seq ?? 0);
               totalAccepted++;
 
               // Path A parity: when the server accepts an order/created
@@ -310,10 +327,7 @@ export class SyncLogService {
               // orderId) — otherwise fall back to the local entry's
               // entity_id, which is the same UUID the client
               // generated.
-              if (
-                entry.entity_type === 'order' &&
-                entry.event === 'created'
-              ) {
+              if (isOrderCreated) {
                 const ra = r as Record<string, unknown>;
                 const backendId =
                   (typeof ra.entity_id === 'string' && ra.entity_id) ||
