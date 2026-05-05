@@ -245,4 +245,81 @@ describe('applyOrder refund normalisation', () => {
     const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
     expect(refundUpdate).toBeUndefined();
   });
+
+  // ─── Bug 2 regression: derive local status from refundAmount/total ─
+  // Backend can ship a refunded order with status='DELIVERED' and
+  // refundAmount > 0. OrderHistory's getRefundStatus() reads
+  // order.status only, so without deriving here, the cashier can
+  // attempt a second refund on a fully-refunded sale.
+
+  it('derives REFUNDED into local status when status=DELIVERED + refundAmount fully covers total', () => {
+    applyEntry(
+      entry({
+        status: 'DELIVERED',
+        total: '12.34',
+        refundAmount: '12.34',
+        refundReason: 'full refund',
+      }),
+    );
+    const statusUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+    expect(
+      statusUpdates.length,
+      'expected at least one local status mirror',
+    ).toBeGreaterThan(0);
+    // The derived status write is the last status mutation to run.
+    const last = statusUpdates[statusUpdates.length - 1];
+    expect((last[1] as unknown[])[0]).toBe('REFUNDED');
+  });
+
+  it('derives PARTIAL_REFUND into local status when status=DELIVERED + refundAmount < total', () => {
+    applyEntry(
+      entry({
+        status: 'DELIVERED',
+        total: '12.34',
+        refundAmount: '5.00',
+        refundReason: 'partial refund',
+      }),
+    );
+    const statusUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+    expect(statusUpdates.length).toBeGreaterThan(0);
+    const last = statusUpdates[statusUpdates.length - 1];
+    expect((last[1] as unknown[])[0]).toBe('PARTIAL_REFUND');
+  });
+
+  it('falls back to local row total when payload omits total but has refundAmount', () => {
+    // status_changed payloads frequently omit total. Look up the
+    // local row to decide REFUNDED vs PARTIAL_REFUND.
+    vi.mocked(database.get).mockImplementation(((sql: string) => {
+      if (/SELECT\s+total\s+FROM\s+orders/i.test(sql)) {
+        return { total: 1234 } as any;
+      }
+      return undefined;
+    }) as any);
+
+    applyEntry(entry({ refundAmount: '12.34', refundReason: 'full' }));
+
+    const statusUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+    expect(statusUpdates.length).toBeGreaterThan(0);
+    expect((statusUpdates[statusUpdates.length - 1][1] as unknown[])[0]).toBe(
+      'REFUNDED',
+    );
+  });
 });

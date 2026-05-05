@@ -233,6 +233,32 @@ function applyOrder(entry: SyncLogEntry): boolean {
          WHERE id = ?`,
         [refundGrosze, p.refundReason ?? null, refundLinesJson, localId],
       );
+
+      // Backend can ship a refunded order with status='DELIVERED'
+      // (refund applied without the status-machine transitioning to
+      // REFUNDED). OrderHistory's getRefundStatus() reads
+      // order.status only, so without deriving here, a fully
+      // refunded synced order still shows refund as available and
+      // the cashier can attempt a duplicate refund. Mirror the same
+      // logic as adaptServerOrder: ref >= total → REFUNDED, ref > 0
+      // → PARTIAL_REFUND.
+      let totalGrosze =
+        p.total !== undefined ? toGrosze(p.total) : 0;
+      if (totalGrosze <= 0) {
+        const localRow = database.get<{ total: number }>(
+          'SELECT total FROM orders WHERE id = ?',
+          [localId],
+        );
+        totalGrosze = localRow?.total ?? 0;
+      }
+      if (totalGrosze > 0) {
+        const derivedStatus =
+          refundGrosze >= totalGrosze ? 'REFUNDED' : 'PARTIAL_REFUND';
+        database.run(
+          'UPDATE orders SET status = ? WHERE id = ?',
+          [derivedStatus, localId],
+        );
+      }
     }
   }
 
