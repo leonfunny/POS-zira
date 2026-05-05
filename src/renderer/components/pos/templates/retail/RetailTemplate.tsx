@@ -23,6 +23,9 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
   const [showHistory, setShowHistory] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [heldCarts, setHeldCarts] = useState<Array<{
     id: string;
     items: CartItem[];
@@ -132,48 +135,106 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     load();
   }, []);
 
-  // Load products when category or search changes (debounced for search)
+  // Load the visible product grid honouring whatever category /
+  // search filter the cashier currently has applied. Reused by the
+  // filter-change effect AND by the pos:products-synced handler so a
+  // 30s periodic ProductSync tick (or a manual refresh) does not yank
+  // the cashier back to the full catalogue mid-sale.
+  const loadFilteredProducts = useCallback(async (): Promise<Product[]> => {
+    if (searchQuery) {
+      const result = await window.electronAPI.pos.products.search(searchQuery);
+      return activeCategoryId
+        ? result.filter((p) => p.category_id === activeCategoryId)
+        : result;
+    }
+    if (activeCategoryId) {
+      return window.electronAPI.pos.products.getByCategory(activeCategoryId);
+    }
+    return window.electronAPI.pos.products.getAll();
+  }, [searchQuery, activeCategoryId]);
+
+  // Filter-change effect: debounced for search, immediate for category.
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      let result: Product[];
-      if (searchQuery) {
-        result = await window.electronAPI.pos.products.search(searchQuery);
-        if (activeCategoryId) {
-          result = result.filter((p) => p.category_id === activeCategoryId);
-        }
-      } else if (activeCategoryId) {
-        result = await window.electronAPI.pos.products.getByCategory(activeCategoryId);
-      } else {
-        result = await window.electronAPI.pos.products.getAll();
-      }
+    const run = async () => {
+      const result = await loadFilteredProducts();
       if (!cancelled) setProducts(result);
     };
 
     if (searchQuery) {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(load, 250);
+      searchTimerRef.current = setTimeout(run, 250);
     } else {
-      load();
+      run();
     }
 
     return () => {
       cancelled = true;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [activeCategoryId, searchQuery]);
+  }, [loadFilteredProducts, searchQuery]);
 
-  // Refresh products when sync completes
+  // Refresh categories + the cached full product list (used by other
+  // surfaces) and then re-apply the cashier's CURRENT filter. Critical
+  // here: `loadFilteredProducts` reads the latest searchQuery /
+  // activeCategoryId via its useCallback closure — calling it on each
+  // sync tick avoids the previous `setProducts(all)` reset that would
+  // dump category/search filtering back to the full catalogue.
   useEffect(() => {
     const unsub = window.electronAPI.pos.sync.onProductsSynced(() => {
-      window.electronAPI.pos.products.getAll().then((all) => {
-        setAllProducts(all);
-        setProducts(all);
-      });
       window.electronAPI.pos.categories.getAll().then(setCategories);
+      window.electronAPI.pos.products.getAll().then(setAllProducts);
+      loadFilteredProducts().then(setProducts);
     });
     return unsub;
+  }, [loadFilteredProducts]);
+
+  const tOr = useCallback(
+    (key: string, fallback: string) => {
+      const v = t(key);
+      return v !== key ? v : fallback;
+    },
+    [t],
+  );
+
+  // Manual catalog refresh — periodic 30s poll already runs in main, this
+  // button is for "I just edited a price on web and want it now" UX.
+  // pos:products-synced from main triggers the existing reload effect, so
+  // success path doesn't need to re-fetch here.
+  const handleManualSync = useCallback(async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    if (syncErrorTimerRef.current) {
+      clearTimeout(syncErrorTimerRef.current);
+      syncErrorTimerRef.current = null;
+    }
+    try {
+      const result = await window.electronAPI.pos.sync.products();
+      if (!result?.success) {
+        const msg =
+          result?.error === 'no-auth'
+            ? tOr('pos.syncNotLoggedIn', 'Not logged in')
+            : tOr('pos.syncFailed', 'Sync failed');
+        setSyncError(msg);
+        // Auto-dismiss after 4s so the toolbar stays clean.
+        syncErrorTimerRef.current = setTimeout(() => setSyncError(null), 4_000);
+      }
+    } catch (e: any) {
+      rlog.warn('[RetailTemplate] manual product sync threw', e?.message);
+      setSyncError(tOr('pos.syncFailed', 'Sync failed'));
+      syncErrorTimerRef.current = setTimeout(() => setSyncError(null), 4_000);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing, tOr]);
+
+  // Cleanup the auto-dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (syncErrorTimerRef.current) clearTimeout(syncErrorTimerRef.current);
+    };
   }, []);
 
   const handleAddProduct = useCallback((product: Product) => {
@@ -256,11 +317,6 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     });
   };
 
-  const tOr = (key: string, fallback: string) => {
-    const v = t(key);
-    return v !== key ? v : fallback;
-  };
-
   return (
     <>
       {/* Main content */}
@@ -280,6 +336,43 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
               </div>
 
               <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                title={tOr('pos.syncProducts', 'Sync products from server')}
+                aria-label={tOr('pos.syncProducts', 'Sync products from server')}
+                className={`shrink-0 min-h-11 w-11 rounded-lg border flex items-center justify-center transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  isSyncing
+                    ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-wait'
+                    : syncError
+                    ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+                    : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                }`}
+              >
+                <svg
+                  className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114-3m2 5a8 8 0 01-14 3"
+                  />
+                </svg>
+              </button>
+              {syncError && (
+                <span
+                  role="status"
+                  className="shrink-0 text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded-md"
+                >
+                  {syncError}
+                </span>
+              )}
               <button
                 onClick={() => setActiveCategoryId(null)}
                 className={`min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus:ring-2 focus:ring-brand-200 ${
