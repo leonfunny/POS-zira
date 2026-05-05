@@ -43,6 +43,7 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
   const [saving, setSaving] = useState(false);
   const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [printWarning, setPrintWarning] = useState<string | null>(null);
   const [cardStatus, setCardStatus] = useState<string | null>(null);
   const [splitMode, setSplitMode] = useState(false);
   const [tenders, setTenders] = useState<Tender[]>([]);
@@ -212,12 +213,23 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
       catch (err) { rlog.warn('[PaymentModal] Failed to increase customer debt:', err); }
     }
 
-    // Print receipt + open drawer (parallel, awaited — optimized to ~3-5s)
+    // Print receipt + open drawer (parallel, awaited — optimized to ~3-5s).
+    // The IPC layer returns { success, receiptPrinted, drawerOpened } —
+    // we surface a non-blocking inline warning so the cashier sees the
+    // failure before the modal closes (sale itself already completed
+    // on the IPC above; reprint lives in Order History).
     setSavingLabel(t('test.printing') || 'Printing...');
+    let receiptPrinted = true;
     try {
-      await Promise.all([
+      const [printResult] = await Promise.all([
         window.electronAPI.pos.payment.printReceipt(orderId).catch(
-          (err: unknown) => rlog.warn('[PaymentModal] Receipt print failed:', err),
+          (err: unknown) => {
+            rlog.warn('[PaymentModal] Receipt print failed:', err);
+            return { success: false, receiptPrinted: false } as {
+              success?: boolean;
+              receiptPrinted?: boolean;
+            };
+          },
         ),
         hasCash
           ? window.electronAPI.pos.payment.openCashDrawer().catch(
@@ -225,10 +237,29 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
             )
           : Promise.resolve(),
       ]);
+      receiptPrinted = Boolean(
+        (printResult as { receiptPrinted?: boolean } | undefined)?.receiptPrinted,
+      );
     } catch { /* errors already logged inside each call */ }
 
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
+
+    if (!receiptPrinted) {
+      // Hold the modal open for ~4s so the cashier sees the inline
+      // warning — the sale itself succeeded; reprint flows through
+      // Order History (existing UI).
+      setPrintWarning(
+        t('pos.payment.receiptNotPrinted') ||
+          'Receipt not printed — reprint from Order History.',
+      );
+      setSavingLabel('');
+      setTimeout(() => {
+        if (onComplete) { onComplete(); } else { onClose(); }
+      }, 4000);
+      return;
+    }
+
     if (onComplete) { onComplete(); } else { onClose(); }
   };
 
@@ -684,6 +715,14 @@ export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, s
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-sm font-semibold text-red-800">{error}</p>
+            </div>
+          )}
+          {printWarning && (
+            <div aria-live="polite" className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
+              <svg className="h-5 w-5 shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 4h.01M10.29 3.86l-8.53 14.78A2 2 0 003.5 21.5h17a2 2 0 001.74-2.86L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-amber-900">{printWarning}</p>
             </div>
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
