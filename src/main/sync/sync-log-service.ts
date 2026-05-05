@@ -298,6 +298,39 @@ export class SyncLogService {
             if (r.accepted) {
               syncLogRepo.markAccepted(entry.id, r.seq!);
               totalAccepted++;
+
+              // Path A parity: when the server accepts an order/created
+              // entry pushed by THIS agent, the local `orders` row is
+              // still synced=0 / backend_id=null because echo sync_log
+              // suppression skips entries from this agent on pull. Mirror
+              // the side effects here so the refund gate
+              // (!order.backend_id) clears and the cashier sees the
+              // sale as synced. Prefer a backend-supplied canonical id
+              // when present (entity_id / entityId / backendId /
+              // orderId) — otherwise fall back to the local entry's
+              // entity_id, which is the same UUID the client
+              // generated.
+              if (
+                entry.entity_type === 'order' &&
+                entry.event === 'created'
+              ) {
+                const ra = r as Record<string, unknown>;
+                const backendId =
+                  (typeof ra.entity_id === 'string' && ra.entity_id) ||
+                  (typeof ra.entityId === 'string' && ra.entityId) ||
+                  (typeof ra.backendId === 'string' && ra.backendId) ||
+                  (typeof ra.orderId === 'string' && ra.orderId) ||
+                  entry.entity_id;
+                database.run(
+                  `UPDATE orders
+                   SET synced = 1,
+                       backend_id = ?,
+                       synced_at = datetime('now'),
+                       sync_error = NULL
+                   WHERE id = ?`,
+                  [backendId, entry.entity_id],
+                );
+              }
             } else {
               syncLogRepo.markRejected(entry.id, r.code || 'UNKNOWN', r.detail || '');
               totalRejected++;

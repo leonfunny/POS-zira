@@ -16,6 +16,8 @@ import { database } from '../database/database';
 import {
   adaptServerOrder,
   adaptServerOrderItem,
+  toGrosze,
+  normalizeRefundLinesJson,
 } from './pos-order-adapter';
 import logger from '../logger';
 
@@ -186,23 +188,42 @@ function applyOrder(entry: SyncLogEntry): boolean {
     }
   }
 
-  // Update server-side status (don't overwrite local status)
+  // Update server-side status mirror (don't overwrite local status
+  // unless the payload signals a refund/cancel terminal — those need
+  // to be visible on the local row so Order History shows the right
+  // badge AND the refund gate (`order.status === 'REFUNDED'`)
+  // doesn't double-refund a row.
   if (p.status) {
     database.run(
       'UPDATE orders SET server_status = ?, server_updated_at = ? WHERE id = ?',
       [p.status, p.updatedAt ?? entry.created_at, localId],
     );
+    if (
+      p.status === 'REFUNDED' ||
+      p.status === 'PARTIAL_REFUND' ||
+      p.status === 'CANCELLED'
+    ) {
+      database.run(
+        'UPDATE orders SET status = ? WHERE id = ?',
+        [p.status, localId],
+      );
+    }
   }
 
-  // Handle refunds
+  // Handle refunds — share the same money/vat normalisation the
+  // adapter uses for full mirror, so a refundAmount string like
+  // "12.34" lands as 1234 grosze instead of being stored as text.
   if (p.refundAmount !== undefined) {
-    // Server always sends refundAmount in PLN float — convert to grosze
-    const refundGrosze = typeof p.refundAmount === 'number'
-      ? Math.round(p.refundAmount * 100)
-      : p.refundAmount;
+    const refundGrosze = toGrosze(p.refundAmount);
+    const refundLinesJson = normalizeRefundLinesJson(p.refundedLines);
     database.run(
-      'UPDATE orders SET refund_amount = ?, refund_reason = ? WHERE id = ?',
-      [refundGrosze, p.refundReason ?? null, localId],
+      `UPDATE orders
+       SET refund_amount = ?,
+           refund_reason = COALESCE(?, refund_reason),
+           refund_lines = COALESCE(?, refund_lines),
+           refunded_at = COALESCE(refunded_at, datetime('now'))
+       WHERE id = ?`,
+      [refundGrosze, p.refundReason ?? null, refundLinesJson, localId],
     );
   }
 
