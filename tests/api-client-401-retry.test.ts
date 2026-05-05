@@ -158,6 +158,60 @@ describe('fetchWithTimeout — 401 NOT retried', () => {
     });
     expect(refreshAccessTokenMock).not.toHaveBeenCalled();
   });
+
+  it('does NOT retry on /api/v1/auth/register', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 401 }));
+    await fetchWithTimeoutForTests('https://api.test/api/v1/auth/register', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer x' },
+    });
+    expect(refreshAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  // PRD: HTTP headers are case-insensitive. `fetch` callers may pass
+  // `authorization` lowercase (Node, some libraries normalize). The
+  // wrapper must detect both spellings; missing this would silently
+  // skip refresh on a perfectly valid 401.
+  it('detects lowercase "authorization" header (case-insensitive)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    refreshAccessTokenMock.mockResolvedValueOnce({
+      ok: true,
+      accessToken: 'fresh',
+    });
+
+    await fetchWithTimeoutForTests('https://api.test/v1/products', {
+      headers: { authorization: 'Bearer old' }, // lowercase
+    });
+
+    expect(refreshAccessTokenMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fetchWithTimeout — no infinite retry loop', () => {
+  // PRD: only ONE retry per request. If the new token also gets 401
+  // (e.g. backend revoked the user between refresh and retry), the
+  // wrapper must NOT trigger another refresh + retry. Otherwise a
+  // hostile backend could induce infinite recursion.
+  it('returns the second 401 as-is, only ONE refresh call total', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 401 })) // initial
+      .mockResolvedValueOnce(new Response('', { status: 401 })); // retry also 401
+    refreshAccessTokenMock.mockResolvedValueOnce({
+      ok: true,
+      accessToken: 'new',
+    });
+
+    const r = await fetchWithTimeoutForTests('https://api.test/v1/products', {
+      headers: { Authorization: 'Bearer old' },
+    });
+
+    expect(r.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // exactly one retry
+    expect(refreshAccessTokenMock).toHaveBeenCalledTimes(1); // no second refresh
+  });
 });
 
 describe('fetchWithTimeout — refresh failures', () => {

@@ -20,7 +20,7 @@ import {
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
 import { ApiClient } from '../network/api-client';
-import { authEvents, AUTH_EXPIRED } from '../network/auth-refresh';
+import { authEvents, AUTH_EXPIRED, forwardAuthExpiredToRenderer } from '../network/auth-refresh';
 import { resolveCurrentUser } from '../network/auth-get-user';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
@@ -72,13 +72,15 @@ export class AuthModule extends BaseModule {
     // refreshAccessToken returns refresh-rejected, the user-session
     // is unrecoverable and we forward the signal to the renderer so
     // useAuth can drop straight to AuthScreen without waiting for the
-    // next IPC poll cycle.
-    authEvents.on(AUTH_EXPIRED, () => {
-      const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('auth:expired');
-      }
-    });
+    // next IPC poll cycle. Forwarder logic is in auth-refresh.ts so
+    // its destroyed-window guard + channel-name spelling are pinned
+    // by auth-expired-wiring.test.ts behaviour tests.
+    authEvents.on(
+      AUTH_EXPIRED,
+      forwardAuthExpiredToRenderer(() =>
+        this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW),
+      ),
+    );
 
     logger.info('[AuthModule] Initialized');
     this.setState(ModuleState.READY);

@@ -20,9 +20,10 @@
  * auth-refresh.test.ts.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { forwardAuthExpiredToRenderer } from '../src/main/network/auth-refresh';
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (rel: string) =>
@@ -37,17 +38,73 @@ describe('auth:expired wiring — end-to-end glue', () => {
     expect(source).toMatch(/authEvents\.on\(\s*AUTH_EXPIRED/);
   });
 
-  it('auth.module.ts forwards AUTH_EXPIRED to the main window via webContents.send', () => {
+  it('auth.module.ts wires forwardAuthExpiredToRenderer (behaviour spec covers the rest)', () => {
+    // This is intentionally just a wiring guard — the helper's actual
+    // forwarding behaviour (channel-name spelling, destroyed-window
+    // guard) is pinned by behaviour tests below, not by source grep.
     const source = read('src/main/modules/auth.module.ts');
-    // The handler must call mainWindow.webContents.send with the
-    // 'auth:expired' channel name. Catches a typo regression that
-    // would silently break the renderer drop.
-    const subscriptionIdx = source.indexOf('authEvents.on(');
-    expect(subscriptionIdx).toBeGreaterThan(-1);
-    const block = source.slice(subscriptionIdx, subscriptionIdx + 800);
-    expect(block).toMatch(/webContents\.send\(\s*['"]auth:expired['"]/);
-    // Defensive: must guard against destroyed window.
-    expect(block).toMatch(/isDestroyed/);
+    expect(source).toMatch(/forwardAuthExpiredToRenderer\s*\(/);
+  });
+});
+
+describe('forwardAuthExpiredToRenderer — behaviour', () => {
+  function makeFakeWindow(opts: { destroyed?: boolean } = {}) {
+    const send = vi.fn();
+    return {
+      win: {
+        isDestroyed: vi.fn(() => Boolean(opts.destroyed)),
+        webContents: { send },
+      } as unknown as Electron.BrowserWindow,
+      send,
+    };
+  }
+
+  it('sends "auth:expired" on the main window when invoked', () => {
+    const { win, send } = makeFakeWindow();
+    const forward = forwardAuthExpiredToRenderer(() => win);
+    forward();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('auth:expired');
+  });
+
+  it('does NOT send when the window is destroyed (race after logout / app close)', () => {
+    const { win, send } = makeFakeWindow({ destroyed: true });
+    const forward = forwardAuthExpiredToRenderer(() => win);
+    forward();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does NOT send when getter returns undefined (window not created yet)', () => {
+    // Edge case: AUTH_EXPIRED can fire before the main window is
+    // wired into the container (e.g. early init refresh attempt).
+    const send = vi.fn();
+    const forward = forwardAuthExpiredToRenderer(() => undefined);
+    forward();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does NOT send when getter returns null', () => {
+    const forward = forwardAuthExpiredToRenderer(() => null);
+    expect(() => forward()).not.toThrow();
+  });
+
+  it('re-evaluates the window on each call (lazy getter — survives reload)', () => {
+    // Main window can be recreated after a hot-reload; the forwarder
+    // must read the LATEST window from the container, not capture a
+    // stale reference at subscription time.
+    const w1 = makeFakeWindow();
+    const w2 = makeFakeWindow();
+    let current: typeof w1 | typeof w2 = w1;
+    const forward = forwardAuthExpiredToRenderer(() => current.win);
+
+    forward();
+    expect(w1.send).toHaveBeenCalledTimes(1);
+    expect(w2.send).not.toHaveBeenCalled();
+
+    current = w2;
+    forward();
+    expect(w1.send).toHaveBeenCalledTimes(1); // unchanged — old window untouched
+    expect(w2.send).toHaveBeenCalledTimes(1); // new window receives event
   });
 
   it('preload.ts exposes auth.onExpired wrapping ipcRenderer.on("auth:expired")', () => {

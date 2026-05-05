@@ -237,6 +237,77 @@ describe('refreshAccessToken — network error', () => {
     expect(getSecureRefreshToken()).toBe('rt');
   });
 
+  // PRD: backend rate-limits /auth/refresh at 10/min/IP. A 429 means
+  // "back off and retry later" — NOT "session is dead". Treating it as
+  // refresh-rejected would log the cashier out for a transient burst
+  // (e.g. 5 timers concurrently hit 401 and only the first triggers
+  // a real refresh — the rest see 429).
+  it('treats 429 (throttled) as network error, NOT refresh-rejected', async () => {
+    setSecureRefreshToken('rt');
+    fetchMock.mockResolvedValueOnce(new Response('Too Many Requests', { status: 429 }));
+
+    const result = await refreshAccessToken();
+
+    expect(result).toEqual({ ok: false, reason: 'network' });
+    expect(getSecureRefreshToken()).toBe('rt');
+  });
+
+  // PRD: only 401 maps to refresh-rejected. 400/403/404/etc. are
+  // backend hiccups or routing problems — keep tokens, return network.
+  it('treats other 4xx (400, 403, 404) as network error, NOT refresh-rejected', async () => {
+    for (const status of [400, 403, 404]) {
+      storeData.set('encryptedRefreshToken', '');
+      setSecureRefreshToken('rt');
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(new Response('', { status }));
+
+      const expiredHandler = vi.fn();
+      authEvents.on(AUTH_EXPIRED, expiredHandler);
+
+      const result = await refreshAccessToken();
+
+      expect(result, `status=${status}`).toEqual({ ok: false, reason: 'network' });
+      expect(getSecureRefreshToken(), `status=${status}`).toBe('rt');
+      expect(expiredHandler, `status=${status}`).not.toHaveBeenCalled();
+      authEvents.off(AUTH_EXPIRED, expiredHandler);
+    }
+  });
+
+  // PRD: malformed response → network reason. Otherwise a partially-
+  // written response could trick the helper into clearing tokens or
+  // accepting a corrupt access_token.
+  it('treats malformed JSON response as network error', async () => {
+    setSecureRefreshToken('rt');
+    fetchMock.mockResolvedValueOnce(
+      new Response('not json {{{', { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+
+    const result = await refreshAccessToken();
+
+    expect(result).toEqual({ ok: false, reason: 'network' });
+    expect(getSecureRefreshToken()).toBe('rt');
+  });
+
+  // PRD: 200 with no access_token field is a backend bug or a partial
+  // response. Don't accept the response — treat as network so the
+  // caller can retry on the next 401.
+  it('treats 200 with missing access_token as network error', async () => {
+    setSecureRefreshToken('rt');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ refresh_token: 'rt-2' }), // no access_token
+        { status: 200 },
+      ),
+    );
+
+    const result = await refreshAccessToken();
+
+    expect(result).toEqual({ ok: false, reason: 'network' });
+    // Old tokens preserved — backend hasn't given us anything usable.
+    expect(getSecureAuthToken()).toBeNull();
+    expect(getSecureRefreshToken()).toBe('rt');
+  });
+
   it('does NOT emit auth-expired on network error', async () => {
     setSecureRefreshToken('rt');
     fetchMock.mockRejectedValueOnce(new Error('timeout'));

@@ -141,3 +141,25 @@ async function doRefresh(): Promise<RefreshResult> {
   logger.info('[AuthRefresh] Access token refreshed successfully');
   return { ok: true, accessToken: body.access_token };
 }
+
+/**
+ * Build a callback that forwards AUTH_EXPIRED to the main window via
+ * webContents.send. Extracted out of auth.module so the destroyed-window
+ * guard + the channel-name spelling can be behaviour-tested without
+ * booting the full module + container.
+ *
+ * Usage:
+ *   authEvents.on(AUTH_EXPIRED, forwardAuthExpiredToRenderer(
+ *     () => container.getOptional(SERVICE_TOKENS.MAIN_WINDOW),
+ *   ));
+ */
+export function forwardAuthExpiredToRenderer(
+  getMainWindow: () => Electron.BrowserWindow | null | undefined,
+): () => void {
+  return () => {
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('auth:expired');
+    }
+  };
+}
