@@ -1092,7 +1092,7 @@ export class ApiClient {
    * Login with email and password
    * POST /api/v1/auth/login
    */
-  async loginWithEmail(email: string, password: string): Promise<{ access_token: string; user: any }> {
+  async loginWithEmail(email: string, password: string): Promise<{ access_token: string; refresh_token?: string; user: any }> {
     const url = `${this.baseUrl}/api/v1/auth/login`;
     logger.info(`[ApiClient] Logging in with email: ${email}...`);
 

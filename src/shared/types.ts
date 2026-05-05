@@ -663,6 +663,7 @@ export interface TelegramLoginTokenResponse {
 export interface TelegramLoginTokenStatus {
   status: 'PENDING' | 'VERIFIED' | 'EXPIRED';
   access_token?: string;
+  refresh_token?: string;
   user?: AuthUser;
   salon?: { id: string; name: string; slug: string };
 }

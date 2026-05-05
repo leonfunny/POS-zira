@@ -228,6 +228,7 @@ const store = new Store<AgentConfig>({
     // SECURITY: authToken should be stored encrypted, plain text for migration only
     authToken: { type: 'string', default: '' },
     encryptedAuthToken: { type: 'string', default: '' },
+    encryptedRefreshToken: { type: 'string', default: '' },
     authUser: { type: 'object', default: {} },
     // API Key (for print-agent connection) - Note: apiKey schema is at line 137
     encryptedApiKey: { type: 'string', default: '' },
@@ -335,13 +336,13 @@ export function setConfigValue<K extends keyof AgentConfig>(key: K, value: Agent
   store.set(key, value);
 }
 
-// Import safeStorage for encryption (lazy import to avoid circular dependency)
-let safeStorageModule: typeof import('electron').safeStorage | null = null;
-function getSafeStorage() {
-  if (!safeStorageModule) {
-    safeStorageModule = require('electron').safeStorage;
-  }
-  return safeStorageModule;
+// safeStorage backs DPAPI encryption on Windows. Imported via the ESM
+// path so vitest can intercept it cleanly with vi.mock('electron', ...);
+// the previous lazy require('electron') pattern bypassed the mock layer
+// in test runs and hit "Encryption not available" branch silently.
+import { safeStorage as electronSafeStorage } from 'electron';
+function getSafeStorage(): typeof electronSafeStorage | null {
+  return electronSafeStorage ?? null;
 }
 
 /**
@@ -403,6 +404,56 @@ export function getSecureAuthToken(): string | null {
     }
   }
 
+  return null;
+}
+
+/**
+ * SECURITY: Securely store the refresh token using Windows DPAPI encryption.
+ * Mirrors setSecureAuthToken — separate slot so the access token can be
+ * rotated independently. Used by the refresh-on-401 flow.
+ */
+export function setSecureRefreshToken(token: string): boolean {
+  const safeStorage = getSafeStorage();
+
+  if (!token) {
+    store.set('encryptedRefreshToken', '');
+    return true;
+  }
+
+  if (safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      const encrypted = safeStorage.encryptString(token).toString('base64');
+      store.set('encryptedRefreshToken', encrypted);
+      return true;
+    } catch (error) {
+      console.error('[Config] Failed to encrypt refresh token:', error);
+      return false;
+    }
+  }
+
+  // SECURITY: If encryption not available, reject the token (same
+  // policy as setSecureAuthToken — never persist plaintext on disk).
+  console.error('[Config] SECURITY: Encryption not available - refresh token REJECTED');
+  store.set('encryptedRefreshToken', '');
+  return false;
+}
+
+/**
+ * SECURITY: Retrieve the decrypted refresh token, or null if absent.
+ */
+export function getSecureRefreshToken(): string | null {
+  const safeStorage = getSafeStorage();
+  const encrypted = store.get('encryptedRefreshToken') as string | undefined;
+  if (!encrypted) return null;
+
+  if (safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+    } catch (error) {
+      console.error('[Config] Failed to decrypt refresh token:', error);
+      return null;
+    }
+  }
   return null;
 }
 
@@ -584,11 +635,36 @@ export function getSecureRemotePin(): string | null {
 }
 
 /**
- * SECURITY: Clear all sensitive tokens (for logout)
+ * SECURITY: Clear ONLY the user-session tokens (auth + refresh).
+ *
+ * Used by the refresh-on-401 flow when the backend rejects the refresh
+ * token (session revoked / user disabled / salon suspended). Does NOT
+ * touch the print-agent pairing key (encryptedApiKey), the AI assistant
+ * key (encryptedAiApiKey), or the remote-control PIN
+ * (encryptedRemotePin) — those are separately-scoped secrets that
+ * should survive a user-session expiry.
+ *
+ * For an explicit logout that invalidates EVERYTHING, use
+ * clearSecureTokens() instead.
+ */
+export function clearSecureAuthTokens(): void {
+  store.set('authToken', '');
+  store.set('encryptedAuthToken', '');
+  store.set('encryptedRefreshToken', '');
+}
+
+/**
+ * SECURITY: Clear all sensitive tokens (for explicit logout).
+ *
+ * Wipes the user session AND every other device-bound secret. Use this
+ * only when the user clicks Logout / unpairs / clears the device —
+ * background refresh-rejected paths must use clearSecureAuthTokens()
+ * instead so they don't break printer pairing or the AI assistant.
  */
 export function clearSecureTokens(): void {
   store.set('authToken', '');
   store.set('encryptedAuthToken', '');
+  store.set('encryptedRefreshToken', '');
   store.set('apiKey', '');
   store.set('encryptedApiKey', '');
   store.set('aiApiKey', '');

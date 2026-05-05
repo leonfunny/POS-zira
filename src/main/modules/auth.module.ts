@@ -23,6 +23,7 @@ import { ApiClient } from '../network/api-client';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
   setSecureAuthToken, getSecureAuthToken, setSecureApiKey, getSecureApiKey,
+  setSecureRefreshToken,
   setSecureAiApiKey, setSecureRemotePin, getSecureRemotePin,
   clearSecureTokens,
 } from '../config/store';
@@ -84,6 +85,7 @@ export class AuthModule extends BaseModule {
         'machineId',        // Server-assigned
         'entitlements',     // SuperAdmin-controlled, server-assigned
         'authToken',        // Auth credential — set through login flow
+        'encryptedRefreshToken', // Managed internally by safeStorage (refresh-on-401 flow)
         'authUser',         // Set through login flow
         'aiApiKey',              // Credential — set through AUTH_SET_AI_API_KEY only
         'encryptedAiApiKey',     // Managed internally by safeStorage
@@ -257,6 +259,11 @@ export class AuthModule extends BaseModule {
 
         if (result?.access_token && result.status === 'VERIFIED') {
           setSecureAuthToken(result.access_token);
+          // Backend's auth response carries a refresh_token alongside the
+          // access token (auth.service.ts:571-572). Persist it now so the
+          // 401-retry flow can rotate without forcing a relogin every
+          // time JWT_EXPIRES_IN ticks over.
+          if (result.refresh_token) setSecureRefreshToken(result.refresh_token);
           const user: any = result.user || {};
           const newSalonId = user.salonId || '';
           const currentSalonId = config.salonId || '';
@@ -369,6 +376,11 @@ export class AuthModule extends BaseModule {
           if (!setSecureAuthToken(result.access_token)) {
             return { success: false, error: 'Failed to store auth token securely' };
           }
+          // Persist refresh_token alongside access_token so the
+          // refresh-on-401 flow can rotate the session without
+          // forcing the cashier back to AuthScreen every JWT TTL.
+          // Backend response shape: auth.service.ts:758-762.
+          if (result.refresh_token) setSecureRefreshToken(result.refresh_token);
 
           setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: user.salon?.slug || '', posEnabled: true, customerDisplayEnabled: true });
 
