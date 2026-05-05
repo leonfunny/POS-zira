@@ -21,6 +21,7 @@ import {
 import SocketClient from '../network/socket-client';
 import { ApiClient } from '../network/api-client';
 import { authEvents, AUTH_EXPIRED } from '../network/auth-refresh';
+import { resolveCurrentUser } from '../network/auth-get-user';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
   setSecureAuthToken, getSecureAuthToken, setSecureApiKey, getSecureApiKey,
@@ -327,62 +328,24 @@ export class AuthModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_GET_USER, async () => {
-      const authToken = getSecureAuthToken();
-      if (!authToken) return { success: true, data: { isAuthenticated: false } };
-
       const config = getConfig();
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-
-      try {
-        // With the C2 401-retry layer in fetchWithTimeout, getMe will
-        // transparently rotate the access token if expired. A 401 here
-        // means refresh ALSO failed (no refresh stored, or refresh
-        // revoked) — the session is unrecoverable.
-        const user = await client.getMe(authToken);
-        const authUser: AuthUser = {
-          id: user.id || user.sub || '', email: user.email || '', firstName: user.firstName || '',
-          lastName: user.lastName || '', role: user.role || '', salonId: user.salonId || '',
-          salonName: user.salon?.name || config.salonName || '',
-        };
-        setConfig({ authUser });
-        return { success: true, data: { isAuthenticated: true, user: authUser } };
-      } catch (e: any) {
-        const message = String(e?.message ?? e);
-        const isAuthRejected = /\b401\b/.test(message);
-
-        if (isAuthRejected) {
-          // Real auth failure — token is dead. Use NARROW clear so the
-          // printer pairing key + AI key survive the user-session
-          // expiry (reviewer's concern: clearSecureTokens would wipe
-          // device-bound secrets unrelated to the user session).
+      // Branching logic lives in the pure helper resolveCurrentUser
+      // (network/auth-get-user.ts) — see auth-get-user-startup.test.ts
+      // for the per-branch behaviour spec. The handler here is only
+      // wiring: pass real dependencies in, run the helper, return its
+      // result verbatim.
+      return resolveCurrentUser({
+        getAuthToken: getSecureAuthToken,
+        getMe: (token) => client.getMe(token),
+        getCachedAuthUser: () => config.authUser as AuthUser | undefined,
+        defaultSalonName: config.salonName,
+        onAuthRejected: () => {
           clearSecureAuthTokens();
           setConfig({ authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' } });
-          return { success: true, data: { isAuthenticated: false } };
-        }
-
-        // Network error (backend offline, DNS fail, timeout, 5xx). Token
-        // might still be valid — keep it. If we have a cached authUser
-        // from the last successful login, return that so the cashier
-        // stays in POS against local data instead of getting kicked
-        // back to AuthScreen by a transient outage.
-        const cachedAuthUser = config.authUser as AuthUser | undefined;
-        if (cachedAuthUser?.id) {
-          logger.warn(
-            `[AuthModule] AUTH_GET_USER network error (${message}) — using cached authUser`,
-          );
-          return {
-            success: true,
-            data: { isAuthenticated: true, user: cachedAuthUser },
-          };
-        }
-
-        // No cached profile (first install). Fall back to AuthScreen
-        // but DO NOT clear tokens — let next attempt try again.
-        logger.warn(
-          `[AuthModule] AUTH_GET_USER network error (${message}) and no cached user`,
-        );
-        return { success: true, data: { isAuthenticated: false } };
-      }
+        },
+        onUserResolved: (authUser) => setConfig({ authUser }),
+      });
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
