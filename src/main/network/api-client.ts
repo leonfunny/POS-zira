@@ -12,6 +12,7 @@ import {
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
+import { refreshAccessToken } from './auth-refresh';
 
 // Default timeout for API requests (30 seconds)
 const DEFAULT_TIMEOUT = 30000;
@@ -115,22 +116,56 @@ function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): Loc
 }
 
 /**
- * Fetch with timeout wrapper using Node.js built-in fetch.
+ * Auth endpoints that must not trigger a refresh-on-401 retry — the
+ * refresh helper itself targets one of these, and login/check-token
+ * legitimately respond 401 when the user supplied bad credentials.
+ * Retrying with a refreshed access token would either loop or paper
+ * over a real authentication failure.
  */
-async function fetchWithTimeout(
+const AUTH_ENDPOINT_PATTERNS = [
+  /\/api\/v1\/auth\/login(\b|$)/,
+  /\/api\/v1\/auth\/refresh(\b|$)/,
+  /\/api\/v1\/auth\/logout(\b|$)/,
+  /\/api\/v1\/auth\/check-token(\b|$)/,
+  /\/api\/v1\/auth\/register(\b|$)/,
+];
+
+function isAuthEndpoint(url: string): boolean {
+  return AUTH_ENDPOINT_PATTERNS.some((p) => p.test(url));
+}
+
+function getBearerToken(options: RequestInit): string | null {
+  const headers = options.headers;
+  if (!headers) return null;
+  const auth =
+    (headers as Record<string, string>).Authorization ??
+    (headers as Record<string, string>).authorization;
+  if (typeof auth !== 'string') return null;
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+}
+
+function withBearer(options: RequestInit, accessToken: string): RequestInit {
+  // Rebuild headers with the new token. Reviewer's claim 6: must
+  // overwrite, never accidentally retain the expired token.
+  return {
+    ...options,
+    headers: {
+      ...(options.headers as Record<string, string> | undefined),
+      Authorization: `Bearer ${accessToken}`,
+    },
+  };
+}
+
+async function rawFetchWithTimeout(
   url: string,
-  options: RequestInit = {},
-  timeout: number = DEFAULT_TIMEOUT,
+  options: RequestInit,
+  timeout: number,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
-
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    return response;
+    return await fetch(url, { ...options, signal: controller.signal });
   } catch (error: any) {
     if (error.name === 'AbortError') {
       throw new Error(`Request timeout after ${timeout}ms: ${url}`);
@@ -140,6 +175,47 @@ async function fetchWithTimeout(
     clearTimeout(timeoutId);
   }
 }
+
+/**
+ * Fetch with timeout + transparent refresh-on-401 for Bearer-auth
+ * requests. Non-auth endpoints carrying a Bearer header that get a 401
+ * trigger one refreshAccessToken() call; on success, the request is
+ * retried once with the new token. On refresh failure (revoked /
+ * network), the original 401 is returned unchanged so the caller's
+ * existing error path still runs.
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = DEFAULT_TIMEOUT,
+): Promise<Response> {
+  const initial = await rawFetchWithTimeout(url, options, timeout);
+
+  if (initial.status !== 401) return initial;
+
+  // 401 — only attempt refresh-and-retry if the request had a Bearer
+  // token AND the URL isn't itself an auth endpoint (refresh would
+  // loop, login 401 is a legitimate "wrong password").
+  const oldToken = getBearerToken(options);
+  if (!oldToken) return initial;
+  if (isAuthEndpoint(url)) return initial;
+
+  const refresh = await refreshAccessToken();
+  if (!refresh.ok) {
+    // refresh-rejected: helper already cleared tokens + emitted
+    // auth-expired. network: caller's existing 401 path runs.
+    return initial;
+  }
+
+  const retryOptions = withBearer(options, refresh.accessToken);
+  return rawFetchWithTimeout(url, retryOptions, timeout);
+}
+
+/**
+ * Test seam — vitest specs import this to exercise the 401-retry
+ * behaviour without going through the higher-level ApiClient methods.
+ */
+export const fetchWithTimeoutForTests = fetchWithTimeout;
 
 /**
  * REST API client for eNail backend
