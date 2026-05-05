@@ -575,7 +575,7 @@ interface ElectronAPI {
       getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
     };
     sync: {
-      products: () => Promise<void>;
+      products: () => Promise<{ success: boolean; productsCount?: number; error?: string }>;
       orders: () => Promise<void>;
       onProductsSynced: (callback: () => void) => () => void;
       onCatalogUpdated: (callback: (data: any) => void) => () => void;

@@ -22,12 +22,18 @@ import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
 import { billiardComboRepo } from '../database/repos/billiard-combo-repo';
 import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-repo';
 import { PrinterType, ReceiptData } from '../../shared/types';
-import { getConfig } from '../config/store';
+import { getConfig, getSecureAuthToken } from '../config/store';
 import SocketClient from '../network/socket-client';
 import { WindowManager } from '../windows/window-manager';
 import { ShiftController } from '../pos/shift-controller';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
+
+export interface ProductSyncResult {
+  success: boolean;
+  productsCount?: number;
+  error?: string;
+}
 
 export class SyncModule extends BaseModule {
   readonly name = 'sync';
@@ -39,6 +45,22 @@ export class SyncModule extends BaseModule {
   private syncLogService: SyncLogService | null = null;
   private _syncInProgress = false;
   private _didFullProductSync = false;
+
+  // ── Periodic product sync (POS-side polling) ────────────────────
+  // Web admin (zira-ai.com / chesaigon.eshoper.pro) writes products and
+  // prices straight to the same backend the POS pulls from, but the
+  // existing ProductSync triggers were socket connect / login / manual
+  // IPC — none fire while the app stays open. A 30s deltaSync poll fixes
+  // that without depending on the socket. The fields below back a single
+  // shared in-flight promise (so a manual button press during a periodic
+  // tick re-uses the same network call) and a lightweight backoff so a
+  // failing backend isn't hit every 30s.
+  private _productPollTimer: ReturnType<typeof setInterval> | null = null;
+  private _productSyncInFlight: Promise<ProductSyncResult> | null = null;
+  // Backoff schedule (ms) on consecutive failures: 60s, 120s, 300s cap.
+  private static readonly PRODUCT_BACKOFF_MS = [60_000, 120_000, 300_000];
+  private _productBackoffStep = 0;
+  private _productSkipUntil = 0;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -60,16 +82,21 @@ export class SyncModule extends BaseModule {
     // Path A outbound timers start as fallback — stopped once Path B push detected.
     this.orderSync.startPeriodicSync();
 
+    // Periodic ProductSync runs from module init, NOT bound to socket
+    // lifecycle. ProductSync is HTTP-based; the socket is only a bonus
+    // realtime channel and may be down for long stretches without
+    // affecting product polling.
+    this.startPeriodicProductSync();
+
     this.setState(ModuleState.READY);
   }
 
   registerIpcHandlers(): void {
-    ipcMain.handle('pos:sync:products', async () => {
-      try {
-        await this.productSync?.deltaSync();
-        return { success: true };
-      } catch (e: any) { return { success: false, error: e.message }; }
-    });
+    // Manual button bypasses the failure backoff (`force: true`) — the
+    // user pressed it intentionally, they want a fresh pull. Still
+    // shares the in-flight promise with any concurrent periodic tick so
+    // we never double-pull the catalogue.
+    ipcMain.handle('pos:sync:products', async () => this.runProductSync({ force: true }));
 
     ipcMain.handle('pos:sync:orders', async () => {
       try {
@@ -504,12 +531,103 @@ export class SyncModule extends BaseModule {
     return [];
   }
 
+  // ── Periodic product sync helpers ───────────────────────────────
+
+  /**
+   * Run a single ProductSync.deltaSync. Polite by default:
+   *   - skips silently if no auth token (avoids 30s log spam)
+   *   - shares an in-flight promise so concurrent callers (periodic
+   *     tick + manual button) get the same result without double-pulling
+   *   - honours an exponential backoff after consecutive failures
+   *     (60s -> 120s -> 300s cap) so a flaky backend isn't hit every 30s
+   *
+   * Pass `{ force: true }` from the manual IPC handler to bypass the
+   * backoff — user clicked the button intentionally.
+   *
+   * Notifies the POS renderer with `pos:products-synced` on success so
+   * the product/category grid reloads immediately.
+   */
+  async runProductSync(opts: { force?: boolean } = {}): Promise<ProductSyncResult> {
+    if (!opts.force && Date.now() < this._productSkipUntil) {
+      return { success: false, error: 'backoff' };
+    }
+    const token = getSecureAuthToken();
+    if (!token) {
+      // Silent — periodic timer fires every 30s before login completes
+      // and we don't want the warning log to fill up with no-auth entries.
+      return { success: false, error: 'no-auth' };
+    }
+    if (this._productSyncInFlight) {
+      return this._productSyncInFlight;
+    }
+    this._productSyncInFlight = this._doProductSync();
+    try {
+      return await this._productSyncInFlight;
+    } finally {
+      this._productSyncInFlight = null;
+    }
+  }
+
+  private async _doProductSync(): Promise<ProductSyncResult> {
+    if (!this.productSync) return { success: false, error: 'no-product-sync' };
+    try {
+      const productsCount = await this.productSync.deltaSync();
+      // Reset backoff state on the first success.
+      this._productBackoffStep = 0;
+      this._productSkipUntil = 0;
+      // Notify renderer so the product/category grid reloads.
+      const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
+      const posWindow = wm?.getWindow('pos');
+      if (posWindow && !posWindow.isDestroyed()) {
+        posWindow.webContents.send('pos:products-synced');
+      }
+      return { success: true, productsCount };
+    } catch (err: any) {
+      const step = Math.min(this._productBackoffStep, SyncModule.PRODUCT_BACKOFF_MS.length - 1);
+      const backoffMs = SyncModule.PRODUCT_BACKOFF_MS[step];
+      this._productSkipUntil = Date.now() + backoffMs;
+      this._productBackoffStep = Math.min(
+        this._productBackoffStep + 1,
+        SyncModule.PRODUCT_BACKOFF_MS.length - 1,
+      );
+      logger.warn(
+        `[SyncModule] Product sync failed: ${err?.message ?? err}; backing off ${backoffMs / 1000}s`,
+      );
+      return { success: false, error: err?.message ?? String(err) };
+    }
+  }
+
+  /**
+   * Start the 30s periodic product polling. Idempotent — calling twice
+   * does not schedule two timers. Defaults to 30s; tests pass a shorter
+   * interval to exercise the timing.
+   */
+  startPeriodicProductSync(intervalMs = 30_000): void {
+    if (this._productPollTimer) return;
+    this._productPollTimer = setInterval(() => {
+      // Swallow rejections — runProductSync resolves with { success: false }
+      // for every failure mode, but defend in depth.
+      this.runProductSync().catch((err) => {
+        logger.debug(`[SyncModule] Periodic product sync threw: ${err?.message ?? err}`);
+      });
+    }, intervalMs);
+    logger.info(`[SyncModule] Started periodic product sync (${intervalMs / 1000}s interval)`);
+  }
+
+  stopPeriodicProductSync(): void {
+    if (this._productPollTimer) {
+      clearInterval(this._productPollTimer);
+      this._productPollTimer = null;
+    }
+  }
+
   async start(): Promise<void> { this.setState(ModuleState.RUNNING); }
 
   async stop(): Promise<void> {
     this.orderSync?.stop();
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
+    this.stopPeriodicProductSync();
     this.setState(ModuleState.STOPPED);
   }
 
@@ -517,6 +635,7 @@ export class SyncModule extends BaseModule {
     this.orderSync?.stop();
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
+    this.stopPeriodicProductSync();
     this.setState(ModuleState.STOPPED);
   }
 }
