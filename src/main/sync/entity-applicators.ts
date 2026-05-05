@@ -213,18 +213,27 @@ function applyOrder(entry: SyncLogEntry): boolean {
   // Handle refunds — share the same money/vat normalisation the
   // adapter uses for full mirror, so a refundAmount string like
   // "12.34" lands as 1234 grosze instead of being stored as text.
+  //
+  // Gate on `refundGrosze > 0`: full order payloads (b2b-pos.service
+  // findOrderById) commonly include refundAmount='0.00' on every
+  // status_changed/updated event. Without this guard, every non-refund
+  // update would stamp refunded_at=datetime('now') and the COALESCE
+  // wrapper below would pin that bogus timestamp through any later
+  // real refund.
   if (p.refundAmount !== undefined) {
     const refundGrosze = toGrosze(p.refundAmount);
-    const refundLinesJson = normalizeRefundLinesJson(p.refundedLines);
-    database.run(
-      `UPDATE orders
-       SET refund_amount = ?,
-           refund_reason = COALESCE(?, refund_reason),
-           refund_lines = COALESCE(?, refund_lines),
-           refunded_at = COALESCE(refunded_at, datetime('now'))
-       WHERE id = ?`,
-      [refundGrosze, p.refundReason ?? null, refundLinesJson, localId],
-    );
+    if (refundGrosze > 0) {
+      const refundLinesJson = normalizeRefundLinesJson(p.refundedLines);
+      database.run(
+        `UPDATE orders
+         SET refund_amount = ?,
+             refund_reason = COALESCE(?, refund_reason),
+             refund_lines = COALESCE(?, refund_lines),
+             refunded_at = COALESCE(refunded_at, datetime('now'))
+         WHERE id = ?`,
+        [refundGrosze, p.refundReason ?? null, refundLinesJson, localId],
+      );
+    }
   }
 
   // Mirror invoice / proforma fields when the addInvoiceToOrder /

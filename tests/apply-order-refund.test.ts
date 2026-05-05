@@ -211,4 +211,38 @@ describe('applyOrder refund normalisation', () => {
     const params = refundUpdate![1] as unknown[];
     expect(params[2]).toBeNull();
   });
+
+  // ─── Bug 3 regression: refundAmount=0 must NOT stamp refunded_at ─
+  // Full order payloads emitted by b2b-pos.service.findOrderById carry
+  // refundAmount='0.00' on every status_changed/updated event for
+  // non-refunded orders. The refund block must skip entirely so the
+  // COALESCE-protected refunded_at column doesn't get pinned to a
+  // bogus datetime('now') that would survive any later real refund.
+
+  it('does NOT run the refund UPDATE when refundAmount is "0.00" (string)', () => {
+    applyEntry(entry({ status: 'DELIVERED', total: '12.34', refundAmount: '0.00' }));
+    const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundUpdate, 'refundAmount=0 must not write the refund UPDATE').toBeUndefined();
+
+    const refundedAtWrite = vi
+      .mocked(database.run)
+      .mock.calls.find(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /refunded_at\s*=/i.test(c[0] as string),
+      );
+    expect(refundedAtWrite, 'refundAmount=0 must not stamp refunded_at').toBeUndefined();
+  });
+
+  it('does NOT run the refund UPDATE when refundAmount is 0 (number)', () => {
+    applyEntry(entry({ refundAmount: 0 }));
+    const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundUpdate).toBeUndefined();
+  });
+
+  it('does NOT run the refund UPDATE when refundAmount is null', () => {
+    applyEntry(entry({ refundAmount: null }));
+    const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundUpdate).toBeUndefined();
+  });
 });
