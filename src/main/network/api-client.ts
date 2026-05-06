@@ -678,7 +678,7 @@ export class ApiClient {
     token: string,
     orderId: string,
     data: Record<string, any>,
-  ): Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[] } | null> {
+  ): Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string } | null> {
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/refund`;
 
     const response = await fetchWithTimeout(url, {

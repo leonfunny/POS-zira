@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { translations } from '../../i18n/translations';
 import { buildRefundRequest } from './refund-request';
+import {
+  getRemainingRefundableItems,
+  getSafeRemainingTotal,
+  hasRefundOverage,
+} from './refund-quantities';
+import {
+  compareOrdersByDisplayTimeDesc,
+  parseOrderTimestampMs,
+} from './order-history-time';
 
 interface OrderRow {
   id: string;
@@ -20,6 +29,7 @@ interface OrderRow {
   refund_amount?: number;
   refund_reason?: string | null;
   refunded_at?: string | null;
+  refund_lines?: string | null;
   customer_nip?: string | null;
   customer_name?: string | null;
   payment_tenders?: string | null;
@@ -78,9 +88,7 @@ function todayISO(): string {
 }
 
 function parseUtcDate(iso: string): Date {
-  let s = iso.includes('T') ? iso : iso.replace(' ', 'T');
-  if (!s.endsWith('Z') && !s.includes('+') && !s.includes('-', 10)) s += 'Z';
-  return new Date(s);
+  return new Date(parseOrderTimestampMs(iso));
 }
 
 function formatTime(iso: string): string {
@@ -122,6 +130,11 @@ function formatMoney(amount: number, currency: string): string {
   return `${(amount / 100).toFixed(2)} ${currency}`;
 }
 
+function createRefundRequestId(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `refund-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function getOrderLabel(order: OrderRow): string {
   return order.order_number || order.id.substring(0, 8);
 }
@@ -142,6 +155,9 @@ function paymentLabel(method: string | null | undefined): string {
 function getRefundStatus(order: OrderRow): RefundStatus {
   if (order.status === 'REFUNDED') return 'full';
   if (order.status === 'PARTIAL_REFUND') return 'partial';
+  const refundAmount = order.refund_amount ?? 0;
+  if (refundAmount >= order.total && order.total > 0) return 'full';
+  if (refundAmount > 0) return 'partial';
   return 'none';
 }
 
@@ -244,12 +260,17 @@ function RefundPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const refundRequestIdRef = useRef<string | null>(null);
 
-  const alreadyRefunded = order.refund_amount ?? 0;
-  const refundableItems = items.map(item => ({
-    ...item,
-    maxQty: item.quantity,
-  }));
+  const resetRefundRequestId = () => {
+    refundRequestIdRef.current = null;
+  };
+
+  const remainingTotal = getSafeRemainingTotal(order);
+  const refundOverage = hasRefundOverage(order);
+  const refundableResult = getRemainingRefundableItems(order, items);
+  const refundableItems = refundableResult.items;
+  const refundBlockedByMissingLines = refundableResult.unsafeMissingRefundLines;
 
   const selectedRefundLines = refundableItems
     .filter(item => (selectedQtys[item.id] ?? 0) > 0)
@@ -264,15 +285,16 @@ function RefundPanel({
     }));
 
   const computedRefundTotal = refundType === 'FULL'
-    ? order.total - alreadyRefunded
+    ? remainingTotal
     : selectedRefundLines.reduce((sum, l) => sum + l.refundAmount, 0);
 
-  const isValid = (refundType === 'FULL'
-    ? (order.total - alreadyRefunded) > 0
+  const isValid = !refundOverage && !refundBlockedByMissingLines && (refundType === 'FULL'
+    ? remainingTotal > 0 && refundableItems.some(item => item.maxQty > 0)
     : selectedRefundLines.length > 0 && computedRefundTotal > 0)
     && (reason !== 'other' || customReason.trim().length > 0);
 
   const setType = (next: 'FULL' | 'PARTIAL') => {
+    resetRefundRequestId();
     setRefundType(next);
     setConfirmStep(false);
     setError(null);
@@ -286,6 +308,7 @@ function RefundPanel({
   };
 
   const setItemQty = (itemId: string, qty: number, max: number) => {
+    resetRefundRequestId();
     setSelectedQtys(prev => ({ ...prev, [itemId]: Math.max(0, Math.min(qty, max)) }));
     setConfirmStep(false);
     setError(null);
@@ -303,7 +326,7 @@ function RefundPanel({
         : translations.pl[`pos.refund.${reason}`] || tOr(t, `pos.refund.${reason}`, reason);
       let refundItems = selectedRefundLines as any[];
       if (refundType === 'FULL') {
-        refundItems = refundableItems.map(item => ({
+        refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => ({
           variantId: item.variant_id ?? undefined,
           sku: item.sku ?? undefined,
           name: item.name,
@@ -313,16 +336,23 @@ function RefundPanel({
           restock,
         }));
       }
+      const refundRequestId = refundRequestIdRef.current ?? createRefundRequestId();
+      refundRequestIdRef.current = refundRequestId;
 
       const result = await window.electronAPI.pos.orders.refund(order.id, buildRefundRequest({
         type: refundType,
+        refundRequestId,
         reason: reasonText,
         computedRefundTotal,
         lines: refundItems,
       }));
       if (result.success) {
+        resetRefundRequestId();
         setSuccess(true);
         setTimeout(onComplete, 1500);
+      } else if ((result as any).mutationDetected || (result as any).requiresRefresh) {
+        resetRefundRequestId();
+        onComplete();
       } else {
         setError(result.error || 'Refund failed');
         setConfirmStep(false);
@@ -349,9 +379,9 @@ function RefundPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-extrabold text-red-900">{tOr(t, 'pos.refund.title', 'Refund Order')}</h3>
-          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(order.total - alreadyRefunded, currency)}</p>
+          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(remainingTotal, currency)}</p>
         </div>
-        <button onClick={onCancel} disabled={loading}
+        <button onClick={() => { resetRefundRequestId(); onCancel(); }} disabled={loading}
           className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200">
           Cancel
         </button>
@@ -363,7 +393,7 @@ function RefundPanel({
             refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
-          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(order.total - alreadyRefunded, currency)}</span>
+          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(remainingTotal, currency)}</span>
         </button>
         <button onClick={() => setType('PARTIAL')}
           className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-200 ${
@@ -407,9 +437,21 @@ function RefundPanel({
         </div>
       )}
 
+      {refundOverage && (
+        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
+          Backend refund amount exceeds this order total. Further refunds are blocked.
+        </div>
+      )}
+
+      {refundBlockedByMissingLines && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-white px-3 py-3 text-sm font-bold text-amber-800">
+          Cannot safely refund more; server refund details are missing.
+        </div>
+      )}
+
       <div className="mt-4 flex items-center gap-3">
         <label className="flex items-center gap-2 cursor-pointer text-sm font-bold text-slate-700">
-          <input type="checkbox" checked={restock} onChange={e => setRestock(e.target.checked)}
+          <input type="checkbox" checked={restock} onChange={e => { resetRefundRequestId(); setRestock(e.target.checked); }}
             className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
           Restock items to inventory
         </label>
@@ -420,7 +462,7 @@ function RefundPanel({
           {tOr(t, 'pos.refund.reason', 'Reason')}
         </label>
         <select id="refund-reason" value={reason}
-          onChange={(e) => { setReason(e.target.value); setCustomReason(''); setConfirmStep(false); setError(null); }}
+          onChange={(e) => { resetRefundRequestId(); setReason(e.target.value); setCustomReason(''); setConfirmStep(false); setError(null); }}
           className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
           {REFUND_REASONS.map((r) => (
             <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
@@ -432,7 +474,7 @@ function RefundPanel({
         <div className="mt-3">
           <textarea
             value={customReason}
-            onChange={(e) => { setCustomReason(e.target.value); setConfirmStep(false); setError(null); }}
+            onChange={(e) => { resetRefundRequestId(); setCustomReason(e.target.value); setConfirmStep(false); setError(null); }}
             placeholder={tOr(t, 'pos.refund.otherPlaceholder', 'Describe the reason...')}
             maxLength={200}
             className="min-h-[80px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
@@ -461,8 +503,8 @@ function RefundPanel({
             : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
         }`}>
         {loading ? 'Processing...'
-          : confirmStep ? tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')
-          : `${tOr(t, 'pos.refund.confirm', 'Confirm Refund')} (${formatMoney(computedRefundTotal, currency)})`}
+          : confirmStep ? `Confirm refund (${formatMoney(computedRefundTotal, currency)})`
+          : `Review refund (${formatMoney(computedRefundTotal, currency)})`}
       </button>
     </section>
   );
@@ -789,7 +831,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       merged = merged.filter((o) => o.payment_method === filterMethod && !isSplit(o));
     }
     if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
-    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    merged.sort(compareOrdersByDisplayTimeDesc);
 
     setOrders(merged);
     setTotalOrders(total);
@@ -923,7 +965,20 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
-    const canRefund = Boolean(order.backend_id) && refundStatus === 'none' && order.status !== 'CANCELLED';
+    const remainingTotal = getSafeRemainingTotal(order);
+    const refundOverage = hasRefundOverage(order);
+    const refundSyncError = order.sync_error && /refund/i.test(order.sync_error) ? order.sync_error : null;
+    const detailRefundableResult = getRemainingRefundableItems(order, items);
+    const refundBlockedByMissingLines = detailRefundableResult.unsafeMissingRefundLines;
+    const hasRefundableItem = detailRefundableResult.items.some((item) => item.maxQty > 0);
+    const canRefund = Boolean(order.backend_id)
+      && order.status !== 'CANCELLED'
+      && refundStatus !== 'full'
+      && !refundOverage
+      && !refundSyncError
+      && !refundBlockedByMissingLines
+      && remainingTotal > 0
+      && hasRefundableItem;
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
 
@@ -962,7 +1017,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             <div className="grid grid-cols-4 gap-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Total</div>
-                <div className={`mt-2 text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-slate-950'}`}>{formatMoney(order.total - (order.refund_amount ?? 0), currency)}</div>
+                <div className={`mt-2 text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-slate-950'}`}>{formatMoney(remainingTotal, currency)}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Paid</div>
@@ -1067,9 +1122,24 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-3">
                 <span className="text-base font-extrabold text-slate-950">{tOr(t, 'pos.cart.total', 'Total')}</span>
-                <span className={`text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-brand-700'}`}>{formatMoney(order.total - (order.refund_amount ?? 0), currency)}</span>
+                <span className={`text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-brand-700'}`}>{formatMoney(remainingTotal, currency)}</span>
               </div>
             </section>
+            {refundOverage && (
+              <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+                Backend refund amount exceeds the order total. Remaining total is clamped to zero and further refunds are blocked.
+              </div>
+            )}
+            {refundSyncError && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+                {refundSyncError}
+              </div>
+            )}
+            {refundBlockedByMissingLines && !refundSyncError && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+                Cannot safely refund more; server refund details are missing.
+              </div>
+            )}
           </main>
 
           <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
@@ -1156,7 +1226,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                         ? canRefund ? 'Available' : 'Blocked'
                         : refundStatus === 'full'
                           ? tOr(t, 'pos.history.refunded', 'Refunded')
-                          : tOr(t, 'pos.history.partialRefund', 'Partial refund')}
+                          : canRefund ? 'Available' : tOr(t, 'pos.history.partialRefund', 'Partial refund')}
                     </span>
                   </div>
                 </div>
@@ -1200,7 +1270,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 />
               )}
 
-              {refundStatus !== 'none' && (
+              {refundStatus !== 'none' && !canRefund && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
                   {tOr(t, 'pos.refund.alreadyRefunded', 'Already refunded')}
                 </div>

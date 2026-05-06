@@ -16,7 +16,15 @@ import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
-import { toRefundBackendPayload, type RefundIpcPayload } from '../pos/refund-backend-payload';
+import {
+  buildRefundMutationError,
+  getRefundBackendResponseSummary,
+  mergeRefundLines,
+  toRefundBackendPayload,
+  validateRefundBackendResponse,
+  type RefundBackendValidationResult,
+  type RefundIpcPayload,
+} from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
@@ -37,7 +45,7 @@ import { getConfig, getSecureAuthToken } from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
-import { adaptServerOrder, adaptServerOrderItem } from '../sync/pos-order-adapter';
+import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
 import {
   writeBookingStatusChanged,
@@ -136,22 +144,6 @@ export class PosModule extends BaseModule {
       // not block the rest of POS init.
       logger.error(`[PosModule] Orphan booking repair failed: ${err?.message ?? err}`);
     }
-
-    // Finish any synced orders that were created before the /finish call was added.
-    // Non-blocking — runs in background after init completes.
-    setTimeout(async () => {
-      const token = getSecureAuthToken();
-      if (!token) return;
-      const unfinished = database.all<{ backend_id: string; order_number: string }>(
-        "SELECT backend_id, order_number FROM orders WHERE synced = 1 AND backend_id IS NOT NULL AND backend_id != ''",
-      );
-      for (const o of unfinished) {
-        try {
-          await apiClient.finishOrder(token, o.backend_id);
-          logger.info(`[PosModule] Retroactively finished order ${o.order_number}`);
-        } catch { /* already finished or endpoint not available */ }
-      }
-    }, 5000);
 
     // Recover open shift from local DB (app restart during active shift)
     const openShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null; opened_at: string }>(
@@ -707,38 +699,78 @@ export class PosModule extends BaseModule {
         }));
 
         const backendPayload = toRefundBackendPayload(data);
+        const alreadyRefundedGrosze = order.refund_amount ?? 0;
+        const requestedAmountGrosze = data.type === 'FULL'
+          ? order.total - alreadyRefundedGrosze
+          : data.amount ?? (data.lines ?? []).reduce((sum, l) => sum + l.refundAmount, 0);
+        if (requestedAmountGrosze <= 0) {
+          return { success: false, error: 'No refundable amount remains for this order' };
+        }
+        if (alreadyRefundedGrosze + requestedAmountGrosze > order.total) {
+          return { success: false, error: `Refund would exceed order total (${order.total} grosze). Already refunded: ${alreadyRefundedGrosze}` };
+        }
+        const hasLineRefund = (data.lines ?? []).length > 0;
+        const hasRestock = (data.lines ?? []).some(l => l.restock);
 
         logger.info(`[PosModule] Refund ${order.order_number}: ${data.type}, ${lines.length} lines, payload=${JSON.stringify(backendPayload).substring(0, 300)}`);
 
         const result = await apiClient.refundOrder(token, order.backend_id, backendPayload);
         if (result === null) return { success: false, error: 'Refund endpoint not available' };
 
-        // Update local DB from backend response
-        const refundedAmount = result.totalRefundedAmount != null
-          ? Math.round(result.totalRefundedAmount * 100)
-          : result.refundAmount != null
-            ? Math.round(result.refundAmount * 100)
-            : data.type === 'FULL' ? order.total : lines.reduce((s, l) => s + Math.round(l.refundAmount * 100), 0);
-        const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
-        const localRefundLines = (data.lines ?? []).map(l => ({
-          name: l.name || '',
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-          refundAmount: l.refundAmount,
-          vatRate: 0,
-          sku: l.sku || undefined,
-        }));
-        const orderItems = orderRepo.getItemsByOrderId(orderId);
-        for (const rl of localRefundLines) {
-          const match = orderItems.find(oi => oi.variant_id === (data.lines ?? []).find(dl => dl.name === rl.name)?.variantId || oi.name === rl.name);
-          if (match) rl.vatRate = match.vat_rate;
+        const summary = getRefundBackendResponseSummary(result);
+        logger.info(
+          `[PosModule] Refund backend response ${order.order_number}: ` +
+          `status=${summary.status ?? 'unknown'} refundAmount=${summary.refundAmount ?? 'null'} ` +
+          `refundedLines.length=${summary.refundedLinesLength} stockMovementIds.length=${summary.stockMovementIdsLength}`,
+        );
+        const validation = validateRefundBackendResponse(result, {
+          type: data.type,
+          requestedAmountGrosze,
+          orderTotalGrosze: order.total,
+          alreadyRefundedGrosze,
+          requireRefundedLines: hasLineRefund,
+          requireStockMovement: hasRestock,
+        });
+        if (!validation.ok) {
+          const error = buildRefundMutationError(validation);
+          logger.error(
+            `[PosModule] Refund backend response incomplete for ${order.order_number}: ${error}. ` +
+            `summary=${JSON.stringify(validation.summary)}`,
+          );
+          if (validation.mutationDetected) {
+            lockRefundMutationLocally(orderId, order, validation, error, data.reason);
+            database.save();
+            return {
+              success: false,
+              mutationDetected: true,
+              requiresRefresh: true,
+              overRefund: validation.overRefund,
+              error,
+              backendSummary: validation.summary,
+            };
+          }
+          return { success: false, error, backendSummary: validation.summary };
         }
-        orderRepo.markRefunded(orderId, refundedAmount, data.reason || '', status, localRefundLines.length > 0 ? localRefundLines : undefined);
+
+        // Update local DB from backend response
+        const refundedAmount = validation.refundedAmountGrosze ?? 0;
+        const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
+        const backendRefundLinesJson = normalizeRefundLinesJson(result.refundedLines);
+        const deltaRefundLines = backendRefundLinesJson ? JSON.parse(backendRefundLinesJson) : [];
+        const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
+        const refundReason = result.refundReason || data.reason || '';
+        orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined);
         database.save();
 
         // Print refund receipt
         let receiptPrinted = false;
-        try { receiptPrinted = await this.paymentController?.printRefundReceipt(orderId) ?? false; } catch (e: any) {
+        try {
+          receiptPrinted = await this.paymentController?.printRefundReceipt(orderId, {
+            amount: validation.refundAmountGrosze ?? refundedAmount,
+            lines: deltaRefundLines,
+            reason: refundReason,
+          }) ?? false;
+        } catch (e: any) {
           logger.warn(`[PosModule] Refund receipt print failed: ${e.message}`);
         }
 
@@ -1156,4 +1188,33 @@ function deriveLegacyServiceName(services?: SelectedService[]): string | undefin
   return names.length > 0 ? names.join(', ') : undefined;
 }
 
+function lockRefundMutationLocally(
+  orderId: string,
+  order: { total: number; refund_amount: number | null },
+  validation: RefundBackendValidationResult,
+  error: string,
+  reason?: string,
+): void {
+  const reportedAmount = validation.refundedAmountGrosze;
+  const status = validation.overRefund || (reportedAmount != null && reportedAmount >= order.total)
+    ? 'REFUNDED'
+    : 'PARTIAL_REFUND';
 
+  database.run(
+    `UPDATE orders
+     SET status = ?,
+         refund_amount = CASE WHEN ? IS NULL THEN refund_amount ELSE ? END,
+         refund_reason = COALESCE(?, refund_reason),
+         sync_error = ?,
+         refunded_at = COALESCE(refunded_at, datetime('now'))
+     WHERE id = ?`,
+    [
+      status,
+      reportedAmount,
+      reportedAmount,
+      reason ?? 'Backend refund response incomplete',
+      error,
+      orderId,
+    ],
+  );
+}

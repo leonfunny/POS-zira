@@ -547,11 +547,12 @@ interface ElectronAPI {
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       refund: (orderId: string, data: {
         type: 'FULL' | 'PARTIAL';
+        refundRequestId?: string;
         reason?: string;
         amount?: number;
         lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
         manualAdjustmentAmount?: number;
-      }) => Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; error?: string }>;
+      }) => Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string; mutationDetected?: boolean; requiresRefresh?: boolean; overRefund?: boolean; backendSummary?: any; error?: string }>;
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => Promise<{ success: boolean; order?: any; error?: string }>;
       generateProforma: (orderId: string) => Promise<{ success: boolean; proforma?: any; error?: string }>;

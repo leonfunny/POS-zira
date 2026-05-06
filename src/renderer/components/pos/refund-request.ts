@@ -12,6 +12,7 @@ export interface RefundLineInput {
 
 export interface RefundRequestInput {
   type: RefundType;
+  refundRequestId: string;
   reason?: string;
   lines: RefundLineInput[];
   computedRefundTotal: number;
@@ -19,14 +20,16 @@ export interface RefundRequestInput {
 
 export function buildRefundRequest(input: RefundRequestInput): {
   type: RefundType;
+  refundRequestId: string;
   reason?: string;
-  amount?: number;
+  amount: number;
   lines: RefundLineInput[];
 } {
   return {
     type: input.type,
+    refundRequestId: input.refundRequestId,
     reason: input.reason,
-    ...(input.type === 'PARTIAL' ? { amount: input.computedRefundTotal } : {}),
+    amount: input.computedRefundTotal,
     lines: input.lines,
   };
 }

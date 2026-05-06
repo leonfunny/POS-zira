@@ -209,6 +209,43 @@ describe('PaymentController.printRefundReceipt — refund_lines parsing (G2)', (
     expect(data.originalDate).toBe('2026-05-05T10:00:00.000Z');
   });
 
+  it('prints a just-confirmed second partial refund from delta override, not cumulative stored state', async () => {
+    const printer = makeFakePrinter({});
+    const ctl = buildController(printer);
+    orderRepoGetById.mockReturnValue({
+      ...sampleOrder,
+      refund_amount: 3000,
+      refund_reason: 'Second partial',
+      refund_lines: JSON.stringify([
+        { name: 'First item', quantity: 1, unitPrice: 2000, refundAmount: 2000, vatRate: 23, sku: 'FIRST-1' },
+        { name: 'Second item', quantity: 2, unitPrice: 500, refundAmount: 1000, vatRate: 8, sku: 'SECOND-1' },
+      ]),
+    });
+
+    const ok = await ctl.printRefundReceipt('order-1', {
+      amount: 1000,
+      reason: 'Second partial',
+      lines: [
+        { name: 'Second item', quantity: 2, unitPrice: 500, refundAmount: 1000, vatRate: 8, sku: 'SECOND-1' },
+      ],
+    });
+
+    expect(ok).toBe(true);
+    const data = (printer.printReceipt.mock.calls[0] as any[])[0];
+    expect(data.items).toHaveLength(1);
+    expect(data.items[0]).toMatchObject({
+      name: 'Second item',
+      quantity: 2,
+      unitPrice: 500,
+      totalPrice: 1000,
+      vatRate: 8,
+      sku: 'SECOND-1',
+    });
+    expect(data.subtotal).toBe(1000);
+    expect(data.total).toBe(1000);
+    expect(data.payment.amount).toBe(1000);
+  });
+
   it('falls back to all order items when refund_lines is null (older orders)', async () => {
     const printer = makeFakePrinter({});
     const ctl = buildController(printer);

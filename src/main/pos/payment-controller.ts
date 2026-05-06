@@ -10,6 +10,12 @@ export interface PaymentResult {
   error?: string;
 }
 
+export interface RefundReceiptOverride {
+  amount: number;
+  reason?: string;
+  lines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}>;
+}
+
 type PrinterDriver = {
   isConnected(): boolean;
   printReceipt(data: ReceiptData): Promise<void>;
@@ -236,7 +242,7 @@ export class PaymentController {
    * Print a refund receipt — shows "ZWROT / REFUND" banner.
    * Uses stored refund_lines for accurate per-item data; falls back to all items for older orders.
    */
-  async printRefundReceipt(orderId: string): Promise<boolean> {
+  async printRefundReceipt(orderId: string, refundOverride?: RefundReceiptOverride): Promise<boolean> {
     const order = orderRepo.getById(orderId);
     if (!order) {
       logger.warn(`[Payment] Cannot print refund receipt: order ${orderId} not found`);
@@ -249,13 +255,15 @@ export class PaymentController {
       return false;
     }
 
-    const refundAmount = order.refund_amount ?? order.total;
+    const refundAmount = refundOverride?.amount ?? order.refund_amount ?? order.total;
 
     let receiptItems: ReceiptData['items'];
     let refundSubtotal: number;
 
     let storedLines: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}> | null = null;
-    if (order.refund_lines) {
+    if (refundOverride?.lines) {
+      storedLines = refundOverride.lines;
+    } else if (order.refund_lines) {
       try { storedLines = JSON.parse(order.refund_lines); } catch {}
     }
 
@@ -301,7 +309,7 @@ export class PaymentController {
       total: refundAmount,
       cashierName: order.staff_name || undefined,
       isRefund: true,
-      refundReason: order.refund_reason || undefined,
+      refundReason: refundOverride?.reason || order.refund_reason || undefined,
       originalOrderNumber: order.order_number || orderId.substring(0, 8),
       // Wiki: refund receipt MUST cite "Oryginał: POS-… z dnia
       // DD.MM.YYYY". order.created_at is the original sale timestamp;
