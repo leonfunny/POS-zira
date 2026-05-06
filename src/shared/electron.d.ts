@@ -566,7 +566,7 @@ interface ElectronAPI {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       printRefundReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
-      openCashDrawer: () => Promise<{ success: boolean }>;
+      openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>;
       cardPayment: (data: { amount: number; orderId: string }) => Promise<{ success: boolean; error?: string }>;
       onElavonStatus: (callback: (data: any) => void) => () => void;
     };

@@ -188,3 +188,19 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(posModule).toContain('refundAmount: l.refundAmount / 100');
   });
 });
+
+describe('Cash drawer IPC contract', () => {
+  const posModule = readFileSync(
+    join(__dirname, '../src/main/modules/pos.module.ts'), 'utf-8',
+  );
+
+  it('pos:open-cash-drawer preserves the PaymentController boolean result', () => {
+    expect(posModule).toContain('const drawerOpened = await this.paymentController?.openCashDrawer() ?? false');
+    expect(posModule).toContain('success: drawerOpened');
+    expect(posModule).toContain('drawerOpened');
+  });
+
+  it('POS preload declaration exposes drawerOpened and error for manual drawer opens', () => {
+    expect(electronDts).toContain('openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>');
+  });
+});

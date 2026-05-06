@@ -152,6 +152,17 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(result.success).toBe(true);
     expect(result.receiptPrinted).toBe(false);
   });
+
+  it('openCashDrawer directly returns false when no drawer/printer hardware is available', async () => {
+    const ctl = buildController(null);
+    await expect(ctl.openCashDrawer()).resolves.toBe(false);
+  });
+
+  it('openCashDrawer directly returns false when drawer opening rejects', async () => {
+    const printer = makeFakePrinter({ drawerRejects: true });
+    const ctl = buildController(printer);
+    await expect(ctl.openCashDrawer()).resolves.toBe(false);
+  });
 });
 
 describe('PaymentController.printRefundReceipt — refund_lines parsing (G2)', () => {

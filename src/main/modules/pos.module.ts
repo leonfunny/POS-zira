@@ -1000,8 +1000,16 @@ export class PosModule extends BaseModule {
     });
 
     ipcMain.handle('pos:open-cash-drawer', async () => {
-      try { await this.paymentController?.openCashDrawer(); return { success: true }; }
-      catch (e: any) { return { success: false, error: e.message }; }
+      try {
+        const drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
+        return {
+          success: drawerOpened,
+          drawerOpened,
+          ...(drawerOpened ? {} : { error: 'Cash drawer did not open' }),
+        };
+      } catch (e: any) {
+        return { success: false, drawerOpened: false, error: e.message };
+      }
     });
 
     ipcMain.handle('pos:payment:card', async (_e, data: { amount: number; orderId: string }) => {
