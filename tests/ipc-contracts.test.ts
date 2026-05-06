@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { toCashDrawerIpcResult } from '../src/main/pos/cash-drawer-ipc-result';
 
 // Read source files as strings to validate contract consistency
 const electronDts = readFileSync(join(__dirname, '../src/shared/electron.d.ts'), 'utf-8');
@@ -190,14 +191,35 @@ describe('Refund payload passes lines[] end-to-end', () => {
 });
 
 describe('Cash drawer IPC contract', () => {
-  const posModule = readFileSync(
-    join(__dirname, '../src/main/modules/pos.module.ts'), 'utf-8',
-  );
+  it('maps an opened drawer to a successful IPC result', () => {
+    expect(toCashDrawerIpcResult(true)).toEqual({
+      success: true,
+      drawerOpened: true,
+    });
+  });
 
-  it('pos:open-cash-drawer preserves the PaymentController boolean result', () => {
-    expect(posModule).toContain('const drawerOpened = await this.paymentController?.openCashDrawer() ?? false');
-    expect(posModule).toContain('success: drawerOpened');
-    expect(posModule).toContain('drawerOpened');
+  it('maps a false drawer result to a truthful IPC failure', () => {
+    expect(toCashDrawerIpcResult(false)).toEqual({
+      success: false,
+      drawerOpened: false,
+      error: 'Cash drawer did not open',
+    });
+  });
+
+  it('maps an undefined drawer result to a truthful IPC failure', () => {
+    expect(toCashDrawerIpcResult(undefined)).toEqual({
+      success: false,
+      drawerOpened: false,
+      error: 'Cash drawer did not open',
+    });
+  });
+
+  it('preserves a readable error message for the IPC catch path', () => {
+    expect(toCashDrawerIpcResult(false, new Error('printer offline'))).toEqual({
+      success: false,
+      drawerOpened: false,
+      error: 'printer offline',
+    });
   });
 
   it('POS preload declaration exposes drawerOpened and error for manual drawer opens', () => {

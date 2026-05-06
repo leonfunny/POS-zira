@@ -15,6 +15,7 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
+import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
 import { ShiftController } from '../pos/shift-controller';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
@@ -1002,13 +1003,9 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:open-cash-drawer', async () => {
       try {
         const drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
-        return {
-          success: drawerOpened,
-          drawerOpened,
-          ...(drawerOpened ? {} : { error: 'Cash drawer did not open' }),
-        };
+        return toCashDrawerIpcResult(drawerOpened);
       } catch (e: any) {
-        return { success: false, drawerOpened: false, error: e.message };
+        return toCashDrawerIpcResult(false, e);
       }
     });
 
