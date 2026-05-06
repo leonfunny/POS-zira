@@ -25,6 +25,10 @@ import {
 } from '../src/shared/types';
 
 const ctorSpy = vi.fn();
+const setConfigMock = vi.fn((patch: Partial<AgentConfig>) => {
+  currentConfig = { ...currentConfig, ...patch };
+});
+let currentConfig: Partial<AgentConfig> = {};
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
@@ -37,9 +41,19 @@ vi.mock('../src/main/logger', () => ({
 }));
 
 vi.mock('../src/main/config/store', () => ({
-  getConfig: () => ({}) as Partial<AgentConfig>,
-  getConfigValue: () => undefined,
-  setConfig: vi.fn(),
+  getConfig: () => currentConfig,
+  getConfigValue: (key: keyof AgentConfig) => currentConfig[key],
+  setConfig: setConfigMock,
+}));
+
+vi.mock('../src/main/database/repos/local-printer-repo', () => ({
+  localPrinterRepo: {
+    getEnabled: vi.fn(() => []),
+    markOnline: vi.fn(),
+    markUsed: vi.fn(),
+    getById: vi.fn(),
+  },
+  rowToPrinterConfig: vi.fn(),
 }));
 
 vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
@@ -84,6 +98,31 @@ async function build(
   return (module as any).createPrinterFromConfig(config, type);
 }
 
+async function autoSetupWindowsPrinter(
+  type: PrinterType,
+  protocol: PrinterConfig['protocol'],
+  config: Partial<AgentConfig>,
+) {
+  currentConfig = config;
+  const { HardwareModule } = await import(
+    '../src/main/modules/hardware.module'
+  );
+  const module = new HardwareModule({
+    set: vi.fn(),
+    getOptional: vi.fn(),
+  } as any);
+  return (module as any).autoSetupWindowsPrinter(type, protocol, {
+    vid: '0000',
+    brand: 'Xprinter',
+    model: 'XP-80T',
+    windowsPrinterName: 'Xprinter XP-80T',
+    comPort: null,
+    portName: 'USB001',
+    connectionType: 'USB',
+    driverInstalled: true,
+  });
+}
+
 // 6th positional arg of ThermalDriver constructor is windowsTextMode.
 function lastTextMode(): boolean {
   expect(
@@ -98,6 +137,8 @@ describe('HardwareModule — auto-detect windowsTextMode by paperWidth', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ctorSpy.mockReset();
+    setConfigMock.mockClear();
+    currentConfig = {};
   });
 
   describe('protocol=WINDOWS on a real thermal receipt printer', () => {
@@ -208,6 +249,62 @@ describe('HardwareModule — auto-detect windowsTextMode by paperWidth', () => {
         paperWidth: 210,
       } as PrinterConfig);
       expect(lastTextMode()).toBe(false);
+    });
+  });
+
+  describe('auto-setup defaults for receipt-like WINDOWS printers', () => {
+    it('seeds missing paper settings for a WINDOWS receipt printer without changing protocol', async () => {
+      await autoSetupWindowsPrinter(PrinterType.RECEIPT, 'WINDOWS', {
+        printers: {},
+      });
+
+      const configPatch = setConfigMock.mock.calls.find(
+        ([patch]) => !!patch.printers?.RECEIPT,
+      )?.[0];
+      expect(configPatch?.printers?.RECEIPT).toMatchObject({
+        protocol: 'WINDOWS',
+        windowsPrinter: 'Xprinter XP-80T',
+        paperWidth: 80,
+        charsPerLine: 48,
+      });
+    });
+
+    it('preserves existing paper settings when auto-setup updates a receipt-like slot', async () => {
+      await autoSetupWindowsPrinter(PrinterType.KITCHEN, 'WINDOWS', {
+        printers: {
+          KITCHEN: {
+            enabled: true,
+            protocol: 'WINDOWS',
+            paperWidth: 58,
+            charsPerLine: 32,
+          },
+        },
+      });
+
+      const configPatch = setConfigMock.mock.calls.find(
+        ([patch]) => !!patch.printers?.KITCHEN,
+      )?.[0];
+      expect(configPatch?.printers?.KITCHEN).toMatchObject({
+        protocol: 'WINDOWS',
+        paperWidth: 58,
+        charsPerLine: 32,
+      });
+    });
+
+    it('does not seed receipt paper settings for A4 office printers', async () => {
+      await autoSetupWindowsPrinter(PrinterType.A4, 'WINDOWS', {
+        printers: {},
+      });
+
+      const configPatch = setConfigMock.mock.calls.find(
+        ([patch]) => !!patch.printers?.A4,
+      )?.[0];
+      expect(configPatch?.printers?.A4).toMatchObject({
+        protocol: 'WINDOWS',
+        windowsPrinter: 'Xprinter XP-80T',
+      });
+      expect(configPatch?.printers?.A4?.paperWidth).toBeUndefined();
+      expect(configPatch?.printers?.A4?.charsPerLine).toBeUndefined();
     });
   });
 });

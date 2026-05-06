@@ -65,6 +65,12 @@ const PRINT_JOB_MAX_RETRIES = 2;
 /** Delay between retries (ms) */
 const PRINT_JOB_RETRY_DELAY = 2_000;
 
+const RECEIPT_LIKE_PRINTER_TYPES = new Set<string>([
+  PrinterType.RECEIPT,
+  PrinterType.KITCHEN,
+  PrinterType.TICKET,
+]);
+
 export class HardwareModule extends BaseModule {
   readonly name = 'hardware';
 
@@ -1048,6 +1054,11 @@ export class HardwareModule extends BaseModule {
       } else {
         printerConfig.windowsPrinter = printerName;
       }
+    }
+
+    if (RECEIPT_LIKE_PRINTER_TYPES.has(printerType) && (protocol === 'THERMAL' || protocol === 'WINDOWS')) {
+      printerConfig.paperWidth = printerConfig.paperWidth ?? 80;
+      printerConfig.charsPerLine = printerConfig.charsPerLine ?? 48;
     }
 
     // Set default label dimensions for label printers

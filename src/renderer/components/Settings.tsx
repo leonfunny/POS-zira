@@ -14,6 +14,11 @@ interface SettingsProps {
 // Printer types - defined locally for Vite compatibility
 const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
+const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
+
+function isPaperControlPrinterType(printerType: PrinterTypeValue): boolean {
+  return PAPER_CONTROL_PRINTER_TYPES.includes(printerType as typeof PAPER_CONTROL_PRINTER_TYPES[number]);
+}
 
 // Default printer config
 const defaultPrinterConfig: PrinterConfig = {
@@ -539,6 +544,39 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const getPrinterConfig = (printerType: PrinterTypeValue): PrinterConfig => {
     return printers[printerType as keyof typeof printers] || { ...defaultPrinterConfig };
   };
+
+  const renderPaperControls = (printerType: PrinterTypeValue, printerConfig: PrinterConfig) => (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.paperWidth')} (mm)</label>
+        <select
+          value={printerConfig.paperWidth || 80}
+          onChange={(e) => {
+            const pw = parseInt(e.target.value);
+            // Derive charsPerLine via the shared helper so the UI and formatter
+            // keep the same paper-width mapping.
+            updatePrinter(printerType, { paperWidth: pw, charsPerLine: charsPerLineFor(pw) });
+          }}
+          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+        >
+          <option value={80}>80mm</option>
+          <option value={76}>76mm</option>
+          <option value={58}>58mm</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.charsPerLine')}</label>
+        <input
+          type="number"
+          value={printerConfig.charsPerLine || 48}
+          onChange={(e) => updatePrinter(printerType, { charsPerLine: parseInt(e.target.value) || 48 })}
+          min={20}
+          max={80}
+          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+        />
+      </div>
+    </div>
+  );
 
   const handleRefreshPorts = async () => {
     try {
@@ -1498,39 +1536,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               </div>
                             </>
                           )}
-                          {/* Paper settings */}
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.paperWidth')} (mm)</label>
-                              <select
-                                value={printerConfig.paperWidth || 80}
-                                onChange={(e) => {
-                                  const pw = parseInt(e.target.value);
-                                  // Derive charsPerLine via the shared
-                                  // helper so adding a new width here
-                                  // (e.g. 76mm dot-matrix) updates char
-                                  // count consistently with the formatter.
-                                  updatePrinter(printerType, { paperWidth: pw, charsPerLine: charsPerLineFor(pw) });
-                                }}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
-                              >
-                                <option value={80}>80mm</option>
-                                <option value={76}>76mm</option>
-                                <option value={58}>58mm</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.charsPerLine')}</label>
-                              <input
-                                type="number"
-                                value={printerConfig.charsPerLine || 48}
-                                onChange={(e) => updatePrinter(printerType, { charsPerLine: parseInt(e.target.value) || 48 })}
-                                min={20}
-                                max={80}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
-                              />
-                            </div>
-                          </div>
+                          {isPaperControlPrinterType(printerType) && renderPaperControls(printerType, printerConfig)}
                         </>
                       ) : (
                         <>
@@ -1557,6 +1563,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               </button>
                             </div>
                           </div>
+                          {isPaperControlPrinterType(printerType) && printerConfig.protocol === 'WINDOWS' && renderPaperControls(printerType, printerConfig)}
                           {/* Label size settings for LABEL printer type */}
                           {isLabel && (
                             <>
