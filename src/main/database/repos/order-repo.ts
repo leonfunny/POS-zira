@@ -133,7 +133,15 @@ export const orderRepo = {
     database.run('UPDATE orders SET synced = 2 WHERE id = ?', [id]);
   },
 
-  markSynced(id: string, backendId: string): void {
+  markSynced(id: string, backendId: string, backendOrderNumber?: string): void {
+    if (backendOrderNumber) {
+      database.run(
+        "UPDATE orders SET synced = 1, backend_id = ?, order_number = ?, synced_at = datetime('now') WHERE id = ?",
+        [backendId, backendOrderNumber, id],
+      );
+      return;
+    }
+
     database.run(
       "UPDATE orders SET synced = 1, backend_id = ?, synced_at = datetime('now') WHERE id = ?",
       [backendId, id],

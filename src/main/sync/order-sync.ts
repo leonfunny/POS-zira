@@ -26,6 +26,13 @@ function classifyError(msg: string): { kind: 'business' | 'transient'; code?: st
   return { kind: 'transient' };
 }
 
+function getBackendOrderNumber(response: any): string | undefined {
+  const direct = response?.orderNumber ?? response?.order_number;
+  if (typeof direct === 'string' && direct.trim()) return direct;
+  const nested = response?.order?.orderNumber ?? response?.order?.order_number;
+  return typeof nested === 'string' && nested.trim() ? nested : undefined;
+}
+
 export interface OrderSyncResult {
   orderId: string;
   orderNumber: string | null;
@@ -162,21 +169,23 @@ export class OrderSync {
 
         const result = await apiClient.createPosOrder(token, dto);
         const backendId = result.id ?? result.orderId ?? order.id;
+        let backendOrderNumber = getBackendOrderNumber(result);
 
         // Finalize immediately — POS orders are paid at the counter, no draft stage.
         // This triggers stock deduction on the backend.
         try {
           const finishResult = await apiClient.finishOrder(token, backendId);
+          backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
           logger.info(`[OrderSync] Finished order ${backendId} → ${JSON.stringify(finishResult)?.substring(0, 200)}`);
         } catch (e) {
           logger.warn(`[OrderSync] finishOrder failed for ${backendId} (non-fatal): ${e}`);
         }
 
-        orderRepo.markSynced(order.id, backendId);
+        orderRepo.markSynced(order.id, backendId, backendOrderNumber);
         database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
         database.save();
         summary.synced++;
-        summary.results.push({ orderId: order.id, orderNumber: order.order_number, status: 'synced', backendId });
+        summary.results.push({ orderId: order.id, orderNumber: backendOrderNumber ?? order.order_number, status: 'synced', backendId });
         logger.info(`[OrderSync] Synced order ${order.order_number} → backend ${backendId}`);
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) {

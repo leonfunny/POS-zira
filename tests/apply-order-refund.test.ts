@@ -322,4 +322,132 @@ describe('applyOrder refund normalisation', () => {
       'REFUNDED',
     );
   });
+
+  it('locks a refund update when backend has refundAmount but omits refundedLines', () => {
+    applyEntry(
+      entry({
+        status: 'PARTIAL_REFUND',
+        total: '42.00',
+        refundAmount: '28.00',
+        refundReason: 'partial refund',
+        refundedLines: [],
+      }),
+    );
+
+    const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundUpdate, 'expected refund UPDATE call').toBeDefined();
+    const params = refundUpdate![1] as unknown[];
+    expect(params[0]).toBe(2800);
+    expect(params[2]).toBeNull();
+    expect(params[3]).toContain('missing refundedLines');
+
+    const statusUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+    expect((statusUpdates[statusUpdates.length - 1][1] as unknown[])[0]).toBe(
+      'PARTIAL_REFUND',
+    );
+  });
+
+  it('flags backend over-refund rows in sync_error and clamps status to refunded', () => {
+    applyEntry(
+      entry({
+        status: 'REFUNDED',
+        total: '42.00',
+        refundAmount: '51.66',
+        refundReason: 'duplicate refund',
+        refundedLines: [],
+      }),
+    );
+
+    const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundUpdate, 'expected refund UPDATE call').toBeDefined();
+    const params = refundUpdate![1] as unknown[];
+    expect(params[0]).toBe(5166);
+    expect(params[2]).toBeNull();
+    expect(params[3]).toContain('exceeds local order total');
+
+    const statusUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+    expect((statusUpdates[statusUpdates.length - 1][1] as unknown[])[0]).toBe(
+      'REFUNDED',
+    );
+  });
+
+  it('clears stale refund sync_error when a later valid backend refund payload includes refundedLines', () => {
+    applyEntry(
+      entry({
+        status: 'PARTIAL_REFUND',
+        total: '42.00',
+        refundAmount: '28.00',
+        refundedLines: [],
+      }),
+    );
+    applyEntry(
+      entry({
+        status: 'PARTIAL_REFUND',
+        total: '42.00',
+        refundAmount: '28.00',
+        refundedLines: [
+          {
+            name: 'Refunded item',
+            quantity: 2,
+            unitPrice: '14.00',
+            refundAmount: '28.00',
+            taxRate: 23,
+            sku: 'SKU-14',
+          },
+        ],
+      }),
+    );
+
+    const refundUpdates = vi
+      .mocked(database.run)
+      .mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders[\s\S]*refund_amount/i.test(c[0] as string),
+      );
+    expect(refundUpdates).toHaveLength(2);
+    const validUpdate = refundUpdates[1];
+    const sql = validUpdate[0] as string;
+    const params = validUpdate[1] as unknown[];
+    expect(sql).toMatch(/sync_error\s*=\s*CASE/i);
+    expect(sql).toMatch(/sync_error LIKE 'Backend refund%'/i);
+    expect(sql).toMatch(/THEN NULL/i);
+    expect(params[2]).toEqual(expect.any(String));
+    expect(params[3]).toBeNull();
+    expect(params[5]).toBe(1);
+  });
+
+  it('locks refunds when backend sends refund status without refundAmount', () => {
+    applyEntry(
+      entry({
+        status: 'PARTIAL_REFUND',
+        total: '42.00',
+      }),
+    );
+
+    const refundAmountUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
+    expect(refundAmountUpdate, 'must not fabricate refund_amount or refund_lines').toBeUndefined();
+
+    const syncErrorUpdate = vi
+      .mocked(database.run)
+      .mock.calls.find(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET sync_error\s*=\s*\? WHERE id\s*=\s*\?/i.test(c[0] as string),
+      );
+    expect(syncErrorUpdate, 'expected refund sync_error lock').toBeDefined();
+    expect((syncErrorUpdate![1] as unknown[])[0]).toContain('refundAmount/refundedLines');
+  });
 });

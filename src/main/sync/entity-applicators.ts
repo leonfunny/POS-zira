@@ -21,6 +21,13 @@ import {
 } from './pos-order-adapter';
 import logger from '../logger';
 
+const REFUND_MISSING_LINES_SYNC_ERROR =
+  'Backend refund update missing refundedLines; further refunds blocked until server details are fixed';
+const REFUND_OVER_TOTAL_SYNC_ERROR =
+  'Backend refund amount exceeds local order total';
+const REFUND_STATUS_MISSING_DETAILS_SYNC_ERROR =
+  'Backend refund status missing valid refundAmount/refundedLines; further refunds blocked until server details are fixed';
+
 export interface SyncLogEntry {
   seq: number;
   entity_type: string;
@@ -193,14 +200,15 @@ function applyOrder(entry: SyncLogEntry): boolean {
   // to be visible on the local row so Order History shows the right
   // badge AND the refund gate (`order.status === 'REFUNDED'`)
   // doesn't double-refund a row.
+  const isRefundStatus = p.status === 'REFUNDED' || p.status === 'PARTIAL_REFUND';
+  const refundAmountGroszeForStatus = p.refundAmount == null ? null : toGrosze(p.refundAmount);
   if (p.status) {
     database.run(
       'UPDATE orders SET server_status = ?, server_updated_at = ? WHERE id = ?',
       [p.status, p.updatedAt ?? entry.created_at, localId],
     );
     if (
-      p.status === 'REFUNDED' ||
-      p.status === 'PARTIAL_REFUND' ||
+      isRefundStatus ||
       p.status === 'CANCELLED'
     ) {
       database.run(
@@ -208,6 +216,13 @@ function applyOrder(entry: SyncLogEntry): boolean {
         [p.status, localId],
       );
     }
+  }
+
+  if (isRefundStatus && (refundAmountGroszeForStatus == null || refundAmountGroszeForStatus <= 0)) {
+    database.run(
+      'UPDATE orders SET sync_error = ? WHERE id = ?',
+      [REFUND_STATUS_MISSING_DETAILS_SYNC_ERROR, localId],
+    );
   }
 
   // Handle refunds — share the same money/vat normalisation the
@@ -223,15 +238,48 @@ function applyOrder(entry: SyncLogEntry): boolean {
   if (p.refundAmount !== undefined) {
     const refundGrosze = toGrosze(p.refundAmount);
     if (refundGrosze > 0) {
+      let totalGrosze =
+        p.total !== undefined ? toGrosze(p.total) : 0;
+      if (totalGrosze <= 0) {
+        const localRow = database.get<{ total: number }>(
+          'SELECT total FROM orders WHERE id = ?',
+          [localId],
+        );
+        totalGrosze = localRow?.total ?? 0;
+      }
+      const hasRefundedLines = Array.isArray(p.refundedLines) && p.refundedLines.length > 0;
       const refundLinesJson = normalizeRefundLinesJson(p.refundedLines);
+      const refundSyncError = totalGrosze > 0 && refundGrosze > totalGrosze
+        ? REFUND_OVER_TOTAL_SYNC_ERROR
+        : !hasRefundedLines
+          ? REFUND_MISSING_LINES_SYNC_ERROR
+          : null;
+      const clearRefundSyncError = hasRefundedLines && refundSyncError == null;
       database.run(
         `UPDATE orders
          SET refund_amount = ?,
              refund_reason = COALESCE(?, refund_reason),
              refund_lines = COALESCE(?, refund_lines),
+             sync_error = CASE
+               WHEN ? IS NOT NULL THEN ?
+               WHEN ? = 1 AND (
+                 sync_error LIKE 'Backend refund%' OR
+                 sync_error LIKE 'Refund may have been applied%' OR
+                 sync_error LIKE 'Backend reported a refund%'
+               ) THEN NULL
+               ELSE sync_error
+             END,
              refunded_at = COALESCE(refunded_at, datetime('now'))
          WHERE id = ?`,
-        [refundGrosze, p.refundReason ?? null, refundLinesJson, localId],
+        [
+          refundGrosze,
+          p.refundReason ?? null,
+          refundLinesJson,
+          refundSyncError,
+          refundSyncError,
+          clearRefundSyncError ? 1 : 0,
+          localId,
+        ],
       );
 
       // Backend can ship a refunded order with status='DELIVERED'
@@ -242,15 +290,6 @@ function applyOrder(entry: SyncLogEntry): boolean {
       // the cashier can attempt a duplicate refund. Mirror the same
       // logic as adaptServerOrder: ref >= total → REFUNDED, ref > 0
       // → PARTIAL_REFUND.
-      let totalGrosze =
-        p.total !== undefined ? toGrosze(p.total) : 0;
-      if (totalGrosze <= 0) {
-        const localRow = database.get<{ total: number }>(
-          'SELECT total FROM orders WHERE id = ?',
-          [localId],
-        );
-        totalGrosze = localRow?.total ?? 0;
-      }
       if (totalGrosze > 0) {
         const derivedStatus =
           refundGrosze >= totalGrosze ? 'REFUNDED' : 'PARTIAL_REFUND';

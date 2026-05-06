@@ -163,6 +163,46 @@ describe('OrderSync DTO mapping', () => {
       }),
     );
   });
+
+  it('persists backend canonical orderNumber when createPosOrder returns it', async () => {
+    vi.mocked(apiClient.createPosOrder).mockResolvedValue({
+      id: 'backend-order-1',
+      orderNumber: 'POS260506-0005',
+    });
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([
+      makeOrder({ order_number: 'POS-20260506-0001' }) as any,
+    ]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([
+      {
+        id: 'item-1',
+        order_id: 'order-1',
+        variant_id: 'variant-1',
+        name: 'Refunded item',
+        sku: 'SKU-1',
+        price: 1799,
+        quantity: 1,
+        total: 1799,
+        vat_rate: 23,
+        staff_id: null,
+        staff_name: null,
+        notes: null,
+        course: null,
+      },
+    ] as any);
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    expect(orderRepo.markSynced).toHaveBeenCalledWith(
+      'order-1',
+      'backend-order-1',
+      'POS260506-0005',
+    );
+    expect(summary.results[0]).toMatchObject({
+      orderId: 'order-1',
+      backendId: 'backend-order-1',
+      orderNumber: 'POS260506-0005',
+    });
+  });
 });
 
 describe('OrderSync.resetForRetry', () => {

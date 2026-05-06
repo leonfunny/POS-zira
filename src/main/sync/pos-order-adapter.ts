@@ -48,6 +48,7 @@ export function toVatRate(value: unknown, fallback: number): number {
 export function normalizeRefundLinesJson(refundedLines: unknown): string | null {
   if (!Array.isArray(refundedLines) || refundedLines.length === 0) return null;
   const out = refundedLines.map((l: any) => ({
+    variantId: l.variantId ?? l.variant_id ?? undefined,
     name: l.name ?? '',
     quantity:
       typeof l.quantity === 'number'
