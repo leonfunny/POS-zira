@@ -21,7 +21,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { EscPosFormatter } from '../src/main/hardware/thermal/escpos-formatter';
+import { EscPosFormatter, type DailyReportData } from '../src/main/hardware/thermal/escpos-formatter';
 import type { ReceiptData } from '../src/shared/types';
 
 function buildReceiptData(overrides: Partial<ReceiptData> = {}): ReceiptData {
@@ -39,6 +39,17 @@ function buildReceiptData(overrides: Partial<ReceiptData> = {}): ReceiptData {
     subtotal: 750,
     total: 750,
     cashierName: 'Anna',
+    ...overrides,
+  };
+}
+
+function buildReportData(overrides: Partial<DailyReportData> = {}): DailyReportData {
+  return {
+    date: '2026-05-06',
+    transactionCount: 12,
+    grossSales: 50000,
+    discounts: 0,
+    netSales: 50000,
     ...overrides,
   };
 }
@@ -222,6 +233,39 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
       const out = bufferToString(buf);
       expect(out).toContain('Oryginal: #POS-20260504-0099');
       expect(out).not.toMatch(/z dnia/);
+    });
+  });
+
+  describe('G3 / report footers use formatDatePl, not toLocaleString', () => {
+    // PR-1 fixed only formatTestPage; the same wiki rule applies to the
+    // three report methods. Date.toLocaleString() varies by host locale
+    // (e.g. "5/4/2026, 2:30:00 PM" on en-US, "04/05/2026 14:30:00" on
+    // vi-VN, "04.05.2026, 14:30:00" on pl-PL) — same Z-report from two
+    // stations would render differently. formatDatePl emits the fixed
+    // "DD.MM.YYYY  HH:MM" shape.
+
+    it('formatDailyReport renders Wydrukowano: DD.MM.YYYY  HH:MM', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatDailyReport(buildReportData());
+      const out = bufferToString(buf);
+      expect(out).toMatch(/Wydrukowano:\s+\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}/);
+      expect(out).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+    });
+
+    it('formatXReport renders Wydrukowano: DD.MM.YYYY  HH:MM', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatXReport(buildReportData());
+      const out = bufferToString(buf);
+      expect(out).toMatch(/Wydrukowano:\s+\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}/);
+      expect(out).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+    });
+
+    it('formatZReport renders Wydrukowano: DD.MM.YYYY  HH:MM', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const buf = fmt.formatZReport(buildReportData({ reportNumber: 'Z-001' }));
+      const out = bufferToString(buf);
+      expect(out).toMatch(/Wydrukowano:\s+\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}/);
+      expect(out).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
     });
   });
 });

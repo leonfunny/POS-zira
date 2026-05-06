@@ -737,7 +737,7 @@ export class EscPosFormatter {
     // Footer
     parts.push(this.text(''));
     parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+    parts.push(this.text(`Wydrukowano: ${this.formatDatePl(new Date())}`));
 
     if (reportData.cashierName) {
       parts.push(this.text(`Kasjer: ${reportData.cashierName}`));
@@ -778,7 +778,7 @@ export class EscPosFormatter {
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
 
     parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+    parts.push(this.text(`Wydrukowano: ${this.formatDatePl(new Date())}`));
 
     parts.push(ESCPOS.FEED_LINES(4));
     parts.push(ESCPOS.CUT_PARTIAL);
@@ -827,7 +827,7 @@ export class EscPosFormatter {
 
     parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
     parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(this.text(`Wydrukowano: ${new Date().toLocaleString()}`));
+    parts.push(this.text(`Wydrukowano: ${this.formatDatePl(new Date())}`));
 
     parts.push(ESCPOS.FEED_LINES(4));
     parts.push(ESCPOS.CUT_PARTIAL);
