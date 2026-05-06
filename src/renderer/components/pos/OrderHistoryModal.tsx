@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { translations } from '../../i18n/translations';
+import { buildRefundRequest } from './refund-request';
 
 interface OrderRow {
   id: string;
@@ -313,11 +314,12 @@ function RefundPanel({
         }));
       }
 
-      const result = await window.electronAPI.pos.orders.refund(order.id, {
+      const result = await window.electronAPI.pos.orders.refund(order.id, buildRefundRequest({
         type: refundType,
         reason: reasonText,
+        computedRefundTotal,
         lines: refundItems,
-      });
+      }));
       if (result.success) {
         setSuccess(true);
         setTimeout(onComplete, 1500);

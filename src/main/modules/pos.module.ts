@@ -16,6 +16,7 @@ import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
+import { toRefundBackendPayload, type RefundIpcPayload } from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
@@ -670,11 +671,7 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
-    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: {
-      type: 'FULL' | 'PARTIAL'; reason?: string;
-      lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
-      manualAdjustmentAmount?: number;
-    }) => {
+    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: RefundIpcPayload) => {
       try {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
@@ -709,16 +706,7 @@ export class PosModule extends BaseModule {
           restock: l.restock,
         }));
 
-        const backendPayload: Record<string, any> = {
-          type: data.type,
-          reason: data.reason,
-        };
-        if (lines.length > 0) {
-          backendPayload.lines = lines;
-        }
-        if (data.manualAdjustmentAmount != null) {
-          backendPayload.manualAdjustmentAmount = data.manualAdjustmentAmount / 100;
-        }
+        const backendPayload = toRefundBackendPayload(data);
 
         logger.info(`[PosModule] Refund ${order.order_number}: ${data.type}, ${lines.length} lines, payload=${JSON.stringify(backendPayload).substring(0, 300)}`);
 

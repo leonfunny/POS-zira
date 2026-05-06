@@ -548,6 +548,7 @@ interface ElectronAPI {
       refund: (orderId: string, data: {
         type: 'FULL' | 'PARTIAL';
         reason?: string;
+        amount?: number;
         lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean }>;
         manualAdjustmentAmount?: number;
       }) => Promise<{ success: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; error?: string }>;

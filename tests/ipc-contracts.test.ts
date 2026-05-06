@@ -9,6 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { toCashDrawerIpcResult } from '../src/main/pos/cash-drawer-ipc-result';
+import { toRefundBackendPayload } from '../src/main/pos/refund-backend-payload';
+import { buildRefundRequest } from '../src/renderer/components/pos/refund-request';
 
 // Read source files as strings to validate contract consistency
 const electronDts = readFileSync(join(__dirname, '../src/shared/electron.d.ts'), 'utf-8');
@@ -160,8 +162,51 @@ describe('Refund payload passes lines[] end-to-end', () => {
   );
 
   it('renderer sends lines (not items) in refund payload', () => {
+    expect(orderHistoryModal).toContain('buildRefundRequest');
+    expect(orderHistoryModal).toContain('computedRefundTotal');
     expect(orderHistoryModal).toContain('lines: refundItems');
     expect(orderHistoryModal).not.toMatch(/items:\s*refundItems/);
+  });
+
+  it('electron.d.ts allows amount on the renderer refund IPC payload', () => {
+    expect(electronDts).toContain('amount?: number;');
+  });
+
+  it('renderer sends amount for partial refund in grosze', () => {
+    expect(buildRefundRequest({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      computedRefundTotal: 1234,
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+        { name: 'Mleko', quantity: 1, unitPrice: 834, refundAmount: 834, restock: true },
+      ],
+    })).toEqual({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      amount: 1234,
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+        { name: 'Mleko', quantity: 1, unitPrice: 834, refundAmount: 834, restock: true },
+      ],
+    });
+  });
+
+  it('renderer leaves full refund amount out of the IPC payload', () => {
+    expect(buildRefundRequest({
+      type: 'FULL',
+      reason: 'Customer request',
+      computedRefundTotal: 1234,
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+      ],
+    })).toEqual({
+      type: 'FULL',
+      reason: 'Customer request',
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+      ],
+    });
   });
 
   it('renderer does NOT send local item.id as orderItemId', () => {
@@ -169,7 +214,7 @@ describe('Refund payload passes lines[] end-to-end', () => {
   });
 
   it('main IPC handler forwards lines to apiClient', () => {
-    expect(posModule).toContain('backendPayload.lines = lines');
+    expect(posModule).toContain('toRefundBackendPayload(data)');
   });
 
   it('main IPC handler maps lines explicitly without orderItemId', () => {
@@ -185,8 +230,50 @@ describe('Refund payload passes lines[] end-to-end', () => {
   });
 
   it('main IPC handler converts line unitPrice/refundAmount from grosze to PLN', () => {
-    expect(posModule).toContain('unitPrice: l.unitPrice / 100');
-    expect(posModule).toContain('refundAmount: l.refundAmount / 100');
+    expect(toRefundBackendPayload({
+      type: 'PARTIAL',
+      amount: 400,
+      lines: [
+        { variantId: 'v1', sku: 'BULKA-1', name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+      ],
+    })).toEqual({
+      type: 'PARTIAL',
+      reason: undefined,
+      amount: 4,
+      lines: [
+        { variantId: 'v1', sku: 'BULKA-1', name: 'Bulka', quantity: 2, unitPrice: 2, refundAmount: 4, restock: true },
+      ],
+    });
+  });
+
+  it('main payload includes explicit partial amount converted from grosze to PLN', () => {
+    expect(toRefundBackendPayload({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      amount: 1234,
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+      ],
+    })).toMatchObject({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      amount: 12.34,
+    });
+  });
+
+  it('main payload derives partial amount from lines when renderer omits it', () => {
+    expect(toRefundBackendPayload({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      lines: [
+        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+        { name: 'Mleko', quantity: 1, unitPrice: 350, refundAmount: 350, restock: true },
+      ],
+    })).toMatchObject({
+      type: 'PARTIAL',
+      reason: 'Damaged item',
+      amount: 7.5,
+    });
   });
 });
 
