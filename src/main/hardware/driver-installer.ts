@@ -27,9 +27,9 @@ export interface DetectedDevice {
   portName: string | null;             // Windows port name (USB001, USB002, etc.)
   connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL';
   driverInstalled: boolean;
-  /** Recommended printer type slot (RECEIPT, LABEL, A4). Set by classifyPrinterCategory(). */
+  /** Recommended printer type slot (RECEIPT, FISCAL, LABEL, A4). Set by classifyPrinterCategory(). */
   targetType?: string;
-  /** Recommended protocol (POSNET, ZEBRA, THERMAL, WINDOWS). Set by classifyPrinterCategory(). */
+  /** Recommended protocol (POSNET, ELZAB_STX, ZEBRA, THERMAL, WINDOWS). Set by classifyPrinterCategory(). */
   recommendedProtocol?: string;
   /** When false, show the device but require manual slot selection instead of auto-setup. */
   autoSetupEligible?: boolean;
@@ -566,7 +566,9 @@ foreach ($vid in $vids) {
     const classification = classifyPrinterCategory(dev);
     dev.targetType = classification.targetType;
     dev.recommendedProtocol = classification.protocol;
-    if (requiresManualPosnetProtocolSelection(dev)) {
+    if (classification.protocol === 'ELZAB_STX') {
+      dev.autoSetupEligible = false;
+    } else if (requiresManualPosnetProtocolSelection(dev)) {
       dev.autoSetupEligible = false;
     } else if (dev.autoSetupEligible === undefined) {
       dev.autoSetupEligible = dev.brand !== 'Generic Serial';
@@ -707,7 +709,7 @@ const LABEL_PATTERNS = [
  */
 export function classifyPrinterCategory(device: DetectedDevice): {
   targetType: 'RECEIPT' | 'FISCAL' | 'LABEL' | 'A4';
-  protocol: 'POSNET' | 'ZEBRA' | 'THERMAL' | 'WINDOWS';
+  protocol: 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'THERMAL' | 'WINDOWS';
 } {
   const brand = device.brand.toUpperCase();
   const model = (device.model || '').toLowerCase();
@@ -720,6 +722,12 @@ export function classifyPrinterCategory(device: DetectedDevice): {
   // disables auto-setup for those PIDs until the printer menu is verified.
   if (brand === 'POSNET' || device.vid === POSNET_VID) {
     return { targetType: 'FISCAL', protocol: 'POSNET' };
+  }
+
+  // ELZAB Zeta Online is a fiscal printer. It may expose Windows transport
+  // drivers, but it must not be classified as a generic THERMAL receipt device.
+  if (brand === 'ELZAB' || combined.includes('elzab') || combined.includes('zeta online')) {
+    return { targetType: 'FISCAL', protocol: 'ELZAB_STX' };
   }
 
   // Zebra — check if it's a label printer (most are) vs receipt

@@ -10,13 +10,13 @@ export enum AgentStatus {
 }
 
 // Printer protocol types
-export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ZEBRA' | 'WINDOWS';
+export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'WINDOWS';
 
 // Printer types - used for routing jobs to correct printer
 // Using const object instead of enum for better Vite/browser compatibility
 export const PrinterType = {
   RECEIPT: 'RECEIPT',   // Thermal ESC/POS receipt printers (Xprinter, Epson, Star...)
-  FISCAL: 'FISCAL',     // Fiscal printers (Posnet) — legally required fiscal receipts
+  FISCAL: 'FISCAL',     // Fiscal printers (Posnet/ELZAB) — legally required fiscal receipts
   LABEL: 'LABEL',       // Máy in nhãn/barcode (Zebra, TSC...)
   A4: 'A4',             // Máy in A4 thường (HP, Canon...)
   TICKET: 'TICKET',     // Máy in vé
@@ -35,7 +35,7 @@ export type PrinterType = typeof PrinterType[keyof typeof PrinterType];
  */
 export const ALLOWED_PROTOCOLS_BY_TYPE: Record<PrinterType, PrinterProtocol[]> = {
   RECEIPT: ['THERMAL', 'WINDOWS'],
-  FISCAL:  ['POSNET'],
+  FISCAL:  ['POSNET', 'ELZAB_STX'],
   LABEL:   ['ZEBRA', 'WINDOWS'],
   A4:      ['WINDOWS'],
   TICKET:  ['POSNET', 'THERMAL', 'WINDOWS'],
@@ -58,7 +58,7 @@ export enum PrintJobType {
 // Printer status returned by driver.getStatus()
 export interface PrinterStatusInfo {
   connected: boolean;
-  type: 'POSNET' | 'ZEBRA' | 'THERMAL';
+  type: 'POSNET' | 'ELZAB' | 'ZEBRA' | 'THERMAL';
   port?: string;
   printerName?: string;
   protocol?: string;
@@ -159,6 +159,8 @@ export interface PrinterConfig {
   // For THERMAL/POSNET (COM port)
   port?: string;
   baudRate?: number;
+  // For network-capable fiscal printers (e.g. ELZAB RNDIS/IP)
+  address?: string;
   // For ZEBRA/WINDOWS (Windows printer)
   windowsPrinter?: string;
   labelWidth?: number;   // mm
@@ -461,7 +463,7 @@ export interface ConnectResponse {
   serverUrl: string;
   printerConfig?: {
     port?: string;
-    protocol?: PrinterProtocol;
+    protocol?: string;
     baudRate?: number;
   };
   printers?: Array<{

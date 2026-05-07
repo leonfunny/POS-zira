@@ -40,11 +40,12 @@ const printerConfigSchema = {
   type: 'object',
   properties: {
     enabled: { type: 'boolean', default: false },
-    protocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
+    protocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
     serverPrinterId: { type: 'string' },
     displayName: { type: 'string' },
     port: { type: 'string' },
     baudRate: { type: 'number', default: 9600 },
+    address: { type: 'string' },
     windowsPrinter: { type: 'string' },
     labelWidth: { type: 'number', default: 100 },
     labelHeight: { type: 'number', default: 50 },
@@ -152,7 +153,7 @@ const store = new Store<AgentConfig>({
     labelPrinter: printerConfigSchema,
     // Legacy single printer settings
     printerPort: { type: 'string' },
-    printerProtocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
+    printerProtocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
     printerBaudRate: { type: 'number', default: 9600 },
     zebraPrinter: { type: 'string' },
     labelWidth: { type: 'number', default: 100 },

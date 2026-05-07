@@ -117,6 +117,13 @@ export const BRAND_PATTERNS: BrandPattern[] = [
     defaultType: 'RECEIPT',
   },
   {
+    brand: 'ELZAB',
+    namePatterns: ['elzab', 'zeta online'],
+    vids: [],
+    defaultProtocol: 'ELZAB_STX',
+    defaultType: 'FISCAL',
+  },
+  {
     brand: 'Zebra',
     namePatterns: ['zebra', 'zdesigner', 'ztc '],
     vids: ['0A5F'],

@@ -20,10 +20,12 @@ const DEFAULT_TIMEOUT = 30000;
 type ServerPrinter = NonNullable<ConnectResponse['printers']>[number];
 
 const KNOWN_PRINTER_TYPES = new Set<string>(Object.values(PrinterType));
+const FISCAL_PROTOCOLS = new Set<PrinterProtocol>(['POSNET', 'ELZAB_STX']);
 
 function normalizeProtocol(protocol?: string): PrinterProtocol | null {
-  const p = (protocol || '').toUpperCase();
+  const p = (protocol || '').toUpperCase().replace(/[-\s]/g, '_');
   if (p === 'POSNET') return 'POSNET';
+  if (p === 'ELZAB' || p === 'STX' || p === 'ELZAB_STX') return 'ELZAB_STX';
   if (p === 'ZEBRA') return 'ZEBRA';
   if (p === 'WINDOWS' || p === 'CUPS') return 'WINDOWS';
   if (p === 'THERMAL' || p === 'ESC_POS' || p === 'SERIAL' || p === 'USB') return 'THERMAL';
@@ -39,9 +41,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   if (!protocol) return null;
 
   const requestedType = (item.printerType || '').toUpperCase();
-  const printerType = requestedType === PrinterType.RECEIPT && protocol === 'POSNET'
-    ? PrinterType.FISCAL
-    : requestedType;
+  const printerType = FISCAL_PROTOCOLS.has(protocol) ? PrinterType.FISCAL : requestedType;
   if (!KNOWN_PRINTER_TYPES.has(printerType)) return null;
 
   const address = (item.address || '').trim();
@@ -53,6 +53,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
     serverPrinterId: item.id,
     displayName: item.displayName || printerType,
     baudRate: item.baudRate || 9600,
+    address: address || undefined,
     paperWidth: item.paperWidth || 80,
     charsPerLine: item.charsPerLine || (item.paperWidth && item.paperWidth <= 58 ? 32 : 48),
     supportsCut: item.supportsCut ?? true,
@@ -61,6 +62,9 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
 
   if (protocol === 'POSNET') {
     if (looksLikeComPort(address)) config.port = address.toUpperCase();
+  } else if (protocol === 'ELZAB_STX') {
+    if (looksLikeComPort(address)) config.port = address.toUpperCase();
+    else if (address) config.address = address;
   } else if (protocol === 'THERMAL') {
     if (looksLikeComPort(address)) config.port = address.toUpperCase();
     else if (target) config.windowsPrinter = target;
@@ -322,6 +326,7 @@ export class ApiClient {
 
     const serverPrinters = normalizeServerPrinters(data.printers);
     const localPrinters = normalizeServerPrinterRows(data.printers);
+    const legacyPrinterProtocol = normalizeProtocol(data.printerConfig?.protocol);
 
     // Save connection info to config
     const nextConfig: Parameters<typeof setConfig>[0] = {
@@ -337,7 +342,7 @@ export class ApiClient {
       isPaired: true,
       // Apply printer config if provided
       ...(data.printerConfig?.port && { printerPort: data.printerConfig.port }),
-      ...(data.printerConfig?.protocol && { printerProtocol: data.printerConfig.protocol }),
+      ...(legacyPrinterProtocol && { printerProtocol: legacyPrinterProtocol }),
       ...(data.printerConfig?.baudRate && { printerBaudRate: data.printerConfig.baudRate }),
     };
 
@@ -1365,6 +1370,13 @@ export class ApiClient {
     return response.json();
   }
 }
+
+export const printerMappingForTests = {
+  normalizeProtocol,
+  mapServerPrinter,
+  normalizeServerPrinters,
+  normalizeServerPrinterRows,
+};
 
 // Singleton instance
 export const apiClient = new ApiClient();

@@ -58,6 +58,7 @@ export function rowToPrinterConfig(row: LocalPrinterRow): PrinterConfig {
     serverPrinterId: row.id,
     displayName: row.display_name || row.name || row.printer_type || row.id,
     port: row.port || undefined,
+    address: row.address || undefined,
     windowsPrinter: windowsPrinterTarget(row),
     baudRate: row.baud_rate || 9600,
     paperWidth: row.paper_width || 80,

@@ -1396,13 +1396,24 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     // show it but flag it visually so the user knows to switch.
                     const currentIsAllowed = allowedProtocols.includes(printerConfig.protocol);
                     const labelTrKey = (proto: PrinterProtocol) => isLabel ? `protocol.${proto}.label` : `protocol.${proto}`;
+                    const updateProtocol = (protocol: PrinterProtocol) => {
+                      const targetReset: Partial<PrinterConfig> =
+                        protocol === 'ELZAB_STX'
+                          ? { windowsPrinter: '' }
+                          : protocol === 'POSNET'
+                            ? { windowsPrinter: '', address: '' }
+                            : protocol === 'THERMAL'
+                              ? { address: '' }
+                              : { port: '', address: '' };
+                      updatePrinter(printerType, { protocol, ...targetReset });
+                    };
                     return (
                     <div className="space-y-3">
                       <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.protocol')}</label>
                         <select
                           value={printerConfig.protocol}
-                          onChange={(e) => updatePrinter(printerType, { protocol: e.target.value as PrinterProtocol })}
+                          onChange={(e) => updateProtocol(e.target.value as PrinterProtocol)}
                           className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none ${
                             currentIsAllowed ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
                           }`}
@@ -1461,6 +1472,70 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               <option value={57600}>57600</option>
                               <option value={115200}>115200</option>
                             </select>
+                          </div>
+                        </>
+                      ) : printerConfig.protocol === 'ELZAB_STX' ? (
+                        <>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.comPort')} (USB CDC / RS232)</label>
+                            <div className="flex gap-2">
+                              <select
+                                value={printerConfig.port || ''}
+                                onChange={(e) => updatePrinter(printerType, { port: e.target.value, address: '', windowsPrinter: '' })}
+                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                              >
+                                <option value="">{t('settings.selectPort')}</option>
+                                {ports.map((port) => (
+                                  <option key={port} value={port}>{port}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={handleRefreshPorts}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.baudRate')}</label>
+                            <select
+                              value={printerConfig.baudRate || 9600}
+                              onChange={(e) => updatePrinter(printerType, { baudRate: parseInt(e.target.value) })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            >
+                              <option value={9600}>9600</option>
+                              <option value={19200}>19200</option>
+                              <option value={38400}>38400</option>
+                              <option value={57600}>57600</option>
+                              <option value={115200}>115200</option>
+                            </select>
+                          </div>
+                          <div className="relative flex items-center py-1">
+                            <div className="flex-grow border-t border-slate-200" />
+                            <span className="mx-2 text-xs text-slate-400">or IP / RNDIS</span>
+                            <div className="flex-grow border-t border-slate-200" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">IP address / host</label>
+                            <input
+                              type="text"
+                              value={printerConfig.address || ''}
+                              onChange={(e) => {
+                                const address = e.target.value.trim();
+                                updatePrinter(printerType, {
+                                  address,
+                                  ...(address ? { port: '', windowsPrinter: '' } : { windowsPrinter: '' }),
+                                });
+                              }}
+                              placeholder="192.168.137.2"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              Use COM after the USB CDC driver, or address for RNDIS/network setup. Fiscal commands still require the ELZAB sidecar and hardware.
+                            </p>
                           </div>
                         </>
                       ) : printerConfig.protocol === 'THERMAL' ? (

@@ -12,6 +12,7 @@ import type { EventBus } from '../core/event-bus';
 import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { PosnetDriver } from '../hardware/posnet/posnet-driver';
+import { ElzabDriver } from '../hardware/elzab/elzab-driver';
 import { DeviceDetectionService } from '../hardware/posnet/device-detection-service';
 import { PosnetProbeEngine } from '../hardware/posnet/posnet-probe-engine';
 import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registry';
@@ -48,7 +49,7 @@ import { WindowManager } from '../windows/window-manager';
 import { app } from 'electron';
 import logger from '../logger';
 
-type PrinterDriver = PosnetDriver | ZebraDriver | ThermalDriver;
+type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
 
@@ -566,16 +567,20 @@ export class HardwareModule extends BaseModule {
       if (receiptDriver instanceof PosnetDriver) return receiptDriver;
     }
 
-    // RECEIPT fallback: FISCAL slot is always Posnet (ALLOWED_PROTOCOLS_BY_TYPE enforces this),
-    // and PosnetDriver.printReceipt() prints via non-fiscal transaction — safe for receipts.
-    // No instanceof check needed here (asymmetry with FISCAL→RECEIPT above is intentional).
+    // RECEIPT fallback: preserve old POSNET-only installs, but do not send
+    // generic receipts to ELZAB. ELZAB is a fiscal protocol path, not a
+    // replacement for a thermal receipt printer.
     if (printerType === PrinterType.RECEIPT && this.printers[PrinterType.FISCAL]) {
-      return this.printers[PrinterType.FISCAL]!;
+      const fiscalDriver = this.printers[PrinterType.FISCAL]!;
+      if (fiscalDriver instanceof PosnetDriver) return fiscalDriver;
     }
 
     if (printerType === PrinterType.LABEL && this.labelPrinter) return this.labelPrinter;
     if ((printerType === PrinterType.RECEIPT || printerType === PrinterType.TICKET || printerType === PrinterType.KITCHEN) && this.receiptPrinter) {
       return this.receiptPrinter;
+    }
+    if (this.printerDriver instanceof ElzabDriver) {
+      return printerType === PrinterType.FISCAL ? this.printerDriver : null;
     }
     return this.printerDriver;
   }
@@ -685,17 +690,17 @@ export class HardwareModule extends BaseModule {
           type: pt,
           connected: this.printers[pt as PrinterType]?.isConnected() || false,
           protocol: pc.protocol,
-          address: pc.windowsPrinter || pc.port,
+          address: pc.windowsPrinter || pc.port || pc.address,
         });
       }
     }
 
     if (!multiPrinterMode && result.length === 0) {
       if (config.receiptPrinter?.enabled) {
-        result.push({ type: 'RECEIPT', connected: this.receiptPrinter?.isConnected() || false, protocol: config.receiptPrinter.protocol, address: config.receiptPrinter.windowsPrinter || config.receiptPrinter.port });
+        result.push({ type: 'RECEIPT', connected: this.receiptPrinter?.isConnected() || false, protocol: config.receiptPrinter.protocol, address: config.receiptPrinter.windowsPrinter || config.receiptPrinter.port || config.receiptPrinter.address });
       }
       if (config.labelPrinter?.enabled) {
-        result.push({ type: 'LABEL', connected: this.labelPrinter?.isConnected() || false, protocol: config.labelPrinter.protocol, address: config.labelPrinter.windowsPrinter || config.labelPrinter.port });
+        result.push({ type: 'LABEL', connected: this.labelPrinter?.isConnected() || false, protocol: config.labelPrinter.protocol, address: config.labelPrinter.windowsPrinter || config.labelPrinter.port || config.labelPrinter.address });
       }
       if (result.length === 0 && (config.printerPort || config.zebraPrinter)) {
         result.push({ type: 'DEFAULT', connected: this.printerDriver?.isConnected() || false, protocol: config.printerProtocol, address: config.zebraPrinter || config.printerPort });
@@ -796,10 +801,10 @@ export class HardwareModule extends BaseModule {
           throw new Error(`${printerType} slot cannot use ${config.protocol} protocol. Allowed: ${allowed.join(', ')}`);
         }
       }
-      if (!config.port && !config.windowsPrinter) {
-        throw new Error('Missing port (COM) or windowsPrinter name in config');
+      if (!config.port && !config.windowsPrinter && !config.address) {
+        throw new Error('Missing port (COM), address, or windowsPrinter name in config');
       }
-      return { detail: `protocol=${config.protocol} target=${config.port || config.windowsPrinter}` };
+      return { detail: `protocol=${config.protocol} target=${config.port || config.address || config.windowsPrinter}` };
     });
     if (!configOk) return result;
 
@@ -826,12 +831,20 @@ export class HardwareModule extends BaseModule {
             if (state === 'physical_present') throw new Error(`DEVICE_DETECTED_NO_PROTOCOL_RESPONSE: ${diag?.detail || `Device detected on ${driver.getPort()} but no POSNET protocol response`}`);
             throw new Error(`PORT_NOT_FOUND: ${diag?.detail || 'Printer not found'}`);
           }
+          if (driver instanceof ElzabDriver) {
+            const diag = driver.getLastDiagnostic();
+            if (diag) throw new Error(`${diag.code}: ${diag.detail || 'ELZAB_STX is not ready'}`);
+            throw new Error('ELZAB_STX_NOT_READY: official sidecar or fiscal printer is not available');
+          }
           throw new Error('Printer not found. Check the cable, power, and whether the printer is selected/installed.');
         }
         if (driver instanceof PosnetDriver) {
           const pid = driver.getDetectedPid();
           const pidInfo = pid ? ` (PID 0x${pid.toString(16).toUpperCase()})` : '';
           return { detail: `Connected on ${driver.getPort()}${pidInfo}` };
+        }
+        if (driver instanceof ElzabDriver) {
+          return { detail: `Connected via ${driver.getPort() || driver.getAddress()}` };
         }
         return { detail: 'Connected' };
       });
@@ -949,6 +962,9 @@ export class HardwareModule extends BaseModule {
       if (protocol === 'POSNET') {
         return this.autoSetupPosnet(effectiveType);
       }
+      if (protocol === 'ELZAB_STX') {
+        return this.autoSetupElzab(device);
+      }
       return this.autoSetupWindowsPrinter(effectiveType, protocol as PrinterProtocol, device);
     }
 
@@ -995,6 +1011,14 @@ export class HardwareModule extends BaseModule {
 
     logger.info(`[HardwareModule] autoSetupPosnet: configured ${printerType} on ${port}`);
     return { success: true, port, message: `POSNET printer configured on ${port}`, action: 'configured' };
+  }
+
+  private async autoSetupElzab(device: DetectedDevice): Promise<{ success: boolean; message: string; action?: string }> {
+    return {
+      success: false,
+      message: `ELZAB ${device.model || 'printer'} detected. Install ELZAB USB/RNDIS drivers, verify communication in Stampa, and configure the FISCAL slot with ELZAB_STX plus an official elzabdr/STX sidecar. The app will not treat it as a generic thermal printer.`,
+      action: 'manual_required',
+    };
   }
 
   /** Universal auto-setup for Windows-spooler printers (Zebra, Thermal, HP, etc.) */
@@ -1693,6 +1717,17 @@ export class HardwareModule extends BaseModule {
       return null;
     }
 
+    if (config.protocol === 'ELZAB_STX') {
+      if (config.port || config.address) {
+        return new ElzabDriver({
+          port: config.port,
+          address: config.address,
+          baudRate: config.baudRate || 9600,
+        });
+      }
+      logger.warn(`[HardwareModule] ELZAB_STX printer "${name}" requires a COM port or IP address`);
+      return null;
+    }
     if (config.protocol === 'ZEBRA') {
       // Zebra label printers: send raw ZPL via Windows spooler API
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
@@ -1761,6 +1796,10 @@ export class HardwareModule extends BaseModule {
       if (port) return new PosnetDriver(port, baud, 'POSNET');
       return null;
     }
+    if (protocol === 'ELZAB_STX') {
+      if (port) return new ElzabDriver({ port, baudRate: baud });
+      return null;
+    }
     if (zebra) return new ThermalDriver(zebra, baud, 'USB', 80, 48);
     if (port) return new ThermalDriver(port, baud, 'SERIAL', 80, 48);
     return null;
@@ -1789,10 +1828,11 @@ export class HardwareModule extends BaseModule {
   private isFiscalJob(job: any): boolean {
     // Z_REPORT is a fiscal zeroing operation
     if (job.jobType === PrintJobType.Z_REPORT) return true;
-    // Receipts and invoices printed on a POSNET fiscal printer are fiscal
+    // Receipts and invoices printed on a fiscal protocol driver are fiscal
+    const driver = this.getPrinterForJob(job);
     if (
       (job.jobType === PrintJobType.RECEIPT || job.jobType === PrintJobType.INVOICE) &&
-      this.getPrinterForJob(job) instanceof PosnetDriver
+      (driver instanceof PosnetDriver || driver instanceof ElzabDriver)
     ) {
       return true;
     }
@@ -1846,6 +1886,11 @@ export class HardwareModule extends BaseModule {
           await this.printA4Document(job.payload as DocumentData, printerName);
         } else if (isReport) {
           if (targetPrinter instanceof ThermalDriver) {
+            const rd = job.payload as DailyReportData;
+            if (job.jobType === PrintJobType.DAILY_REPORT) await targetPrinter.printDailyReport(rd);
+            else if (job.jobType === PrintJobType.X_REPORT) await targetPrinter.printXReport(rd);
+            else await targetPrinter.printZReport(rd);
+          } else if (targetPrinter instanceof ElzabDriver) {
             const rd = job.payload as DailyReportData;
             if (job.jobType === PrintJobType.DAILY_REPORT) await targetPrinter.printDailyReport(rd);
             else if (job.jobType === PrintJobType.X_REPORT) await targetPrinter.printXReport(rd);

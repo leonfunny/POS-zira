@@ -45,7 +45,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Receipts',
     'printer.RECEIPT.desc': 'Receipts and invoices',
     'printer.FISCAL': 'Fiscal',
-    'printer.FISCAL.desc': 'Posnet fiscal printer',
+    'printer.FISCAL.desc': 'Posnet / ELZAB fiscal printer',
     'printer.LABEL': 'Labels',
     'printer.LABEL.desc': 'Labels and barcodes',
     'printer.A4': 'A4',
@@ -58,11 +58,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (ESC/POS)',
     'protocol.POSNET': 'POSNET (fiscal)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (fiscal)',
     'protocol.ZEBRA': 'ZEBRA (ZPL labels)',
     'protocol.WINDOWS': 'WINDOWS (driver)',
     'protocol.ZEBRA.label': 'ZEBRA (ZPL labels)',
     'protocol.WINDOWS.label': 'WINDOWS (driver)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'Test Print',
@@ -1059,7 +1061,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Hóa đơn',
     'printer.RECEIPT.desc': 'Hóa đơn và phiếu thu',
     'printer.FISCAL': 'Tài chính',
-    'printer.FISCAL.desc': 'Máy in hóa đơn Posnet',
+    'printer.FISCAL.desc': 'Máy in hóa đơn Posnet / ELZAB',
     'printer.LABEL': 'Nhãn',
     'printer.LABEL.desc': 'Nhãn và mã vạch',
     'printer.A4': 'A4',
@@ -1072,11 +1074,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (ESC/POS)',
     'protocol.POSNET': 'POSNET (fiscal)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (fiscal)',
     'protocol.ZEBRA': 'ZEBRA (nhãn ZPL)',
     'protocol.WINDOWS': 'WINDOWS (driver)',
     'protocol.ZEBRA.label': 'ZEBRA (nhãn ZPL)',
     'protocol.WINDOWS.label': 'WINDOWS (driver)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'In thử',
@@ -2032,7 +2036,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Fişler',
     'printer.RECEIPT.desc': 'Fişler ve faturalar',
     'printer.FISCAL': 'Mali',
-    'printer.FISCAL.desc': 'Posnet mali yazıcı',
+    'printer.FISCAL.desc': 'Posnet / ELZAB mali yazıcı',
     'printer.LABEL': 'Etiketler',
     'printer.LABEL.desc': 'Etiketler ve barkodlar',
     'printer.A4': 'A4',
@@ -2045,11 +2049,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (mali yazıcılar)',
     'protocol.POSNET': 'POSNET (eski yazıcılar)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (mali)',
     'protocol.ZEBRA': 'ZEBRA (ZPL etiketleri)',
     'protocol.WINDOWS': 'WINDOWS (sürücü)',
     'protocol.ZEBRA.label': 'ZEBRA (ZPL etiketleri)',
     'protocol.WINDOWS.label': 'WINDOWS (sürücü)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'Test Yazdır',
@@ -2984,7 +2990,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': '收据',
     'printer.RECEIPT.desc': '收据和发票',
     'printer.FISCAL': '财务',
-    'printer.FISCAL.desc': 'Posnet财务打印机',
+    'printer.FISCAL.desc': 'Posnet / ELZAB财务打印机',
     'printer.LABEL': '标签',
     'printer.LABEL.desc': '标签和条码',
     'printer.A4': 'A4',
@@ -2997,11 +3003,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (热敏打印机)',
     'protocol.POSNET': 'POSNET (旧式打印机)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (fiscal)',
     'protocol.ZEBRA': 'ZEBRA (ZPL标签)',
     'protocol.WINDOWS': 'WINDOWS (驱动)',
     'protocol.ZEBRA.label': 'ZEBRA (ZPL标签)',
     'protocol.WINDOWS.label': 'WINDOWS (驱动)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': '测试打印',
@@ -3936,7 +3944,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Чеки',
     'printer.RECEIPT.desc': 'Чеки та рахунки',
     'printer.FISCAL': 'Фіскальний',
-    'printer.FISCAL.desc': 'Фіскальний принтер Posnet',
+    'printer.FISCAL.desc': 'Фіскальний принтер Posnet / ELZAB',
     'printer.LABEL': 'Етикетки',
     'printer.LABEL.desc': 'Етикетки та штрих-коди',
     'printer.A4': 'A4',
@@ -3949,11 +3957,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (фіскальні принтери)',
     'protocol.POSNET': 'POSNET (старі принтери)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (фіскальний)',
     'protocol.ZEBRA': 'ZEBRA (ZPL етикетки)',
     'protocol.WINDOWS': 'WINDOWS (драйвер)',
     'protocol.ZEBRA.label': 'ZEBRA (ZPL етикетки)',
     'protocol.WINDOWS.label': 'WINDOWS (драйвер)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'Тестовий друк',
@@ -4888,7 +4898,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Чеки',
     'printer.RECEIPT.desc': 'Чеки и счета',
     'printer.FISCAL': 'Фискальный',
-    'printer.FISCAL.desc': 'Фискальный принтер Posnet',
+    'printer.FISCAL.desc': 'Фискальный принтер Posnet / ELZAB',
     'printer.LABEL': 'Этикетки',
     'printer.LABEL.desc': 'Этикетки и штрих-коды',
     'printer.A4': 'A4',
@@ -4901,11 +4911,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (фискальные принтеры)',
     'protocol.POSNET': 'POSNET (старые принтеры)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (фискальный)',
     'protocol.ZEBRA': 'ZEBRA (ZPL этикетки)',
     'protocol.WINDOWS': 'WINDOWS (драйвер)',
     'protocol.ZEBRA.label': 'ZEBRA (ZPL этикетки)',
     'protocol.WINDOWS.label': 'WINDOWS (драйвер)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'Тестовая печать',
@@ -5842,7 +5854,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'printer.RECEIPT': 'Paragony',
     'printer.RECEIPT.desc': 'Paragony i faktury',
     'printer.FISCAL': 'Fiskalny',
-    'printer.FISCAL.desc': 'Drukarka fiskalna Posnet',
+    'printer.FISCAL.desc': 'Drukarka fiskalna Posnet / ELZAB',
     'printer.LABEL': 'Etykiety',
     'printer.LABEL.desc': 'Etykiety i kody kreskowe',
     'printer.A4': 'A4',
@@ -5855,11 +5867,13 @@ export const translations: Record<Language, Record<string, string>> = {
     // Protocols
     'protocol.THERMAL': 'THERMAL (ESC/POS)',
     'protocol.POSNET': 'POSNET (fiskalne)',
+    'protocol.ELZAB_STX': 'ELZAB/STX (fiskalne)',
     'protocol.ZEBRA': 'ZEBRA (etykiety ZPL)',
     'protocol.WINDOWS': 'WINDOWS (sterownik)',
     'protocol.ZEBRA.label': 'ZEBRA (etykiety ZPL)',
     'protocol.WINDOWS.label': 'WINDOWS (sterownik)',
     'protocol.THERMAL.label': 'THERMAL',
+    'protocol.ELZAB_STX.label': 'ELZAB/STX',
 
     // Test print
     'test.button': 'Test drukowania',

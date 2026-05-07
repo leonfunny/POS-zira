@@ -67,8 +67,23 @@ describe('POSNET Thermal profile routing', () => {
 
   it('keeps RECEIPT and FISCAL protocol slots separated by the fiscal ADR contract', () => {
     expect(ALLOWED_PROTOCOLS_BY_TYPE.RECEIPT).not.toContain('POSNET');
+    expect(ALLOWED_PROTOCOLS_BY_TYPE.RECEIPT).not.toContain('ELZAB_STX');
     expect(ALLOWED_PROTOCOLS_BY_TYPE.RECEIPT).toContain('THERMAL');
-    expect(ALLOWED_PROTOCOLS_BY_TYPE.FISCAL).toEqual(['POSNET']);
+    expect(ALLOWED_PROTOCOLS_BY_TYPE.FISCAL).toEqual(['POSNET', 'ELZAB_STX']);
+  });
+
+  it('routes detected ELZAB devices to FISCAL with ELZAB_STX, not THERMAL', () => {
+    const elzab = device({
+      vid: '0000',
+      pid: '0000',
+      brand: 'ELZAB',
+      model: 'ELZAB Zeta Online',
+      windowsPrinterName: 'ELZAB Zeta Online',
+      comPort: 'COM8',
+      portName: 'COM8',
+    });
+
+    expect(classifyPrinterCategory(elzab)).toEqual({ targetType: 'FISCAL', protocol: 'ELZAB_STX' });
   });
 
   it('keeps non-POSNET thermal serial printers on RECEIPT with THERMAL protocol', () => {
