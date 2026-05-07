@@ -35,11 +35,22 @@ export class ZplFormatter {
    * Sanitize text for ZPL (remove special characters)
    */
   private sanitizeText(text: string, maxLength: number = 50): string {
-    return text
+    return this.transliterateForZebra(text)
       .replace(/[\x00-\x1F\x7F]/g, '') // Control characters
       .replace(/[\^~]/g, '')            // ZPL special chars
       .trim()
       .substring(0, maxLength);
+  }
+
+  /**
+   * Replace characters that the default Zebra Font 0 lacks a glyph for
+   * with the closest ASCII equivalent. ^CI28 sets UTF-8 decoding but the
+   * built-in font has incomplete Latin Extended-A coverage — `ł/Ł` in
+   * particular render as blank on ZD230 firmware. Other Polish chars
+   * (ż, ć, ó, ń, ś, ę, ą) render correctly so we leave them.
+   */
+  private transliterateForZebra(text: string): string {
+    return text.replace(/ł/g, 'l').replace(/Ł/g, 'L');
   }
 
   /**
@@ -498,16 +509,24 @@ export class ZplFormatter {
       return lines.slice(0, maxLines).join("\\&");
     };
 
-    const ingredientsText = `Składniki: ${truncate(data.ingredients, ingredientsLines)}`;
-    const bestBeforeText = `Najlepiej spożyć przed: ${formatBestBefore(data.bestBefore)}`;
-    const manufacturerText = `${rolePrefixMap[data.manufacturerRole]}: ${truncate(data.manufacturerInfo, manufacturerLines)}`;
-    const countryText = showCountry ? `Kraj pochodzenia: ${data.countryOfOrigin}` : null;
+    const ingredientsText = this.transliterateForZebra(
+      `Składniki: ${truncate(data.ingredients, ingredientsLines)}`,
+    );
+    const bestBeforeText = this.transliterateForZebra(
+      `Najlepiej spożyć przed: ${formatBestBefore(data.bestBefore)}`,
+    );
+    const manufacturerText = this.transliterateForZebra(
+      `${rolePrefixMap[data.manufacturerRole]}: ${truncate(data.manufacturerInfo, manufacturerLines)}`,
+    );
+    const countryText = showCountry
+      ? this.transliterateForZebra(`Kraj pochodzenia: ${data.countryOfOrigin}`)
+      : null;
 
     let y = 8;
     const blocks: string[] = [];
 
     // Product name — bold, larger
-    blocks.push(`^FO10,${y}^A0N,22,22^FB${widthDots - 20},2,0,L,0^FD${data.productName}^FS`);
+    blocks.push(`^FO10,${y}^A0N,22,22^FB${widthDots - 20},2,0,L,0^FD${this.transliterateForZebra(data.productName)}^FS`);
     y += 50;
     // Ingredients
     blocks.push(`^FO10,${y}^A0N,16,16^FB${widthDots - 20},${ingredientsLines},0,L,0^FD${ingredientsText}^FS`);
