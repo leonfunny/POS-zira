@@ -344,7 +344,19 @@ export default function App() {
           swipeTouchStartY.current = null;
         }}
       >
-        <POSLayout />
+        <div
+          className="flex-1 overflow-y-auto"
+          style={{ paddingBottom: keyboardVisible ? '300px' : '0' }}
+        >
+          <POSLayout />
+        </div>
+        <TouchKeyboard
+          visible={keyboardVisible}
+          mode={keyboardMode}
+          onKey={onKey}
+          onBackspace={onBackspace}
+          onDone={onDone}
+        />
       </div>
     );
   }
