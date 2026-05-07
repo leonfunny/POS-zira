@@ -58,15 +58,30 @@ export class ZplFormatter {
 
     // Start ZPL format
     lines.push('^XA');
+    lines.push('^CI28'); // UTF-8 international chars (Polish + Vietnamese diacritics)
 
     // Set label size
     lines.push(`^LL${this.mmToDots(this.labelHeight)}`);
     lines.push(`^PW${this.mmToDots(this.labelWidth)}`);
 
+    // Adaptive vertical budget based on configured label height (mm).
+    const H = this.labelHeight;
+    const topMarginMm = Math.max(2, H * 0.10);
+    const barcodeHeightMm = Math.max(8, H * 0.40);
+    const text1FontMm = Math.max(2, H * 0.10);
+    const text1GapMm = text1FontMm + 0.5;
+    const text2FontMm = Math.max(1.8, H * 0.085);
+    const text2GapMm = text2FontMm + 0.3;
+    const text3FontMm = text2FontMm;
+
+    // Helper: returns true if a text field at yDots with given font height would still fit
+    const labelHeightDots = this.mmToDots(this.labelHeight);
+    const wouldFit = (yDots: number, requiredFontMm: number): boolean =>
+      yDots + this.mmToDots(requiredFontMm) + this.mmToDots(0.5) <= labelHeightDots;
 
     // Position for barcode
     const barcodeX = this.mmToDots(5);
-    let currentY = this.mmToDots(5);
+    let currentY = this.mmToDots(topMarginMm);
 
     // Add barcode based on type
     if (data.barcodeType === 'QR') {
@@ -76,34 +91,32 @@ export class ZplFormatter {
       lines.push(`^FDQA,${data.barcode}^FS`);
       currentY += this.mmToDots(25);
     } else {
-      // Linear barcode (CODE128 or EAN13)
+      // Linear barcode (CODE128 or EAN13) — height scales with label
       lines.push(`^FO${barcodeX},${currentY}^BY2`);  // Barcode defaults, module width 2
       const barcodeCmd = BARCODE_COMMANDS[data.barcodeType] || '^BC';
-      lines.push(`${barcodeCmd},${this.mmToDots(12)},Y,N,N`);  // Height, interpretation line
+      lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},Y,N,N`);  // Adaptive height, interpretation line
       lines.push(`^FD${data.barcode}^FS`);
-      currentY += this.mmToDots(18);
+      currentY += this.mmToDots(barcodeHeightMm + 2);  // ~2mm gap below barcode
     }
 
-    // Add text lines
-    const fontSize = this.mmToDots(3);
-
-    if (data.text1) {
+    // Add text lines — skip any that would overflow the label
+    if (data.text1 && wouldFit(currentY, text1FontMm)) {
       lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${fontSize},${fontSize}`);
+      lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1FontMm)}`);
       lines.push(`^FD${this.sanitizeText(data.text1)}^FS`);
-      currentY += this.mmToDots(5);
+      currentY += this.mmToDots(text1GapMm);
     }
 
-    if (data.text2) {
+    if (data.text2 && wouldFit(currentY, text2FontMm)) {
       lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${Math.round(fontSize * 0.8)},${Math.round(fontSize * 0.8)}`);
+      lines.push(`^A0,${this.mmToDots(text2FontMm)},${this.mmToDots(text2FontMm)}`);
       lines.push(`^FD${this.sanitizeText(data.text2)}^FS`);
-      currentY += this.mmToDots(4);
+      currentY += this.mmToDots(text2GapMm);
     }
 
-    if (data.text3) {
+    if (data.text3 && wouldFit(currentY, text3FontMm)) {
       lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${Math.round(fontSize * 0.8)},${Math.round(fontSize * 0.8)}`);
+      lines.push(`^A0,${this.mmToDots(text3FontMm)},${this.mmToDots(text3FontMm)}`);
       lines.push(`^FD${this.sanitizeText(data.text3)}^FS`);
     }
 
