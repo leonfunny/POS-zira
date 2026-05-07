@@ -61,7 +61,10 @@ export class ZplFormatter {
     lines.push('^CI28'); // UTF-8 international chars (Polish + Vietnamese diacritics)
 
     // Set label size
-    lines.push(`^LL${this.mmToDots(this.labelHeight)}`);
+    // ^LL omitted: rely on the printer's gap-sensor calibration so labels
+    // don't drift when our nominal label height (configured in mm) doesn't
+    // exactly match the physical media. The check-in label flow does the
+    // same thing.
     lines.push(`^PW${this.mmToDots(this.labelWidth)}`);
 
     // Adaptive vertical budget based on configured label height (mm).
@@ -531,8 +534,8 @@ export class ZplFormatter {
     return [
       "^XA",
       "^CI28",
+      // ^LL omitted: defer to printer calibration (see formatLabel comment).
       `^PW${widthDots}`,
-      `^LL${heightDots}`,
       ...blocks,
       `^PQ${data.quantity}`,
       "^XZ",

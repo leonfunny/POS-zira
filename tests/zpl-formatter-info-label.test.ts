@@ -62,6 +62,8 @@ describe("ZplFormatter.formatInfoLabel", () => {
     const f = new ZplFormatter(60, 40);
     const zpl = f.formatInfoLabel(sampleData, 60, 40);
     expect(zpl).toContain("^CI28");
+    // Verify ^LL is omitted so printer uses calibrated label length
+    expect(zpl).not.toContain("^LL");
   });
 
   it("emits N copies via ^PQ when quantity > 1", () => {
