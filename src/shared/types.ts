@@ -49,6 +49,7 @@ export enum PrintJobType {
   REPORT = 'REPORT',
   LABEL = 'LABEL',
   BARCODE = 'BARCODE',
+  INFO_LABEL = 'INFO_LABEL', // Quick Add 4-line PL-legal info label
   TEST = 'TEST',
   DAILY_REPORT = 'DAILY_REPORT',  // Raport dobowy
   X_REPORT = 'X_REPORT',          // Raport X (niefiskalny)
@@ -121,6 +122,30 @@ export interface LabelData {
   text1?: string;
   text2?: string;
   text3?: string;
+  quantity: number;
+}
+
+// Manufacturer/distributor role on Polish food labels (per art. 11 ustawa o
+// bezpieczeństwie żywności i żywienia). Renders as "Producent: ..." /
+// "Importer: ..." etc. on the info label.
+export enum ManufacturerRole {
+  PRODUCER = 'PRODUCER',
+  IMPORTER = 'IMPORTER',
+  DISTRIBUTOR = 'DISTRIBUTOR',
+  SUPPLIER = 'SUPPLIER',
+}
+
+// 4-line PL-legal info label payload (Quick Add).
+// productName + ingredients (Składniki) + bestBefore (Najlepiej spożyć
+// przed) + manufacturer (Producent/Importer). Renderer adapts to paper
+// size; on small paper, ingredients/manufacturer get truncated.
+export interface InfoLabelData {
+  productName: string;
+  ingredients: string;
+  bestBefore: string; // ISO YYYY-MM-DD
+  manufacturerInfo: string;
+  manufacturerRole: ManufacturerRole;
+  countryOfOrigin: string | null;
   quantity: number;
 }
 
@@ -432,7 +457,7 @@ export interface PrintJobEvent {
   jobType: PrintJobType;
   printerType?: PrinterType;  // NEW: Explicit printer routing from server
   printerId?: string | null;  // Server printer mapping id
-  payload: ReceiptData | LabelData | DocumentData | DailyReportData;
+  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData;
   referenceType: string | null;
   referenceId: string | null;
   createdAt: string;
