@@ -35,6 +35,7 @@ import {
   DailyReportData,
   DeviceStatus,
   CheckinConfirmationData,
+  InfoLabelData,
   ALLOWED_PROTOCOLS_BY_TYPE,
   TestPrintStep,
   TestPrintStepName,
@@ -1816,7 +1817,7 @@ export class HardwareModule extends BaseModule {
       }
     }
     if (job.printerType) return job.printerType;
-    if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE) return PrinterType.LABEL;
+    if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE || job.jobType === PrintJobType.INFO_LABEL) return PrinterType.LABEL;
     return PrinterType.RECEIPT;
   }
 
@@ -1878,8 +1879,12 @@ export class HardwareModule extends BaseModule {
         const isReport = [PrintJobType.DAILY_REPORT, PrintJobType.X_REPORT, PrintJobType.Z_REPORT].includes(job.jobType);
 
         if (isLabel) {
-          if (targetPrinter instanceof ZebraDriver) await targetPrinter.printLabel(job.payload as LabelData);
-          else throw new Error('Label printing requires Zebra printer');
+          if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
+          if (job.jobType === PrintJobType.INFO_LABEL) {
+            await targetPrinter.printInfoLabel(job.payload as InfoLabelData);
+          } else {
+            await targetPrinter.printLabel(job.payload as LabelData);
+          }
         } else if (isA4) {
           const printerName = printerConfig?.windowsPrinter;
           if (!printerName) throw new Error('A4 printing requires a Windows printer name');

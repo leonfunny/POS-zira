@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
 import { ZplFormatter } from './zpl-formatter';
-import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo } from '../../../shared/types';
+import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo, InfoLabelData } from '../../../shared/types';
 import { listWindowsPrinters, sanitizePrinterName, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { type RecoveryResult } from '../detection/types';
 
@@ -508,6 +508,22 @@ try {
 
     await this.printRaw(zpl);
     logger.info('[ZebraDriver] Label printed successfully');
+  }
+
+  /**
+   * Print a 4-line PL-legal food information label
+   */
+  async printInfoLabel(data: InfoLabelData): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info(`[ZebraDriver] Printing info label for "${data.productName}"...`);
+    const zpl = this.formatter.formatInfoLabel(data, (this.formatter as any).labelWidth, (this.formatter as any).labelHeight);
+    logger.debug(`[ZebraDriver] ZPL:\n${zpl}`);
+
+    await this.printRaw(zpl);
+    logger.info('[ZebraDriver] Info label printed successfully');
   }
 
   /**
