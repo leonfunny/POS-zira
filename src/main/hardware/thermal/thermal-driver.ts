@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
-import { EscPosFormatter, DailyReportData, EscPosCharset, EscPosCutMode } from './escpos-formatter';
+import { EscPosFormatter, DailyReportData, EscPosCharset, EscPosCutMode, EscPosPlainLine } from './escpos-formatter';
 import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { matchBrand, type RecoveryResult } from '../detection/types';
@@ -555,7 +555,7 @@ export class ThermalDriver {
    * bitmap, then converts to GS v 0 raster format. Works with ALL languages
    * regardless of printer codepage support.
    */
-  private async renderTextToRaster(lines: Array<{ text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean }>): Promise<Buffer> {
+  private async renderTextToRaster(lines: EscPosPlainLine[]): Promise<Buffer> {
     // pixels at 203 DPI: 58mm→384, 76mm→432 (Epson TM-U220 / dot-matrix
     // legacy), 80mm→576 standard. Default to 576 so paperWidth values
     // outside this set still produce a reasonable raster (printer trims
@@ -737,13 +737,21 @@ export class ThermalDriver {
     }
 
     const modelInfo = this.identifyModel();
-    const testData = this.formatter.formatTestPage({
+    const testPageOpts = {
       modelInfo: { modelName: modelInfo.modelName },
       salonName: opts?.salonName,
       sellerName: opts?.sellerName,
       sellerNip: opts?.sellerNip,
-    });
-    await this.printRaw(testData);
+    };
+    const testData = this.formatter.formatTestPage(testPageOpts);
+    if (this.bufferHasNonAsciiText(testData)) {
+      logger.info('[ThermalDriver] Non-ASCII detected in test page — rendering as raster image');
+      const lines = this.formatter.formatTestPagePlainLines(testPageOpts);
+      const rasterData = await this.renderTextToRaster(lines);
+      await this.printRaw(rasterData);
+    } else {
+      await this.printRaw(testData);
+    }
 
     // Post-flight: USB spooler jobs may stick if the printer is off/offline —
     // Out-Printer returns success even then. Check the queue and surface a

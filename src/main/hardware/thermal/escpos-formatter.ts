@@ -2,6 +2,7 @@ import { ReceiptData, ReceiptItem, charsPerLineFor } from '../../../shared/types
 
 export type EscPosCharset = 'utf8' | 'cp1250' | 'ascii';
 export type EscPosCutMode = 'partial' | 'full' | 'none';
+export type EscPosPlainLine = { text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean };
 
 /**
  * Subset of CP1250 (Polish) mappings for the characters most likely to appear
@@ -382,13 +383,45 @@ export class EscPosFormatter {
   }
 
   /**
+   * Same logical content as formatTestPage(), but structured for raster
+   * rendering when the test header contains text the printer codepage cannot
+   * render correctly.
+   */
+  formatTestPagePlainLines(opts?: {
+    modelInfo?: { modelName?: string; firmwareVersion?: string };
+    salonName?: string;
+    sellerName?: string;
+    sellerNip?: string;
+  }): EscPosPlainLine[] {
+    const lines: EscPosPlainLine[] = [];
+
+    if (opts?.salonName) lines.push({ text: opts.salonName, big: true, center: true });
+    if (opts?.sellerName) lines.push({ text: opts.sellerName, center: true });
+    if (opts?.sellerNip) lines.push({ text: `NIP: ${opts.sellerNip}`, center: true });
+    if (opts?.salonName || opts?.sellerName || opts?.sellerNip) lines.push({ text: '' });
+
+    lines.push({ text: 'Zira AI - Test Print', bold: true, center: true });
+    lines.push({ text: this.repeatChar('-', this.charsPerLine), center: true });
+    if (opts?.modelInfo?.modelName) {
+      lines.push({ text: opts.modelInfo.modelName, center: true });
+      if (opts.modelInfo.firmwareVersion) lines.push({ text: `fw ${opts.modelInfo.firmwareVersion}`, center: true });
+    }
+    lines.push({ text: `${this.paperWidth}mm / ${this.charsPerLine} chars`, center: true });
+    lines.push({ text: `charset: ${this.charset}  cut: ${this.cutMode}`, center: true });
+    lines.push({ text: this.formatDatePl(new Date()), center: true });
+    lines.push({ text: this.repeatChar('-', this.charsPerLine), center: true });
+    lines.push({ text: 'OK', center: true });
+
+    return lines;
+  }
+
+  /**
    * Format receipt as plain-text structured lines for raster image rendering.
    * Used when the printer doesn't support UTF-8 text mode.
    */
-  formatReceiptPlainLines(data: ReceiptData): Array<{ text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean }> {
-    type Line = { text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean };
-    const lines: Line[] = [];
-    const lr = (left: string, right: string, opts?: Partial<Line>): Line =>
+  formatReceiptPlainLines(data: ReceiptData): EscPosPlainLine[] {
+    const lines: EscPosPlainLine[] = [];
+    const lr = (left: string, right: string, opts?: Partial<EscPosPlainLine>): EscPosPlainLine =>
       ({ text: left, rightText: right, ...opts });
 
     // Refund banner
