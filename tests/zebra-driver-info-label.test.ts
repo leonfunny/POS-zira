@@ -1,4 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+
+vi.mock("../src/main/hardware/port-utils", () => ({
+  listWindowsPrinters: vi.fn(async () => ["Mock Printer"]),
+  sanitizePrinterName: vi.fn((name: string) => name),
+  isWindowsPrinterPresent: vi.fn(async () => true),
+  flushStuckPrintJobs: vi.fn(async () => 0),
+  getStuckPrintJobStatus: vi.fn(async () => null),
+}));
+
 import { ZebraDriver } from "../src/main/hardware/zebra/zebra-driver";
 import { ManufacturerRole, InfoLabelData } from "../src/shared/types";
 
@@ -30,9 +39,38 @@ describe("ZebraDriver.printInfoLabel", () => {
     const zpl: string = spoolSpy.mock.calls[0][0];
     expect(zpl).toContain("^CI28");
     expect(zpl).toContain("^PW480"); // 60mm * 8 dpmm = 480 dots
-    expect(zpl).toContain("^LL320"); // 40mm * 8 dpmm = 320 dots
+    expect(zpl).not.toContain("^LL");
     expect(zpl).toContain("Producent:");
     expect(zpl).toContain("Test 100g");
+  });
+
+  it("does not replace configured dimensions with Windows driver paper size during connect", async () => {
+    const detectSpy = vi
+      .spyOn(ZebraDriver, "detectPaperSize")
+      .mockResolvedValue({ widthMm: 76.2, heightMm: 50.8 });
+    const configured = new ZebraDriver("Mock Printer", 50, 30);
+    const labelSpy = vi.spyOn(configured as any, "printRaw").mockResolvedValue(undefined);
+
+    try {
+      await expect(configured.connect()).resolves.toBe(true);
+      await configured.printLabel({
+        barcode: "2000000000152",
+        barcodeType: "EAN13",
+        text1: "Bánh mì",
+        quantity: 1,
+      });
+
+      const zpl: string = labelSpy.mock.calls[0][0];
+      expect(detectSpy).not.toHaveBeenCalled();
+      expect(zpl).toContain("^CI28");
+      expect(zpl).toContain("^PW400");
+      expect(zpl).not.toContain("^PW609");
+      expect(zpl).toContain("Bánh mì");
+    } finally {
+      detectSpy.mockRestore();
+      labelSpy.mockRestore();
+      configured.disconnect();
+    }
   });
 
   it("throws when disconnected", async () => {

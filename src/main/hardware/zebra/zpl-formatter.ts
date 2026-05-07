@@ -25,14 +25,6 @@ export class ZplFormatter {
   }
 
   /**
-   * Update label dimensions (used by auto-detect)
-   */
-  updateDimensions(widthMm: number, heightMm: number): void {
-    this.labelWidth = widthMm;
-    this.labelHeight = heightMm;
-  }
-
-  /**
    * Convert mm to dots
    */
   private mmToDots(mm: number): number {

@@ -112,17 +112,6 @@ if ($doc.PrinterSettings.IsValid) {
       this.connected = true;
       logger.info(`[ZebraDriver] Connected to "${this.printerName}" (verified present)`);
 
-      // Auto-detect paper size from Windows driver
-      try {
-        const detected = await ZebraDriver.detectPaperSize(this.printerName);
-        if (detected) {
-          this.formatter.updateDimensions(detected.widthMm, detected.heightMm);
-          logger.info(`[ZebraDriver] Auto-detected paper size: ${detected.widthMm}mm x ${detected.heightMm}mm`);
-        }
-      } catch (detectErr) {
-        logger.warn('[ZebraDriver] Paper size detection failed (non-fatal):', detectErr);
-      }
-
       return this.connected;
     } catch (error) {
       logger.error('[ZebraDriver] Connect error:', error);
@@ -156,16 +145,6 @@ if ($doc.PrinterSettings.IsValid) {
     if (!present) {
       logger.warn(`[ZebraDriver] Reconnect failed — "${newPrinterName}" not physically present`);
       return;
-    }
-    // Re-detect paper size for the new printer name
-    try {
-      const paperSize = await ZebraDriver.detectPaperSize(newPrinterName);
-      if (paperSize) {
-        this.formatter.updateDimensions(paperSize.widthMm, paperSize.heightMm);
-        logger.info(`[ZebraDriver] Paper size updated: ${paperSize.widthMm}x${paperSize.heightMm}mm`);
-      }
-    } catch (err: any) {
-      logger.debug(`[ZebraDriver] Paper size detection after reconnect failed: ${err.message}`);
     }
   }
 
@@ -323,9 +302,9 @@ public class RawPrinterHelper {
     public static extern bool EndPagePrinter(IntPtr hPrinter);
 
     [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true)]
-    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, Int32 dwCount, out Int32 dwWritten);
+    public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, Int32 dwCount, out Int32 dwWritten);
 
-    public static string SendStringToPrinter(string szPrinterName, string szString) {
+    public static string SendBytesToPrinter(string szPrinterName, byte[] bytes) {
         IntPtr hPrinter = IntPtr.Zero;
         DOCINFOA di = new DOCINFOA();
         di.pDocName = "ZPL Label";
@@ -347,17 +326,15 @@ public class RawPrinterHelper {
                     return "StartPagePrinter failed (Win32 error " + err + ")";
                 }
                 try {
-                    IntPtr pBytes = Marshal.StringToCoTaskMemAnsi(szString);
-                    try {
-                        int dwWritten = 0;
-                        if (!WritePrinter(hPrinter, pBytes, szString.Length, out dwWritten)) {
-                            int err = Marshal.GetLastWin32Error();
-                            return "WritePrinter failed (Win32 error " + err + ")";
-                        }
-                        return "OK";
-                    } finally {
-                        Marshal.FreeCoTaskMem(pBytes);
+                    int dwWritten = 0;
+                    if (!WritePrinter(hPrinter, bytes, bytes.Length, out dwWritten)) {
+                        int err = Marshal.GetLastWin32Error();
+                        return "WritePrinter failed (Win32 error " + err + ")";
                     }
+                    if (dwWritten != bytes.Length) {
+                        return "WritePrinter wrote " + dwWritten + " of " + bytes.Length + " bytes";
+                    }
+                    return "OK";
                 } finally {
                     EndPagePrinter(hPrinter);
                 }
@@ -373,9 +350,9 @@ public class RawPrinterHelper {
 
 $printerName = '${this.printerName.replace(/'/g, "''")}'
 $zplFile = '${tempZplFile.replace(/\\/g, '\\\\').replace(/'/g, "''")}'
-$content = Get-Content -Path $zplFile -Raw -Encoding UTF8
+$bytes = [System.IO.File]::ReadAllBytes($zplFile)
 
-$result = [RawPrinterHelper]::SendStringToPrinter($printerName, $content)
+$result = [RawPrinterHelper]::SendBytesToPrinter($printerName, $bytes)
 if ($result -ne "OK") {
     throw $result
 }
@@ -457,7 +434,7 @@ try {
         );
       }
 
-      // Look for our structured error from SendStringToPrinter (e.g. "OpenPrinter failed ...")
+      // Look for our structured error from SendBytesToPrinter (e.g. "OpenPrinter failed ...")
       const structured = raw.match(/(OpenPrinter|StartDocPrinter|StartPagePrinter|WritePrinter) failed[^"'\r\n]*/);
       if (structured) {
         throw new Error(structured[0]);
