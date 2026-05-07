@@ -1,4 +1,4 @@
-import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData } from '../../../shared/types';
+import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData, InfoLabelData, ManufacturerRole } from '../../../shared/types';
 
 /**
  * ZPL command mappings for barcode types
@@ -438,5 +438,91 @@ export class ZplFormatter {
   private formatCurrency(grosze: number): string {
     const zl = grosze / 100;
     return zl.toFixed(2) + ' zl';
+  }
+
+  /**
+   * Format an info label (4-section PL-legal label).
+   * Adapts content to paper height: smaller paper → fewer rows / shorter
+   * ingredient list. Parallel to `formatLabel()`; uses the same ZPL
+   * dialect.
+   */
+  formatInfoLabel(data: InfoLabelData, widthMm: number, heightMm: number): string {
+    const dpmm = 8; // Zebra typical 203 dpi → 8 dots/mm
+    const widthDots = Math.round(widthMm * dpmm);
+    const heightDots = Math.round(heightMm * dpmm);
+
+    const rolePrefixMap: Record<ManufacturerRole, string> = {
+      PRODUCER: "Producent",
+      IMPORTER: "Importer",
+      DISTRIBUTOR: "Dystrybutor",
+      SUPPLIER: "Dostawca",
+    } as Record<ManufacturerRole, string>;
+
+    const formatBestBefore = (iso: string): string => {
+      const [y, m, d] = iso.split("-");
+      return `${d}.${m}.${y}`;
+    };
+
+    // Heuristic line budgets per height
+    const ingredientsLines = heightMm >= 40 ? (heightMm >= 50 ? 4 : 3) : 2;
+    const manufacturerLines = heightMm >= 40 ? 2 : 1;
+    const showCountry = heightMm >= 40 && data.countryOfOrigin;
+
+    // Truncate helper: wrap at ~charsPerLine, append … on overflow
+    // 203 DPI, font width 16 dots ≈ 2mm/char → widthMm/2 chars/line
+    const charsPerLine = Math.max(20, Math.floor(widthMm / 2));
+    const truncate = (text: string, maxLines: number): string => {
+      const words = text.split(/\s+/);
+      const lines: string[] = [];
+      let current = "";
+      for (const w of words) {
+        if ((current + " " + w).trim().length > charsPerLine) {
+          if (lines.length >= maxLines - 1) {
+            return [...lines, current.trim()].slice(0, maxLines).join("\\&") + "…";
+          }
+          lines.push(current.trim());
+          current = w;
+        } else {
+          current = (current + " " + w).trim();
+        }
+      }
+      if (current) lines.push(current);
+      return lines.slice(0, maxLines).join("\\&");
+    };
+
+    const ingredientsText = `Składniki: ${truncate(data.ingredients, ingredientsLines)}`;
+    const bestBeforeText = `Najlepiej spożyć przed: ${formatBestBefore(data.bestBefore)}`;
+    const manufacturerText = `${rolePrefixMap[data.manufacturerRole]}: ${truncate(data.manufacturerInfo, manufacturerLines)}`;
+    const countryText = showCountry ? `Kraj pochodzenia: ${data.countryOfOrigin}` : null;
+
+    let y = 8;
+    const blocks: string[] = [];
+
+    // Product name — bold, larger
+    blocks.push(`^FO10,${y}^A0N,22,22^FB${widthDots - 20},2,0,L,0^FD${data.productName}^FS`);
+    y += 50;
+    // Ingredients
+    blocks.push(`^FO10,${y}^A0N,16,16^FB${widthDots - 20},${ingredientsLines},0,L,0^FD${ingredientsText}^FS`);
+    y += 18 * ingredientsLines + 4;
+    // Best-before
+    blocks.push(`^FO10,${y}^A0N,18,18^FD${bestBeforeText}^FS`);
+    y += 22;
+    // Manufacturer
+    blocks.push(`^FO10,${y}^A0N,16,16^FB${widthDots - 20},${manufacturerLines},0,L,0^FD${manufacturerText}^FS`);
+    y += 18 * manufacturerLines + 2;
+    // Country (optional)
+    if (countryText) {
+      blocks.push(`^FO10,${y}^A0N,14,14^FD${countryText}^FS`);
+    }
+
+    return [
+      "^XA",
+      "^CI28",
+      `^PW${widthDots}`,
+      `^LL${heightDots}`,
+      ...blocks,
+      `^PQ${data.quantity}`,
+      "^XZ",
+    ].join("\n");
   }
 }
