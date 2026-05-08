@@ -286,7 +286,7 @@ describe('Refund payload passes lines[] end-to-end', () => {
   it('renderer sends vatRate for refund lines and surfaces refund receipt print failures', () => {
     expect(orderHistoryModal).toContain('vatRate: item.vat_rate');
     expect(orderHistoryModal).toContain('deriveReceiptOutcome(result, t)');
-    expect(orderHistoryModal).toContain('setPrintWarning(closeAction.warning)');
+    expect(orderHistoryModal).toContain('printWarning: outcome.warning');
     expect(electronDts).toContain('receiptPrinted?: boolean');
   });
 
@@ -691,6 +691,17 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain('Confirm refund (${formatMoney(computedRefundTotal, currency)})');
     expect(electronDts).toContain('mutationDetected?: boolean');
     expect(electronDts).toContain('requiresRefresh?: boolean');
+  });
+
+  it('renderer shows refund breakdown and keeps the success summary actionable', () => {
+    expect(orderHistoryModal).toContain('getItemRefundBreakdowns(order, items)');
+    expect(orderHistoryModal).toContain('getRefundBreakdownLines(order)');
+    expect(orderHistoryModal).toContain('Refund breakdown');
+    expect(orderHistoryModal).toContain('refunded -');
+    expect(orderHistoryModal).toContain('setSuccessSummary({');
+    expect(orderHistoryModal).toContain('Print refund receipt');
+    expect(orderHistoryModal).toContain('onComplete({ keepRefundOpen: true })');
+    expect(orderHistoryModal).not.toContain('setTimeout(onComplete, 1500)');
   });
 });
 

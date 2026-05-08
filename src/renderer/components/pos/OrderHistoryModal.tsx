@@ -10,7 +10,12 @@ import {
   compareOrdersByDisplayTimeDesc,
   parseOrderTimestampMs,
 } from './order-history-time';
-import { decideCloseAction, deriveReceiptOutcome } from './receipt-outcome';
+import { deriveReceiptOutcome } from './receipt-outcome';
+import {
+  getItemRefundBreakdowns,
+  getRefundBreakdownLines,
+  type RefundBreakdownLine,
+} from './refund-breakdown';
 
 interface OrderRow {
   id: string;
@@ -58,6 +63,15 @@ interface OrderHistoryModalProps {
 
 type RefundStatus = 'none' | 'full' | 'partial';
 type ReprintStatus = { type: 'ok' | 'error'; message: string } | null;
+type RefundPanelCompleteOptions = { keepRefundOpen?: boolean };
+type RefundSuccessSummary = {
+  amount: number;
+  lines: RefundBreakdownLine[];
+  remainingTotal: number;
+  remainingUnits: number;
+  receiptPrinted: boolean;
+  printWarning: string | null;
+};
 
 const PAGE_SIZE = 20;
 
@@ -129,6 +143,45 @@ function periodToDateRange(period: string): { from: string; to: string } {
 
 function formatMoney(amount: number, currency: string): string {
   return `${(amount / 100).toFixed(2)} ${currency}`;
+}
+
+function toGrosze(value: unknown, fallback = 0): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+  return Number.isFinite(n) ? Math.round(n * 100) : fallback;
+}
+
+function getSelectedRefundLineGrossAmount(line: { refundAmount: number; vatRate?: number }): number {
+  return Math.round(line.refundAmount * (1 + Math.max(0, line.vatRate ?? 0) / 100));
+}
+
+function getRefundSuccessLines(result: any, fallbackLines: Array<{ name?: string; quantity: number; refundAmount: number; vatRate?: number; sku?: string; variantId?: string }>): RefundBreakdownLine[] {
+  if (Array.isArray(result?.refundedLines) && result.refundedLines.length > 0) {
+    return result.refundedLines
+      .map((line: any): RefundBreakdownLine => ({
+        variantId: line.variantId ?? line.variant_id ?? null,
+        sku: line.sku ?? null,
+        name: String(line.name ?? ''),
+        quantity: typeof line.quantity === 'number' ? line.quantity : parseFloat(String(line.quantity ?? '')) || 0,
+        refundAmount: toGrosze(line.refundAmount),
+        vatRate: line.taxRate ?? line.vatRate,
+      }))
+      .filter((line: RefundBreakdownLine) => line.name && line.quantity > 0 && line.refundAmount > 0);
+  }
+
+  return fallbackLines.map((line): RefundBreakdownLine => ({
+    variantId: line.variantId ?? null,
+    sku: line.sku ?? null,
+    name: line.name || '',
+    quantity: line.quantity,
+    refundAmount: getSelectedRefundLineGrossAmount(line),
+    vatRate: line.vatRate,
+  })).filter((line: RefundBreakdownLine) => line.name && line.quantity > 0 && line.refundAmount > 0);
+}
+
+function getRefundSuccessAmount(result: any, lines: RefundBreakdownLine[], fallbackAmount: number): number {
+  if (result?.refundAmount != null) return toGrosze(result.refundAmount, fallbackAmount);
+  const lineTotal = lines.reduce((sum, line) => sum + line.refundAmount, 0);
+  return lineTotal > 0 ? lineTotal : fallbackAmount;
 }
 
 function createRefundRequestId(): string {
@@ -250,7 +303,7 @@ function RefundPanel({
   currency: string;
   t: (key: string) => string;
   onCancel: () => void;
-  onComplete: () => void;
+  onComplete: (options?: RefundPanelCompleteOptions) => void;
 }) {
   const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>('FULL');
   const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
@@ -260,8 +313,9 @@ function RefundPanel({
   const [confirmStep, setConfirmStep] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [printWarning, setPrintWarning] = useState<string | null>(null);
+  const [successSummary, setSuccessSummary] = useState<RefundSuccessSummary | null>(null);
+  const [reprintingRefundReceipt, setReprintingRefundReceipt] = useState(false);
+  const [refundReprintStatus, setRefundReprintStatus] = useState<ReprintStatus>(null);
   const refundRequestIdRef = useRef<string | null>(null);
 
   const resetRefundRequestId = () => {
@@ -323,7 +377,7 @@ function RefundPanel({
 
     setLoading(true);
     setError(null);
-    setPrintWarning(null);
+    setRefundReprintStatus(null);
     try {
       const reasonText = reason === 'other' && customReason.trim()
         ? customReason.trim()
@@ -353,14 +407,19 @@ function RefundPanel({
       }));
       if (result.success) {
         resetRefundRequestId();
-        const closeAction = decideCloseAction(deriveReceiptOutcome(result, t));
-        setSuccess(true);
-        if (closeAction.type === 'show-warning-then-close') {
-          setPrintWarning(closeAction.warning);
-          setTimeout(onComplete, closeAction.delayMs);
-        } else {
-          setTimeout(onComplete, 1500);
-        }
+        const refundLines = getRefundSuccessLines(result, refundItems);
+        const refundAmount = getRefundSuccessAmount(result, refundLines, computedRefundTotal);
+        const outcome = deriveReceiptOutcome(result, t);
+        const refundedUnits = refundItems.reduce((sum, line) => sum + line.quantity, 0);
+        const remainingUnits = Math.max(0, refundableItems.reduce((sum, item) => sum + item.maxQty, 0) - refundedUnits);
+        setSuccessSummary({
+          amount: refundAmount,
+          lines: refundLines,
+          remainingTotal: Math.max(0, remainingTotal - refundAmount),
+          remainingUnits,
+          receiptPrinted: outcome.receiptPrinted,
+          printWarning: outcome.warning,
+        });
       } else if ((result as any).mutationDetected || (result as any).requiresRefresh) {
         resetRefundRequestId();
         onComplete();
@@ -376,16 +435,101 @@ function RefundPanel({
     }
   };
 
-  if (success) {
+  const handlePrintRefundReceipt = async () => {
+    if (reprintingRefundReceipt) return;
+    setReprintingRefundReceipt(true);
+    setRefundReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.payment.printRefundReceipt(order.id);
+      const outcome = deriveReceiptOutcome(result, t);
+      if (outcome.receiptPrinted) {
+        setSuccessSummary(prev => prev ? { ...prev, receiptPrinted: true, printWarning: null } : prev);
+        setRefundReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.reprinted', 'Receipt sent to printer') });
+      } else {
+        setRefundReprintStatus({ type: 'error', message: outcome.warning || tOr(t, 'pos.history.reprintFailed', 'Printer not connected') });
+      }
+    } catch (e: any) {
+      setRefundReprintStatus({ type: 'error', message: e?.message || tOr(t, 'pos.history.reprintFailed', 'Printer not connected') });
+    } finally {
+      setReprintingRefundReceipt(false);
+    }
+  };
+
+  if (successSummary) {
+    const canRefundMore = successSummary.remainingTotal > 0 && successSummary.remainingUnits > 0;
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
         <div className="text-sm font-bold text-emerald-800">{tOr(t, 'pos.refund.success', 'Refund processed')}</div>
-        {printWarning && (
-          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-            {printWarning}
+        <div className="mt-2 text-2xl font-extrabold tabular-nums text-emerald-900">-{formatMoney(successSummary.amount, currency)}</div>
+
+        {successSummary.lines.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {successSummary.lines.map((line, index) => (
+              <div key={`${line.variantId || line.sku || line.name}-${index}`} className="rounded-md border border-emerald-200 bg-white px-3 py-2">
+                <div className="truncate text-sm font-bold text-slate-950">{line.name}</div>
+                <div className="mt-1 flex justify-between gap-3 text-xs font-bold text-slate-600">
+                  <span>x{line.quantity}</span>
+                  <span className="tabular-nums text-red-700">-{formatMoney(line.refundAmount, currency)}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-        <div className="mt-1 text-xs text-emerald-700">Refreshing order status...</div>
+
+        <div className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-900">
+          Remaining: {successSummary.remainingUnits} units - {formatMoney(successSummary.remainingTotal, currency)}
+        </div>
+
+        <div
+          className={`mt-3 rounded-md border px-3 py-2 text-xs font-bold ${
+            successSummary.receiptPrinted
+              ? 'border-emerald-200 bg-white text-emerald-800'
+              : 'border-amber-200 bg-amber-50 text-amber-800'
+          }`}
+        >
+          {successSummary.receiptPrinted
+            ? tOr(t, 'pos.history.reprinted', 'Receipt sent to printer')
+            : successSummary.printWarning || tOr(t, 'pos.history.reprintFailed', 'Printer not connected')}
+        </div>
+
+        {!successSummary.receiptPrinted && (
+          <button
+            onClick={handlePrintRefundReceipt}
+            disabled={reprintingRefundReceipt}
+            className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg border border-amber-300 bg-white px-4 text-sm font-extrabold text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {reprintingRefundReceipt ? 'Sending...' : 'Print refund receipt'}
+          </button>
+        )}
+
+        {refundReprintStatus && (
+          <div
+            className={`mt-3 rounded-md border px-3 py-2 text-xs font-bold ${
+              refundReprintStatus.type === 'ok'
+                ? 'border-emerald-200 bg-white text-emerald-800'
+                : 'border-red-200 bg-red-50 text-red-800'
+            }`}
+          >
+            {refundReprintStatus.message}
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {canRefundMore && (
+            <button
+              onClick={() => onComplete({ keepRefundOpen: true })}
+              className="min-h-10 rounded-lg border border-emerald-300 bg-white px-3 text-sm font-extrabold text-emerald-800 hover:bg-emerald-50"
+            >
+              Refund next
+            </button>
+          )}
+          <button
+            onClick={() => onComplete()}
+            className={`${canRefundMore ? '' : 'col-span-2'} min-h-10 rounded-lg bg-emerald-700 px-3 text-sm font-extrabold text-white hover:bg-emerald-800`}
+          >
+            Close
+          </button>
+        </div>
       </div>
     );
   }
@@ -987,6 +1131,9 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const detailRefundableResult = getRemainingRefundableItems(order, items);
     const refundBlockedByMissingLines = detailRefundableResult.unsafeMissingRefundLines;
     const hasRefundableItem = detailRefundableResult.items.some((item) => item.maxQty > 0);
+    const itemRefundBreakdowns = getItemRefundBreakdowns(order, items);
+    const itemRefundBreakdownById = new Map(itemRefundBreakdowns.map((breakdown) => [breakdown.item.id, breakdown]));
+    const refundBreakdownLines = getRefundBreakdownLines(order);
     const canRefund = Boolean(order.backend_id)
       && order.status !== 'CANCELLED'
       && refundStatus !== 'full'
@@ -1054,26 +1201,70 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <h3 className="text-sm font-extrabold text-slate-900">Items</h3>
                 <span className="text-xs font-bold text-slate-500">{items.length} rows</span>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_76px_108px_112px] gap-3 border-b border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <div className="grid grid-cols-[minmax(0,1fr)_132px_80px_120px] gap-3 border-b border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
                 <span>Product</span>
                 <span className="text-right">Qty</span>
                 <span className="text-right">VAT</span>
                 <span className="text-right">Total</span>
               </div>
               <div className="divide-y divide-slate-100">
-                {items.map((item) => (
-                  <div key={item.id} className="grid min-h-14 grid-cols-[minmax(0,1fr)_76px_108px_112px] items-center gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-bold text-slate-950">{item.name}</div>
-                      <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
+                {items.map((item) => {
+                  const refundInfo = itemRefundBreakdownById.get(item.id);
+                  const hasItemRefund = Boolean(refundInfo && refundInfo.refundedQty > 0);
+                  return (
+                    <div key={item.id} className={`grid min-h-14 grid-cols-[minmax(0,1fr)_132px_80px_120px] items-center gap-3 px-4 py-3 ${hasItemRefund ? 'bg-amber-50/45' : ''}`}>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-950">{item.name}</div>
+                        <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold tabular-nums text-slate-700">{item.quantity}</div>
+                        {hasItemRefund && refundInfo && (
+                          <div className="mt-1 inline-flex whitespace-nowrap rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                            {refundInfo.refundedQty} refunded - {refundInfo.remainingQty} remaining
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right text-sm font-bold tabular-nums text-slate-700">{item.vat_rate}%</div>
+                      <div className="text-right">
+                        <div className="text-sm font-extrabold tabular-nums text-slate-950">{formatMoney(item.total, currency)}</div>
+                        {hasItemRefund && refundInfo && (
+                          <div className="mt-1 text-xs font-bold tabular-nums text-red-700">Refunded -{formatMoney(refundInfo.refundedAmount, currency)}</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right text-sm font-bold tabular-nums text-slate-700">{item.quantity}</div>
-                    <div className="text-right text-sm font-bold tabular-nums text-slate-700">{item.vat_rate}%</div>
-                    <div className="text-right text-sm font-extrabold tabular-nums text-slate-950">{formatMoney(item.total, currency)}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
+
+            {refundBreakdownLines.length > 0 && (
+              <section className="mt-4 rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">Refund breakdown</h3>
+                    {order.refund_reason && (
+                      <p className="mt-1 text-xs font-bold text-slate-500">Reason: {order.refund_reason}</p>
+                    )}
+                  </div>
+                  <div className="text-right text-sm font-extrabold tabular-nums text-red-700">
+                    -{formatMoney(refundBreakdownLines.reduce((sum, line) => sum + line.refundAmount, 0), currency)}
+                  </div>
+                </div>
+                <div className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
+                  {refundBreakdownLines.map((line, index) => (
+                    <div key={`${line.variantId || line.sku || line.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_64px_110px] gap-3 px-3 py-2 text-sm">
+                      <div className="min-w-0">
+                        <div className="truncate font-bold text-slate-900">{line.name}</div>
+                        {line.sku && <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{line.sku}</div>}
+                      </div>
+                      <div className="text-right font-bold tabular-nums text-slate-700">x{line.quantity}</div>
+                      <div className="text-right font-extrabold tabular-nums text-red-700">-{formatMoney(line.refundAmount, currency)}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h3 className="text-sm font-extrabold text-slate-900">Payment and totals</h3>
@@ -1172,9 +1363,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   currency={currency}
                   t={t}
                   onCancel={() => setShowRefund(false)}
-                  onComplete={() => {
+                  onComplete={(options) => {
                     setShowRefund(false);
-                    handleSelectOrder(order.id);
+                    handleSelectOrder(order.id).finally(() => {
+                      if (options?.keepRefundOpen) setShowRefund(true);
+                    });
                     loadOrders();
                   }}
                 />
