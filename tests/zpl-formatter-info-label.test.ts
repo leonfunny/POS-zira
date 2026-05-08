@@ -51,6 +51,22 @@ describe("ZplFormatter.formatInfoLabel", () => {
     expect(Math.max(...yPositions)).toBeGreaterThan(700);
   });
 
+  it("can transliterate Polish text for Xprinter-compatible fonts", () => {
+    const f = new ZplFormatter(100, 150, 203, "ascii");
+    const zpl = f.formatInfoLabel({
+      ...sampleData,
+      ingredients: "Wartości odżywcze, węglowodany, białko, sól",
+      manufacturerInfo: "Zollerstraße 7, właściciel marki",
+    }, 100, 150);
+
+    expect(zpl).toContain("Wartosci odzywcze");
+    expect(zpl).toContain("weglowodany");
+    expect(zpl).toContain("Zollerstrasse 7");
+    expect(zpl).toContain("wlasciciel marki");
+    expect(zpl).not.toContain("Wartości");
+    expect(zpl).not.toContain("Zollerstraße");
+  });
+
   it("omits countryOfOrigin row when null", () => {
     const f = new ZplFormatter(60, 40);
     const zpl = f.formatInfoLabel({ ...sampleData, countryOfOrigin: null }, 60, 40);

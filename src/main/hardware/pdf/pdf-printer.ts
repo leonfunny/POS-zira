@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import QRCode from 'qrcode';
-import { CheckinConfirmationData } from '../../../shared/types';
+import { CheckinConfirmationData, InfoLabelData, ManufacturerRole } from '../../../shared/types';
 import path from 'path';
 import fs from 'fs';
 import logger from '../../logger';
@@ -18,8 +18,28 @@ export interface PrintLabelOptions {
   grandTotal?: number;
 }
 
+export interface PrintInfoLabelOptions {
+  printerName: string;
+  labelWidthMm: number;
+  labelHeightMm: number;
+  data: InfoLabelData;
+  silent?: boolean;
+}
+
 function esc(t: string): string { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtPrice(g: number): string { return (g / 100).toFixed(2); }
+
+function formatInfoDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return y && m && d ? `${d}.${m}.${y}` : iso;
+}
+
+const INFO_ROLE_PREFIX: Record<ManufacturerRole, string> = {
+  [ManufacturerRole.PRODUCER]: 'Producent',
+  [ManufacturerRole.IMPORTER]: 'Importer',
+  [ManufacturerRole.DISTRIBUTOR]: 'Dystrybutor',
+  [ManufacturerRole.SUPPLIER]: 'Dostawca',
+};
 
 /** Pipe-separated QR payload for booking lookup: ZIRA|<booking>|<phone>|<iso-timestamp> */
 export function buildQrPayload(data: CheckinConfirmationData): string {
@@ -185,16 +205,81 @@ ${qrHtml}
 </body></html>`;
 }
 
+export function buildInfoLabelHtml(opts: PrintInfoLabelOptions): string {
+  const { labelWidthMm: w, labelHeightMm: h, data } = opts;
+  const tall = h >= 90;
+  const titlePt = tall ? 18 : 10;
+  const bodyPt = tall ? 11 : 7;
+  const metaPt = tall ? 12 : 8;
+  const sectionGap = tall ? 8 : 3;
+  const blockGap = tall ? 20 : 5;
+  const paddingX = tall ? 8 : 3;
+  const paddingY = tall ? 8 : 2;
+  const countryHtml = data.countryOfOrigin
+    ? `<div class="country">Kraj pochodzenia: ${esc(data.countryOfOrigin)}</div>`
+    : '';
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page { size: ${w}mm ${h}mm; margin: 0; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  width:${w}mm;
+  height:${h}mm;
+  font-family: Arial, "Segoe UI", Helvetica, sans-serif;
+  padding:${paddingY}mm ${paddingX}mm;
+  color:#000;
+  background:#fff;
+  overflow:hidden;
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+.title {
+  font-size:${titlePt}pt;
+  font-weight:800;
+  line-height:1.15;
+  margin-bottom:${tall ? 22 : 5}px;
+}
+.ingredients {
+  font-size:${bodyPt}pt;
+  font-weight:700;
+  line-height:1.28;
+  margin-bottom:${blockGap}px;
+  white-space:pre-wrap;
+}
+.best-before {
+  font-size:${metaPt}pt;
+  font-weight:800;
+  line-height:1.2;
+  margin-bottom:${sectionGap}px;
+}
+.manufacturer,
+.country {
+  font-size:${bodyPt}pt;
+  font-weight:700;
+  line-height:1.28;
+}
+.label {
+  font-weight:900;
+}
+</style></head><body>
+<div class="title">${esc(data.productName)}</div>
+<div class="ingredients"><span class="label">Składniki:</span> ${esc(data.ingredients)}</div>
+<div class="best-before">Najlepiej spożyć przed: ${esc(formatInfoDate(data.bestBefore))}</div>
+<div class="manufacturer"><span class="label">${INFO_ROLE_PREFIX[data.manufacturerRole] || 'Producent'}:</span> ${esc(data.manufacturerInfo)}</div>
+${countryHtml}
+</body></html>`;
+}
+
 function todayDateStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function saveHtmlLabel(html: string): string {
+function saveHtmlLabel(html: string, prefix = 'checkin'): string {
   const labelsRoot = path.join(app.getPath('userData'), 'labels');
   const dayDir = path.join(labelsRoot, todayDateStr());
   if (!fs.existsSync(dayDir)) fs.mkdirSync(dayDir, { recursive: true });
-  const filePath = path.join(dayDir, `checkin-${Date.now()}.html`);
+  const filePath = path.join(dayDir, `${prefix}-${Date.now()}.html`);
   fs.writeFileSync(filePath, html, 'utf-8');
   logger.info(`[PdfPrinter] Saved HTML label -> ${filePath}`);
   return filePath;
@@ -220,7 +305,27 @@ export async function printLabelToDevice(opts: PrintLabelOptions): Promise<strin
 
   // Save HTML to labels/ folder for archive
   const htmlPath = saveHtmlLabel(html);
+  await printHtmlToDevice({ html, printerName, labelWidthMm, labelHeightMm, silent });
+  return htmlPath;
+}
 
+export async function printInfoLabelToDevice(opts: PrintInfoLabelOptions): Promise<string> {
+  const { printerName, labelWidthMm, labelHeightMm, silent = true } = opts;
+  logger.info(`[PdfPrinter] Printing ${labelWidthMm}x${labelHeightMm}mm info label -> "${printerName}"`);
+  const html = buildInfoLabelHtml(opts);
+  const htmlPath = saveHtmlLabel(html, 'info-label');
+  await printHtmlToDevice({ html, printerName, labelWidthMm, labelHeightMm, silent });
+  return htmlPath;
+}
+
+async function printHtmlToDevice(opts: {
+  html: string;
+  printerName: string;
+  labelWidthMm: number;
+  labelHeightMm: number;
+  silent: boolean;
+}): Promise<void> {
+  const { html, printerName, labelWidthMm, labelHeightMm, silent } = opts;
   const win = new BrowserWindow({ show: false, width: Math.round(labelWidthMm * 4), height: Math.round(labelHeightMm * 4), webPreferences: { offscreen: true } });
   try {
     await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
@@ -230,5 +335,4 @@ export async function printLabelToDevice(opts: PrintLabelOptions): Promise<strin
         (success, reason) => { if (success) { logger.info(`[PdfPrinter] Label printed to "${printerName}"`); resolve(); } else { reject(new Error(`Print failed: ${reason}`)); } });
     });
   } finally { win.destroy(); }
-  return htmlPath;
 }

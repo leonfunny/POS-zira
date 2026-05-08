@@ -19,7 +19,7 @@ import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registr
 import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
-import { printLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
+import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { listSerialPorts, listWindowsPrintersDetailed } from '../hardware/port-utils';
@@ -53,6 +53,11 @@ import logger from '../logger';
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
+
+function shouldRenderInfoLabelViaWindows(config?: PrinterConfig | null): boolean {
+  const printerName = config?.windowsPrinter || config?.address || '';
+  return /xprinter|xp-?423|xp-?42/i.test(printerName);
+}
 
 /** How often to run printer health checks (ms) */
 const HEALTH_CHECK_INTERVAL = 30_000;
@@ -1898,7 +1903,18 @@ export class HardwareModule extends BaseModule {
         if (isLabel) {
           if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
           if (job.jobType === PrintJobType.INFO_LABEL) {
-            await targetPrinter.printInfoLabel(job.payload as InfoLabelData);
+            if (shouldRenderInfoLabelViaWindows(printerConfig)) {
+              const printerName = printerConfig?.windowsPrinter || printerConfig?.address;
+              if (!printerName) throw new Error('Info label printing requires a Windows printer name');
+              await printInfoLabelToDevice({
+                printerName,
+                labelWidthMm: printerConfig?.labelWidth || printerConfig?.paperWidth || 100,
+                labelHeightMm: printerConfig?.labelHeight || 150,
+                data: job.payload as InfoLabelData,
+              });
+            } else {
+              await targetPrinter.printInfoLabel(job.payload as InfoLabelData);
+            }
           } else {
             await targetPrinter.printLabel(job.payload as LabelData);
           }

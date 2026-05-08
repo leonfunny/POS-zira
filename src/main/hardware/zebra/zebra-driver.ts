@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
-import { ZplFormatter } from './zpl-formatter';
+import { ZplFormatter, type ZplTextProfile } from './zpl-formatter';
 import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo, InfoLabelData } from '../../../shared/types';
 import { listWindowsPrinters, sanitizePrinterName, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { type RecoveryResult } from '../detection/types';
@@ -20,13 +20,17 @@ export class ZebraDriver {
   private connected = false;
   private formatter: ZplFormatter;
 
+  private static textProfileForPrinter(printerName: string): ZplTextProfile {
+    return /xprinter|xp-?423|xp-?42/i.test(printerName) ? 'ascii' : 'zebra';
+  }
+
   constructor(
     printerName: string,
     labelWidth: number = 100,
     labelHeight: number = 50
   ) {
     this.printerName = printerName;
-    this.formatter = new ZplFormatter(labelWidth, labelHeight);
+    this.formatter = new ZplFormatter(labelWidth, labelHeight, 203, ZebraDriver.textProfileForPrinter(printerName));
     logger.info(`[ZebraDriver] Initialized for "${printerName}" (${labelWidth}x${labelHeight}mm)`);
   }
 

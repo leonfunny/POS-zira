@@ -44,6 +44,30 @@ describe("ZebraDriver.printInfoLabel", () => {
     expect(zpl).toContain("Test 100g");
   });
 
+  it("uses ASCII transliteration for Xprinter-compatible label printers", async () => {
+    const xprinter = new ZebraDriver("Xprinter XP-423B", 100, 150);
+    (xprinter as any).connected = true;
+    const xprinterSpool = vi.spyOn(xprinter as any, "printRaw").mockResolvedValue(undefined);
+
+    try {
+      await xprinter.printInfoLabel({
+        ...sample,
+        ingredients: "Wartości odżywcze, węglowodany, białko, sól",
+        manufacturerInfo: "Zollerstraße 7, właściciel marki",
+      });
+
+      const zpl: string = xprinterSpool.mock.calls[0][0];
+      expect(zpl).toContain("Wartosci odzywcze");
+      expect(zpl).toContain("Zollerstrasse 7");
+      expect(zpl).toContain("wlasciciel marki");
+      expect(zpl).not.toContain("Wartości");
+      expect(zpl).not.toContain("Zollerstraße");
+    } finally {
+      xprinterSpool.mockRestore();
+      xprinter.disconnect();
+    }
+  });
+
   it("does not replace configured dimensions with Windows driver paper size during connect", async () => {
     const detectSpy = vi
       .spyOn(ZebraDriver, "detectPaperSize")

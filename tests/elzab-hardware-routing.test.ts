@@ -17,6 +17,7 @@ const mock = vi.hoisted(() => ({
   rowToPrinterConfig: vi.fn(),
   thermalCtor: vi.fn(),
   zebraCtor: vi.fn(),
+  printInfoLabelToDevice: vi.fn(),
   elzabCtor: vi.fn(),
   elzabInstances: [] as any[],
 }));
@@ -107,10 +108,17 @@ vi.mock('../src/main/hardware/zebra/zebra-driver', () => {
     isConnected = vi.fn(() => true);
     printTest = vi.fn();
     printLabel = vi.fn();
+    printInfoLabel = vi.fn();
     openDrawer = vi.fn();
   }
   return { ZebraDriver };
 });
+
+vi.mock('../src/main/hardware/pdf/pdf-printer', () => ({
+  printLabelToDevice: vi.fn(),
+  printInfoLabelToDevice: mock.printInfoLabelToDevice,
+  cleanupOldLabels: vi.fn(),
+}));
 
 async function buildDriver(config: PrinterConfig, type: PrinterType = PrinterType.FISCAL) {
   const { HardwareModule } = await import('../src/main/modules/hardware.module');
@@ -127,6 +135,7 @@ describe('ELZAB fiscal protocol routing', () => {
     mock.rowToPrinterConfig.mockReset();
     mock.elzabInstances.length = 0;
     mock.zebraCtor.mockReset();
+    mock.printInfoLabelToDevice.mockReset();
   });
 
   it('allows ELZAB_STX only in FISCAL, while RECEIPT stays non-fiscal', () => {
@@ -284,5 +293,56 @@ describe('ELZAB fiscal protocol routing', () => {
     await module.reinitializePrinter();
 
     expect(mock.zebraCtor).toHaveBeenCalledWith('Xprinter XP-423B', 100, 150);
+  });
+
+  it('prints Xprinter info labels through Windows HTML rendering for Unicode text', async () => {
+    const row = {
+      id: 'xprinter-1',
+      printer_type: PrinterType.LABEL,
+      display_name: 'Xprinter 100x150',
+      protocol: 'WINDOWS',
+      is_enabled: 1,
+    };
+    const config: PrinterConfig = {
+      enabled: true,
+      protocol: 'WINDOWS',
+      serverPrinterId: 'xprinter-1',
+      windowsPrinter: 'Xprinter XP-423B',
+      paperWidth: 100,
+      labelWidth: 100,
+      labelHeight: 150,
+    };
+    mock.currentConfig = { multiPrinterMode: true, printers: {} };
+    mock.getEnabled.mockReturnValue([row]);
+    mock.getById.mockReturnValue(row);
+    mock.rowToPrinterConfig.mockReturnValue(config);
+    mock.printInfoLabelToDevice.mockResolvedValue('info-label.html');
+
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule({ set: vi.fn(), getOptional: vi.fn(() => socket) } as any);
+    await module.reinitializePrinter();
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-info',
+      jobType: PrintJobType.INFO_LABEL,
+      printerId: 'xprinter-1',
+      payload: {
+        productName: 'Złota Nioska Świeże Jaja',
+        ingredients: 'Składniki: ś, ż, ć',
+        bestBefore: '2026-06-06',
+        manufacturerInfo: 'właściciel marki',
+        manufacturerRole: 'PRODUCER',
+        countryOfOrigin: null,
+        quantity: 1,
+      },
+    });
+
+    expect(mock.printInfoLabelToDevice).toHaveBeenCalledWith(expect.objectContaining({
+      printerName: 'Xprinter XP-423B',
+      labelWidthMm: 100,
+      labelHeightMm: 150,
+    }));
+    expect(mock.markUsed).toHaveBeenCalledWith('xprinter-1');
   });
 });

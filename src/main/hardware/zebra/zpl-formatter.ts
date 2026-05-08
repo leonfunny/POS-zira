@@ -9,6 +9,30 @@ const BARCODE_COMMANDS: Record<BarcodeType, string> = {
   QR: '^BQ',
 };
 
+export type ZplTextProfile = 'zebra' | 'ascii';
+
+const ASCII_TRANSLITERATION: Record<string, string> = {
+  'ą': 'a',
+  'ć': 'c',
+  'ę': 'e',
+  'ł': 'l',
+  'ń': 'n',
+  'ó': 'o',
+  'ś': 's',
+  'ź': 'z',
+  'ż': 'z',
+  'Ą': 'A',
+  'Ć': 'C',
+  'Ę': 'E',
+  'Ł': 'L',
+  'Ń': 'N',
+  'Ó': 'O',
+  'Ś': 'S',
+  'Ź': 'Z',
+  'Ż': 'Z',
+  'ß': 'ss',
+};
+
 /**
  * ZPL Formatter for Zebra printers
  * Creates ZPL commands for labels and receipts
@@ -19,7 +43,8 @@ export class ZplFormatter {
   constructor(
     private labelWidth: number = 100,  // mm
     private labelHeight: number = 50,  // mm
-    dpi: number = 203                   // Common: 203 or 300 dpi
+    dpi: number = 203,                  // Common: 203 or 300 dpi
+    private textProfile: ZplTextProfile = 'zebra',
   ) {
     this.dotsPerMm = dpi / 25.4;
   }
@@ -43,13 +68,15 @@ export class ZplFormatter {
   }
 
   /**
-   * Replace characters that the default Zebra Font 0 lacks a glyph for
-   * with the closest ASCII equivalent. ^CI28 sets UTF-8 decoding but the
-   * built-in font has incomplete Latin Extended-A coverage — `ł/Ł` in
-   * particular render as blank on ZD230 firmware. Other Polish chars
-   * (ż, ć, ó, ń, ś, ę, ą) render correctly so we leave them.
+   * Replace characters that the printer font cannot render with readable
+   * ASCII equivalents. Zebra Font 0 only needs ł/Ł replacement on tested
+   * units; Xprinter-compatible firmware drops broader Polish glyphs.
    */
   private transliterateForZebra(text: string): string {
+    if (this.textProfile === 'ascii') {
+      return text.replace(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻß]/g, (char) => ASCII_TRANSLITERATION[char] || char);
+    }
+
     return text.replace(/ł/g, 'l').replace(/Ł/g, 'L');
   }
 
