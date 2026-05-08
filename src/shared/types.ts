@@ -374,6 +374,17 @@ export interface AgentConfig {
   customerDisplayPromoInterval?: number; // Carousel interval in ms (default 5000)
   customerDisplayIdleTimeout?: number;   // Idle timeout before promo in ms (default 120000)
 
+  // Self-checkout terminal — kiosk for customer-driven sales. Disabled
+  // by default; opening the window takes over the screen and is meant
+  // for unattended-kiosk hardware on the shop counter.
+  selfCheckoutEnabled?: boolean;
+  selfCheckoutMonitor?: number;
+  selfCheckoutTerminalId?: string;       // Stable ID generated on first launch
+  selfCheckoutKioskUserId?: string;      // Dedicated staff user for kiosk sales
+  selfCheckoutBagFeeAmount?: number;     // Bag fee in PLN (default 0.20)
+  selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
+  selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
+
   // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
   salonCode?: string;

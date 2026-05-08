@@ -53,6 +53,21 @@ const WINDOW_CONFIGS: Record<string, WindowConfig> = {
     alwaysOnTop: false,
     targetDisplay: 'secondary',
   },
+  selfCheckout: {
+    id: 'selfCheckout',
+    htmlFile: 'windows/self-checkout/index.html',
+    // Reuse the customer-display preload bridge for now — self-checkout
+    // talks to the same backend (pos socket + apiKey REST) and doesn't
+    // need a different IPC surface yet. If a kiosk-specific preload
+    // becomes necessary (e.g. exposing only a payment terminal API)
+    // we can add `preload-kiosk.js` later.
+    preload: 'preload-display.js',
+    width: 1280,
+    height: 800,
+    fullscreen: true,
+    alwaysOnTop: true,
+    targetDisplay: 'primary',
+  },
 };
 
 export class WindowManager {
@@ -199,6 +214,10 @@ export class WindowManager {
       logger.warn('[WindowManager] Customer display disabled in settings');
       return null;
     }
+    if (id === 'selfCheckout' && !getConfigValue('selfCheckoutEnabled')) {
+      logger.warn('[WindowManager] Self-checkout disabled in settings');
+      return null;
+    }
 
     const existing = this.getWindow(id);
     if (existing) {
@@ -275,7 +294,12 @@ export class WindowManager {
       },
       show: false,
       autoHideMenuBar: true,
-      title: id === 'pos' ? 'Zira AI POS' : 'Customer Display',
+      title:
+        id === 'pos'
+          ? 'Zira AI POS'
+          : id === 'selfCheckout'
+            ? 'Self Checkout'
+            : 'Customer Display',
     });
 
     if (customerBehavior) {

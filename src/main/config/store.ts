@@ -204,6 +204,26 @@ const store = new Store<AgentConfig>({
     customerDisplayPromoFolder: { type: 'string', default: '' },
     customerDisplayPromoInterval: { type: 'number', default: 5000 },
     customerDisplayIdleTimeout: { type: 'number', default: 120000 },
+    // Self-checkout terminal (kiosk for customer-driven sales). Disabled by
+    // default until owner explicitly turns it on — opening the window
+    // takes over the screen and is meant for unattended-kiosk hardware.
+    selfCheckoutEnabled: { type: 'boolean', default: false },
+    selfCheckoutMonitor: { type: 'number', default: 0 },
+    /**
+     * Stable terminal ID generated on first launch and persisted; used
+     * by the help-request flow so staff dashboards can identify which
+     * kiosk is calling for help.
+     */
+    selfCheckoutTerminalId: { type: 'string', default: '' },
+    /**
+     * Dedicated staff user that owns every self-checkout sale (Polish
+     * fiscal law requires an identified operator on the paragon).
+     * Owner picks an existing user from POS settings.
+     */
+    selfCheckoutKioskUserId: { type: 'string', default: '' },
+    selfCheckoutBagFeeAmount: { type: 'number', default: 0.2 },
+    selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
+    selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },
     // Booksy Sync settings
     booksy: {
       type: 'object',

@@ -29,6 +29,10 @@ export default defineConfig({
         main: resolve(__dirname, 'src/renderer/index.html'),
         pos: resolve(__dirname, 'src/renderer/windows/pos/index.html'),
         customer: resolve(__dirname, 'src/renderer/windows/customer/index.html'),
+        selfCheckout: resolve(
+          __dirname,
+          'src/renderer/windows/self-checkout/index.html',
+        ),
       },
       output: {
         format: 'es',
