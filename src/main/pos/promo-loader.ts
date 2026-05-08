@@ -1,11 +1,9 @@
 import { readdirSync, statSync } from 'fs';
 import { join, extname } from 'path';
-import { pathToFileURL } from 'url';
 import logger from '../logger';
 import { getConfigValue, getSecureAuthToken } from '../config/store';
 import { apiClient } from '../network/api-client';
-
-const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.jfif', '.avif']);
+import { IMAGE_EXTENSIONS, toPromoImageUrl } from './promo-image-url';
 
 export class PromoLoader {
   private cachedImages: string[] = [];
@@ -13,7 +11,11 @@ export class PromoLoader {
   private cacheTtlMs: number = 300000; // 5 min cache
 
   async getImages(): Promise<string[]> {
-    // 1. Try backend API (if auth token exists + cache expired)
+    // Local promo folder is an explicit operator setting, so it wins over API images.
+    const localImages = this.scanLocalFolder();
+    if (localImages.length > 0) return localImages;
+
+    // Fallback: try backend API (if auth token exists + cache expired)
     if (Date.now() - this.lastFetchTime > this.cacheTtlMs) {
       const apiImages = await this.fetchFromApi();
       if (apiImages.length > 0) {
@@ -23,10 +25,6 @@ export class PromoLoader {
       }
     }
     if (this.cachedImages.length > 0) return this.cachedImages;
-
-    // 2. Fallback: scan local folder
-    const localImages = this.scanLocalFolder();
-    if (localImages.length > 0) return localImages;
 
     return [];
   }
@@ -61,7 +59,7 @@ export class PromoLoader {
         try {
           const stat = statSync(fullPath);
           if (stat.isFile()) {
-            images.push(pathToFileURL(fullPath).toString());
+            images.push(toPromoImageUrl(fullPath));
           }
         } catch {
           // skip unreadable files

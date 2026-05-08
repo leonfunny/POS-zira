@@ -13,6 +13,10 @@ import { join } from 'path';
 import { AgentOrchestrator } from './core/orchestrator';
 import { initAutoUpdater } from './updates/auto-updater';
 import logger from './logger';
+import {
+  registerPromoImageProtocolHandler,
+  registerPromoImageProtocolScheme,
+} from './pos/promo-image-protocol';
 
 // Module imports
 import { HardwareModule } from './modules/hardware.module';
@@ -32,6 +36,8 @@ import { BackupModule } from './modules/backup.module';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
+
+registerPromoImageProtocolScheme();
 
 /**
  * Get system diagnostics info
@@ -256,6 +262,8 @@ async function startApp() {
 
     logger.info('[Startup] Step 2: App is ready, initializing...');
     safeConsoleLog('[Startup] Step 2: App is ready, initializing...');
+
+    registerPromoImageProtocolHandler();
 
     orchestrator = new AgentOrchestrator();
     const container = orchestrator.getContainer();
