@@ -118,6 +118,16 @@ export function validateRefundBackendResponse(
     alreadyRefundedGrosze: number;
     requireRefundedLines: boolean;
     requireStockMovement: boolean;
+    /**
+     * Optional gross-up factor applied to `requestedAmountGrosze` for
+     * the strict amount comparison. Server now derives the refund delta
+     * server-side as gross when an order is `priceType=brutto`, so the
+     * client's net-based `requestedAmountGrosze` will be smaller than
+     * the response's `refundAmount`. Pass `1 + tax/subtotal` (typically
+     * 1.08, 1.05, 1.23 …) to keep the strict equality check while
+     * tolerating the server-side gross-up.
+     */
+    grossUpFactor?: number;
   },
 ): RefundBackendValidationResult {
   const summary = getRefundBackendResponseSummary(result);
@@ -133,11 +143,17 @@ export function validateRefundBackendResponse(
   const missingLines = opts.requireRefundedLines && summary.refundedLinesLength === 0;
   const missingStockMovement = opts.requireStockMovement && summary.stockMovementIdsLength === 0;
   const missingTotalRefundedAmount = refundedAmountGrosze == null;
+  const factor = opts.grossUpFactor && opts.grossUpFactor > 1 ? opts.grossUpFactor : 1;
+  const expectedDeltaGrosze = Math.round(opts.requestedAmountGrosze * factor);
   const expectedCumulative = opts.type === 'FULL'
     ? opts.orderTotalGrosze
-    : opts.alreadyRefundedGrosze + opts.requestedAmountGrosze;
-  const refundAmountMismatch = refundAmountGrosze == null || Math.abs(refundAmountGrosze - opts.requestedAmountGrosze) > 1;
-  const totalRefundedMismatch = refundedAmountGrosze == null || Math.abs(refundedAmountGrosze - expectedCumulative) > 1;
+    : opts.alreadyRefundedGrosze + expectedDeltaGrosze;
+  // Allow a 1-grosz rounding tolerance plus an extra 1-grosz per percent
+  // of gross-up to absorb compounding rounding errors when the server
+  // grosses up each line individually before summing.
+  const tolerance = factor > 1 ? Math.max(2, Math.ceil(factor * 2)) : 1;
+  const refundAmountMismatch = refundAmountGrosze == null || Math.abs(refundAmountGrosze - expectedDeltaGrosze) > tolerance;
+  const totalRefundedMismatch = refundedAmountGrosze == null || Math.abs(refundedAmountGrosze - expectedCumulative) > tolerance;
   const amountMismatch = refundAmountMismatch || totalRefundedMismatch;
 
   const fail = (

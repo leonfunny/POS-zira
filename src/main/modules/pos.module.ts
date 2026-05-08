@@ -723,6 +723,18 @@ export class PosModule extends BaseModule {
           `status=${summary.status ?? 'unknown'} refundAmount=${summary.refundAmount ?? 'null'} ` +
           `refundedLines.length=${summary.refundedLinesLength} stockMovementIds.length=${summary.stockMovementIdsLength}`,
         );
+        // For brutto orders the server grosses up each line's net unit
+        // price by its own VAT rate before summing. Use order.tax /
+        // order.subtotal as the order-wide gross-up factor; if either is
+        // missing or the order is netto, the factor stays 1 (no
+        // gross-up) and the validator behaves as before.
+        const orderPriceType = (order as any).price_type as string | undefined;
+        const orderSubtotalGrosze = Number((order as any).subtotal) || 0;
+        const orderTaxGrosze = Number((order as any).tax) || 0;
+        const grossUpFactor =
+          orderPriceType === 'brutto' && orderSubtotalGrosze > 0
+            ? 1 + orderTaxGrosze / orderSubtotalGrosze
+            : 1;
         const validation = validateRefundBackendResponse(result, {
           type: data.type,
           requestedAmountGrosze,
@@ -730,6 +742,7 @@ export class PosModule extends BaseModule {
           alreadyRefundedGrosze,
           requireRefundedLines: hasLineRefund,
           requireStockMovement: hasRestock,
+          grossUpFactor,
         });
         if (!validation.ok) {
           const error = buildRefundMutationError(validation);
