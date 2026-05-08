@@ -8,6 +8,7 @@ export interface RefundIpcLine {
   unitPrice: number;
   refundAmount: number;
   restock: boolean;
+  vatRate?: number;
 }
 
 export interface RefundIpcPayload {
@@ -128,6 +129,12 @@ export function validateRefundBackendResponse(
      * tolerating the server-side gross-up.
      */
     grossUpFactor?: number;
+    /**
+     * Additional acceptable refund deltas in grosze. This is used when
+     * the client selected/refunded net line amounts but the backend
+     * correctly reports gross refund amounts.
+     */
+    expectedDeltaGroszeCandidates?: number[];
   },
 ): RefundBackendValidationResult {
   const summary = getRefundBackendResponseSummary(result);
@@ -145,16 +152,24 @@ export function validateRefundBackendResponse(
   const missingTotalRefundedAmount = refundedAmountGrosze == null;
   const factor = opts.grossUpFactor && opts.grossUpFactor > 1 ? opts.grossUpFactor : 1;
   const expectedDeltaGrosze = Math.round(opts.requestedAmountGrosze * factor);
-  const expectedCumulative = opts.type === 'FULL'
-    ? opts.orderTotalGrosze
-    : opts.alreadyRefundedGrosze + expectedDeltaGrosze;
+  const expectedDeltaCandidates = Array.from(new Set([
+    expectedDeltaGrosze,
+    ...(opts.expectedDeltaGroszeCandidates ?? []),
+  ].filter((n) => Number.isFinite(n) && n > 0)));
   // Allow a 1-grosz rounding tolerance plus an extra 1-grosz per percent
   // of gross-up to absorb compounding rounding errors when the server
   // grosses up each line individually before summing.
   const tolerance = factor > 1 ? Math.max(2, Math.ceil(factor * 2)) : 1;
-  const refundAmountMismatch = refundAmountGrosze == null || Math.abs(refundAmountGrosze - expectedDeltaGrosze) > tolerance;
-  const totalRefundedMismatch = refundedAmountGrosze == null || Math.abs(refundedAmountGrosze - expectedCumulative) > tolerance;
-  const amountMismatch = refundAmountMismatch || totalRefundedMismatch;
+  const amountMatches = expectedDeltaCandidates.some((delta) => {
+    const expectedCumulative = opts.type === 'FULL'
+      ? opts.orderTotalGrosze
+      : opts.alreadyRefundedGrosze + delta;
+    return refundAmountGrosze != null
+      && refundedAmountGrosze != null
+      && Math.abs(refundAmountGrosze - delta) <= tolerance
+      && Math.abs(refundedAmountGrosze - expectedCumulative) <= tolerance;
+  });
+  const amountMismatch = !amountMatches;
 
   const fail = (
     classification: RefundBackendValidationResult['classification'],

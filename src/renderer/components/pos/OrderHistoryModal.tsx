@@ -10,6 +10,7 @@ import {
   compareOrdersByDisplayTimeDesc,
   parseOrderTimestampMs,
 } from './order-history-time';
+import { decideCloseAction, deriveReceiptOutcome } from './receipt-outcome';
 
 interface OrderRow {
   id: string;
@@ -260,6 +261,7 @@ function RefundPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [printWarning, setPrintWarning] = useState<string | null>(null);
   const refundRequestIdRef = useRef<string | null>(null);
 
   const resetRefundRequestId = () => {
@@ -282,6 +284,7 @@ function RefundPanel({
       unitPrice: item.price,
       refundAmount: item.price * selectedQtys[item.id],
       restock,
+      vatRate: item.vat_rate,
     }));
 
   const computedRefundTotal = refundType === 'FULL'
@@ -320,6 +323,7 @@ function RefundPanel({
 
     setLoading(true);
     setError(null);
+    setPrintWarning(null);
     try {
       const reasonText = reason === 'other' && customReason.trim()
         ? customReason.trim()
@@ -334,6 +338,7 @@ function RefundPanel({
           unitPrice: item.price,
           refundAmount: item.price * item.maxQty,
           restock,
+          vatRate: item.vat_rate,
         }));
       }
       const refundRequestId = refundRequestIdRef.current ?? createRefundRequestId();
@@ -348,8 +353,14 @@ function RefundPanel({
       }));
       if (result.success) {
         resetRefundRequestId();
+        const closeAction = decideCloseAction(deriveReceiptOutcome(result, t));
         setSuccess(true);
-        setTimeout(onComplete, 1500);
+        if (closeAction.type === 'show-warning-then-close') {
+          setPrintWarning(closeAction.warning);
+          setTimeout(onComplete, closeAction.delayMs);
+        } else {
+          setTimeout(onComplete, 1500);
+        }
       } else if ((result as any).mutationDetected || (result as any).requiresRefresh) {
         resetRefundRequestId();
         onComplete();
@@ -369,6 +380,11 @@ function RefundPanel({
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
         <div className="text-sm font-bold text-emerald-800">{tOr(t, 'pos.refund.success', 'Refund processed')}</div>
+        {printWarning && (
+          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+            {printWarning}
+          </div>
+        )}
         <div className="mt-1 text-xs text-emerald-700">Refreshing order status...</div>
       </div>
     );

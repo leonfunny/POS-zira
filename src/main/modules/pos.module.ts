@@ -57,6 +57,29 @@ import {
 } from '../sync/booking-sync';
 import logger from '../logger';
 
+function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
+  const candidates: number[] = [];
+  const lines = data.lines ?? [];
+  if (lines.length > 0 && lines.every((line) => typeof line.vatRate === 'number')) {
+    const lineGrossTotal = lines.reduce((sum, line) => {
+      const vatRate = typeof line.vatRate === 'number' ? line.vatRate : 0;
+      return sum + Math.round(line.refundAmount * (1 + Math.max(0, vatRate) / 100));
+    }, 0);
+    if (lineGrossTotal > 0 && lineGrossTotal !== requestedAmountGrosze) {
+      candidates.push(lineGrossTotal);
+    }
+  }
+
+  const subtotalGrosze = Number(order?.subtotal) || 0;
+  const taxGrosze = Number(order?.tax) || 0;
+  const netSubtotalGrosze = subtotalGrosze - taxGrosze;
+  if (requestedAmountGrosze > 0 && taxGrosze > 0 && netSubtotalGrosze > 0) {
+    candidates.push(Math.round(requestedAmountGrosze * (subtotalGrosze / netSubtotalGrosze)));
+  }
+
+  return candidates;
+}
+
 export class PosModule extends BaseModule {
   readonly name = 'pos';
 
@@ -696,6 +719,7 @@ export class PosModule extends BaseModule {
           unitPrice: l.unitPrice / 100,
           refundAmount: l.refundAmount / 100,
           restock: l.restock,
+          vatRate: l.vatRate,
         }));
 
         const backendPayload = toRefundBackendPayload(data);
@@ -723,18 +747,7 @@ export class PosModule extends BaseModule {
           `status=${summary.status ?? 'unknown'} refundAmount=${summary.refundAmount ?? 'null'} ` +
           `refundedLines.length=${summary.refundedLinesLength} stockMovementIds.length=${summary.stockMovementIdsLength}`,
         );
-        // For brutto orders the server grosses up each line's net unit
-        // price by its own VAT rate before summing. Use order.tax /
-        // order.subtotal as the order-wide gross-up factor; if either is
-        // missing or the order is netto, the factor stays 1 (no
-        // gross-up) and the validator behaves as before.
-        const orderPriceType = (order as any).price_type as string | undefined;
-        const orderSubtotalGrosze = Number((order as any).subtotal) || 0;
-        const orderTaxGrosze = Number((order as any).tax) || 0;
-        const grossUpFactor =
-          orderPriceType === 'brutto' && orderSubtotalGrosze > 0
-            ? 1 + orderTaxGrosze / orderSubtotalGrosze
-            : 1;
+        const expectedDeltaGroszeCandidates = getRefundExpectedDeltaCandidates(data, requestedAmountGrosze, order);
         const validation = validateRefundBackendResponse(result, {
           type: data.type,
           requestedAmountGrosze,
@@ -742,7 +755,7 @@ export class PosModule extends BaseModule {
           alreadyRefundedGrosze,
           requireRefundedLines: hasLineRefund,
           requireStockMovement: hasRestock,
-          grossUpFactor,
+          expectedDeltaGroszeCandidates,
         });
         if (!validation.ok) {
           const error = buildRefundMutationError(validation);

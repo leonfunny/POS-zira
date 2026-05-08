@@ -8,6 +8,7 @@ export interface RefundLineInput {
   unitPrice: number;
   refundAmount: number;
   restock: boolean;
+  vatRate?: number;
 }
 
 export interface RefundRequestInput {

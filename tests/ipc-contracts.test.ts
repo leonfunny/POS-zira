@@ -276,9 +276,18 @@ describe('Refund payload passes lines[] end-to-end', () => {
   it('main IPC handler stores cumulative refund_lines but prints the delta refund receipt', () => {
     expect(posModule).toContain('mergeRefundLines(order.refund_lines, deltaRefundLines)');
     expect(posModule).toContain('orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined)');
+    expect(posModule).toContain('getRefundExpectedDeltaCandidates(data, requestedAmountGrosze, order)');
+    expect(posModule).toContain('expectedDeltaGroszeCandidates');
     expect(posModule).toContain('printRefundReceipt(orderId, {');
     expect(posModule).toContain('amount: validation.refundAmountGrosze ?? refundedAmount');
     expect(posModule).toContain('lines: deltaRefundLines');
+  });
+
+  it('renderer sends vatRate for refund lines and surfaces refund receipt print failures', () => {
+    expect(orderHistoryModal).toContain('vatRate: item.vat_rate');
+    expect(orderHistoryModal).toContain('deriveReceiptOutcome(result, t)');
+    expect(orderHistoryModal).toContain('setPrintWarning(closeAction.warning)');
+    expect(electronDts).toContain('receiptPrinted?: boolean');
   });
 
   it('startup does not retroactively finish every synced order', () => {
@@ -425,6 +434,32 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(validation.requiresRefresh).toBe(false);
     expect(validation.refundedAmountGrosze).toBe(3598);
     expect(validation.refundAmountGrosze).toBe(3598);
+  });
+
+  it('accepts backend gross refund amounts when the client refund line was net plus VAT', () => {
+    const validation = validateRefundBackendResponse({
+      success: true,
+      status: 'PARTIAL_REFUND',
+      refundAmount: 7,
+      totalRefundedAmount: 7,
+      refundedLines: [
+        { variantId: 'variant-8vat', sku: 'VAT8', name: 'Grossed item', quantity: 1, unitPrice: 7, refundAmount: 7, taxRate: 8 },
+      ],
+      stockMovementIds: ['stock-move-8vat'],
+    }, {
+      type: 'PARTIAL',
+      requestedAmountGrosze: 648,
+      orderTotalGrosze: 2100,
+      alreadyRefundedGrosze: 0,
+      requireRefundedLines: true,
+      requireStockMovement: true,
+      expectedDeltaGroszeCandidates: [700],
+    });
+
+    expect(validation.ok).toBe(true);
+    expect(validation.classification).toBe('confirmedComplete');
+    expect(validation.refundAmountGrosze).toBe(700);
+    expect(validation.refundedAmountGrosze).toBe(700);
   });
 
   it('does not treat refundAmount alone as the cumulative refunded total', () => {
