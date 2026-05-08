@@ -1050,6 +1050,19 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
   };
 
+  const refreshLocalOrderDetail = async (orderId: string) => {
+    setDetailLoadingId(orderId);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.getDetail(orderId);
+      if (result) {
+        setDetail(result);
+      }
+    } finally {
+      setDetailLoadingId(null);
+    }
+  };
+
   const handleReprint = async (orderId: string, order: OrderRow) => {
     if (reprinting) return;
     setReprinting(true);
@@ -1365,7 +1378,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   onCancel={() => setShowRefund(false)}
                   onComplete={(options) => {
                     setShowRefund(false);
-                    handleSelectOrder(order.id).finally(() => {
+                    refreshLocalOrderDetail(order.id).finally(() => {
                       if (options?.keepRefundOpen) setShowRefund(true);
                     });
                     loadOrders();

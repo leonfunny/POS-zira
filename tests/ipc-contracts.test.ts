@@ -701,6 +701,8 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain('setSuccessSummary({');
     expect(orderHistoryModal).toContain('Print refund receipt');
     expect(orderHistoryModal).toContain('onComplete({ keepRefundOpen: true })');
+    expect(orderHistoryModal).toContain('const refreshLocalOrderDetail = async (orderId: string)');
+    expect(orderHistoryModal).toContain('refreshLocalOrderDetail(order.id).finally');
     expect(orderHistoryModal).not.toContain('setTimeout(onComplete, 1500)');
   });
 });
