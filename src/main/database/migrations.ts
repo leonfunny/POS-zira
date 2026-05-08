@@ -1025,4 +1025,11 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_local_printers_enabled ON local_printers(is_enabled);
     `,
   },
+  {
+    version: 26,
+    name: 'local_printers_paper_height',
+    up: `
+      ALTER TABLE local_printers ADD COLUMN paper_height INTEGER;
+    `,
+  },
 ];

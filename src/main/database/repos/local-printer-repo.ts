@@ -13,6 +13,7 @@ export interface LocalPrinterRow {
   port: string | null;
   baud_rate: number;
   paper_width: number;
+  paper_height: number | null;
   chars_per_line: number;
   supports_cut: number;
   supports_cash_drawer: number;
@@ -35,6 +36,7 @@ export interface LocalPrinterUpsert {
   port?: string | null;
   baudRate?: number;
   paperWidth?: number;
+  paperHeight?: number | null;
   charsPerLine?: number;
   supportsCut?: boolean;
   supportsCashDrawer?: boolean;
@@ -52,7 +54,7 @@ function windowsPrinterTarget(row: LocalPrinterRow): string | undefined {
 }
 
 export function rowToPrinterConfig(row: LocalPrinterRow): PrinterConfig {
-  return {
+  const config: PrinterConfig = {
     enabled: row.is_enabled === 1,
     protocol: row.protocol,
     serverPrinterId: row.id,
@@ -66,6 +68,13 @@ export function rowToPrinterConfig(row: LocalPrinterRow): PrinterConfig {
     supportsCut: row.supports_cut === 1,
     supportsCashDrawer: row.supports_cash_drawer === 1,
   };
+
+  if (row.printer_type === PrinterType.LABEL) {
+    if (row.paper_width > 0) config.labelWidth = row.paper_width;
+    if (row.paper_height && row.paper_height > 0) config.labelHeight = row.paper_height;
+  }
+
+  return config;
 }
 
 export const localPrinterRepo = {
@@ -76,26 +85,27 @@ export const localPrinterRepo = {
     database.transaction(() => {
       for (const printer of printers) {
         database.run(
-          `INSERT INTO local_printers (
-             id, agent_id, printer_type, display_name, name, protocol,
-             windows_printer_name, address, port, baud_rate, paper_width,
-             chars_per_line, supports_cut, supports_cash_drawer, is_enabled,
-             last_seen_at, updated_at
-           )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             agent_id = excluded.agent_id,
-             printer_type = excluded.printer_type,
+           `INSERT INTO local_printers (
+              id, agent_id, printer_type, display_name, name, protocol,
+              windows_printer_name, address, port, baud_rate, paper_width,
+              paper_height, chars_per_line, supports_cut, supports_cash_drawer, is_enabled,
+              last_seen_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              agent_id = excluded.agent_id,
+              printer_type = excluded.printer_type,
              display_name = excluded.display_name,
              name = excluded.name,
              protocol = excluded.protocol,
              windows_printer_name = excluded.windows_printer_name,
              address = excluded.address,
-             port = excluded.port,
-             baud_rate = excluded.baud_rate,
-             paper_width = excluded.paper_width,
-             chars_per_line = excluded.chars_per_line,
-             supports_cut = excluded.supports_cut,
+              port = excluded.port,
+              baud_rate = excluded.baud_rate,
+              paper_width = excluded.paper_width,
+              paper_height = excluded.paper_height,
+              chars_per_line = excluded.chars_per_line,
+              supports_cut = excluded.supports_cut,
              supports_cash_drawer = excluded.supports_cash_drawer,
              is_enabled = excluded.is_enabled,
              last_seen_at = excluded.last_seen_at,
@@ -112,6 +122,7 @@ export const localPrinterRepo = {
             printer.port ?? null,
             printer.baudRate ?? 9600,
             printer.paperWidth ?? 80,
+            printer.paperHeight ?? null,
             printer.charsPerLine ?? 48,
             boolToInt(printer.supportsCut, 1),
             boolToInt(printer.supportsCashDrawer, 0),

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
-import { ShoppingCart, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X } from 'lucide-react';
 
 interface SettingsProps {
   config: AgentConfig | null;
@@ -58,6 +58,41 @@ interface PrinterDetectionStatus {
 }
 
 type WindowsPrinterOption = { name: string; port: string };
+
+type CustomPrinterForm = {
+  id?: string;
+  displayName: string;
+  printerType: PrinterTypeValue;
+  protocol: PrinterProtocol;
+  windowsPrinterName: string;
+  address: string;
+  paperWidth: number;
+  paperHeight: number;
+  isEnabled: boolean;
+};
+
+const emptyCustomPrinterForm = (): CustomPrinterForm => ({
+  displayName: '',
+  printerType: 'LABEL',
+  protocol: 'WINDOWS',
+  windowsPrinterName: '',
+  address: '',
+  paperWidth: 100,
+  paperHeight: 150,
+  isEnabled: true,
+});
+
+function preferredProtocolForType(printerType: PrinterTypeValue): PrinterProtocol {
+  if (printerType === 'LABEL') return 'WINDOWS';
+  const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerType as PrinterType] || ['WINDOWS'];
+  return allowed.includes('WINDOWS') ? 'WINDOWS' : allowed[0];
+}
+
+function normalizePrinterList(response: any): ServerPrinterMapping[] {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.printers)) return response.printers;
+  return [];
+}
 
 function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
   if (!config) return false;
@@ -302,6 +337,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [printers, setPrinters] = useState<PrintersConfig>(
     config?.printers || {}
   );
+  const [serverPrinters, setServerPrinters] = useState<ServerPrinterMapping[]>([]);
+  const [serverPrintersLoading, setServerPrintersLoading] = useState(false);
+  const [serverPrintersError, setServerPrintersError] = useState<string | null>(null);
+  const [customPrinterForm, setCustomPrinterForm] = useState<CustomPrinterForm>(() => emptyCustomPrinterForm());
+  const [customPrinterModalOpen, setCustomPrinterModalOpen] = useState(false);
+  const [customPrinterSaving, setCustomPrinterSaving] = useState(false);
+  const [customPrinterDeletingId, setCustomPrinterDeletingId] = useState<string | null>(null);
   const deviceRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const printerSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const printerAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -396,6 +438,36 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       refreshPrinterDiscovery().catch(() => {});
     }, delayMs);
   }, [refreshPrinterDiscovery]);
+
+  const loadServerPrinters = useCallback(async () => {
+    if (!config?.agentId) return;
+    setServerPrintersLoading(true);
+    setServerPrintersError(null);
+    try {
+      const response = await window.electronAPI.printAgentPrinters.list();
+      const rows = normalizePrinterList(response);
+      setServerPrinters(rows);
+      setWindowsPrinters(prev => mergeWindowsPrinterOptions(
+        prev,
+        rows
+          .map((printer) => printer.windowsPrinterName)
+          .filter(Boolean)
+          .map((name) => ({ name: name as string, port: '' })),
+      ));
+    } catch (err: any) {
+      setServerPrintersError(err?.message || 'Failed to load server printers');
+    } finally {
+      setServerPrintersLoading(false);
+    }
+  }, [config?.agentId]);
+
+  useEffect(() => {
+    if (config?.agentId) {
+      loadServerPrinters().catch(() => {});
+    } else {
+      setServerPrinters([]);
+    }
+  }, [config?.agentId, loadServerPrinters]);
 
   // Load available ports and Windows printers
   useEffect(() => {
@@ -612,6 +684,102 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   // Get printer config for a type (with default)
   const getPrinterConfig = (printerType: PrinterTypeValue): PrinterConfig => {
     return printers[printerType as keyof typeof printers] || { ...defaultPrinterConfig };
+  };
+
+  const openCustomPrinterForm = (printer?: ServerPrinterMapping) => {
+    if (printer) {
+      const printerType = ((printer.printerType || 'LABEL').toUpperCase() as PrinterTypeValue);
+      const protocol = (printer.protocol || preferredProtocolForType(printerType)) as PrinterProtocol;
+      setCustomPrinterForm({
+        id: printer.id,
+        displayName: printer.displayName || printer.name || '',
+        printerType,
+        protocol,
+        windowsPrinterName: printer.windowsPrinterName || '',
+        address: printer.address || '',
+        paperWidth: printer.paperWidth || (printerType === 'LABEL' ? 100 : 80),
+        paperHeight: printer.paperHeight || 150,
+        isEnabled: printer.isEnabled ?? true,
+      });
+    } else {
+      setCustomPrinterForm(emptyCustomPrinterForm());
+    }
+    setCustomPrinterModalOpen(true);
+    setServerPrintersError(null);
+  };
+
+  const updateCustomPrinterForm = (updates: Partial<CustomPrinterForm>) => {
+    setCustomPrinterForm(prev => {
+      const next = { ...prev, ...updates };
+      if (updates.printerType && updates.printerType !== prev.printerType) {
+        next.protocol = preferredProtocolForType(updates.printerType);
+        next.paperWidth = updates.printerType === 'LABEL' ? 100 : 80;
+        next.paperHeight = updates.printerType === 'LABEL' ? 150 : prev.paperHeight;
+      }
+      return next;
+    });
+  };
+
+  const buildCustomPrinterPayload = (form: CustomPrinterForm): Partial<ServerPrinterMapping> => {
+    const usesWindowsPrinter = form.protocol === 'WINDOWS' || form.protocol === 'ZEBRA' || form.protocol === 'THERMAL';
+    return {
+      displayName: form.displayName.trim(),
+      printerType: form.printerType,
+      protocol: form.protocol,
+      windowsPrinterName: usesWindowsPrinter ? form.windowsPrinterName.trim() : null,
+      address: usesWindowsPrinter ? null : form.address.trim(),
+      paperWidth: form.paperWidth,
+      paperHeight: form.printerType === 'LABEL' ? form.paperHeight : null,
+      isEnabled: form.isEnabled,
+    };
+  };
+
+  const handleSaveCustomPrinter = async () => {
+    const payload = buildCustomPrinterPayload(customPrinterForm);
+    if (!payload.displayName) {
+      setServerPrintersError('Display name is required');
+      return;
+    }
+    if ((payload.protocol === 'WINDOWS' || payload.protocol === 'ZEBRA' || payload.protocol === 'THERMAL') && !payload.windowsPrinterName) {
+      setServerPrintersError('Windows printer is required');
+      return;
+    }
+    if ((payload.protocol === 'POSNET' || payload.protocol === 'ELZAB_STX') && !payload.address) {
+      setServerPrintersError('COM port or address is required');
+      return;
+    }
+    if (payload.printerType === 'LABEL' && (!payload.paperWidth || !payload.paperHeight)) {
+      setServerPrintersError('Label width and height are required');
+      return;
+    }
+
+    setCustomPrinterSaving(true);
+    setServerPrintersError(null);
+    try {
+      const response = customPrinterForm.id
+        ? await window.electronAPI.printAgentPrinters.update(customPrinterForm.id, payload)
+        : await window.electronAPI.printAgentPrinters.create(payload);
+      setServerPrinters(normalizePrinterList(response));
+      setCustomPrinterModalOpen(false);
+      setCustomPrinterForm(emptyCustomPrinterForm());
+    } catch (err: any) {
+      setServerPrintersError(err?.message || 'Failed to save custom printer');
+    } finally {
+      setCustomPrinterSaving(false);
+    }
+  };
+
+  const handleDeleteCustomPrinter = async (printerId: string) => {
+    setCustomPrinterDeletingId(printerId);
+    setServerPrintersError(null);
+    try {
+      const response = await window.electronAPI.printAgentPrinters.delete(printerId);
+      setServerPrinters(normalizePrinterList(response));
+    } catch (err: any) {
+      setServerPrintersError(err?.message || 'Failed to delete custom printer');
+    } finally {
+      setCustomPrinterDeletingId(null);
+    }
   };
 
   const renderPaperControls = (printerType: PrinterTypeValue, printerConfig: PrinterConfig) => (
@@ -1027,6 +1195,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setIsConnecting(false);
     }
   };
+
+  const predefinedServerPrinters = serverPrinters.filter((printer) => printer.isPredefined);
+  const customServerPrinters = serverPrinters.filter((printer) => !printer.isPredefined);
+  const customFormAllowedProtocols = ALLOWED_PROTOCOLS_BY_TYPE[customPrinterForm.printerType as PrinterType] || [];
+  const customFormUsesWindowsPrinter = customPrinterForm.protocol === 'WINDOWS'
+    || customPrinterForm.protocol === 'ZEBRA'
+    || customPrinterForm.protocol === 'THERMAL';
 
   return (
     <div className="space-y-4">
@@ -1869,6 +2044,258 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 </div>
               );
             })}
+
+            <div className="border border-slate-200 rounded-lg p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-slate-700">Backend printer rows</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loadServerPrinters()}
+                    disabled={serverPrintersLoading || !config?.agentId}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCustomPrinterForm()}
+                    disabled={!config?.agentId}
+                    className="px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Plus size={15} />
+                    Add printer
+                  </button>
+                </div>
+              </div>
+
+              {serverPrintersError && (
+                <div className="mt-3 px-3 py-2 rounded-lg text-xs bg-red-50 text-red-700">
+                  {serverPrintersError}
+                </div>
+              )}
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Predefined</div>
+                  <div className="space-y-2">
+                    {predefinedServerPrinters.length === 0 && (
+                      <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
+                        {serverPrintersLoading ? 'Loading predefined printers...' : 'No predefined printers loaded'}
+                      </div>
+                    )}
+                    {predefinedServerPrinters.map((printer) => (
+                      <div key={printer.id} className="border border-slate-200 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-slate-700 truncate">{printer.displayName || printer.name || printer.printerType}</div>
+                            <div className="text-xs text-slate-500 truncate">
+                              {printer.printerType} · {printer.windowsPrinterName || printer.address || 'no target'}
+                            </div>
+                          </div>
+                          <span className={`text-[11px] px-2 py-1 rounded-full ${printer.isEnabled ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {printer.isEnabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </div>
+                        {printer.printerType === 'LABEL' && (
+                          <div className="mt-1 text-xs text-slate-500">
+                            {printer.paperWidth || '?'} x {printer.paperHeight || '?'} mm
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Custom printers</div>
+                  <div className="space-y-2">
+                    {customServerPrinters.length === 0 && (
+                      <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
+                        {serverPrintersLoading ? 'Loading custom printers...' : 'No custom printers yet'}
+                      </div>
+                    )}
+                    {customServerPrinters.map((printer) => (
+                      <div key={printer.id} className="border border-slate-200 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-slate-700 truncate">{printer.displayName || printer.name || printer.printerType}</div>
+                            <div className="text-xs text-slate-500 truncate">
+                              {printer.printerType} · {printer.protocol} · {printer.windowsPrinterName || printer.address || 'no target'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openCustomPrinterForm(printer)}
+                              className="p-2 rounded-lg text-slate-500 hover:bg-slate-100"
+                              title="Edit printer"
+                            >
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomPrinter(printer.id)}
+                              disabled={customPrinterDeletingId === printer.id}
+                              className="p-2 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
+                              title="Delete printer"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                          <span>{printer.isEnabled ? 'Enabled' : 'Disabled'}</span>
+                          {printer.printerType === 'LABEL' && (
+                            <span>{printer.paperWidth || '?'} x {printer.paperHeight || '?'} mm</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {customPrinterModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                      <h3 className="text-sm font-semibold text-slate-800">
+                        {customPrinterForm.id ? 'Edit custom printer' : 'Add custom printer'}
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setCustomPrinterModalOpen(false)}
+                        className="p-2 rounded-lg text-slate-500 hover:bg-slate-100"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <div className="space-y-3 px-4 py-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Display name</label>
+                        <input
+                          type="text"
+                          value={customPrinterForm.displayName}
+                          onChange={(e) => updateCustomPrinterForm({ displayName: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          placeholder="Xprinter 100x150"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">Type</label>
+                          <select
+                            value={customPrinterForm.printerType}
+                            onChange={(e) => updateCustomPrinterForm({ printerType: e.target.value as PrinterTypeValue })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          >
+                            {PRINTER_TYPES.map((printerType) => (
+                              <option key={printerType} value={printerType}>{printerType}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">Protocol</label>
+                          <select
+                            value={customPrinterForm.protocol}
+                            onChange={(e) => updateCustomPrinterForm({ protocol: e.target.value as PrinterProtocol })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          >
+                            {customFormAllowedProtocols.map((protocolOption) => (
+                              <option key={protocolOption} value={protocolOption}>{protocolOption}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {customFormUsesWindowsPrinter ? (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">Windows printer</label>
+                          <select
+                            value={customPrinterForm.windowsPrinterName}
+                            onChange={(e) => updateCustomPrinterForm({ windowsPrinterName: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          >
+                            <option value="">Select printer</option>
+                            {getWindowsPrinterOptionsForSelect(windowsPrinters, customPrinterForm.windowsPrinterName).map((printer) => (
+                              <option key={printer.name} value={printer.name}>{printer.name}{printer.port ? ` [${printer.port}]` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">COM port / address</label>
+                          <input
+                            type="text"
+                            value={customPrinterForm.address}
+                            onChange={(e) => updateCustomPrinterForm({ address: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            placeholder={ports[0] || 'COM3'}
+                          />
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">Paper width (mm)</label>
+                          <input
+                            type="number"
+                            min={5}
+                            max={1000}
+                            value={customPrinterForm.paperWidth || ''}
+                            onChange={(e) => updateCustomPrinterForm({ paperWidth: parseInt(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          />
+                        </div>
+                        {customPrinterForm.printerType === 'LABEL' && (
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Paper height (mm)</label>
+                            <input
+                              type="number"
+                              min={5}
+                              max={1000}
+                              value={customPrinterForm.paperHeight || ''}
+                              onChange={(e) => updateCustomPrinterForm({ paperHeight: parseInt(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={customPrinterForm.isEnabled}
+                          onChange={(e) => updateCustomPrinterForm({ isEnabled: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                        />
+                        Enabled
+                      </label>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => setCustomPrinterModalOpen(false)}
+                        className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveCustomPrinter}
+                        disabled={customPrinterSaving}
+                        className="px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+                      >
+                        {customPrinterSaving ? 'Saving...' : 'Save printer'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+          </div>
           </div>
         ) : (
           /* Legacy single printer mode */

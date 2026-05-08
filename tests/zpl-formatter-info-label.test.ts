@@ -40,6 +40,17 @@ describe("ZplFormatter.formatInfoLabel", () => {
     expect(zpl).toContain("BE");
   });
 
+  it("uses the full 100x150 label budget for info labels", () => {
+    const f = new ZplFormatter(100, 150);
+    const zpl = f.formatInfoLabel(sampleData, 100, 150);
+    const yPositions = Array.from(zpl.matchAll(/\^FO\d+,(\d+)/g)).map((match) => Number(match[1]));
+
+    expect(zpl).toContain("^PW800");
+    expect(zpl).toContain("^A0N,40,40");
+    expect(zpl).toContain("^FB720,10");
+    expect(Math.max(...yPositions)).toBeGreaterThan(700);
+  });
+
   it("omits countryOfOrigin row when null", () => {
     const f = new ZplFormatter(60, 40);
     const zpl = f.formatInfoLabel({ ...sampleData, countryOfOrigin: null }, 60, 40);

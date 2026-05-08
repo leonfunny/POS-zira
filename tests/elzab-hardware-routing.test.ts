@@ -16,6 +16,7 @@ const mock = vi.hoisted(() => ({
   markUsed: vi.fn(),
   rowToPrinterConfig: vi.fn(),
   thermalCtor: vi.fn(),
+  zebraCtor: vi.fn(),
   elzabCtor: vi.fn(),
   elzabInstances: [] as any[],
 }));
@@ -100,7 +101,7 @@ vi.mock('../src/main/hardware/posnet/posnet-driver', () => {
 
 vi.mock('../src/main/hardware/zebra/zebra-driver', () => {
   class ZebraDriver {
-    constructor() {}
+    constructor(...args: unknown[]) { mock.zebraCtor(...args); }
     connect = vi.fn(async () => true);
     disconnect = vi.fn();
     isConnected = vi.fn(() => true);
@@ -125,6 +126,7 @@ describe('ELZAB fiscal protocol routing', () => {
     mock.getById.mockReturnValue(null);
     mock.rowToPrinterConfig.mockReset();
     mock.elzabInstances.length = 0;
+    mock.zebraCtor.mockReset();
   });
 
   it('allows ELZAB_STX only in FISCAL, while RECEIPT stays non-fiscal', () => {
@@ -182,6 +184,36 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(stx?.config).toMatchObject({ protocol: 'ELZAB_STX', address: '192.168.192.1:9100' });
   });
 
+  it('maps server LABEL paperHeight into both config and local mirror rows', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+
+    const label = printerMappingForTests.mapServerPrinter({
+      id: 'xprinter-1',
+      printerType: 'LABEL',
+      protocol: 'WINDOWS',
+      windowsPrinterName: 'Xprinter XP-423B',
+      paperWidth: 100,
+      paperHeight: 150,
+      isEnabled: true,
+    });
+    expect(label?.config).toMatchObject({
+      paperWidth: 100,
+      labelWidth: 100,
+      labelHeight: 150,
+    });
+
+    const rows = printerMappingForTests.normalizeServerPrinterRows([{
+      id: 'xprinter-1',
+      printerType: 'LABEL',
+      protocol: 'WINDOWS',
+      windowsPrinterName: 'Xprinter XP-423B',
+      paperWidth: 100,
+      paperHeight: 150,
+      isEnabled: true,
+    }]);
+    expect(rows[0]).toMatchObject({ paperWidth: 100, paperHeight: 150 });
+  });
+
   it('routes print jobs by ELZAB server printerId through ElzabDriver', async () => {
     const row = {
       id: 'elzab-1',
@@ -212,5 +244,45 @@ describe('ELZAB fiscal protocol routing', () => {
       payload: {},
     });
     expect(driver).toBe(mock.elzabInstances[0]);
+  });
+
+  it('keeps mirrored LABEL row dimensions instead of per-type config fallback', async () => {
+    const row = {
+      id: 'xprinter-1',
+      printer_type: PrinterType.LABEL,
+      display_name: 'Xprinter 100x150',
+      protocol: 'WINDOWS',
+      is_enabled: 1,
+    };
+    const config: PrinterConfig = {
+      enabled: true,
+      protocol: 'WINDOWS',
+      serverPrinterId: 'xprinter-1',
+      windowsPrinter: 'Xprinter XP-423B',
+      paperWidth: 100,
+      labelWidth: 100,
+      labelHeight: 150,
+    };
+    mock.currentConfig = {
+      multiPrinterMode: true,
+      printers: {
+        LABEL: {
+          enabled: true,
+          protocol: 'WINDOWS',
+          windowsPrinter: 'ZDesigner GK420d',
+          labelWidth: 50,
+          labelHeight: 30,
+        },
+      },
+    };
+    mock.getEnabled.mockReturnValue([row]);
+    mock.getById.mockReturnValue(row);
+    mock.rowToPrinterConfig.mockReturnValue(config);
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule({ set: vi.fn(), getOptional: vi.fn() } as any);
+    await module.reinitializePrinter();
+
+    expect(mock.zebraCtor).toHaveBeenCalledWith('Xprinter XP-423B', 100, 150);
   });
 });

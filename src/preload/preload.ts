@@ -118,6 +118,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installPosnetDriver: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_POSNET_DRIVER),
   scanForDriver: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_FOR_DRIVER),
   autoSetupPrinter: (printerType: string, device?: any) => ipcRenderer.invoke(IPC_CHANNELS.AUTO_SETUP_PRINTER, printerType, device),
+  printAgentPrinters: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LIST),
+    create: (body: any) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_CREATE, body),
+    update: (printerId: string, body: any) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_UPDATE, printerId, body),
+    delete: (printerId: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_DELETE, printerId),
+  },
   posnetScanDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SCAN_DEVICES),
   posnetListDevices: () => ipcRenderer.invoke(IPC_CHANNELS.POSNET_LIST_DEVICES),
   posnetSelectDevice: (serial: string) => ipcRenderer.invoke(IPC_CHANNELS.POSNET_SELECT_DEVICE, serial),

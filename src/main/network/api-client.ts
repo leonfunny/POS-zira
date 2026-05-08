@@ -3,10 +3,12 @@ import * as os from 'os';
 import logger from '../logger';
 import {
   ConnectResponse,
+  AgentPrintersResponse,
   PrinterConfig,
   PrinterProtocol,
   PrintersConfig,
   PrinterType,
+  ServerPrinterMapping,
   TelegramLoginTokenResponse,
   TelegramLoginTokenStatus,
 } from '../../shared/types';
@@ -17,7 +19,7 @@ import { refreshAccessToken, AuthRefreshNetworkError } from './auth-refresh';
 // Default timeout for API requests (30 seconds)
 const DEFAULT_TIMEOUT = 30000;
 
-type ServerPrinter = NonNullable<ConnectResponse['printers']>[number];
+type ServerPrinter = ServerPrinterMapping;
 
 const KNOWN_PRINTER_TYPES = new Set<string>(Object.values(PrinterType));
 const FISCAL_PROTOCOLS = new Set<PrinterProtocol>(['POSNET', 'ELZAB_STX']);
@@ -47,6 +49,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   const address = (item.address || '').trim();
   const windowsPrinterName = (item.windowsPrinterName || '').trim();
   const target = windowsPrinterName || address;
+  const paperWidth = item.paperWidth || (printerType === PrinterType.LABEL ? 100 : 80);
   const config: PrinterConfig = {
     enabled: item.isEnabled ?? false,
     protocol,
@@ -54,11 +57,16 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
     displayName: item.displayName || printerType,
     baudRate: item.baudRate || 9600,
     address: address || undefined,
-    paperWidth: item.paperWidth || 80,
-    charsPerLine: item.charsPerLine || (item.paperWidth && item.paperWidth <= 58 ? 32 : 48),
+    paperWidth,
+    charsPerLine: item.charsPerLine || (paperWidth <= 58 ? 32 : 48),
     supportsCut: item.supportsCut ?? true,
     supportsCashDrawer: item.supportsCashDrawer ?? false,
   };
+
+  if (printerType === PrinterType.LABEL) {
+    config.labelWidth = paperWidth;
+    if (item.paperHeight && item.paperHeight > 0) config.labelHeight = item.paperHeight;
+  }
 
   if (protocol === 'POSNET') {
     if (looksLikeComPort(address)) config.port = address.toUpperCase();
@@ -91,7 +99,7 @@ function normalizeServerPrinters(printers?: ConnectResponse['printers']): Printe
   return Object.keys(mapped).length > 0 ? mapped : null;
 }
 
-function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): LocalPrinterUpsert[] {
+export function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): LocalPrinterUpsert[] {
   if (!printers?.length) return [];
 
   const rows: LocalPrinterUpsert[] = [];
@@ -110,6 +118,7 @@ function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): Loc
       port: result.config.port || null,
       baudRate: result.config.baudRate,
       paperWidth: result.config.paperWidth,
+      paperHeight: item.paperHeight ?? (result.config.labelHeight || null),
       charsPerLine: result.config.charsPerLine,
       supportsCut: result.config.supportsCut,
       supportsCashDrawer: result.config.supportsCashDrawer,
@@ -261,7 +270,8 @@ export class ApiClient {
    * Generic REST API proxy — any method/path with auth token
    */
   async request(method: string, path: string, token: string, body?: any): Promise<any> {
-    const url = `${this.baseUrl}/api/v1${path}`;
+    const normalizedPath = path.startsWith('/api/v1/') ? path : `/api/v1${path}`;
+    const url = `${this.baseUrl}${normalizedPath}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -278,6 +288,50 @@ export class ApiClient {
     const text = await response.text();
     if (!text) return {};
     return JSON.parse(text);
+  }
+
+  async listAgentPrinters(token: string, agentId: string): Promise<AgentPrintersResponse> {
+    const result = await this.request(
+      'GET',
+      `/print-agent/agents/${encodeURIComponent(agentId)}/printers`,
+      token,
+    );
+    return { printers: Array.isArray(result?.printers) ? result.printers : [] };
+  }
+
+  async createAgentPrinter(
+    token: string,
+    agentId: string,
+    body: Partial<ServerPrinterMapping>,
+  ): Promise<ServerPrinterMapping> {
+    return this.request(
+      'POST',
+      `/print-agent/agents/${encodeURIComponent(agentId)}/printers`,
+      token,
+      body,
+    );
+  }
+
+  async updateAgentPrinter(
+    token: string,
+    agentId: string,
+    printerId: string,
+    body: Partial<ServerPrinterMapping>,
+  ): Promise<ServerPrinterMapping> {
+    return this.request(
+      'PUT',
+      `/print-agent/agents/${encodeURIComponent(agentId)}/printers/${encodeURIComponent(printerId)}`,
+      token,
+      body,
+    );
+  }
+
+  async deleteAgentPrinter(token: string, agentId: string, printerId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/print-agent/agents/${encodeURIComponent(agentId)}/printers/${encodeURIComponent(printerId)}`,
+      token,
+    );
   }
 
   /**

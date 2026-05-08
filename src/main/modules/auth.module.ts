@@ -17,9 +17,11 @@ import {
   IPC_CHANNELS,
   AgentConfig,
   AuthUser,
+  AgentPrintersResponse,
+  ServerPrinterMapping,
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
-import { ApiClient } from '../network/api-client';
+import { ApiClient, normalizeServerPrinterRows } from '../network/api-client';
 import { authEvents, AUTH_EXPIRED, forwardAuthExpiredToRenderer } from '../network/auth-refresh';
 import { resolveCurrentUser } from '../network/auth-get-user';
 import {
@@ -30,6 +32,7 @@ import {
   clearSecureTokens, clearSecureAuthTokens,
 } from '../config/store';
 import { database } from '../database/database';
+import { localPrinterRepo } from '../database/repos/local-printer-repo';
 import { listWindowsPrintersDetailed } from '../hardware/port-utils';
 import logger from '../logger';
 
@@ -447,6 +450,30 @@ export class AuthModule extends BaseModule {
       return client.request(method.toUpperCase(), path, token, body);
     });
 
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LIST, async () => {
+      return this.refreshAgentPrinters();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_CREATE, async (_, body: Partial<ServerPrinterMapping>) => {
+      const { client, token, agentId } = this.getPrinterApiContext();
+      await client.createAgentPrinter(token, agentId, body);
+      return this.refreshAgentPrinters();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_UPDATE, async (_, printerId: string, body: Partial<ServerPrinterMapping>) => {
+      if (!printerId) throw new Error('Missing printer id');
+      const { client, token, agentId } = this.getPrinterApiContext();
+      await client.updateAgentPrinter(token, agentId, printerId, body);
+      return this.refreshAgentPrinters();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_DELETE, async (_, printerId: string) => {
+      if (!printerId) throw new Error('Missing printer id');
+      const { client, token, agentId } = this.getPrinterApiContext();
+      await client.deleteAgentPrinter(token, agentId, printerId);
+      return this.refreshAgentPrinters();
+    });
+
     logger.info('[AuthModule] IPC handlers registered');
   }
 
@@ -490,6 +517,36 @@ export class AuthModule extends BaseModule {
 
     const latestConfig = getConfig();
     await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey);
+  }
+
+  private getPrinterApiContext(): { client: ApiClient; token: string; agentId: string } {
+    const token = getSecureAuthToken();
+    if (!token) throw new Error('Not authenticated');
+
+    const config = getConfig();
+    const agentId = config.agentId;
+    if (!agentId) throw new Error('Print Agent is not paired');
+
+    return {
+      client: new ApiClient(config.serverUrl || 'https://api.enail.pro'),
+      token,
+      agentId,
+    };
+  }
+
+  private async refreshAgentPrinters(): Promise<AgentPrintersResponse> {
+    const { client, token, agentId } = this.getPrinterApiContext();
+    const response = await client.listAgentPrinters(token, agentId);
+    const localPrinters = normalizeServerPrinterRows(response.printers);
+
+    if (localPrinters.length > 0) {
+      localPrinterRepo.upsertMany(agentId, localPrinters);
+      setConfig({ multiPrinterMode: true });
+      this.eventBus?.emit('config:changed', { changedKeys: ['printers', 'multiPrinterMode'] });
+      logger.info(`[AuthModule] Refreshed ${localPrinters.length} backend printer row(s) into local mirror`);
+    }
+
+    return response;
   }
 
   private async syncWindowsPrintersWithBackend(apiKey?: string): Promise<void> {

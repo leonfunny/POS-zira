@@ -201,6 +201,36 @@ export interface PrinterConfig {
   cutMode?: 'partial' | 'full' | 'none';
 }
 
+export interface ServerPrinterMapping {
+  id: string;
+  agentId?: string | null;
+  displayName?: string | null;
+  name?: string | null;
+  printerType?: string | null;
+  protocol?: string;
+  windowsPrinterName?: string | null;
+  address?: string | null;
+  baudRate?: number;
+  paperWidth?: number | null;
+  paperHeight?: number | null;
+  charsPerLine?: number;
+  supportsImages?: boolean;
+  supportsCut?: boolean;
+  supportsCashDrawer?: boolean;
+  isPredefined?: boolean;
+  isEnabled?: boolean;
+  isOnline?: boolean;
+  lastError?: string | null;
+  lastCheckedAt?: string | null;
+  lastUsedAt?: string | null;
+  sortOrder?: number;
+  createdAt?: string;
+}
+
+export interface AgentPrintersResponse {
+  printers: ServerPrinterMapping[];
+}
+
 /**
  * Chars-per-line derived from paper width (mm). Single source of truth — used by
  * config defaults, ESC/POS formatter, and Settings UI so they can never diverge.
@@ -491,20 +521,7 @@ export interface ConnectResponse {
     protocol?: string;
     baudRate?: number;
   };
-  printers?: Array<{
-    id: string;
-    displayName?: string | null;
-    printerType?: string | null;
-    protocol?: string;
-    windowsPrinterName?: string | null;
-    address?: string | null;
-    baudRate?: number;
-    paperWidth?: number;
-    charsPerLine?: number;
-    supportsCut?: boolean;
-    supportsCashDrawer?: boolean;
-    isEnabled?: boolean;
-  }>;
+  printers?: ServerPrinterMapping[];
 }
 
 // ==========================================
@@ -725,6 +742,10 @@ export const IPC_CHANNELS = {
   POSNET_SELECT_DEVICE: 'posnet-select-device',
   POSNET_RESCAN_KNOWN: 'posnet-rescan-known',
   POSNET_DIAGNOSE_PORT: 'posnet-diagnose-port',
+  PRINT_AGENT_PRINTERS_LIST: 'print-agent-printers-list',
+  PRINT_AGENT_PRINTERS_CREATE: 'print-agent-printers-create',
+  PRINT_AGENT_PRINTERS_UPDATE: 'print-agent-printers-update',
+  PRINT_AGENT_PRINTERS_DELETE: 'print-agent-printers-delete',
   // Universal printer detection (all brands)
   UNIVERSAL_SCAN_DEVICES: 'universal-scan-devices',
   UNIVERSAL_LIST_DEVICES: 'universal-list-devices',

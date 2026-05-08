@@ -1256,12 +1256,16 @@ export class HardwareModule extends BaseModule {
       for (const row of localRows) {
         const pt = (row.printer_type || PrinterType.RECEIPT) as PrinterType;
         const pc = rowToPrinterConfig(row);
-        // local_printers (SQLite) doesn't store label_width/label_height —
-        // those live only in electron-store config.json under printers[pt].
-        // Without this merge the ZebraDriver constructor falls back to the
-        // 100×50 default and ignores the user's configured paper size.
+        // New backend rows carry per-printer label dimensions. Older local
+        // mirrors did not, so fall back to the legacy per-type config only
+        // when a mirrored LABEL row has not been refreshed with paper_height.
         const cfgPrinter = (config.printers as any)?.[pt];
-        if (cfgPrinter) {
+        const hasRowLabelDimensions = pt === PrinterType.LABEL
+          && typeof pc.labelWidth === 'number'
+          && pc.labelWidth > 0
+          && typeof pc.labelHeight === 'number'
+          && pc.labelHeight > 0;
+        if (cfgPrinter && !hasRowLabelDimensions) {
           if (typeof cfgPrinter.labelWidth === 'number' && cfgPrinter.labelWidth > 0) {
             pc.labelWidth = cfgPrinter.labelWidth;
           }

@@ -199,6 +199,12 @@ interface ElectronAPI {
   onTestPrintProgress: (callback: (step: import('./types').TestPrintStep) => void) => () => void;
   openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
+  printAgentPrinters: {
+    list: () => Promise<import('./types').AgentPrintersResponse>;
+    create: (body: Partial<import('./types').ServerPrinterMapping>) => Promise<import('./types').AgentPrintersResponse>;
+    update: (printerId: string, body: Partial<import('./types').ServerPrinterMapping>) => Promise<import('./types').AgentPrintersResponse>;
+    delete: (printerId: string) => Promise<import('./types').AgentPrintersResponse>;
+  };
   getPosnetDriverStatus: () => Promise<{ devices: Array<{ vid: string; brand: string; model: string; windowsPrinterName: string | null; comPort: string | null; portName: string | null; connectionType: 'USB' | 'SERIAL' | 'NETWORK' | 'VIRTUAL'; driverInstalled: boolean; targetType?: string; recommendedProtocol?: string }>; posnetPresent: boolean; posnetComPort: string | null; posnetDriverInstalled: boolean }>;
   installPosnetDriver: () => Promise<{ success: boolean; message: string; rebootRequired?: boolean }>;
   scanForDriver: () => Promise<{ success: boolean; message: string }>;
