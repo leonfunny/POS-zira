@@ -433,7 +433,19 @@ export class PosStore {
 
     const profile = this.getCustomerDisplayProfile();
     if (profile !== 'salon_checkin') {
-      logger.info(`[PosStore] Ignoring customer touch for profile=${profile}`);
+      // Retail / promo-only profiles have no interactive next-step, but
+      // the operator still expects tapping the screen to skip an empty
+      // promo carousel back to the idle copy ("Your items will appear
+      // here"). Without this branch the customer display can get stuck
+      // on a blank promo slot when promo images fail to load.
+      if (mode === 'promo') {
+        logger.info(`[PosStore] Customer tapped promo on profile=${profile}, returning to idle`);
+        this.state = {
+          ...this.state,
+          display: { ...this.state.display, mode: 'idle' },
+        };
+        this.broadcast();
+      }
       return;
     }
 
