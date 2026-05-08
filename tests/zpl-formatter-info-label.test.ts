@@ -17,7 +17,7 @@ describe("ZplFormatter.formatInfoLabel", () => {
     const f = new ZplFormatter(50, 40);
     const zpl = f.formatInfoLabel(sampleData, 50, 40);
     expect(zpl).toContain("Bánh quy");
-    expect(zpl).toContain("Składniki:");
+    expect(zpl).toContain("Skladniki:");
     expect(zpl).toContain("cukier");
     expect(zpl).toContain("Najlepiej spożyć przed: 31.12.2026");
     expect(zpl).toContain("Producent:");
@@ -28,7 +28,7 @@ describe("ZplFormatter.formatInfoLabel", () => {
     const f = new ZplFormatter(50, 30);
     const zpl = f.formatInfoLabel(sampleData, 50, 30);
     expect(zpl).toContain("Bánh quy");
-    expect(zpl).toContain("Składniki:");
+    expect(zpl).toContain("Skladniki:");
     expect(zpl).toContain("…");
     expect(zpl).not.toContain("Kraj pochodzenia");
   });
