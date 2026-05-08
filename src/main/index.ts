@@ -13,6 +13,7 @@ import { join } from 'path';
 import { AgentOrchestrator } from './core/orchestrator';
 import { initAutoUpdater } from './updates/auto-updater';
 import logger from './logger';
+import { ensureReceiptPrinterEnabledOnBoot } from './config/ensure-receipt-enabled';
 import {
   registerPromoImageProtocolHandler,
   registerPromoImageProtocolScheme,
@@ -264,6 +265,11 @@ async function startApp() {
     safeConsoleLog('[Startup] Step 2: App is ready, initializing...');
 
     registerPromoImageProtocolHandler();
+
+    // Force receipt printer toggle ON for this session before any module
+    // reads config — a forgotten "off" from a previous shift must not
+    // silently stop receipts at the till.
+    ensureReceiptPrinterEnabledOnBoot();
 
     orchestrator = new AgentOrchestrator();
     const container = orchestrator.getContainer();
