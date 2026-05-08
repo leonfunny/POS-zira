@@ -54,8 +54,10 @@ interface PrinterDetectionStatus {
   posnetComPort: string | null;
   posnetDriverInstalled: boolean;
   serialPorts?: string[];
-  windowsPrinters?: Array<{ name: string; port: string }>;
+  windowsPrinters?: WindowsPrinterOption[];
 }
+
+type WindowsPrinterOption = { name: string; port: string };
 
 function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
   if (!config) return false;
@@ -96,6 +98,73 @@ function getPrinterPayloadSignature(payload: Partial<AgentConfig>): string {
   return JSON.stringify(payload);
 }
 
+function readCachedPrinterDetectionStatus(): PrinterDetectionStatus | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null;
+    const raw = sessionStorage.getItem('zira.posnetStatus');
+    return raw ? JSON.parse(raw) as PrinterDetectionStatus : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeWindowsPrinterOptions(
+  ...groups: Array<WindowsPrinterOption[] | undefined>
+): WindowsPrinterOption[] {
+  const byName = new Map<string, WindowsPrinterOption>();
+
+  for (const group of groups) {
+    for (const printer of group || []) {
+      const name = printer?.name?.trim();
+      if (!name) continue;
+
+      const key = name.toLowerCase();
+      const existing = byName.get(key);
+      if (!existing) {
+        byName.set(key, { name, port: printer.port || '' });
+      } else if (!existing.port && printer.port) {
+        byName.set(key, { ...existing, port: printer.port });
+      }
+    }
+  }
+
+  return Array.from(byName.values());
+}
+
+function getConfiguredWindowsPrinterOptions(config: AgentConfig | null | undefined): WindowsPrinterOption[] {
+  const configured: WindowsPrinterOption[] = [];
+  const add = (name: string | null | undefined) => {
+    const trimmed = name?.trim();
+    if (trimmed) configured.push({ name: trimmed, port: '' });
+  };
+
+  for (const printer of Object.values(config?.printers || {})) {
+    add(printer?.windowsPrinter);
+  }
+  add(config?.receiptPrinter?.windowsPrinter);
+  add(config?.labelPrinter?.windowsPrinter);
+  add(config?.zebraPrinter);
+
+  return mergeWindowsPrinterOptions(configured);
+}
+
+function getInitialWindowsPrinterOptions(config: AgentConfig | null | undefined): WindowsPrinterOption[] {
+  return mergeWindowsPrinterOptions(
+    readCachedPrinterDetectionStatus()?.windowsPrinters,
+    getConfiguredWindowsPrinterOptions(config),
+  );
+}
+
+function getWindowsPrinterOptionsForSelect(
+  windowsPrinters: WindowsPrinterOption[],
+  selectedPrinter: string | undefined,
+): WindowsPrinterOption[] {
+  return mergeWindowsPrinterOptions(
+    windowsPrinters,
+    selectedPrinter ? [{ name: selectedPrinter, port: '' }] : undefined,
+  );
+}
+
 const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
   { tab: 'pos',       label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
   { tab: 'billiard',  label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
@@ -111,7 +180,9 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
 
 export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
-  const [windowsPrinters, setWindowsPrinters] = useState<Array<{name: string; port: string}>>([]);
+  const [windowsPrinters, setWindowsPrinters] = useState<WindowsPrinterOption[]>(
+    () => getInitialWindowsPrinterOptions(config),
+  );
   const [selectedPort, setSelectedPort] = useState(config?.printerPort || '');
   const [protocol, setProtocol] = useState<PrinterProtocol>(
     config?.printerProtocol || 'THERMAL'
@@ -157,10 +228,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   // UI. Main-side registry keeps the real cache; this is just for instant UI
   // restore.
   const [posnetStatus, setPosnetStatus] = useState<PrinterDetectionStatus | null>(() => {
-    try {
-      const raw = sessionStorage.getItem('zira.posnetStatus');
-      return raw ? JSON.parse(raw) as PrinterDetectionStatus : null;
-    } catch { return null; }
+    return readCachedPrinterDetectionStatus();
   });
   useEffect(() => {
     try {
@@ -420,6 +488,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         setPrinters(config.printers || {});
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
+      setWindowsPrinters(prev => mergeWindowsPrinterOptions(prev, getConfiguredWindowsPrinterOptions(config)));
     }
   }, [config]);
 
@@ -1550,7 +1619,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                 className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                               >
                                 <option value="">{t('settings.selectPrinter')}</option>
-                                {windowsPrinters.map((p) => (
+                                {getWindowsPrinterOptionsForSelect(windowsPrinters, printerConfig.windowsPrinter).map((p) => (
                                   <option key={p.name} value={p.name}>{p.name}{p.port ? ` [${p.port}]` : ''}</option>
                                 ))}
                               </select>
@@ -1624,7 +1693,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                 className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                               >
                                 <option value="">{t('settings.selectPrinter')}</option>
-                                {windowsPrinters.map((p) => (
+                                {getWindowsPrinterOptionsForSelect(windowsPrinters, printerConfig.windowsPrinter).map((p) => (
                                   <option key={p.name} value={p.name}>{p.name}{p.port ? ` [${p.port}]` : ''}</option>
                                 ))}
                               </select>
@@ -1889,7 +1958,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none truncate"
                     >
                       <option value="">{t('settings.selectPrinter')}</option>
-                      {windowsPrinters.map((p) => (
+                      {getWindowsPrinterOptionsForSelect(windowsPrinters, zebraPrinter).map((p) => (
                         <option key={p.name} value={p.name}>
                           {p.name}{p.port ? ` [${p.port}]` : ''}
                         </option>
@@ -1905,7 +1974,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       </svg>
                     </button>
                   </div>
-                  {windowsPrinters.length === 0 && (
+                  {getWindowsPrinterOptionsForSelect(windowsPrinters, zebraPrinter).length === 0 && (
                     <p className="mt-1 text-xs text-amber-600">
                       {t('settings.noPrintersDetected')}
                     </p>
