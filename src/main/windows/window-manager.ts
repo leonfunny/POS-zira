@@ -362,6 +362,12 @@ export class WindowManager {
       if (input.key === 'F12') {
         win.webContents.toggleDevTools();
       }
+      // Self-checkout kiosk: Ctrl+Shift+Q exits (single-monitor escape hatch)
+      if (id === 'selfCheckout' && input.control && input.shift && (input.key === 'Q' || input.key === 'q')) {
+        logger.info('[WindowManager] Ctrl+Shift+Q on self-checkout - closing');
+        event.preventDefault();
+        win.destroy();
+      }
     });
 
     win.once('ready-to-show', () => win.show());
