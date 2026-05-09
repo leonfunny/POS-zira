@@ -13,6 +13,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:state-changed', listener);
       return () => ipcRenderer.removeListener('pos:state-changed', listener);
     },
+    products: {
+      getByBarcode: (barcode: string) =>
+        ipcRenderer.invoke('pos:products:getByBarcode', barcode),
+    },
+    orders: {
+      create: (order: any, items: any[]) =>
+        ipcRenderer.invoke('pos:orders:create', order, items),
+    },
   },
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('set-config', config),
@@ -33,5 +41,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ping: () => ipcRenderer.invoke('display:interaction-ping'),
     searchByPhone: (phone: string) => ipcRenderer.invoke('display:search-by-phone', phone),
     close: () => ipcRenderer.invoke('display:close'),
+  },
+  selfCheckout: {
+    /**
+     * Customer pressed "Wezwij obsługę". Body carries the reason
+     * (one of MISTAKE / CANT_PAY / ITEM_ISSUE / PRICE_DISPUTE / OTHER)
+     * and a snapshot of the cart total.
+     */
+    helpRequest: (payload: { reason: string; cartTotalGrosze: number }) =>
+      ipcRenderer.invoke('self-checkout:help-request', payload),
+    /**
+     * Poll the backend for help-request progress (acknowledged /
+     * resolved). Cheaper than wiring a socket listener for the kiosk
+     * window when staff usually responds within 10-30 s.
+     */
+    checkStatus: (id: string) =>
+      ipcRenderer.invoke('self-checkout:help-status', id),
   },
 });

@@ -41,7 +41,13 @@ import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
 import { apiClient } from '../network/api-client';
-import { getConfig, getSecureAuthToken } from '../config/store';
+import {
+  getConfig,
+  getSecureAuthToken,
+  getConfigValue,
+  setConfigValue,
+  getSecureApiKey,
+} from '../config/store';
 import type { SelectedService } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
@@ -1116,6 +1122,78 @@ export class PosModule extends BaseModule {
         await this.shiftController.printZReport(report);
         return { success: true, report };
       } catch (e: any) { return { success: false, error: e.message }; }
+    });
+
+    // Self-checkout kiosk: "Wezwij obsługę" round-trip. Renderer is
+    // sandboxed to localStorage + window-scoped APIs, so the actual
+    // backend REST calls live here in main where we have the api key
+    // and can persist a stable terminal id across restarts.
+    ipcMain.handle(
+      'self-checkout:help-request',
+      async (_e, payload: { reason: string; cartTotalGrosze?: number }) => {
+        const apiKey = getSecureApiKey() || '';
+        if (!apiKey) {
+          return { error: 'Print Agent not paired (missing apiKey)' };
+        }
+        let terminalId = (getConfigValue('selfCheckoutTerminalId') as string) || '';
+        if (!terminalId) {
+          terminalId = `kiosk-${Math.random().toString(36).slice(2, 10)}`;
+          setConfigValue('selfCheckoutTerminalId', terminalId);
+        }
+        const baseUrl = (getConfigValue('serverUrl') as string) || 'https://api.enail.pro';
+        try {
+          const r = await fetch(
+            `${baseUrl}/api/v1/print-agent/self-checkout/help-request`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                apiKey,
+                terminalId,
+                reason: payload.reason,
+                cartTotalGrosze: payload.cartTotalGrosze ?? null,
+              }),
+            },
+          );
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) return { error: body?.message || `HTTP ${r.status}` };
+          return body;
+        } catch (e: any) {
+          return { error: e?.message || 'Network error' };
+        }
+      },
+    );
+
+    ipcMain.handle('self-checkout:help-status', async (_e, id: string) => {
+      const apiKey = getSecureApiKey() || '';
+      if (!apiKey) return null;
+      const baseUrl = (getConfigValue('serverUrl') as string) || 'https://api.enail.pro';
+      try {
+        // The /open endpoint returns the unresolved queue; finding our id
+        // there means it's still open. Anything else (404 / not in list)
+        // means it was resolved.
+        const r = await fetch(
+          `${baseUrl}/api/v1/print-agent/self-checkout/help-requests/open`,
+          {
+            headers: {
+              Authorization: `Bearer ${getSecureAuthToken() || ''}`,
+            },
+          },
+        );
+        if (!r.ok) return null;
+        const list = (await r.json().catch(() => [])) as Array<any>;
+        const row = Array.isArray(list) ? list.find((x) => x.id === id) : null;
+        if (!row) {
+          return { id, resolvedAt: new Date().toISOString() };
+        }
+        return {
+          id,
+          acknowledgedAt: row.acknowledgedAt ?? null,
+          resolvedAt: row.resolvedAt ?? null,
+        };
+      } catch {
+        return null;
+      }
     });
 
     logger.info('[PosModule] IPC handlers registered');
