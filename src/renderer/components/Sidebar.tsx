@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ShoppingCart,
+  ScanBarcode,
   FileText,
   CalendarDays,
   UserCheck,
@@ -49,6 +50,7 @@ const MENU_GROUPS: MenuGroup[] = [
     labelKey: 'sidebar.sales',
     items: [
       { tab: 'pos', icon: <ShoppingCart size={18} />, labelKey: 'sidebar.pos' },
+      { tab: 'selfCheckout', icon: <ScanBarcode size={18} />, labelKey: 'sidebar.selfCheckout' },
       { tab: 'billiard', icon: <LayoutDashboard size={18} />, labelKey: 'sidebar.billiard' },
       { tab: 'invoicing', icon: <FileText size={18} />, labelKey: 'sidebar.invoicing' },
     ],

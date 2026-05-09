@@ -2013,10 +2013,11 @@ export type FeatureKey =
   | 'security'    // Security camera AI
   | 'checkin'     // Check-in management
   | 'bookings'    // Dashboard-synced appointments calendar
-  | 'billiard';   // Billiard floor plan
+  | 'billiard'    // Billiard floor plan
+  | 'selfCheckout'; // Self-checkout kiosk window
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -2049,6 +2050,7 @@ export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   settings: true,    // Always enabled
   debug: false,
   pos: false,
+  selfCheckout: false,
   remote: false,
   telegram: false,
   security: false,

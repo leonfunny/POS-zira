@@ -13,6 +13,7 @@ import SecurityTab from './components/security/SecurityTab';
 import CheckinWizard from './components/checkin/CheckinWizard';
 import BookingsTodayScreen from './components/booking/BookingsTodayScreen';
 import POSLayout from './components/pos/POSLayout';
+import SelfCheckoutTab from './components/SelfCheckoutTab';
 import BilliardFloorPlan from './components/billiard/BilliardFloorPlan';
 import Sidebar from './components/Sidebar';
 import TouchKeyboard from './components/shared/TouchKeyboard';
@@ -32,6 +33,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   settings: true,    // Always enabled
   debug: true,
   pos: true,         // Always show POS tab
+  selfCheckout: true,
   billiard: false,   // Not relevant for nail salon
   remote: false,
   telegram: false,
@@ -43,6 +45,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
 // Tab to feature key mapping
 const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   pos: 'pos',
+  selfCheckout: 'selfCheckout',
   billiard: 'billiard',
   chat: 'chat',
   status: 'status',
@@ -111,7 +114,7 @@ export default function App() {
 
   // Get visible tabs based on entitlements and user preferences
   const visibleTabs = useMemo((): Tab[] => {
-    const allTabs: Tab[] = ['pos', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'security', 'settings', 'debug'];
+    const allTabs: Tab[] = ['pos', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'security', 'settings', 'debug'];
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
     return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
   }, [isFeatureEnabled, config?.hiddenTabs]);
@@ -430,6 +433,7 @@ export default function App() {
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
               {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && <SelfCheckoutTab />}
               {activeTab === 'billiard' && isFeatureEnabled('billiard') && (
                 <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
               )}
