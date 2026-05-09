@@ -10,7 +10,7 @@ export function useSshTunnel() {
   useEffect(() => {
     window.electronAPI.sshTunnel.getStatus()
       .then(setStatus)
-      .catch((err) => rlog.error('[useSshTunnel] Failed to load:', err));
+      .catch((err: any) => rlog.error('[useSshTunnel] Failed to load:', err));
 
     const unsub = window.electronAPI.sshTunnel.onStatusChanged(setStatus);
     return unsub;

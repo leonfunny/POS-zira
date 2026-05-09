@@ -64,7 +64,7 @@ export default function BooksySync() {
   }, []);
 
   useEffect(() => {
-    const unsub = window.electronAPI.booksy.onStatusChanged((s) => {
+    const unsub = window.electronAPI.booksy.onStatusChanged((s: any) => {
       setStatus(s);
       window.electronAPI.booksy.getBookings().then(setBookings);
     });

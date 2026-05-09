@@ -1009,18 +1009,18 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   }, [detail?.order.id]);
 
   useEffect(() => {
-    const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data) => {
+    const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data: any) => {
       loadOrders();
       if (detail && detail.order.id === data.orderId) {
-        window.electronAPI.pos.orders.getDetail(data.orderId).then((result) => {
+        window.electronAPI.pos.orders.getDetail(data.orderId).then((result: any) => {
           if (result) setDetail(result);
         });
       }
     });
-    const unsubFailed = window.electronAPI.pos.sync.onOrderSyncFailed?.((data) => {
+    const unsubFailed = window.electronAPI.pos.sync.onOrderSyncFailed?.((data: any) => {
       loadOrders();
       if (detail && detail.order.id === data.orderId) {
-        window.electronAPI.pos.orders.getDetail(data.orderId).then((result) => {
+        window.electronAPI.pos.orders.getDetail(data.orderId).then((result: any) => {
           if (result) setDetail(result);
         });
       }

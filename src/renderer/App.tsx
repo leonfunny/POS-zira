@@ -140,11 +140,11 @@ export default function App() {
 
   // Subscribe to connection/device events
   useEffect(() => {
-    const unsubConnection = window.electronAPI.onConnectionStatus((status) => {
+    const unsubConnection = window.electronAPI.onConnectionStatus((status: any) => {
       setConnectionStatus(status);
     });
 
-    const unsubDevice = window.electronAPI.onDeviceStatus((status) => {
+    const unsubDevice = window.electronAPI.onDeviceStatus((status: any) => {
       setDeviceStatus(status);
     });
 

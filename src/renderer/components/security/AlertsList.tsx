@@ -39,7 +39,7 @@ export default function AlertsList({ limit = 50, cameraId, t }: AlertsListProps)
 
   useEffect(() => {
     loadAlerts();
-    const unsub = window.electronAPI.security.onAlert((alert) => {
+    const unsub = window.electronAPI.security.onAlert((alert: any) => {
       setAlerts(prev => [alert, ...prev].slice(0, limit));
     });
     return () => unsub();

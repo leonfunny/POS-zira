@@ -151,7 +151,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   useEffect(() => {
     window.electronAPI.getStatus().then((status: any) => {
       setIsOnline(status?.connected ?? false);
-    }).catch((err) => rlog.error('[POSLayout] Failed to load status:', err));
+    }).catch((err: any) => rlog.error('[POSLayout] Failed to load status:', err));
   }, []);
 
   // Listen for connection status changes

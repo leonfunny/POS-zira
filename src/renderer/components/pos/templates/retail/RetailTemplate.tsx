@@ -144,7 +144,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     if (searchQuery) {
       const result = await window.electronAPI.pos.products.search(searchQuery);
       return activeCategoryId
-        ? result.filter((p) => p.category_id === activeCategoryId)
+        ? result.filter((p: any) => p.category_id === activeCategoryId)
         : result;
     }
     if (activeCategoryId) {

@@ -95,7 +95,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   // Refresh on sync
   useEffect(() => {
     const unsub = window.electronAPI.pos.sync.onProductsSynced(() => {
-      window.electronAPI.pos.products.getAll().then((all) => {
+      window.electronAPI.pos.products.getAll().then((all: any) => {
         setAllProducts(all);
         setProducts(all);
       });

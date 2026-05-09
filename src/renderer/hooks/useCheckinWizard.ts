@@ -240,7 +240,7 @@ export function useCheckinWizard() {
         services: booking.serviceName ? [{ name: booking.serviceName, price: 0 }] : [],
         staffName: staffName || booking.staffName,
         checkinTime: new Date().toISOString(),
-      }).catch((e) => rlog.warn('[Wizard] Check-in print failed:', e));
+      }).catch((e: any) => rlog.warn('[Wizard] Check-in print failed:', e));
       doneTimerRef.current = setTimeout(reset, 8000);
     } catch (e) {
       rlog.error('[Wizard] Booking check-in failed:', e);
@@ -382,7 +382,7 @@ export function useCheckinWizard() {
         services: selectedServices.map((s) => ({ name: s.name, price: s.price || 0 })),
         staffName: selectedStaff?.name,
         checkinTime: new Date().toISOString(),
-      }).catch((e) => rlog.warn('[Wizard] Check-in print failed:', e));
+      }).catch((e: any) => rlog.warn('[Wizard] Check-in print failed:', e));
       doneTimerRef.current = setTimeout(reset, 8000);
     } catch (e) {
       rlog.error('[Wizard] Walk-in check-in failed:', e);

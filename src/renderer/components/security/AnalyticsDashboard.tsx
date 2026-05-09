@@ -29,10 +29,10 @@ export default function AnalyticsDashboard({ cameras, t }: AnalyticsDashboardPro
     setLoading(true);
 
     window.electronAPI.security.getAnalytics(selectedCamera, date)
-      .then(data => {
+      .then((data: any) => {
         if (!cancelled) setAnalytics(data);
       })
-      .catch(err => {
+      .catch((err: any) => {
         if (!cancelled) rlog.error('[Analytics] Failed to load:', err);
       })
       .finally(() => {

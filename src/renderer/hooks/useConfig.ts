@@ -23,7 +23,7 @@ export function useConfig() {
     if (_configCache) { setLoading(false); return; }
     window.electronAPI.getConfig()
       .then(setConfig)
-      .catch((err) => rlog.error('[useConfig] Failed to load:', err))
+      .catch((err: any) => rlog.error('[useConfig] Failed to load:', err))
       .finally(() => setLoading(false));
   }, [setConfig]);
 

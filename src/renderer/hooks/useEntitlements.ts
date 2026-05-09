@@ -26,7 +26,7 @@ export function useEntitlements() {
   useEffect(() => {
     refresh();
 
-    const unsub = window.electronAPI.entitlements.onChanged((updated) => {
+    const unsub = window.electronAPI.entitlements.onChanged((updated: any) => {
       setEntitlements(updated);
     });
 

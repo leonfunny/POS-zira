@@ -66,7 +66,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
 
   // Subscribe to status changes
   useEffect(() => {
-    const unsub = window.electronAPI.security.onStatusChanged((s) => {
+    const unsub = window.electronAPI.security.onStatusChanged((s: any) => {
       setStatus(s);
     });
     return () => unsub();

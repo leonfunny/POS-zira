@@ -82,10 +82,10 @@ function FloorPlanInner({ language }: { language: Language }) {
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Data
-  const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview();
-  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE');
-  const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans();
-  const { data: syncStatus } = useSyncStatus();
+  const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview() as any;
+  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE') as any;
+  const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans() as any;
+  const { data: syncStatus } = useSyncStatus() as any;
 
   const startSession = useStartSession(refetchOverview);
   const pauseSession = usePauseSession(refetchOverview);

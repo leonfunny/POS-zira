@@ -15,7 +15,7 @@ export function useRemoteControl() {
   useEffect(() => {
     window.electronAPI.remote.getState()
       .then(setState)
-      .catch((err) => rlog.error('[useRemoteControl] Failed to load:', err));
+      .catch((err: any) => rlog.error('[useRemoteControl] Failed to load:', err));
 
     const unsub = window.electronAPI.remote.onStateChanged(setState);
     return unsub;

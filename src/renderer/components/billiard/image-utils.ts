@@ -8,7 +8,7 @@ async function getServerUrl(): Promise<string> {
   } catch {
     cachedServerUrl = 'https://api.enail.pro';
   }
-  return cachedServerUrl;
+  return cachedServerUrl as string;
 }
 
 // Synchronous version using cached value

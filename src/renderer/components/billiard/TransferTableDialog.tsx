@@ -25,7 +25,7 @@ export function TransferTableDialog({
 
   const [selectedTableId, setSelectedTableId] = useState('');
 
-  const freeTables = (floorOverview?.resources || []).filter(
+  const freeTables = ((floorOverview as any)?.resources || []).filter(
     (r: any) => r.status === 'FREE' || r.status === 'free'
   );
 

@@ -95,7 +95,7 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
 
   // Listen for KDS data updates (real-time from IPC)
   useEffect(() => {
-    const unsub = window.electronAPI?.kds?.onDataUpdated?.((data) => {
+    const unsub = window.electronAPI?.kds?.onDataUpdated?.((data: any) => {
       fetchOrders();
       // Play notification sound for new orders (reuse single AudioContext)
       if (data.type === 'order-created' && soundEnabled) {

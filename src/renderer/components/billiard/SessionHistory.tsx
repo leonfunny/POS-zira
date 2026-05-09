@@ -142,7 +142,7 @@ export function SessionHistory({ language, onClose }: SessionHistoryProps) {
 
   // Fetch table list on mount
   useEffect(() => {
-    window.electronAPI?.sessionHistory?.getTables?.().then((res) => {
+    window.electronAPI?.sessionHistory?.getTables?.().then((res: any) => {
       if (res?.success && res.data) setTables(res.data);
     }).catch(() => {});
   }, []);

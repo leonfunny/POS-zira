@@ -24,7 +24,7 @@ export function useConnectionStatus() {
 
   useEffect(() => {
     // Fetch initial status
-    window.electronAPI.getStatus().then((status) => {
+    window.electronAPI.getStatus().then((status: any) => {
       setInfo({
         connected: status.connected,
         deviceStatus: status.deviceStatus,
@@ -32,7 +32,7 @@ export function useConnectionStatus() {
     });
 
     // Subscribe to real-time updates
-    const unsub = window.electronAPI.onConnectionStatus((status) => {
+    const unsub = window.electronAPI.onConnectionStatus((status: any) => {
       setInfo((prev) => ({
         ...prev,
         connected: status.connected,

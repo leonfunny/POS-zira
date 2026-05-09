@@ -485,10 +485,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     loadDisplays();
 
     // Load remote access PIN from secure storage
-    window.electronAPI.getRemotePin().then((r) => { if (mounted && r?.pin) setRemoteAccessPin(r.pin); }).catch(() => {});
+    window.electronAPI.getRemotePin().then((r: any) => { if (mounted && r?.pin) setRemoteAccessPin(r.pin); }).catch(() => {});
 
     // Load SSH tunnel status
-    window.electronAPI.sshTunnel.getStatus().then((s) => { if (mounted) setSshStatus(s); }).catch(() => {});
+    window.electronAPI.sshTunnel.getStatus().then((s: any) => { if (mounted) setSshStatus(s); }).catch(() => {});
     const unsubSsh = window.electronAPI.sshTunnel.onStatusChanged(setSshStatus);
 
     // Listen for auto-update status
@@ -502,7 +502,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     });
 
     // Get app version
-    window.electronAPI.debug.getDiagnostics().then((d) => {
+    window.electronAPI.debug.getDiagnostics().then((d: any) => {
       if (mounted && d?.appVersion) setAppVersion(d.appVersion);
     }).catch(() => {});
 
