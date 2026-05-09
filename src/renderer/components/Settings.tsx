@@ -301,6 +301,12 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
   const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
   const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
+  // Self-Checkout Kiosk
+  const [selfCheckoutEnabled, setSelfCheckoutEnabled] = useState((config as any)?.selfCheckoutEnabled ?? false);
+  const [selfCheckoutMonitor, setSelfCheckoutMonitor] = useState((config as any)?.selfCheckoutMonitor ?? 0);
+  const [selfCheckoutLanguage, setSelfCheckoutLanguage] = useState<'pl' | 'en' | 'vi'>((config as any)?.selfCheckoutLanguage ?? 'pl');
+  const [selfCheckoutBagFeeAmount, setSelfCheckoutBagFeeAmount] = useState<number>((config as any)?.selfCheckoutBagFeeAmount ?? 0.20);
+  const [selfCheckoutIdleTimeoutMs, setSelfCheckoutIdleTimeoutMs] = useState<number>((config as any)?.selfCheckoutIdleTimeoutMs ?? 90000);
 
   // Connected displays (dynamic)
   const [displays, setDisplays] = useState<Array<{
@@ -372,13 +378,19 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     customerDisplayPromoFolder: promoFolder,
     customerDisplayPromoInterval: promoInterval,
     customerDisplayIdleTimeout: idleTimeout,
+    selfCheckoutEnabled,
+    selfCheckoutMonitor,
+    selfCheckoutLanguage,
+    selfCheckoutBagFeeAmount,
+    selfCheckoutIdleTimeoutMs,
     ...overrides,
-  }), [
+  } as Partial<AgentConfig>), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
     customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
     promoFolder, promoInterval, idleTimeout,
+    selfCheckoutEnabled, selfCheckoutMonitor, selfCheckoutLanguage, selfCheckoutBagFeeAmount, selfCheckoutIdleTimeoutMs,
   ]);
 
   const buildPrinterConfigPayload = useCallback((): Partial<AgentConfig> => {
@@ -541,6 +553,12 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
+      // Self-Checkout Kiosk
+      setSelfCheckoutEnabled((config as any).selfCheckoutEnabled ?? false);
+      setSelfCheckoutMonitor((config as any).selfCheckoutMonitor ?? 0);
+      setSelfCheckoutLanguage((config as any).selfCheckoutLanguage ?? 'pl');
+      setSelfCheckoutBagFeeAmount((config as any).selfCheckoutBagFeeAmount ?? 0.20);
+      setSelfCheckoutIdleTimeoutMs((config as any).selfCheckoutIdleTimeoutMs ?? 90000);
       // AI settings
       setAiEnabled((config as any).aiEnabled ?? false);
       setAiLocalMode((config as any).aiLocalMode ?? false);
@@ -2838,6 +2856,139 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   <option value={600000}>10 min</option>
                 </select>
                 <p className="text-xs text-slate-500 mt-1">{t('settings.idleTimeoutDesc')}</p>
+              </div>
+            )}
+
+            {/* Self-Checkout Kiosk — divider */}
+            <div className="pt-4 mt-2 border-t border-slate-200" />
+
+            {/* Self-Checkout Kiosk toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-sm font-medium text-slate-600">
+                  Self-Checkout Kiosk
+                </label>
+                <p className="text-xs text-slate-500">
+                  Customer-driven checkout terminal (separate fullscreen window)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelfCheckoutEnabled(!selfCheckoutEnabled)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  selfCheckoutEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    selfCheckoutEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {selfCheckoutEnabled && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (autoSaveTimerRef.current) {
+                      clearTimeout(autoSaveTimerRef.current);
+                      autoSaveTimerRef.current = null;
+                    }
+                    const payload = buildGeneralConfigPayload();
+                    await Promise.resolve(onConfigChange(payload));
+                    const result = await window.electronAPI.window.open('selfCheckout');
+                    if (!result?.success) {
+                      rlog.error('[Settings] Failed to open self-checkout:', result?.error);
+                    }
+                  } catch (err) {
+                    rlog.error('[Settings] Failed to open self-checkout:', err);
+                  }
+                }}
+                className="w-full px-4 py-2 border border-brand-300 text-brand-700 rounded-lg text-sm font-medium hover:bg-brand-50 transition-colors cursor-pointer"
+              >
+                Open Self-Checkout window
+              </button>
+            )}
+
+            {selfCheckoutEnabled && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  Default language
+                </label>
+                <select
+                  value={selfCheckoutLanguage}
+                  onChange={(e) => setSelfCheckoutLanguage(e.target.value as 'pl' | 'en' | 'vi')}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                >
+                  <option value="pl">Polski (PL)</option>
+                  <option value="en">English (EN)</option>
+                  <option value="vi">Tiếng Việt (VI)</option>
+                </select>
+              </div>
+            )}
+
+            {selfCheckoutEnabled && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  Monitor
+                </label>
+                <select
+                  value={selfCheckoutMonitor}
+                  onChange={(e) => setSelfCheckoutMonitor(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                >
+                  {displays.length > 0 ? (
+                    displays.map((d) => (
+                      <option key={d.index} value={d.index}>
+                        {d.isPrimary ? t('settings.monitorPrimary') : `${t('settings.monitorSecondary')} ${d.index}`}
+                        {' '}&mdash; {d.width}x{d.height}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value={0}>{t('settings.monitorPrimary')}</option>
+                      <option value={1}>{t('settings.monitorSecondary')} (1)</option>
+                    </>
+                  )}
+                </select>
+              </div>
+            )}
+
+            {selfCheckoutEnabled && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  Bag fee (PLN, ≥ 0.20 by Polish law)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={selfCheckoutBagFeeAmount}
+                  onChange={(e) => setSelfCheckoutBagFeeAmount(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                />
+                <p className="text-xs text-slate-500 mt-1">Amount added to cart when customer chooses Yes for bag</p>
+              </div>
+            )}
+
+            {selfCheckoutEnabled && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  Idle timeout
+                </label>
+                <select
+                  value={selfCheckoutIdleTimeoutMs}
+                  onChange={(e) => setSelfCheckoutIdleTimeoutMs(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                >
+                  <option value={60000}>1 min</option>
+                  <option value={90000}>1.5 min</option>
+                  <option value={120000}>2 min</option>
+                  <option value={300000}>5 min</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">Auto-reset cart and return to welcome screen after this delay</p>
               </div>
             )}
           </div>
