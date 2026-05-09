@@ -312,6 +312,7 @@ export class WindowManager {
       const devUrls: Record<string, string> = {
         pos: 'http://localhost:3100/windows/pos/',
         customer: 'http://localhost:3100/windows/customer/',
+        selfCheckout: 'http://localhost:3100/windows/self-checkout/',
       };
       win.loadURL(devUrls[id] || `http://localhost:3100/windows/${id}/`);
     } else {
