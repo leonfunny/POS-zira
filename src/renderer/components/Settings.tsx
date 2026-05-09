@@ -4,7 +4,7 @@ import { resolveCustomerDisplayProfile } from '../../shared/customer-display-pro
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
-import { ShoppingCart, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X } from 'lucide-react';
 
 interface SettingsProps {
   config: AgentConfig | null;
@@ -201,8 +201,9 @@ function getWindowsPrinterOptionsForSelect(
 }
 
 const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
-  { tab: 'pos',       label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
-  { tab: 'billiard',  label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
+  { tab: 'pos',          label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
+  { tab: 'selfCheckout', label: 'Self-Checkout',   icon: <ScanBarcode size={15} />,    color: 'text-emerald-600 bg-emerald-50' },
+  { tab: 'billiard',     label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
   { tab: 'invoicing', label: 'Invoicing',        icon: <FileText size={15} />,        color: 'text-purple-600 bg-purple-50' },
   { tab: 'booksy',    label: 'Booksy Sync',      icon: <CalendarDays size={15} />,    color: 'text-orange-600 bg-orange-50' },
   { tab: 'bookings',  label: 'Bookings',         icon: <CalendarDays size={15} />,    color: 'text-indigo-600 bg-indigo-50' },
