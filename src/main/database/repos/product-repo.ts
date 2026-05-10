@@ -37,16 +37,30 @@ export interface CategoryRow {
   updated_at: string | null;
 }
 
+// Hide template rows that have variant children. The sync layer mirrors
+// both the product (template) and its variants into product_variants —
+// for a 1-product/1-variant tạp hóa item that surfaces as two rows
+// with the same name and SKU, the template row carrying stock=0 and
+// price=0. POS should only ever sell the leaf rows, otherwise we
+// get phantom "out of stock" duplicates next to the real variant.
+const HIDE_TEMPLATES_WITH_VARIANTS = `
+  AND id NOT IN (
+    SELECT DISTINCT template_id
+    FROM product_variants
+    WHERE template_id IS NOT NULL AND is_active = 1
+  )
+`;
+
 export const productRepo = {
   getAll(): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE is_active = 1 ORDER BY name',
+      `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
   },
 
   getByCategory(categoryId: string): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE category_id = ? AND is_active = 1 ORDER BY name',
+      `SELECT * FROM product_variants WHERE category_id = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
       [categoryId],
     );
   },
@@ -56,9 +70,11 @@ export const productRepo = {
   },
 
   getByBarcode(barcode: string): ProductVariantRow | null {
-    // 1. Exact match (fastest — indexed)
+    // 1. Exact match (fastest — indexed). Template + variant share the
+    //    same barcode in tạp hóa, so exclude templates so the cashier
+    //    always lands on the sellable variant with the right stock.
     const exact = database.get<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1',
+      `SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
       [barcode],
     );
     if (exact) return exact;
@@ -67,7 +83,7 @@ export const productRepo = {
     const stripped = barcode.replace(/^0+/, '');
     if (stripped !== barcode && stripped.length >= 4) {
       const m = database.get<ProductVariantRow>(
-        'SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1',
+        `SELECT * FROM product_variants WHERE barcode = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
         [stripped],
       );
       if (m) return m;
@@ -75,7 +91,7 @@ export const productRepo = {
 
     // 3. Substring match — scanned data contains the stored barcode verbatim
     const sub = database.get<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4 AND INSTR(?, barcode) > 0',
+      `SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4 AND INSTR(?, barcode) > 0 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
       [barcode],
     );
     if (sub) return sub;
@@ -86,7 +102,7 @@ export const productRepo = {
     const scanAlnum = barcode.replace(/[^A-Za-z0-9]/g, '');
     if (scanAlnum.length >= 8) {
       const allActive = database.all<ProductVariantRow>(
-        'SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4',
+        `SELECT * FROM product_variants WHERE is_active = 1 AND barcode IS NOT NULL AND length(barcode) >= 4 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
       );
       for (const row of allActive) {
         const rowAlnum = (row.barcode || '').replace(/[^A-Za-z0-9]/g, '');
@@ -96,7 +112,7 @@ export const productRepo = {
 
     // 5. Also try by SKU
     return database.get<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE sku = ? AND is_active = 1',
+      `SELECT * FROM product_variants WHERE sku = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
       [barcode],
     );
   },
@@ -105,13 +121,13 @@ export const productRepo = {
     // Try exact SQL LIKE first (fast path for SKU/barcode)
     const like = `%${query}%`;
     const sqlResults = database.all<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE is_active = 1 AND (sku LIKE ? OR barcode LIKE ?) ORDER BY name',
+      `SELECT * FROM product_variants WHERE is_active = 1 AND (sku LIKE ? OR barcode LIKE ?) ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
       [like, like],
     );
     // Diacritics-aware search on name (bánh bao ↔ banh bao, łódź ↔ lodz)
     const normalizedQuery = normalizeSearch(query);
     const allActive = database.all<ProductVariantRow>(
-      'SELECT * FROM product_variants WHERE is_active = 1 ORDER BY name',
+      `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
     const nameMatches = allActive.filter(p =>
       normalizeSearch(p.name).includes(normalizedQuery),
