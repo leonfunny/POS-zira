@@ -31,6 +31,7 @@ import {
   setSecureAiApiKey, setSecureRemotePin, getSecureRemotePin,
   clearSecureTokens, clearSecureAuthTokens,
 } from '../config/store';
+import { ensureReceiptPrinterEnabledOnBoot } from '../config/ensure-receipt-enabled';
 import { database } from '../database/database';
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
 import { listWindowsPrintersDetailed } from '../hardware/port-utils';
@@ -504,6 +505,14 @@ export class AuthModule extends BaseModule {
     try {
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
       const response = await client.connectWithApiKey(apiKey);
+      // Server-pushed printers carry their own isEnabled flag (typically false
+      // until the dashboard admin flips it). Without this re-apply, a cashier
+      // who relied on the boot-time auto-on would see Receipts toggle OFF
+      // every login. Same "forgotten off must not stop sales" intent as the
+      // boot call in index.ts — re-run after every printer-config sync.
+      if (response.printers?.length) {
+        ensureReceiptPrinterEnabledOnBoot();
+      }
       if (this.eventBus) {
         const changedKeys = ['apiKey', 'agentId', 'salonId', 'salonName', 'salonSlug', 'salonCode', 'serverUrl', 'isPaired'];
         if (response.printers?.length) changedKeys.push('printers', 'multiPrinterMode');
