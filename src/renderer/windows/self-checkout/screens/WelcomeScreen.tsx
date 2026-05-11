@@ -1,6 +1,7 @@
-// Idle / welcome screen. Start button, scan-to-start, payment notice,
-// and language switcher.
-import React, { useEffect, useRef } from 'react';
+// Idle / welcome screen. It must be scan-first: a barcode starts the
+// session just like the visible start button.
+import React, { useCallback, useEffect, useRef } from 'react';
+import { CreditCard, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import { ScLanguage, SC_LANGUAGES, getScStrings } from '../i18n';
 
 interface WelcomeScreenProps {
@@ -17,20 +18,61 @@ export default function WelcomeScreen({
   onScanStart,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
+  const scannerInputRef = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef<string>('');
   const scannerLastKey = useRef<number>(0);
+  const lastScanRef = useRef<{ code: string; at: number } | null>(null);
+
+  const handleScannedCode = useCallback(
+    (rawCode: string) => {
+      const code = rawCode.trim();
+      if (code.length < 4) return;
+      const now = Date.now();
+      if (lastScanRef.current?.code === code && now - lastScanRef.current.at < 600) return;
+      lastScanRef.current = { code, at: now };
+      void onScanStart(code);
+    },
+    [onScanStart],
+  );
+
+  const focusScannerInput = useCallback(() => {
+    scannerInputRef.current?.focus();
+  }, []);
+
+  const handleScannerInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const code = e.currentTarget.value;
+      e.currentTarget.value = '';
+      handleScannedCode(code);
+    },
+    [handleScannedCode],
+  );
+
+  useEffect(() => {
+    focusScannerInput();
+    const handler = () => setTimeout(focusScannerInput, 50);
+    document.addEventListener('pointerdown', handler);
+    const interval = setInterval(focusScannerInput, 1000);
+    return () => {
+      document.removeEventListener('pointerdown', handler);
+      clearInterval(interval);
+    };
+  }, [focusScannerInput]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.dataset?.scannerCapture === 'true') return;
       const now = Date.now();
-      if (now - scannerLastKey.current > 80) {
+      if (now - scannerLastKey.current > 150) {
         scannerBuffer.current = '';
       }
       scannerLastKey.current = now;
       if (e.key === 'Enter') {
         const code = scannerBuffer.current.trim();
         scannerBuffer.current = '';
-        if (code.length >= 4) void onScanStart(code);
+        handleScannedCode(code);
         return;
       }
       if (e.key.length === 1 && /[0-9A-Za-z\-_]/.test(e.key)) {
@@ -39,46 +81,107 @@ export default function WelcomeScreen({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onScanStart]);
+  }, [handleScannedCode]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onBarcodeScanned?.((barcode: string) => {
+      handleScannedCode(barcode);
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [handleScannedCode]);
 
   return (
-    <div className="relative flex h-screen w-screen flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-amber-50 text-slate-900 select-none">
-      {/* Language switcher — top-right, big touch targets */}
-      <div className="absolute top-6 right-6 flex gap-2">
-        {SC_LANGUAGES.map((l) => (
-          <button
-            key={l.code}
-            type="button"
-            onClick={() => onLangChange(l.code)}
-            className={`flex h-14 w-20 items-center justify-center rounded-2xl border-2 text-3xl transition-colors ${
-              l.code === lang
-                ? 'border-emerald-600 bg-emerald-50'
-                : 'border-slate-200 bg-white hover:border-slate-300'
-            }`}
-            aria-label={l.label}
-          >
-            {l.flag}
-          </button>
-        ))}
-      </div>
+    <div className="sc-shell relative flex h-screen w-screen flex-col overflow-hidden select-none">
+      <input
+        ref={scannerInputRef}
+        onKeyDown={handleScannerInputKeyDown}
+        inputMode="none"
+        data-scanner-capture="true"
+        aria-label="Barcode scanner"
+        tabIndex={-1}
+        className="pointer-events-none fixed h-px w-px opacity-0"
+      />
+      <header className="flex items-center justify-between px-10 py-8">
+        <div className="flex items-center gap-4">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--sc-primary)] text-3xl font-black text-white">
+            Z
+          </div>
+          <div>
+            <div className="text-lg font-black uppercase tracking-[0.18em] text-[var(--sc-primary-deep)]">
+              Zira AI
+            </div>
+            <div className="text-base font-semibold text-[var(--sc-muted)]">
+              Self-checkout
+            </div>
+          </div>
+        </div>
 
-      <div className="text-center">
-        <h1 className="mb-4 text-7xl font-black tracking-tight">
-          {t.welcomeTitle}
-        </h1>
-        <p className="mb-16 text-3xl text-slate-600">{t.welcomeSubtitle}</p>
-        <button
-          type="button"
-          onClick={onStart}
-          className="rounded-3xl bg-emerald-600 px-20 py-10 text-4xl font-bold text-white shadow-2xl shadow-emerald-600/40 transition-all hover:bg-emerald-700 hover:scale-105 active:scale-100"
-        >
-          {t.startButton}
-        </button>
-      </div>
+        <div className="flex gap-3">
+          {SC_LANGUAGES.map((l) => (
+            <button
+              key={l.code}
+              type="button"
+              onClick={() => onLangChange(l.code)}
+              className="sc-language-button sc-focusable"
+              data-active={l.code === lang}
+              aria-label={l.label}
+            >
+              {l.flag}
+            </button>
+          ))}
+        </div>
+      </header>
 
-      <p className="absolute bottom-10 text-lg text-slate-500">
-        💳 {t.paymentNotice}
-      </p>
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] gap-8 px-10 pb-10">
+        <section className="flex min-h-0 items-center justify-center">
+          <div className="w-full max-w-4xl">
+            <div className="mb-8 inline-flex items-center gap-3 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-3 text-lg font-black text-emerald-800">
+              <ShoppingBasket size={24} />
+              {t.welcomeTitle}
+            </div>
+            <h1 className="max-w-4xl text-6xl font-black leading-[1.03] tracking-tight text-[var(--sc-ink)]">
+              {t.startButton}
+            </h1>
+            <p className="mt-6 max-w-2xl text-3xl font-semibold leading-snug text-[var(--sc-muted)]">
+              {t.welcomeSubtitle}
+            </p>
+            <button
+              type="button"
+              onClick={onStart}
+              className="sc-action sc-focusable mt-12 flex min-w-[520px] items-center justify-center gap-5 px-16 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.26)]"
+            >
+              <ScanBarcode size={44} />
+              {t.startButton}
+            </button>
+          </div>
+        </section>
+
+        <aside className="sc-surface flex flex-col justify-between p-7">
+          <div>
+            <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]">
+              <ScanBarcode size={42} />
+            </div>
+            <h2 className="mt-8 text-3xl font-black text-[var(--sc-ink)]">
+              {t.scanPrompt}
+            </h2>
+            <p className="mt-3 text-xl leading-8 text-[var(--sc-muted)]">
+              {t.scanHint}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-5">
+            <div className="mb-3 flex items-center gap-3 text-lg font-black text-[var(--sc-ink)]">
+              <CreditCard size={24} className="text-[var(--sc-info)]" />
+              {t.paymentNotice}
+            </div>
+            <p className="text-base leading-6 text-[var(--sc-muted)]">
+              BLIK / CARD
+            </p>
+          </div>
+        </aside>
+      </main>
     </div>
   );
 }

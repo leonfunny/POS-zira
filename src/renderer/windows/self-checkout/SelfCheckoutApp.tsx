@@ -25,6 +25,7 @@ interface ProductLookupResult {
   name: string;
   sku?: string | null;
   barcode?: string | null;
+  category_id?: string | null;
   retail_price?: number;
   price?: number;
   price_gross?: number;
@@ -33,6 +34,14 @@ interface ProductLookupResult {
   thumbnail_url?: string | null;
   in_stock?: number;
   available_qty?: number;
+}
+
+interface CategoryLookupResult {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  sort_order?: number;
 }
 
 declare global {
@@ -55,6 +64,17 @@ function getProductStock(product: ProductLookupResult): number | undefined {
   return Number.isFinite(Number(value)) ? Number(value) : undefined;
 }
 
+function normalizeScanQuantity(value: number): number {
+  return Math.min(99, Math.max(1, Math.floor(Number(value) || 1)));
+}
+
+function formatScMessage(
+  template: string,
+  values: Record<string, string | number | undefined>,
+): string {
+  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
+}
+
 export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
@@ -63,6 +83,8 @@ export default function SelfCheckoutApp() {
   const [bagFeeGrosze, setBagFeeGrosze] = useState<number>(20);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [categories, setCategories] = useState<CategoryLookupResult[]>([]);
+  const [scanQuantity, setScanQuantity] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
@@ -76,6 +98,7 @@ export default function SelfCheckoutApp() {
 
   const cart = useScCart();
   const hasBagFee = cart.cart.items.some((item) => item.isBagFee);
+  const t = getScStrings(lang);
 
   const handleLangChange = useCallback((next: ScLanguage) => {
     // Session-only. A customer changing language must not rewrite the
@@ -92,6 +115,7 @@ export default function SelfCheckoutApp() {
   const resetSession = useCallback(() => {
     cart.clear();
     setLastPaymentMethod(null);
+    setScanQuantity(1);
     setAbandonOpen(false);
     setToast(null);
     reset();
@@ -135,6 +159,23 @@ export default function SelfCheckoutApp() {
     };
   }, [goTo]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await window.electronAPI?.pos?.categories?.getAll?.();
+        if (!cancelled && Array.isArray(list)) {
+          setCategories(list.slice(0, 8));
+        }
+      } catch {
+        /* Category fallback is optional; scanner remains primary. */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Track real inactivity, not just screen transitions.
   useEffect(() => {
     const markActivity = () => setActivityAt(Date.now());
@@ -152,47 +193,68 @@ export default function SelfCheckoutApp() {
     return () => clearTimeout(timer);
   }, [activityAt, help, idleTimeoutMs, resetSession, screen]);
 
+  const addProductToCart = useCallback(
+    (product: ProductLookupResult, fallbackEan = '', requestedQuantity = scanQuantity): boolean => {
+      const quantity = normalizeScanQuantity(requestedQuantity);
+      const stock = getProductStock(product);
+      if (typeof stock === 'number' && stock <= 0) {
+        showToast('error', formatScMessage(t.productOutOfStock, { name: product.name }));
+        return false;
+      }
+      if (typeof stock === 'number' && stock < quantity) {
+        showToast(
+          'error',
+          formatScMessage(t.productInsufficientStock, {
+            name: product.name,
+            stock,
+          }),
+        );
+        return false;
+      }
+
+      const price = getProductPriceGrosze(product);
+      if (price <= 0) {
+        showToast('error', formatScMessage(t.productNoPrice, { name: product.name }));
+        return false;
+      }
+
+      cart.add({
+        variantId: product.id,
+        productId: product.template_id || product.id,
+        name: product.name,
+        sku: product.sku || '',
+        ean: product.barcode || fallbackEan,
+        price,
+        vatRate: product.vat_rate,
+        imageUrl: product.thumbnail_url || product.image_url || undefined,
+      }, quantity);
+      showToast('ok', quantity > 1 ? `+ ${quantity} x ${product.name}` : `+ ${product.name}`);
+      if (quantity > 1) setScanQuantity(1);
+      return true;
+    },
+    [cart, scanQuantity, showToast, t],
+  );
+
   const handleScan = useCallback(
     async (ean: string): Promise<boolean> => {
+      const code = ean.trim();
+      if (!code) return false;
       try {
         const product = (await window.electronAPI?.pos?.products?.getByBarcode?.(
-          ean,
+          code,
         )) as ProductLookupResult | null | undefined;
         if (!product) {
-          showToast('error', `Nie znaleziono: ${ean}`);
+          showToast('error', formatScMessage(t.productNotFound, { code }));
           return false;
         }
 
-        const stock = getProductStock(product);
-        if (typeof stock === 'number' && stock <= 0) {
-          showToast('error', `${product.name} - brak na stanie`);
-          return false;
-        }
-
-        const price = getProductPriceGrosze(product);
-        if (price <= 0) {
-          showToast('error', `${product.name} - brak ceny`);
-          return false;
-        }
-
-        cart.add({
-          variantId: product.id,
-          productId: product.template_id || product.id,
-          name: product.name,
-          sku: product.sku || '',
-          ean: product.barcode || ean,
-          price,
-          vatRate: product.vat_rate,
-          imageUrl: product.thumbnail_url || product.image_url || undefined,
-        });
-        showToast('ok', `+ ${product.name}`);
-        return true;
+        return addProductToCart(product, code);
       } catch (err: any) {
-        showToast('error', err?.message || 'Scan failed');
+        showToast('error', err?.message || t.scanFailed);
         return false;
       }
     },
-    [cart, showToast],
+    [addProductToCart, showToast, t],
   );
 
   const handleWelcomeScan = useCallback(
@@ -307,6 +369,8 @@ export default function SelfCheckoutApp() {
           cartItems={cart.cart.items}
           totalGrosze={cart.cart.totalGrosze}
           onScan={handleScan}
+          scanQuantity={scanQuantity}
+          onScanQuantityChange={(quantity) => setScanQuantity(normalizeScanQuantity(quantity))}
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
             if (item && !item.isBagFee) cart.setQuantity(id, item.quantity + 1);
@@ -320,6 +384,8 @@ export default function SelfCheckoutApp() {
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}
           onLangChange={handleLangChange}
+          categories={categories}
+          onProductSelect={(product) => addProductToCart(product, '', scanQuantity)}
           toast={toast}
         />
         {abandonOpen && (
@@ -407,24 +473,24 @@ interface AbandonConfirmProps {
 function AbandonConfirm({ lang, onConfirm, onCancel }: AbandonConfirmProps) {
   const t = getScStrings(lang);
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50">
-      <div className="w-[480px] rounded-3xl bg-white p-8 text-center shadow-2xl">
-        <h3 className="mb-2 text-3xl font-extrabold">{t.abandonConfirmTitle}</h3>
-        <p className="mb-8 text-lg text-slate-500">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-6">
+      <div className="sc-surface w-[520px] p-8 text-center">
+        <h3 className="mb-3 text-4xl font-black text-[var(--sc-ink)]">{t.abandonConfirmTitle}</h3>
+        <p className="mb-8 text-xl leading-8 text-[var(--sc-muted)]">
           {t.abandonConfirmBody}
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-xl border-2 border-slate-300 bg-white py-4 text-lg font-semibold text-slate-700 hover:bg-slate-50"
+            className="sc-secondary-action sc-focusable text-lg"
           >
             {t.back}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-xl bg-red-600 py-4 text-lg font-bold text-white hover:bg-red-700"
+            className="sc-danger-action sc-focusable bg-red-50 text-lg"
           >
             {t.abandonConfirm}
           </button>

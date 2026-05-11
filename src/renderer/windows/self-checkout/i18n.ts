@@ -21,10 +21,23 @@ interface ScStrings {
   scanPrompt: string;
   scanHint: string;
   manualEntry: string;
+  scanQuantity: string;
+  scanQuantityHint: string;
+  noCategories: string;
+  productNotFound: string;
+  productOutOfStock: string;
+  productInsufficientStock: string;
+  productNoPrice: string;
+  scanFailed: string;
   emptyCart: string;
   remove: string;
   // Operator help
   callStaff: string;
+  staffCalledTitle: string;
+  staffComingTitle: string;
+  staffLockedBody: string;
+  staffComingBody: string;
+  helpReasonOther: string;
   abandon: string;
   abandonConfirmTitle: string;
   abandonConfirmBody: string;
@@ -49,6 +62,12 @@ interface ScStrings {
   blik: string;
   card: string;
   paymentSuccess: string;
+  popularCategories: string;
+  productsInCategory: string;
+  addProduct: string;
+  close: string;
+  items: string;
+  scanAgain: string;
   // Thank-you
   thankYouTitle: string;
   thankYouSub: string;
@@ -68,11 +87,24 @@ const PL: ScStrings = {
   demoMode: 'Tryb demo',
   productionMode: 'Tryb produkcyjny',
   scanPrompt: 'Zeskanuj produkt',
-  scanHint: 'lub wprowadź kod ręcznie',
+  scanHint: 'Skaner doda produkt do koszyka automatycznie',
   manualEntry: 'Wprowadź kod',
+  scanQuantity: 'Ilość',
+  scanQuantityHint: 'Wybierz ilość przed skanowaniem',
+  noCategories: 'Kategorie nie są jeszcze dostępne. Skanuj produkty kodem kreskowym.',
+  productNotFound: 'Nie znaleziono produktu: {code}. Zeskanuj ponownie albo wezwij obsługę.',
+  productOutOfStock: '{name} - brak na stanie. Wezwij obsługę.',
+  productInsufficientStock: '{name} - dostępna ilość: {stock}. Zmień ilość albo wezwij obsługę.',
+  productNoPrice: '{name} - brak ceny. Wezwij obsługę.',
+  scanFailed: 'Skanowanie nie powiodło się. Spróbuj ponownie albo wezwij obsługę.',
   emptyCart: 'Koszyk pusty - zacznij skanować',
   remove: 'Usuń',
   callStaff: 'Wezwij obsługę',
+  staffCalledTitle: 'Wezwano obsługę',
+  staffComingTitle: 'Obsługa idzie',
+  staffLockedBody: 'Kasa jest zablokowana. Poczekaj na pracownika.',
+  staffComingBody: 'Pracownik jest w drodze do kasy.',
+  helpReasonOther: 'Pomoc pracownika',
   abandon: 'Porzuć',
   abandonConfirmTitle: 'Porzucić zakupy?',
   abandonConfirmBody: 'Cały koszyk zostanie usunięty.',
@@ -93,6 +125,12 @@ const PL: ScStrings = {
   blik: 'BLIK',
   card: 'Karta płatnicza',
   paymentSuccess: 'Płatność potwierdzona',
+  popularCategories: 'Kategorie',
+  productsInCategory: 'Produkty w kategorii',
+  addProduct: 'Dodaj',
+  close: 'Zamknij',
+  items: 'Produkty',
+  scanAgain: 'Skanuj dalej',
   thankYouTitle: 'Dziękujemy!',
   thankYouSub: 'Odbierz paragon z drukarki',
 };
@@ -111,11 +149,24 @@ const EN: ScStrings = {
   demoMode: 'Demo mode',
   productionMode: 'Production mode',
   scanPrompt: 'Scan a product',
-  scanHint: 'or type the barcode manually',
+  scanHint: 'The scanner adds the product automatically',
   manualEntry: 'Enter code',
+  scanQuantity: 'Quantity',
+  scanQuantityHint: 'Choose quantity before scanning',
+  noCategories: 'Categories are not available yet. Scan products by barcode.',
+  productNotFound: 'Product not found: {code}. Scan again or call staff.',
+  productOutOfStock: '{name} is out of stock. Call staff.',
+  productInsufficientStock: '{name} has only {stock} available. Change quantity or call staff.',
+  productNoPrice: '{name} has no price. Call staff.',
+  scanFailed: 'Scan failed. Try again or call staff.',
   emptyCart: 'Cart is empty - start scanning',
   remove: 'Remove',
   callStaff: 'Call staff',
+  staffCalledTitle: 'Staff called',
+  staffComingTitle: 'Staff is coming',
+  staffLockedBody: 'This checkout is locked. Please wait for staff.',
+  staffComingBody: 'A staff member is on the way to this checkout.',
+  helpReasonOther: 'Staff assistance',
   abandon: 'Abandon',
   abandonConfirmTitle: 'Abandon shopping?',
   abandonConfirmBody: 'The entire cart will be cleared.',
@@ -136,6 +187,12 @@ const EN: ScStrings = {
   blik: 'BLIK',
   card: 'Card',
   paymentSuccess: 'Payment confirmed',
+  popularCategories: 'Categories',
+  productsInCategory: 'Products in category',
+  addProduct: 'Add',
+  close: 'Close',
+  items: 'Items',
+  scanAgain: 'Keep scanning',
   thankYouTitle: 'Thank you!',
   thankYouSub: 'Please collect your receipt',
 };
@@ -154,11 +211,24 @@ const VI: ScStrings = {
   demoMode: 'Chế độ demo',
   productionMode: 'Chế độ thật',
   scanPrompt: 'Quét sản phẩm',
-  scanHint: 'hoặc nhập mã thủ công',
+  scanHint: 'Máy quét sẽ tự thêm sản phẩm vào giỏ',
   manualEntry: 'Nhập mã',
+  scanQuantity: 'Số lượng',
+  scanQuantityHint: 'Chọn số lượng trước khi quét',
+  noCategories: 'Danh mục chưa sẵn sàng. Hãy quét sản phẩm bằng mã vạch.',
+  productNotFound: 'Không tìm thấy sản phẩm: {code}. Quét lại hoặc gọi nhân viên.',
+  productOutOfStock: '{name} đã hết hàng. Gọi nhân viên.',
+  productInsufficientStock: '{name} chỉ còn {stock}. Đổi số lượng hoặc gọi nhân viên.',
+  productNoPrice: '{name} chưa có giá. Gọi nhân viên.',
+  scanFailed: 'Quét không thành công. Thử lại hoặc gọi nhân viên.',
   emptyCart: 'Giỏ hàng trống - hãy quét sản phẩm',
   remove: 'Xóa',
   callStaff: 'Gọi nhân viên',
+  staffCalledTitle: 'Đã gọi nhân viên',
+  staffComingTitle: 'Nhân viên đang tới',
+  staffLockedBody: 'Quầy đang bị khóa. Vui lòng chờ nhân viên.',
+  staffComingBody: 'Nhân viên đang tới quầy này.',
+  helpReasonOther: 'Cần nhân viên hỗ trợ',
   abandon: 'Hủy giao dịch',
   abandonConfirmTitle: 'Hủy giao dịch?',
   abandonConfirmBody: 'Toàn bộ giỏ hàng sẽ bị xóa.',
@@ -179,6 +249,12 @@ const VI: ScStrings = {
   blik: 'BLIK',
   card: 'Thẻ',
   paymentSuccess: 'Thanh toán thành công',
+  popularCategories: 'Danh mục',
+  productsInCategory: 'Sản phẩm trong danh mục',
+  addProduct: 'Thêm',
+  close: 'Đóng',
+  items: 'Sản phẩm',
+  scanAgain: 'Tiếp tục quét',
   thankYouTitle: 'Cảm ơn quý khách!',
   thankYouSub: 'Vui lòng nhận hóa đơn từ máy in',
 };

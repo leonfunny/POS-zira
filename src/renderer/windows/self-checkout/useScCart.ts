@@ -59,7 +59,8 @@ export function useScCart() {
     }
   }, [cart]);
 
-  const add = useCallback((item: Omit<ScCartItem, 'quantity'>) => {
+  const add = useCallback((item: Omit<ScCartItem, 'quantity'>, quantity = 1) => {
+    const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     setCart((prev) => {
       const idx = prev.items.findIndex((i) =>
         item.isBagFee
@@ -70,9 +71,9 @@ export function useScCart() {
       if (idx >= 0) {
         items[idx] = item.isBagFee
           ? { ...items[idx], ...item, quantity: 1 }
-          : { ...items[idx], quantity: items[idx].quantity + 1 };
+          : { ...items[idx], quantity: items[idx].quantity + safeQuantity };
       } else {
-        items.push({ ...item, quantity: 1 });
+        items.push({ ...item, quantity: item.isBagFee ? 1 : safeQuantity });
       }
       return { ...recalc(items), customerNip: prev.customerNip };
     });

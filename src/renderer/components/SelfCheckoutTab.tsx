@@ -7,7 +7,10 @@ import {
   Languages,
   Maximize,
   Monitor,
+  Power,
   ScanBarcode,
+  Settings,
+  ShieldAlert,
   XCircle,
 } from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
@@ -19,6 +22,14 @@ import rlog from '../utils/logger';
 
 type ScLang = 'pl' | 'en' | 'vi';
 
+interface DisplayInfo {
+  index: number;
+  width: number;
+  height: number;
+  isPrimary: boolean;
+  label?: string;
+}
+
 export default function SelfCheckoutTab() {
   const { config, saveConfig } = useConfig();
 
@@ -27,7 +38,7 @@ export default function SelfCheckoutTab() {
   const [bagFee, setBagFee] = useState<number>(0.20);
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
-  const [displays, setDisplays] = useState<Array<{ index: number; width: number; height: number; isPrimary: boolean; label?: string }>>([]);
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [opening, setOpening] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -92,199 +103,308 @@ export default function SelfCheckoutTab() {
     }
   };
 
-  const justSaved = savedAt && Date.now() - savedAt < 2000;
+  const justSaved = Boolean(savedAt && Date.now() - savedAt < 2000);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="mx-auto max-w-6xl space-y-5">
+      <header className="flex items-start justify-between gap-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <ScanBarcode size={24} className="text-brand-600" />
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[var(--sand-200)] bg-white px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-[var(--ink-muted)]">
+            <ScanBarcode size={14} className="text-[var(--primary-deep)]" />
+            POS kiosk control
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-[var(--ink)]">
             Self-Checkout Kiosk
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Customer-operated kiosk. Demo is usable; production is blocked until payment, order, and fiscal paths are real.
+          <p className="mt-1 max-w-2xl text-sm text-[var(--ink-muted)]">
+            Operator control for the customer-facing kiosk. Demo can be opened;
+            production intentionally fails closed until payment, fiscal, and order paths are real.
           </p>
         </div>
-      </div>
+        {justSaved && (
+          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+            Saved
+          </div>
+        )}
+      </header>
 
-      <div className="panel p-5">
-        <div className="flex items-start gap-3">
-          {isProductionBlocked ? (
-            <AlertTriangle size={22} className="mt-0.5 text-amber-600" />
-          ) : (
-            <CheckCircle2 size={22} className="mt-0.5 text-emerald-600" />
-          )}
+      <section
+        className={`rounded-2xl border p-5 ${
+          isProductionBlocked
+            ? 'border-amber-200 bg-amber-50'
+            : 'border-emerald-200 bg-emerald-50'
+        }`}
+      >
+        <div className="flex items-start gap-4">
+          <div
+            className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+              isProductionBlocked
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+            }`}
+          >
+            {isProductionBlocked ? <AlertTriangle size={24} /> : <CheckCircle2 size={24} />}
+          </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-bold text-slate-800">
-              {mode === 'demo' ? 'Demo mode is available' : 'Production mode is blocked'}
+            <h2 className="text-lg font-black text-[var(--ink)]">
+              {mode === 'demo' ? 'Demo kiosk is available' : 'Production kiosk opens closed'}
             </h2>
-            <p className="mt-1 text-sm text-slate-600">
+            <p className="mt-1 text-sm leading-6 text-[var(--ink-muted)]">
               {mode === 'demo'
-                ? 'Demo can scan products and walk through summary/payment/receipt states, but it does not create a real sale.'
-                : 'The kiosk will open only into a closed/unavailable state until these blockers are removed.'}
+                ? 'Use this for UI flow, scanning, summary, payment simulation, and receipt state testing. It does not create a real sale.'
+                : 'This is the correct behavior until the missing integrations are wired. Do not make production look sellable before it is real.'}
             </p>
-            {isProductionBlocked && (
-              <div className="mt-4 grid gap-2">
-                {runtime.unavailableReasons.map((reason) => (
-                  <div key={reason} className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    <XCircle size={16} />
-                    {reason}
-                  </div>
-                ))}
+          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="panel p-5">
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-[var(--ink)]">
+                <Power size={20} className="text-[var(--primary-deep)]" />
+                Launch
+              </h2>
+              <p className="mt-1 text-sm text-[var(--ink-muted)]">
+                Opens the kiosk on the selected customer display.
+              </p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.1em] ${
+              mode === 'demo'
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-slate-100 text-slate-700'
+            }`}>
+              {mode}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={openKiosk}
+            disabled={opening}
+            className="flex min-h-[76px] w-full items-center justify-center gap-3 rounded-2xl bg-[var(--primary)] px-6 text-xl font-black text-white shadow-[0_16px_38px_rgba(169,83,58,0.22)] transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Maximize size={24} />
+            {opening
+              ? 'Opening kiosk...'
+              : mode === 'demo'
+                ? 'Open demo self-checkout'
+                : 'Open closed production kiosk'}
+          </button>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <RuntimePill
+              label="Payment"
+              state={mode === 'demo' ? 'Demo only' : 'Blocked'}
+              blocked={mode === 'production'}
+            />
+            <RuntimePill
+              label="Fiscal print"
+              state={mode === 'demo' ? 'Skipped' : 'Blocked'}
+              blocked={mode === 'production'}
+            />
+            <RuntimePill
+              label="Order create"
+              state={mode === 'demo' ? 'Skipped' : 'Blocked'}
+              blocked={mode === 'production'}
+            />
+          </div>
+        </section>
+
+        <section className="panel p-5">
+          <h2 className="flex items-center gap-2 text-lg font-black text-[var(--ink)]">
+            <ShieldAlert size={20} className={isProductionBlocked ? 'text-amber-600' : 'text-emerald-600'} />
+            Production readiness
+          </h2>
+          <div className="mt-4 space-y-2">
+            {isProductionBlocked ? (
+              runtime.unavailableReasons.map((reason) => (
+                <div key={reason} className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-900">
+                  <XCircle size={17} className="mt-0.5 shrink-0" />
+                  <span>{reason}</span>
+                </div>
+              ))
+            ) : (
+              <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-800">
+                <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
+                <span>Demo flow is available for UI and state testing.</span>
               </div>
             )}
           </div>
-        </div>
+        </section>
       </div>
 
-      <div className="panel p-6 space-y-6">
-        <button
-          type="button"
-          onClick={openKiosk}
-          disabled={opening}
-          className="w-full px-6 py-4 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-base font-semibold transition-colors flex items-center justify-center gap-3 shadow-sm"
-        >
-          <Maximize size={20} />
-          {opening
-            ? 'Opening kiosk...'
-            : mode === 'demo'
-              ? 'Open demo self-checkout'
-              : 'Open closed production kiosk'}
-        </button>
-        <p className="text-xs text-slate-500 text-center -mt-3">
-          Settings below auto-save and apply on next launch.
-        </p>
+      <section className="panel p-5">
+        <div className="mb-5 flex items-center gap-2">
+          <Settings size={20} className="text-[var(--primary-deep)]" />
+          <div>
+            <h2 className="text-lg font-black text-[var(--ink)]">Kiosk settings</h2>
+            <p className="text-sm text-[var(--ink-muted)]">
+              These settings save immediately and apply on next kiosk launch.
+            </p>
+          </div>
+        </div>
 
-        <div className="border-t border-slate-200" />
-
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-            <AlertTriangle size={16} className="text-slate-500" />
-            Runtime mode
-          </label>
-          <select
-            value={mode}
-            onChange={(e) => {
-              const v = e.target.value === 'production' ? 'production' : 'demo';
-              setMode(v);
-              persist({ selfCheckoutMode: v });
-            }}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+        <div className="grid gap-4 lg:grid-cols-2">
+          <SettingField
+            icon={<AlertTriangle size={17} />}
+            label="Runtime mode"
+            help="Production stays closed until real integrations are done."
           >
-            <option value="demo">Demo only - mocked payment, no real order</option>
-            <option value="production">Production - fail closed until integrations are ready</option>
-          </select>
-        </div>
+            <select
+              value={mode}
+              onChange={(e) => {
+                const v = e.target.value === 'production' ? 'production' : 'demo';
+                setMode(v);
+                persist({ selfCheckoutMode: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            >
+              <option value="demo">Demo only - mocked payment, no real order</option>
+              <option value="production">Production - fail closed until integrations are ready</option>
+            </select>
+          </SettingField>
 
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-            <Languages size={16} className="text-slate-500" />
-            Default language
-          </label>
-          <select
-            value={language}
-            onChange={(e) => {
-              const v = e.target.value as ScLang;
-              setLanguage(v);
-              persist({ selfCheckoutLanguage: v });
-            }}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+          <SettingField
+            icon={<Languages size={17} />}
+            label="Default language"
+            help="Customer changes are session-only."
           >
-            <option value="pl">Polski (PL)</option>
-            <option value="en">English (EN)</option>
-            <option value="vi">Tiếng Việt (VI)</option>
-          </select>
-          <p className="text-xs text-slate-500 mt-1">
-            Customer language changes are session-only; this value is only the launch default.
-          </p>
-        </div>
+            <select
+              value={language}
+              onChange={(e) => {
+                const v = e.target.value as ScLang;
+                setLanguage(v);
+                persist({ selfCheckoutLanguage: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            >
+              <option value="pl">Polski (PL)</option>
+              <option value="en">English (EN)</option>
+              <option value="vi">Tiếng Việt (VI)</option>
+            </select>
+          </SettingField>
 
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-            <Coins size={16} className="text-slate-500" />
-            Bag fee (PLN)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={bagFee}
-            onChange={(e) => {
-              const v = parseFloat(e.target.value) || 0;
-              setBagFee(v);
-              persist({ selfCheckoutBagFeeAmount: v });
-            }}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
-          />
-          <p className="text-xs text-slate-500 mt-1">
-            This is added as a separate cart line only when the customer chooses a bag in summary.
-          </p>
-        </div>
-
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-            <Monitor size={16} className="text-slate-500" />
-            Display monitor
-          </label>
-          <select
-            value={monitor}
-            onChange={(e) => {
-              const v = parseInt(e.target.value);
-              setMonitor(v);
-              persist({ selfCheckoutMonitor: v });
-            }}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+          <SettingField
+            icon={<Coins size={17} />}
+            label="Bag fee (PLN)"
+            help="Added only when the customer chooses a bag in summary."
           >
-            {displays.length > 0 ? (
-              displays.map((d) => (
-                <option key={d.index} value={d.index}>
-                  {d.isPrimary ? 'Primary' : `Secondary ${d.index}`}
-                  {' - '}{d.width}x{d.height}
-                  {d.label && d.label !== `Display ${d.index + 1}` ? ` (${d.label})` : ''}
-                </option>
-              ))
-            ) : (
-              <>
-                <option value={0}>Primary</option>
-                <option value={1}>Secondary (1)</option>
-                <option value={2}>Secondary (2)</option>
-              </>
-            )}
-          </select>
-          <p className="text-xs text-slate-500 mt-1">
-            Pick the screen the kiosk fullscreens on. Use a customer-facing display if available.
-          </p>
-        </div>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={bagFee}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value) || 0;
+                setBagFee(v);
+                persist({ selfCheckoutBagFeeAmount: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            />
+          </SettingField>
 
-        <div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-            <Clock size={16} className="text-slate-500" />
-            Idle timeout
-          </label>
-          <select
-            value={idleTimeoutMs}
-            onChange={(e) => {
-              const v = parseInt(e.target.value);
-              setIdleTimeoutMs(v);
-              persist({ selfCheckoutIdleTimeoutMs: v });
-            }}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+          <SettingField
+            icon={<Monitor size={17} />}
+            label="Display monitor"
+            help="Use a customer-facing display if available."
           >
-            <option value={60000}>1 min</option>
-            <option value={90000}>1.5 min</option>
-            <option value={120000}>2 min</option>
-            <option value={300000}>5 min</option>
-          </select>
-          <p className="text-xs text-slate-500 mt-1">
-            Cart auto-resets after this delay with no touch, keyboard, or scanner input.
-          </p>
-        </div>
+            <select
+              value={monitor}
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                setMonitor(v);
+                persist({ selfCheckoutMonitor: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            >
+              {displays.length > 0 ? (
+                displays.map((d) => (
+                  <option key={d.index} value={d.index}>
+                    {d.isPrimary ? 'Primary' : `Secondary ${d.index}`}
+                    {' - '}{d.width}x{d.height}
+                    {d.label && d.label !== `Display ${d.index + 1}` ? ` (${d.label})` : ''}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value={0}>Primary</option>
+                  <option value={1}>Secondary (1)</option>
+                  <option value={2}>Secondary (2)</option>
+                </>
+              )}
+            </select>
+          </SettingField>
 
-        {justSaved && (
-          <div className="text-xs text-emerald-600 text-center">Saved</div>
-        )}
+          <SettingField
+            icon={<Clock size={17} />}
+            label="Idle timeout"
+            help="Cart resets after no touch, keyboard, or scanner input."
+          >
+            <select
+              value={idleTimeoutMs}
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                setIdleTimeoutMs(v);
+                persist({ selfCheckoutIdleTimeoutMs: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            >
+              <option value={60000}>1 min</option>
+              <option value={90000}>1.5 min</option>
+              <option value={120000}>2 min</option>
+              <option value={300000}>5 min</option>
+            </select>
+          </SettingField>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RuntimePill({
+  label,
+  state,
+  blocked,
+}: {
+  label: string;
+  state: string;
+  blocked: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--sand-200)] bg-white px-3 py-3">
+      <div className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--ink-muted)]">
+        {label}
+      </div>
+      <div className={`mt-1 text-sm font-black ${blocked ? 'text-amber-700' : 'text-emerald-700'}`}>
+        {state}
       </div>
     </div>
+  );
+}
+
+function SettingField({
+  icon,
+  label,
+  help,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  help: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block rounded-xl border border-[var(--sand-200)] bg-white p-4">
+      <span className="mb-2 flex items-center gap-2 text-sm font-black text-[var(--ink)]">
+        <span className="text-[var(--ink-muted)]">{icon}</span>
+        {label}
+      </span>
+      {children}
+      <span className="mt-2 block text-xs leading-5 text-[var(--ink-muted)]">
+        {help}
+      </span>
+    </label>
   );
 }

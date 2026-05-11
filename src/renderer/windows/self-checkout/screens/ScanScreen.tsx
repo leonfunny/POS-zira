@@ -1,18 +1,51 @@
-// Scan + cart screen. Customer scans products into the cart. Left pane
-// is the active scan target / category prompt; right pane is the live
-// cart with +/- buttons and remove. Bottom bar shows total and
-// "Przejdź do płatności" / "Pay". Top toolbar carries help/abandon/
-// language. HID-style barcode scanner is captured globally via a
-// keypress listener (each scan ends with Enter).
+// Scan + cart screen. Scanner remains the primary path; category
+// browsing is a fallback for products without a readable barcode.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScLanguage, getScStrings } from '../i18n';
+import {
+  Hand,
+  Minus,
+  PackageSearch,
+  Plus,
+  ScanBarcode,
+  ShoppingCart,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { ScLanguage, SC_LANGUAGES, getScStrings } from '../i18n';
 import { ScCartItem, formatPLN } from '../useScCart';
+
+interface ScCategory {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+}
+
+interface BrowseProduct {
+  id: string;
+  template_id?: string | null;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  retail_price?: number;
+  price?: number;
+  price_gross?: number;
+  vat_rate?: number;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
+  in_stock?: number;
+  available_qty?: number;
+}
 
 interface ScanScreenProps {
   lang: ScLanguage;
   cartItems: ScCartItem[];
   totalGrosze: number;
+  categories: ScCategory[];
   onScan: (ean: string) => Promise<unknown> | unknown;
+  scanQuantity: number;
+  onScanQuantityChange: (quantity: number) => void;
+  onProductSelect: (product: BrowseProduct) => void;
   onIncrement: (variantId: string) => void;
   onDecrement: (variantId: string) => void;
   onRemove: (variantId: string) => void;
@@ -27,35 +60,80 @@ export default function ScanScreen({
   lang,
   cartItems,
   totalGrosze,
+  categories,
   onScan,
+  scanQuantity,
+  onScanQuantityChange,
+  onProductSelect,
   onIncrement,
   onDecrement,
   onRemove,
   onCheckout,
   onCallStaff,
   onAbandon,
+  onLangChange,
   toast,
 }: ScanScreenProps) {
   const t = getScStrings(lang);
-  const [manualOpen, setManualOpen] = useState(false);
-  const [manualValue, setManualValue] = useState('');
+  const [categoryOpen, setCategoryOpen] = useState<ScCategory | null>(null);
+  const [categoryProducts, setCategoryProducts] = useState<BrowseProduct[]>([]);
+  const [categoryLoading, setCategoryLoading] = useState(false);
+  const scannerInputRef = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef<string>('');
   const scannerLastKey = useRef<number>(0);
+  const lastScanRef = useRef<{ code: string; at: number } | null>(null);
 
-  // Global HID scanner capture: characters arriving < 50ms apart with
-  // a trailing Enter look like a barcode scan.
+  const handleScannedCode = useCallback(
+    (rawCode: string) => {
+      const code = rawCode.trim();
+      if (code.length < 4) return;
+      const now = Date.now();
+      if (lastScanRef.current?.code === code && now - lastScanRef.current.at < 600) return;
+      lastScanRef.current = { code, at: now };
+      setCategoryOpen(null);
+      void onScan(code);
+    },
+    [onScan],
+  );
+
+  const focusScannerInput = useCallback(() => {
+    scannerInputRef.current?.focus();
+  }, []);
+
+  const handleScannerInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const code = e.currentTarget.value;
+      e.currentTarget.value = '';
+      handleScannedCode(code);
+    },
+    [handleScannedCode],
+  );
+
+  useEffect(() => {
+    focusScannerInput();
+    const handler = () => setTimeout(focusScannerInput, 50);
+    document.addEventListener('pointerdown', handler);
+    const interval = setInterval(focusScannerInput, 1000);
+    return () => {
+      document.removeEventListener('pointerdown', handler);
+      clearInterval(interval);
+    };
+  }, [focusScannerInput]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (manualOpen) return; // don't steal keys while typing the numpad
+      if ((e.target as HTMLElement | null)?.dataset?.scannerCapture === 'true') return;
       const now = Date.now();
-      if (now - scannerLastKey.current > 80) {
+      if (now - scannerLastKey.current > 150) {
         scannerBuffer.current = '';
       }
       scannerLastKey.current = now;
       if (e.key === 'Enter') {
         const code = scannerBuffer.current.trim();
         scannerBuffer.current = '';
-        if (code.length >= 4) void onScan(code);
+        handleScannedCode(code);
         return;
       }
       if (e.key.length === 1 && /[0-9A-Za-z\-_]/.test(e.key)) {
@@ -64,86 +142,220 @@ export default function ScanScreen({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [manualOpen, onScan]);
+  }, [handleScannedCode]);
 
-  const submitManual = useCallback(async () => {
-    const v = manualValue.trim();
-    if (v.length < 4) return;
-    setManualOpen(false);
-    setManualValue('');
-    await onScan(v);
-  }, [manualValue, onScan]);
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onBarcodeScanned?.((barcode: string) => {
+      handleScannedCode(barcode);
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [handleScannedCode]);
+
+  const openCategory = useCallback(async (category: ScCategory) => {
+    setCategoryOpen(category);
+    setCategoryProducts([]);
+    setCategoryLoading(true);
+    try {
+      const products = await window.electronAPI?.pos?.products?.getByCategory?.(category.id);
+      if (Array.isArray(products)) setCategoryProducts(products.slice(0, 30));
+    } catch {
+      setCategoryProducts([]);
+    } finally {
+      setCategoryLoading(false);
+    }
+  }, []);
+
+  const productCount = cartItems.reduce((sum, item) => sum + (item.isBagFee ? 0 : item.quantity), 0);
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-slate-50 text-slate-900 select-none">
-      {/* Top toolbar */}
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-        <button
-          type="button"
-          onClick={onAbandon}
-          className="rounded-xl border-2 border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 hover:bg-slate-100"
-        >
-          ✗ {t.abandon}
-        </button>
-        <button
-          type="button"
-          onClick={onCallStaff}
-          className="rounded-xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-800 hover:bg-amber-100"
-        >
-          🆘 {t.callStaff}
-        </button>
-      </div>
-
-      {/* Body */}
-      <div className="flex flex-1 min-h-0 gap-4 p-4">
-        {/* Left: scan prompt */}
-        <div className="flex w-3/5 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white p-8">
-          <div className="text-7xl mb-4">📦</div>
-          <h2 className="mb-2 text-4xl font-bold">{t.scanPrompt}</h2>
-          <p className="mb-8 text-xl text-slate-500">{t.scanHint}</p>
-          <button
-            type="button"
-            onClick={() => setManualOpen(true)}
-            className="rounded-xl bg-slate-900 px-8 py-4 text-xl font-semibold text-white hover:bg-slate-800"
-          >
-            ⌨️ {t.manualEntry}
-          </button>
-          {toast && (
-            <div
-              className={`mt-6 rounded-xl px-4 py-3 text-lg font-semibold ${
-                toast.kind === 'ok'
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  : 'bg-red-50 text-red-800 border border-red-200'
-              }`}
-            >
-              {toast.text}
+    <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
+      <input
+        ref={scannerInputRef}
+        onKeyDown={handleScannerInputKeyDown}
+        inputMode="none"
+        data-scanner-capture="true"
+        aria-label="Barcode scanner"
+        tabIndex={-1}
+        className="pointer-events-none fixed h-px w-px opacity-0"
+      />
+      <header className="flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-8 py-4">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--sc-primary)] text-xl font-black text-white">
+            Z
+          </div>
+          <div>
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-[var(--sc-primary-deep)]">
+              Zira AI
             </div>
-          )}
+            <div className="text-sm font-semibold text-[var(--sc-muted)]">
+              Self-checkout
+            </div>
+          </div>
         </div>
 
-        {/* Right: cart */}
-        <div className="flex w-2/5 min-w-0 flex-col rounded-2xl bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
-            {t.total} ({cartItems.length})
+        <div className="flex items-center gap-3">
+          <div className="hidden gap-2 md:flex">
+            {SC_LANGUAGES.map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                onClick={() => onLangChange(l.code)}
+                className="sc-language-button sc-focusable !min-h-[46px] !min-w-[58px]"
+                data-active={l.code === lang}
+                aria-label={l.label}
+              >
+                {l.flag}
+              </button>
+            ))}
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            {cartItems.length === 0 ? (
-              <div className="flex h-full items-center justify-center px-6 text-center text-lg text-slate-400">
-                {t.emptyCart}
+          <button
+            type="button"
+            onClick={onCallStaff}
+            className="sc-secondary-action sc-focusable flex items-center gap-2 px-5 text-base text-amber-800"
+          >
+            <Hand size={20} />
+            {t.callStaff}
+          </button>
+          <button
+            type="button"
+            onClick={onAbandon}
+            className="sc-danger-action sc-focusable px-5 text-base"
+          >
+            {t.abandon}
+          </button>
+        </div>
+      </header>
+
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_430px] gap-5 p-5">
+        <section className="flex min-h-0 flex-col gap-5">
+          <div className="sc-surface flex min-h-[330px] flex-1 flex-col justify-center p-8">
+            <div className="flex items-center gap-8">
+              <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-[34px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]">
+                <ScanBarcode size={82} />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-6xl font-black tracking-tight text-[var(--sc-ink)]">
+                  {t.scanPrompt}
+                </h1>
+                <p className="mt-4 text-2xl font-semibold leading-9 text-[var(--sc-muted)]">
+                  {t.scanHint}
+                </p>
+                <div className="mt-7 inline-flex items-center gap-4 rounded-3xl border-2 border-[var(--sc-border)] bg-white p-3">
+                  <div className="px-3">
+                    <div className="text-base font-black text-[var(--sc-ink)]">
+                      {t.scanQuantity}
+                    </div>
+                    <div className="text-sm font-semibold text-[var(--sc-muted)]">
+                      {t.scanQuantityHint}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onScanQuantityChange(scanQuantity - 1)}
+                    disabled={scanQuantity <= 1}
+                    className="sc-focusable flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35"
+                    aria-label="-"
+                  >
+                    <Minus size={28} />
+                  </button>
+                  <div className="sc-tabular flex h-16 min-w-[88px] items-center justify-center rounded-2xl bg-[var(--sc-primary-soft)] px-5 text-4xl font-black text-[var(--sc-primary-deep)]">
+                    {scanQuantity}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onScanQuantityChange(scanQuantity + 1)}
+                    disabled={scanQuantity >= 99}
+                    className="sc-focusable flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35"
+                    aria-label="+"
+                  >
+                    <Plus size={28} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {toast && (
+              <div
+                role={toast.kind === 'error' ? 'alert' : 'status'}
+                className={`mt-8 rounded-2xl border px-5 py-4 text-xl font-black ${
+                  toast.kind === 'ok'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-red-200 bg-red-50 text-[var(--sc-danger)]'
+                }`}
+              >
+                {toast.text}
+              </div>
+            )}
+          </div>
+
+          <div className="sc-surface-flat p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-2xl font-black text-[var(--sc-ink)]">
+                {t.popularCategories}
+              </h2>
+              <span className="text-sm font-semibold text-[var(--sc-muted)]">
+                {t.scanAgain}
+              </span>
+            </div>
+            {categories.length > 0 ? (
+              <div className="grid grid-cols-4 gap-3">
+                {categories.slice(0, 8).map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => openCategory(category)}
+                    className="sc-secondary-action sc-focusable flex min-h-[76px] items-center justify-center px-3 text-center text-lg leading-tight"
+                  >
+                    {category.name}
+                  </button>
+                ))}
               </div>
             ) : (
-              <ul className="divide-y divide-slate-100">
+              <div className="rounded-2xl bg-[var(--sc-surface-muted)] px-5 py-6 text-lg font-semibold text-[var(--sc-muted)]">
+                {t.noCategories}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <aside className="sc-surface flex min-h-0 flex-col overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5 py-4">
+            <div className="flex items-center gap-3">
+              <ShoppingCart size={26} className="text-[var(--sc-primary-deep)]" />
+              <div>
+                <div className="text-2xl font-black text-[var(--sc-ink)]">
+                  {t.total}
+                </div>
+                <div className="text-sm font-semibold text-[var(--sc-muted)]">
+                  {productCount} {t.items}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {cartItems.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center px-8 text-center">
+                <PackageSearch size={64} className="mb-5 text-[var(--sc-border)]" />
+                <div className="text-2xl font-black text-[var(--sc-ink)]">
+                  {t.emptyCart}
+                </div>
+              </div>
+            ) : (
+              <ul className="divide-y divide-[var(--sc-border)]">
                 {cartItems.map((item) => (
                   <li
                     key={item.variantId + (item.isBagFee ? '-bag' : '')}
-                    className="px-4 py-3"
+                    className="px-5 py-4"
                   >
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-base font-semibold">
+                        <div className="text-xl font-black leading-snug text-[var(--sc-ink)]">
                           {item.name}
                         </div>
-                        <div className="text-sm text-slate-500">
+                        <div className="mt-1 text-base font-semibold text-[var(--sc-muted)]">
                           {formatPLN(item.price)}
                           {item.sku ? ` · ${item.sku}` : ''}
                         </div>
@@ -151,32 +363,34 @@ export default function ScanScreen({
                       <button
                         type="button"
                         onClick={() => onRemove(item.variantId)}
-                        className="text-2xl leading-none text-slate-400 hover:text-red-600"
+                        className="sc-focusable flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
                         aria-label={t.remove}
                       >
-                        ✕
+                        <Trash2 size={22} />
                       </button>
                     </div>
-                    <div className="mt-2 flex items-center gap-2">
+                    <div className="mt-4 flex items-center gap-3">
                       <button
                         type="button"
                         onClick={() => onDecrement(item.variantId)}
-                        className="h-10 w-10 rounded-lg border-2 border-slate-200 text-xl font-bold hover:bg-slate-100"
+                        className="sc-focusable flex h-12 w-12 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
+                        aria-label="-"
                       >
-                        −
+                        <Minus size={22} />
                       </button>
-                      <span className="min-w-[3ch] text-center text-xl font-semibold tabular-nums">
+                      <span className="sc-tabular min-w-[3ch] text-center text-2xl font-black">
                         {item.quantity}
                       </span>
                       <button
                         type="button"
                         onClick={() => onIncrement(item.variantId)}
                         disabled={item.isBagFee}
-                        className="h-10 w-10 rounded-lg border-2 border-slate-200 text-xl font-bold hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-white"
+                        className="sc-focusable flex h-12 w-12 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)] disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="+"
                       >
-                        +
+                        <Plus size={22} />
                       </button>
-                      <span className="ml-auto text-base font-bold tabular-nums">
+                      <span className="sc-tabular ml-auto text-xl font-black text-[var(--sc-ink)]">
                         {formatPLN(item.price * item.quantity)}
                       </span>
                     </div>
@@ -186,13 +400,12 @@ export default function ScanScreen({
             )}
           </div>
 
-          {/* Bottom bar */}
-          <div className="border-t border-slate-200 px-4 py-3">
-            <div className="mb-3 flex items-baseline justify-between">
-              <span className="text-lg font-semibold text-slate-600">
+          <div className="border-t border-[var(--sc-border)] bg-white p-5">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <span className="text-xl font-black text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="text-3xl font-extrabold tabular-nums">
+              <span className="sc-tabular text-5xl font-black tracking-tight text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </span>
             </div>
@@ -200,30 +413,110 @@ export default function ScanScreen({
               type="button"
               onClick={onCheckout}
               disabled={cartItems.length === 0}
-              className="w-full rounded-xl bg-emerald-600 py-5 text-2xl font-bold text-white shadow-lg shadow-emerald-600/30 transition-colors hover:bg-emerald-700 disabled:bg-slate-300 disabled:shadow-none"
+              className="sc-action sc-action-success sc-focusable flex w-full items-center justify-center gap-3 text-2xl"
             >
-              {t.pay} {formatPLN(totalGrosze)} →
+              {t.pay}
             </button>
           </div>
-        </div>
-      </div>
+        </aside>
+      </main>
 
-      {/* Manual entry modal */}
-      {manualOpen && (
-        <ManualNumpad
-          title={t.manualEntry}
-          value={manualValue}
-          onChange={setManualValue}
-          onCancel={() => {
-            setManualOpen(false);
-            setManualValue('');
+      {categoryOpen && (
+        <CategoryBrowser
+          title={categoryOpen.name}
+          t={t}
+          products={categoryProducts}
+          loading={categoryLoading}
+          onClose={() => setCategoryOpen(null)}
+          onSelect={(product) => {
+            onProductSelect(product);
+            setCategoryOpen(null);
           }}
-          onSubmit={submitManual}
-          okLabel={t.scanPrompt}
-          cancelLabel={t.cancel}
-          maxLength={14}
         />
       )}
+    </div>
+  );
+}
+
+interface CategoryBrowserProps {
+  title: string;
+  t: ReturnType<typeof getScStrings>;
+  products: BrowseProduct[];
+  loading: boolean;
+  onClose: () => void;
+  onSelect: (product: BrowseProduct) => void;
+}
+
+function CategoryBrowser({
+  title,
+  t,
+  products,
+  loading,
+  onClose,
+  onSelect,
+}: CategoryBrowserProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-8">
+      <section className="sc-surface flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden">
+        <header className="flex items-center justify-between border-b border-[var(--sc-border)] px-6 py-5">
+          <div>
+            <div className="text-sm font-bold uppercase tracking-[0.12em] text-[var(--sc-muted)]">
+              {t.productsInCategory}
+            </div>
+            <h2 className="mt-1 text-3xl font-black text-[var(--sc-ink)]">
+              {title}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white hover:bg-[var(--sc-surface-muted)]"
+            aria-label={t.close}
+          >
+            <X size={26} />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          {loading ? (
+            <div className="flex min-h-[320px] items-center justify-center text-2xl font-black text-[var(--sc-muted)]">
+              ...
+            </div>
+          ) : products.length === 0 ? (
+            <div className="flex min-h-[320px] items-center justify-center text-2xl font-black text-[var(--sc-muted)]">
+              {t.emptyCart}
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-4">
+              {products.map((product) => {
+                const price = product.retail_price ?? product.price ?? product.price_gross ?? 0;
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => onSelect(product)}
+                    className="sc-focusable min-h-[150px] rounded-2xl border border-[var(--sc-border)] bg-white p-4 text-left hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)]"
+                  >
+                    <div className="line-clamp-2 text-xl font-black leading-tight text-[var(--sc-ink)]">
+                      {product.name}
+                    </div>
+                    <div className="mt-3 text-sm font-semibold text-[var(--sc-muted)]">
+                      {product.sku || product.barcode || ''}
+                    </div>
+                    <div className="mt-5 flex items-end justify-between gap-3">
+                      <span className="sc-tabular text-2xl font-black text-[var(--sc-ink)]">
+                        {formatPLN(Math.round(Number(price) || 0))}
+                      </span>
+                      <span className="rounded-full bg-[var(--sc-primary)] px-4 py-2 text-sm font-black text-white">
+                        {t.addProduct}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -255,35 +548,37 @@ export function ManualNumpad({
   };
   const keys = ['1','2','3','4','5','6','7','8','9','<','0','OK'];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-      <div className="w-[420px] rounded-3xl bg-white p-6 shadow-2xl">
-        <h3 className="mb-3 text-2xl font-bold text-center">{title}</h3>
-        <div className="mb-4 h-16 rounded-xl border-2 border-slate-200 bg-slate-50 px-4 text-center text-3xl font-mono tabular-nums leading-[64px] tracking-widest">
-          {value || <span className="text-slate-300">—</span>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-6">
+      <div className="sc-surface w-[440px] p-6">
+        {title && (
+          <h3 className="mb-4 text-center text-3xl font-black text-[var(--sc-ink)]">
+            {title}
+          </h3>
+        )}
+        <div className="sc-tabular mb-4 h-20 rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-4 text-center text-4xl font-black leading-[76px] tracking-widest text-[var(--sc-ink)]">
+          {value || <span className="text-[var(--sc-muted)]">-</span>}
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-3">
           {keys.map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => (k === 'OK' ? onSubmit() : press(k))}
-              className={`h-16 rounded-xl text-2xl font-bold transition-colors ${
+              className={`sc-focusable h-20 rounded-2xl text-2xl font-black transition-colors ${
                 k === 'OK'
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  : k === '<'
-                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    : 'bg-slate-100 hover:bg-slate-200'
+                  ? 'bg-[var(--sc-success)] text-white hover:bg-emerald-800'
+                  : 'border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] hover:bg-[var(--sc-surface-muted)]'
               }`}
               aria-label={k}
             >
-              {k === '<' ? '⌫' : k === 'OK' ? okLabel : k}
+              {k === '<' ? 'Del' : k === 'OK' ? okLabel : k}
             </button>
           ))}
         </div>
         <button
           type="button"
           onClick={onCancel}
-          className="mt-3 w-full rounded-xl border-2 border-slate-200 py-3 text-base font-semibold text-slate-600 hover:bg-slate-50"
+          className="sc-secondary-action sc-focusable mt-4 w-full text-lg"
         >
           {cancelLabel}
         </button>

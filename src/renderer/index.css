@@ -6,6 +6,20 @@
   --primary: #da7756;
   --primary-hover: #c5684a;
   --primary-deep: #a9533a;
+  --sc-canvas: #f7f8f6;
+  --sc-surface: #ffffff;
+  --sc-surface-muted: #eef1ee;
+  --sc-border: #d8ded6;
+  --sc-ink: #202421;
+  --sc-muted: #687069;
+  --sc-primary: #da7756;
+  --sc-primary-hover: #c5684a;
+  --sc-primary-deep: #a9533a;
+  --sc-primary-soft: #fbe8df;
+  --sc-success: #15803d;
+  --sc-info: #2563eb;
+  --sc-warning: #b7791f;
+  --sc-danger: #b42318;
   --sand-50: #faf9f7;
   --sand-100: #f3f2ef;
   --sand-200: #e8e5e0;
@@ -21,7 +35,12 @@ html.customer-display-root,
 html.customer-display-root body,
 html.customer-display-root body #root,
 body.customer-display-root,
-body.customer-display-root #root {
+body.customer-display-root #root,
+html.self-checkout-root,
+html.self-checkout-root body,
+html.self-checkout-root body #root,
+body.self-checkout-root,
+body.self-checkout-root #root {
   height: 100%;
   overflow: hidden;
 }
@@ -41,6 +60,12 @@ button, input, select {
 
 /* Customer display needs full click interaction — disable drag region */
 body.customer-display-root {
+  -webkit-app-region: no-drag;
+}
+
+body.self-checkout-root {
+  background: var(--sc-canvas);
+  color: var(--sc-ink);
   -webkit-app-region: no-drag;
 }
 
@@ -137,6 +162,127 @@ body.customer-display-root {
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(232, 229, 224, 0.7);
   border-radius: 14px;
+}
+
+.sc-shell {
+  min-height: 100vh;
+  width: 100vw;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 248, 246, 0.9)),
+    var(--sc-canvas);
+  color: var(--sc-ink);
+}
+
+.sc-surface {
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: 24px;
+  box-shadow: 0 18px 50px rgba(32, 36, 33, 0.08);
+}
+
+.sc-surface-flat {
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: 18px;
+}
+
+.sc-action {
+  min-height: 72px;
+  border-radius: 18px;
+  background: var(--sc-primary);
+  color: white;
+  font-weight: 800;
+  transition: background-color 160ms ease, transform 120ms ease, opacity 120ms ease;
+  touch-action: manipulation;
+}
+
+.sc-action:hover {
+  background: var(--sc-primary-hover);
+}
+
+.sc-action:active {
+  transform: scale(0.985);
+}
+
+.sc-action:disabled {
+  background: #c8cec8;
+  box-shadow: none;
+  color: rgba(32, 36, 33, 0.55);
+  cursor: not-allowed;
+}
+
+.sc-action-success {
+  background: var(--sc-success);
+}
+
+.sc-action-success:hover {
+  background: #126c35;
+}
+
+.sc-secondary-action {
+  min-height: 56px;
+  border: 2px solid var(--sc-border);
+  border-radius: 16px;
+  background: var(--sc-surface);
+  color: var(--sc-ink);
+  font-weight: 700;
+  transition: background-color 160ms ease, border-color 160ms ease;
+  touch-action: manipulation;
+}
+
+.sc-secondary-action:hover {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary-soft);
+}
+
+.sc-danger-action {
+  min-height: 56px;
+  border: 2px solid #f2b8b5;
+  border-radius: 16px;
+  background: #fff4f2;
+  color: var(--sc-danger);
+  font-weight: 800;
+}
+
+.sc-language-button {
+  min-height: 52px;
+  min-width: 68px;
+  border: 2px solid var(--sc-border);
+  border-radius: 999px;
+  background: var(--sc-surface);
+  color: var(--sc-muted);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.sc-language-button[data-active="true"] {
+  border-color: var(--sc-primary);
+  background: var(--sc-primary-soft);
+  color: var(--sc-primary-deep);
+}
+
+.sc-focusable:focus-visible,
+.sc-action:focus-visible,
+.sc-secondary-action:focus-visible,
+.sc-danger-action:focus-visible,
+.sc-language-button:focus-visible {
+  outline: 4px solid rgba(218, 119, 86, 0.32);
+  outline-offset: 3px;
+}
+
+.sc-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-action,
+  .sc-secondary-action {
+    transition: none;
+  }
+
+  .sc-action:active {
+    transform: none;
+  }
 }
 
 /* Hide scrollbar for category tabs */

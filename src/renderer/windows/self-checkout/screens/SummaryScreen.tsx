@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ArrowLeft, Hand, ReceiptText, ShoppingBag, Trash2 } from 'lucide-react';
 import { ScLanguage, getScStrings } from '../i18n';
 import { isValidPolishNip, normalizeNip } from '../self-checkout-model';
 import { ScCartItem, formatPLN } from '../useScCart';
@@ -40,52 +41,64 @@ export default function SummaryScreen({
   const validNip = isValidPolishNip(nipValue);
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-slate-50 text-slate-900 select-none">
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+    <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
+      <header className="flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-8 py-4">
         <button
           type="button"
           onClick={onBack}
-          className="rounded-xl border-2 border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 hover:bg-slate-100"
+          className="sc-secondary-action sc-focusable flex items-center gap-3 px-5 text-lg"
         >
-          ← {t.back}
+          <ArrowLeft size={22} />
+          {t.back}
         </button>
         <div className="flex gap-3">
           <button
             type="button"
             onClick={onCallStaff}
-            className="rounded-xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-800 hover:bg-amber-100"
+            className="sc-secondary-action sc-focusable flex items-center gap-2 px-5 text-base text-amber-800"
           >
+            <Hand size={20} />
             {t.callStaff}
           </button>
           <button
             type="button"
             onClick={onAbandon}
-            className="rounded-xl border-2 border-red-200 bg-red-50 px-5 py-3 text-base font-semibold text-red-700 hover:bg-red-100"
+            className="sc-danger-action sc-focusable px-5 text-base"
           >
             {t.abandon}
           </button>
         </div>
-      </div>
+      </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_420px] gap-4 p-4">
-        <section className="min-h-0 rounded-2xl bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-6 py-4 text-2xl font-bold">
-            {t.summaryTitle}
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_430px] gap-5 p-5">
+        <section className="sc-surface min-h-0 overflow-hidden">
+          <div className="flex items-center gap-3 border-b border-[var(--sc-border)] px-6 py-5">
+            <ReceiptText size={30} className="text-[var(--sc-primary-deep)]" />
+            <div>
+              <h1 className="text-3xl font-black text-[var(--sc-ink)]">
+                {t.summaryTitle}
+              </h1>
+              <p className="text-base font-semibold text-[var(--sc-muted)]">
+                {products.length} {t.items}
+              </p>
+            </div>
           </div>
           <div className="max-h-full overflow-y-auto">
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-[var(--sc-border)]">
               {cartItems.map((item) => (
-                <li key={item.variantId + (item.isBagFee ? '-bag' : '')} className="grid grid-cols-[1fr_90px_150px] items-center gap-4 px-6 py-4">
+                <li key={item.variantId + (item.isBagFee ? '-bag' : '')} className="grid grid-cols-[minmax(0,1fr)_90px_170px] items-center gap-4 px-6 py-5">
                   <div className="min-w-0">
-                    <div className="truncate text-xl font-semibold">{item.name}</div>
-                    <div className="mt-1 text-sm text-slate-500">
+                    <div className="text-2xl font-black leading-snug text-[var(--sc-ink)]">
+                      {item.name}
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-[var(--sc-muted)]">
                       {formatPLN(item.price)}{item.sku ? ` · ${item.sku}` : ''}
                     </div>
                   </div>
-                  <div className="text-right text-xl font-semibold tabular-nums">
+                  <div className="sc-tabular text-right text-2xl font-black text-[var(--sc-ink)]">
                     x{item.quantity}
                   </div>
-                  <div className="text-right text-xl font-bold tabular-nums">
+                  <div className="sc-tabular text-right text-2xl font-black text-[var(--sc-ink)]">
                     {formatPLN(item.price * item.quantity)}
                   </div>
                 </li>
@@ -94,20 +107,23 @@ export default function SummaryScreen({
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col rounded-2xl bg-white p-5 shadow-sm">
+        <aside className="sc-surface flex min-h-0 flex-col p-5">
           <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wider text-slate-500">
-                {t.bagQuestion}
+            <section className="sc-surface-flat p-4">
+              <div className="flex items-center gap-3">
+                <ShoppingBag size={26} className="text-[var(--sc-primary-deep)]" />
+                <h2 className="text-xl font-black text-[var(--sc-ink)]">
+                  {t.bagQuestion}
+                </h2>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-4 grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => onSetBagFee(true)}
-                  className={`rounded-xl px-4 py-4 text-lg font-bold ${
+                  className={`sc-focusable min-h-[64px] rounded-2xl px-4 text-xl font-black ${
                     hasBagFee
-                      ? 'bg-emerald-600 text-white'
-                      : 'border-2 border-slate-200 bg-white text-slate-700'
+                      ? 'bg-[var(--sc-success)] text-white'
+                      : 'border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
                   }`}
                 >
                   {t.bagYes}
@@ -115,35 +131,35 @@ export default function SummaryScreen({
                 <button
                   type="button"
                   onClick={() => onSetBagFee(false)}
-                  className={`rounded-xl px-4 py-4 text-lg font-bold ${
+                  className={`sc-focusable min-h-[64px] rounded-2xl px-4 text-xl font-black ${
                     !hasBagFee
-                      ? 'bg-slate-900 text-white'
-                      : 'border-2 border-slate-200 bg-white text-slate-700'
+                      ? 'bg-[var(--sc-ink)] text-white'
+                      : 'border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
                   }`}
                 >
                   {t.bagNo}
                 </button>
               </div>
-              <div className="mt-2 text-sm text-slate-500">
+              <div className="mt-3 text-base font-bold text-[var(--sc-muted)]">
                 {formatPLN(bagFeeGrosze)}
               </div>
-            </div>
+            </section>
 
-            <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+            <section className="sc-surface-flat p-4">
+              <div className="text-sm font-black uppercase tracking-[0.12em] text-[var(--sc-muted)]">
                 {t.nipTitle}
               </div>
-              <div className="mt-3 text-lg font-semibold">
+              <div className="mt-3 min-h-[32px] text-xl font-black text-[var(--sc-ink)]">
                 {customerNip || t.noNip}
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-4 grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => {
                     setNipValue(customerNip ?? '');
                     setNipOpen(true);
                   }}
-                  className="rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-semibold text-slate-700"
+                  className="sc-secondary-action sc-focusable px-3 text-base"
                 >
                   {t.addNipButton}
                 </button>
@@ -151,20 +167,21 @@ export default function SummaryScreen({
                   type="button"
                   onClick={() => onSetNip(null)}
                   disabled={!customerNip}
-                  className="rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-semibold text-slate-700 disabled:opacity-40"
+                  className="sc-secondary-action sc-focusable flex items-center justify-center gap-2 px-3 text-base disabled:cursor-not-allowed disabled:opacity-40"
                 >
+                  <Trash2 size={18} />
                   {t.remove}
                 </button>
               </div>
-            </div>
+            </section>
           </div>
 
-          <div className="mt-auto border-t border-slate-200 pt-5">
-            <div className="mb-4 flex items-baseline justify-between">
-              <span className="text-xl font-semibold text-slate-600">
+          <div className="mt-auto border-t border-[var(--sc-border)] pt-5">
+            <div className="mb-5 flex items-end justify-between gap-4">
+              <span className="text-xl font-black text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="text-4xl font-black tabular-nums">
+              <span className="sc-tabular text-5xl font-black tracking-tight text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </span>
             </div>
@@ -172,13 +189,13 @@ export default function SummaryScreen({
               type="button"
               onClick={onPay}
               disabled={products.length === 0}
-              className="w-full rounded-xl bg-emerald-600 py-5 text-2xl font-bold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-700 disabled:bg-slate-300 disabled:shadow-none"
+              className="sc-action sc-action-success sc-focusable flex w-full items-center justify-center text-2xl"
             >
               {t.pay}
             </button>
           </div>
         </aside>
-      </div>
+      </main>
 
       {nipOpen && (
         <ManualNumpad
