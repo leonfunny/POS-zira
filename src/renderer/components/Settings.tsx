@@ -25,8 +25,8 @@ const defaultPrinterConfig: PrinterConfig = {
   enabled: false,
   protocol: 'THERMAL',
   baudRate: 9600,
-  labelWidth: 100,
-  labelHeight: 50,
+  labelWidth: 50,
+  labelHeight: 30,
   paperWidth: 80,
   charsPerLine: 48,
   supportsCut: true,
@@ -121,8 +121,8 @@ function buildPrinterPayloadFromConfig(config: AgentConfig | null | undefined): 
     printerProtocol: config?.printerProtocol || 'THERMAL',
     printerBaudRate: config?.printerBaudRate || 9600,
     zebraPrinter: config?.zebraPrinter || '',
-    labelWidth: config?.labelWidth || 100,
-    labelHeight: config?.labelHeight || 50,
+    labelWidth: config?.labelWidth || 50,
+    labelHeight: config?.labelHeight || 30,
     printers: {},
     receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
     labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
@@ -311,8 +311,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   // Zebra-specific settings (legacy)
   const [zebraPrinter, setZebraPrinter] = useState(config?.zebraPrinter || '');
-  const [labelWidth, setLabelWidth] = useState(config?.labelWidth || 100);
-  const [labelHeight, setLabelHeight] = useState(config?.labelHeight || 50);
+  const [labelWidth, setLabelWidth] = useState(config?.labelWidth || 50);
+  const [labelHeight, setLabelHeight] = useState(config?.labelHeight || 30);
 
   // AI Settings (local mode with tools)
   const [aiEnabled, setAiEnabled] = useState((config as any)?.aiEnabled ?? false);
@@ -555,8 +555,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         setProtocol(config.printerProtocol || 'THERMAL');
         setBaudRate(config.printerBaudRate || 9600);
         setZebraPrinter(config.zebraPrinter || '');
-        setLabelWidth(config.labelWidth || 100);
-        setLabelHeight(config.labelHeight || 50);
+        setLabelWidth(config.labelWidth || 50);
+        setLabelHeight(config.labelHeight || 30);
         setMultiPrinterMode(deriveMultiPrinterMode(config));
         setPrinters(config.printers || {});
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
@@ -989,8 +989,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
         setBaudRate(updatedConfig?.printerBaudRate || 9600);
         setZebraPrinter(updatedConfig?.zebraPrinter || '');
-        setLabelWidth(updatedConfig?.labelWidth || 100);
-        setLabelHeight(updatedConfig?.labelHeight || 50);
+        setLabelWidth(updatedConfig?.labelWidth || 50);
+        setLabelHeight(updatedConfig?.labelHeight || 30);
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
     } finally {
@@ -1135,8 +1135,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
         setBaudRate(updatedConfig?.printerBaudRate || 9600);
         setZebraPrinter(updatedConfig?.zebraPrinter || '');
-        setLabelWidth(updatedConfig?.labelWidth || 100);
-        setLabelHeight(updatedConfig?.labelHeight || 50);
+        setLabelWidth(updatedConfig?.labelWidth || 50);
+        setLabelHeight(updatedConfig?.labelHeight || 30);
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
     } finally {
@@ -1894,7 +1894,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                     type="number"
                                     value={printerConfig.labelWidth || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: 100 }); }}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: 50 }); }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -1906,7 +1906,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                     type="number"
                                     value={printerConfig.labelHeight || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelHeight: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: 50 }); }}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: 30 }); }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"

@@ -1093,8 +1093,8 @@ export class HardwareModule extends BaseModule {
 
     // Set default label dimensions for label printers
     if (printerType === 'LABEL') {
-      printerConfig.labelWidth = printerConfig.labelWidth || 100;
-      printerConfig.labelHeight = printerConfig.labelHeight || 50;
+      printerConfig.labelWidth = printerConfig.labelWidth || 50;
+      printerConfig.labelHeight = printerConfig.labelHeight || 30;
     }
 
     currentPrinters[printerType as PrinterType] = printerConfig;
