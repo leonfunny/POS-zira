@@ -131,12 +131,28 @@ export class HardwareModule extends BaseModule {
         if (socket?.isConnected()) {
           socket.sendBarcodeScan(barcode);
         }
-        // Notify main + POS windows
+        // Route scanner input to one active sales surface. Broadcasting to
+        // every open checkout can add the same item to POS and kiosk carts.
         const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
-        try { mainWindow?.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch (err: any) { logger.debug('[HardwareModule] send barcode to main window failed:', err?.message); }
         const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
         const posWindow = wm?.getWindow('pos');
-        try { if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode); } catch (err: any) { logger.debug('[HardwareModule] send barcode to POS window failed:', err?.message); }
+        const selfCheckoutWindow = wm?.getWindow('selfCheckout');
+        const candidates = [
+          { label: 'self-checkout', window: selfCheckoutWindow },
+          { label: 'POS', window: posWindow },
+          { label: 'main', window: mainWindow },
+        ].filter((entry): entry is { label: string; window: Electron.BrowserWindow } =>
+          !!entry.window && !entry.window.isDestroyed(),
+        );
+        const focusedWindow = BrowserWindow.getFocusedWindow();
+        const target = candidates.find((entry) => entry.window.id === focusedWindow?.id)
+          || candidates.find((entry) => entry.window.isFocused())
+          || candidates.find((entry) => entry.label === 'main');
+        try {
+          target?.window.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode);
+        } catch (err: any) {
+          logger.debug(`[HardwareModule] send barcode to ${target?.label || 'sales'} window failed:`, err?.message);
+        }
       });
     } catch (err) {
       logger.error('[HardwareModule] Scanner initialization failed (non-fatal):', err);

@@ -16,11 +16,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     products: {
       getByBarcode: (barcode: string) =>
         ipcRenderer.invoke('pos:products:getByBarcode', barcode),
+      getByCategory: (catId: string) =>
+        ipcRenderer.invoke('pos:products:getByCategory', catId),
+    },
+    categories: {
+      getAll: () => ipcRenderer.invoke('pos:categories:getAll'),
     },
     orders: {
       create: (order: any, items: any[]) =>
         ipcRenderer.invoke('pos:orders:create', order, items),
     },
+  },
+  onBarcodeScanned: (callback: (barcode: string) => void) => {
+    const listener = (_event: any, barcode: string) => callback(barcode);
+    ipcRenderer.on('barcode-scanned', listener);
+    return () => ipcRenderer.removeListener('barcode-scanned', listener);
   },
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('set-config', config),
