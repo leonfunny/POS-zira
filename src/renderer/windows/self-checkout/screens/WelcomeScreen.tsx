@@ -1,20 +1,46 @@
-// Idle / welcome screen. Big START button + payment notice + language
-// switcher. Tap START transitions the state machine to 'scan'.
-import React from 'react';
+// Idle / welcome screen. Start button, scan-to-start, payment notice,
+// and language switcher.
+import React, { useEffect, useRef } from 'react';
 import { ScLanguage, SC_LANGUAGES, getScStrings } from '../i18n';
 
 interface WelcomeScreenProps {
   lang: ScLanguage;
   onLangChange: (lang: ScLanguage) => void;
   onStart: () => void;
+  onScanStart: (ean: string) => Promise<void> | void;
 }
 
 export default function WelcomeScreen({
   lang,
   onLangChange,
   onStart,
+  onScanStart,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
+  const scannerBuffer = useRef<string>('');
+  const scannerLastKey = useRef<number>(0);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (now - scannerLastKey.current > 80) {
+        scannerBuffer.current = '';
+      }
+      scannerLastKey.current = now;
+      if (e.key === 'Enter') {
+        const code = scannerBuffer.current.trim();
+        scannerBuffer.current = '';
+        if (code.length >= 4) void onScanStart(code);
+        return;
+      }
+      if (e.key.length === 1 && /[0-9A-Za-z\-_]/.test(e.key)) {
+        scannerBuffer.current += e.key;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onScanStart]);
+
   return (
     <div className="relative flex h-screen w-screen flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-amber-50 text-slate-900 select-none">
       {/* Language switcher — top-right, big touch targets */}

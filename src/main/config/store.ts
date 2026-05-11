@@ -221,6 +221,7 @@ const store = new Store<AgentConfig>({
      * Owner picks an existing user from POS settings.
      */
     selfCheckoutKioskUserId: { type: 'string', default: '' },
+    selfCheckoutMode: { type: 'string', enum: ['demo', 'production'], default: 'demo' },
     selfCheckoutBagFeeAmount: { type: 'number', default: 0.2 },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },

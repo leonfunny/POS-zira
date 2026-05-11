@@ -4,11 +4,12 @@
 import { useCallback, useState } from 'react';
 
 export type ScScreen =
+  | 'unavailable'
   | 'welcome'
-  | 'scan'
-  | 'nip'
-  | 'bag'
+  | 'shopping'
+  | 'summary'
   | 'payment'
+  | 'receipt'
   | 'thankyou';
 
 export interface ScreenStateApi {

@@ -61,14 +61,35 @@ export function useScCart() {
 
   const add = useCallback((item: Omit<ScCartItem, 'quantity'>) => {
     setCart((prev) => {
-      const idx = prev.items.findIndex(
-        (i) => i.variantId === item.variantId && !i.isBagFee,
+      const idx = prev.items.findIndex((i) =>
+        item.isBagFee
+          ? i.variantId === item.variantId && i.isBagFee
+          : i.variantId === item.variantId && !i.isBagFee,
       );
       const items = [...prev.items];
       if (idx >= 0) {
-        items[idx] = { ...items[idx], quantity: items[idx].quantity + 1 };
+        items[idx] = item.isBagFee
+          ? { ...items[idx], ...item, quantity: 1 }
+          : { ...items[idx], quantity: items[idx].quantity + 1 };
       } else {
         items.push({ ...item, quantity: 1 });
+      }
+      return { ...recalc(items), customerNip: prev.customerNip };
+    });
+  }, []);
+
+  const setBagFee = useCallback((enabled: boolean, price: number) => {
+    setCart((prev) => {
+      const items = prev.items.filter((i) => !i.isBagFee);
+      if (enabled && price > 0) {
+        items.push({
+          variantId: '__bag-fee__',
+          name: 'Torba foliowa',
+          sku: 'BAG',
+          price,
+          quantity: 1,
+          isBagFee: true,
+        });
       }
       return { ...recalc(items), customerNip: prev.customerNip };
     });
@@ -104,7 +125,7 @@ export function useScCart() {
     }
   }, []);
 
-  return { cart, add, setQuantity, remove, setNip, clear };
+  return { cart, add, setQuantity, remove, setNip, setBagFee, clear };
 }
 
 export function formatPLN(grosze: number): string {

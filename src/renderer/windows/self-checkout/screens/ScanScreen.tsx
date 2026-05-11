@@ -12,7 +12,7 @@ interface ScanScreenProps {
   lang: ScLanguage;
   cartItems: ScCartItem[];
   totalGrosze: number;
-  onScan: (ean: string) => Promise<void> | void;
+  onScan: (ean: string) => Promise<unknown> | unknown;
   onIncrement: (variantId: string) => void;
   onDecrement: (variantId: string) => void;
   onRemove: (variantId: string) => void;

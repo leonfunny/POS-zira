@@ -9,7 +9,7 @@ interface HelpLockedOverlayProps {
   lang: ScLanguage;
   acknowledged: boolean;
   reason: string;
-  onCancel: () => void;
+  onCancel?: () => void;
 }
 
 export default function HelpLockedOverlay({
@@ -31,13 +31,15 @@ export default function HelpLockedOverlay({
           ? 'Pracownik jest w drodze do kasy.'
           : 'Czekamy na pracownika…'}
       </p>
-      <button
-        type="button"
-        onClick={onCancel}
-        className="rounded-xl border-2 border-amber-300 bg-white px-6 py-3 text-base font-semibold text-amber-800 hover:bg-amber-100"
-      >
-        {t.cancel}
-      </button>
+      {onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border-2 border-amber-300 bg-white px-6 py-3 text-base font-semibold text-amber-800 hover:bg-amber-100"
+        >
+          {t.cancel}
+        </button>
+      )}
     </div>
   );
 }

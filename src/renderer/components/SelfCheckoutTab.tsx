@@ -1,6 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { ScanBarcode, Maximize, Languages, Coins, Monitor, Clock } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Coins,
+  Languages,
+  Maximize,
+  Monitor,
+  ScanBarcode,
+  XCircle,
+} from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
+import {
+  SelfCheckoutMode,
+  resolveSelfCheckoutRuntime,
+} from '../windows/self-checkout/self-checkout-model';
 import rlog from '../utils/logger';
 
 type ScLang = 'pl' | 'en' | 'vi';
@@ -9,6 +23,7 @@ export default function SelfCheckoutTab() {
   const { config, saveConfig } = useConfig();
 
   const [language, setLanguage] = useState<ScLang>('pl');
+  const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [bagFee, setBagFee] = useState<number>(0.20);
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
@@ -20,6 +35,7 @@ export default function SelfCheckoutTab() {
     if (!config) return;
     const c = config as any;
     setLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
+    setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
     setBagFee(typeof c.selfCheckoutBagFeeAmount === 'number' ? c.selfCheckoutBagFeeAmount : 0.20);
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
@@ -28,11 +44,20 @@ export default function SelfCheckoutTab() {
   useEffect(() => {
     (async () => {
       try {
-        const list = await (window.electronAPI as any).getDisplays?.();
+        const api = window.electronAPI as any;
+        const list = await (api.display?.list?.() ?? api.getDisplays?.());
         if (Array.isArray(list)) setDisplays(list);
-      } catch { /* getDisplays may not exist in older builds */ }
+      } catch {
+        /* display listing may not exist in older builds */
+      }
     })();
   }, []);
+
+  const runtime = useMemo(
+    () => resolveSelfCheckoutRuntime({ selfCheckoutMode: mode }),
+    [mode],
+  );
+  const isProductionBlocked = runtime.unavailableReasons.length > 0;
 
   const persist = async (patch: Record<string, any>) => {
     try {
@@ -48,6 +73,7 @@ export default function SelfCheckoutTab() {
     try {
       await persist({
         selfCheckoutEnabled: true,
+        selfCheckoutMode: mode,
         selfCheckoutLanguage: language,
         selfCheckoutBagFeeAmount: bagFee,
         selfCheckoutMonitor: monitor,
@@ -69,7 +95,7 @@ export default function SelfCheckoutTab() {
   const justSaved = savedAt && Date.now() - savedAt < 2000;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -77,8 +103,38 @@ export default function SelfCheckoutTab() {
             Self-Checkout Kiosk
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Customer-driven checkout terminal. Opens in a separate fullscreen window.
+            Customer-operated kiosk. Demo is usable; production is blocked until payment, order, and fiscal paths are real.
           </p>
+        </div>
+      </div>
+
+      <div className="panel p-5">
+        <div className="flex items-start gap-3">
+          {isProductionBlocked ? (
+            <AlertTriangle size={22} className="mt-0.5 text-amber-600" />
+          ) : (
+            <CheckCircle2 size={22} className="mt-0.5 text-emerald-600" />
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold text-slate-800">
+              {mode === 'demo' ? 'Demo mode is available' : 'Production mode is blocked'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {mode === 'demo'
+                ? 'Demo can scan products and walk through summary/payment/receipt states, but it does not create a real sale.'
+                : 'The kiosk will open only into a closed/unavailable state until these blockers are removed.'}
+            </p>
+            {isProductionBlocked && (
+              <div className="mt-4 grid gap-2">
+                {runtime.unavailableReasons.map((reason) => (
+                  <div key={reason} className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <XCircle size={16} />
+                    {reason}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -90,13 +146,36 @@ export default function SelfCheckoutTab() {
           className="w-full px-6 py-4 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-base font-semibold transition-colors flex items-center justify-center gap-3 shadow-sm"
         >
           <Maximize size={20} />
-          {opening ? 'Opening kiosk…' : 'Launch Self-Checkout window'}
+          {opening
+            ? 'Opening kiosk...'
+            : mode === 'demo'
+              ? 'Open demo self-checkout'
+              : 'Open closed production kiosk'}
         </button>
         <p className="text-xs text-slate-500 text-center -mt-3">
           Settings below auto-save and apply on next launch.
         </p>
 
         <div className="border-t border-slate-200" />
+
+        <div>
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
+            <AlertTriangle size={16} className="text-slate-500" />
+            Runtime mode
+          </label>
+          <select
+            value={mode}
+            onChange={(e) => {
+              const v = e.target.value === 'production' ? 'production' : 'demo';
+              setMode(v);
+              persist({ selfCheckoutMode: v });
+            }}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+          >
+            <option value="demo">Demo only - mocked payment, no real order</option>
+            <option value="production">Production - fail closed until integrations are ready</option>
+          </select>
+        </div>
 
         <div>
           <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
@@ -117,7 +196,7 @@ export default function SelfCheckoutTab() {
             <option value="vi">Tiếng Việt (VI)</option>
           </select>
           <p className="text-xs text-slate-500 mt-1">
-            Customer can switch language from the welcome screen at any time.
+            Customer language changes are session-only; this value is only the launch default.
           </p>
         </div>
 
@@ -139,7 +218,7 @@ export default function SelfCheckoutTab() {
             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
           />
           <p className="text-xs text-slate-500 mt-1">
-            Polish law: ≥ 0.20 PLN per single-use plastic bag. Added to cart on bag = Yes.
+            This is added as a separate cart line only when the customer chooses a bag in summary.
           </p>
         </div>
 
@@ -161,7 +240,7 @@ export default function SelfCheckoutTab() {
               displays.map((d) => (
                 <option key={d.index} value={d.index}>
                   {d.isPrimary ? 'Primary' : `Secondary ${d.index}`}
-                  {' '}&mdash; {d.width}x{d.height}
+                  {' - '}{d.width}x{d.height}
                   {d.label && d.label !== `Display ${d.index + 1}` ? ` (${d.label})` : ''}
                 </option>
               ))
@@ -198,21 +277,13 @@ export default function SelfCheckoutTab() {
             <option value={300000}>5 min</option>
           </select>
           <p className="text-xs text-slate-500 mt-1">
-            Cart auto-resets and screen returns to welcome after this delay with no input.
+            Cart auto-resets after this delay with no touch, keyboard, or scanner input.
           </p>
         </div>
 
         {justSaved && (
-          <div className="text-xs text-emerald-600 text-center">Saved ✓</div>
+          <div className="text-xs text-emerald-600 text-center">Saved</div>
         )}
-      </div>
-
-      <div className="panel p-4 bg-amber-50 border border-amber-200">
-        <p className="text-xs text-amber-800">
-          <strong>MVP limitations</strong> — Card/BLIK payment is mocked (auto-success), POSNET fiscal print
-          is not yet wired, and order creation is stubbed for testing. Do not use on production
-          until card terminal SDK and fiscal printer are integrated.
-        </p>
       </div>
     </div>
   );

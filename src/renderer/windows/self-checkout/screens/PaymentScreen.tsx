@@ -1,9 +1,8 @@
-// Payment screen. MOCK terminal — real card / BLIK SDK is deferred
-// until hardware lands. The flow itself is real: customer picks BLIK
-// or Card, the screen shows a "waiting for terminal" spinner for
-// ~1500 ms, then resolves success and triggers order create + receipt.
+// Payment screen. Demo mode may auto-approve; production mode is fail-closed
+// until a real payment terminal SDK owns the payment state transition.
 import React, { useEffect, useState } from 'react';
 import { ScLanguage, getScStrings } from '../i18n';
+import type { SelfCheckoutMode } from '../self-checkout-model';
 import { formatPLN } from '../useScCart';
 import { ManualNumpad } from './ScanScreen';
 
@@ -11,6 +10,7 @@ export type PaymentMethod = 'BLIK' | 'CARD';
 
 interface PaymentScreenProps {
   lang: ScLanguage;
+  mode: SelfCheckoutMode;
   totalGrosze: number;
   onSuccess: (method: PaymentMethod) => void;
   onCancel: () => void;
@@ -18,6 +18,7 @@ interface PaymentScreenProps {
 
 export default function PaymentScreen({
   lang,
+  mode,
   totalGrosze,
   onSuccess,
   onCancel,
@@ -27,20 +28,46 @@ export default function PaymentScreen({
   const [blikCode, setBlikCode] = useState('');
   const [processing, setProcessing] = useState(false);
 
-  // Card flow auto-resolves after a short delay; BLIK waits for code.
   useEffect(() => {
-    if (method !== 'CARD' || !processing) return;
-    const t = setTimeout(() => {
+    if (mode !== 'demo' || method !== 'CARD' || !processing) return;
+    const id = window.setTimeout(() => {
       onSuccess('CARD');
     }, 1500);
-    return () => clearTimeout(t);
-  }, [method, processing, onSuccess]);
+    return () => window.clearTimeout(id);
+  }, [method, mode, processing, onSuccess]);
 
   const submitBlik = () => {
     if (blikCode.length !== 6) return;
     setProcessing(true);
-    setTimeout(() => onSuccess('BLIK'), 1200);
+    if (mode === 'demo') {
+      window.setTimeout(() => onSuccess('BLIK'), 1200);
+    }
   };
+
+  if (mode === 'production') {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-50 px-8 text-center select-none">
+        <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-10 shadow-sm">
+          <div className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+            {t.productionMode}
+          </div>
+          <h2 className="mt-4 text-4xl font-black text-slate-900">
+            {t.closedTitle}
+          </h2>
+          <p className="mt-5 text-xl text-slate-600">
+            {t.receiptProductionBlocked}
+          </p>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mt-8 rounded-xl border-2 border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            ← {t.back}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!method) {
     return (
@@ -48,6 +75,9 @@ export default function PaymentScreen({
         <h2 className="mb-3 text-3xl font-bold text-slate-600">
           {t.paymentTitle}
         </h2>
+        <div className="mb-4 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold uppercase tracking-wider text-amber-800">
+          {t.demoMode}
+        </div>
         <p className="mb-12 text-6xl font-black tabular-nums">
           {formatPLN(totalGrosze)}
         </p>
@@ -57,7 +87,7 @@ export default function PaymentScreen({
             onClick={() => setMethod('BLIK')}
             className="rounded-3xl bg-violet-600 px-6 py-12 text-4xl font-extrabold text-white shadow-xl shadow-violet-600/30 hover:bg-violet-700"
           >
-            <div className="mb-2 text-6xl">📱</div>
+            <div className="mb-2 text-6xl">BLIK</div>
             {t.blik}
           </button>
           <button
@@ -68,7 +98,7 @@ export default function PaymentScreen({
             }}
             className="rounded-3xl bg-blue-600 px-6 py-12 text-4xl font-extrabold text-white shadow-xl shadow-blue-600/30 hover:bg-blue-700"
           >
-            <div className="mb-2 text-6xl">💳</div>
+            <div className="mb-2 text-6xl">CARD</div>
             {t.card}
           </button>
         </div>
@@ -86,19 +116,18 @@ export default function PaymentScreen({
   if (method === 'CARD') {
     return (
       <div className="flex h-screen w-screen flex-col items-center justify-center bg-blue-50 px-8 select-none">
-        <div className="mb-6 text-9xl animate-pulse">💳</div>
+        <div className="mb-6 text-7xl font-black animate-pulse">CARD</div>
         <p className="mb-2 text-3xl font-bold">
           {processing ? '...' : t.card}
         </p>
         <p className="mb-8 text-xl text-slate-500">
-          (mock terminal — auto-success in 1.5s)
+          {t.demoMode} - auto-success in 1.5s
         </p>
         <p className="text-5xl font-black tabular-nums">{formatPLN(totalGrosze)}</p>
       </div>
     );
   }
 
-  // BLIK
   return (
     <div className="flex h-screen w-screen flex-col items-center justify-center bg-violet-50 px-8 select-none">
       <h2 className="mb-2 text-3xl font-bold">{t.blik}</h2>
@@ -117,7 +146,7 @@ export default function PaymentScreen({
         maxLength={6}
       />
       {processing && (
-        <p className="mt-4 text-lg text-violet-600">⏳ {t.paymentSuccess}...</p>
+        <p className="mt-4 text-lg text-violet-600">{t.paymentSuccess}...</p>
       )}
     </div>
   );

@@ -381,6 +381,7 @@ export interface AgentConfig {
   selfCheckoutMonitor?: number;
   selfCheckoutTerminalId?: string;       // Stable ID generated on first launch
   selfCheckoutKioskUserId?: string;      // Dedicated staff user for kiosk sales
+  selfCheckoutMode?: 'demo' | 'production'; // Demo allows mocked terminal/fiscal flow; production must pass readiness gates.
   selfCheckoutBagFeeAmount?: number;     // Bag fee in PLN (default 0.20)
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle

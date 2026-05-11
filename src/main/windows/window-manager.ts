@@ -235,6 +235,7 @@ export class WindowManager {
     const displays = screen.getAllDisplays();
     const primaryDisplay = screen.getPrimaryDisplay();
     const isCustomer = id === 'customer';
+    const isSelfCheckout = id === 'selfCheckout';
     const customerBehavior = isCustomer
       ? this.resolveCustomerDisplayBehavior(displays, primaryDisplay, true)
       : null;
@@ -243,6 +244,9 @@ export class WindowManager {
     let targetDisplay = primaryDisplay;
     if (customerBehavior) {
       targetDisplay = customerBehavior.targetDisplay;
+    } else if (isSelfCheckout) {
+      const requestedDisplay = Number(getConfigValue('selfCheckoutMonitor') ?? 0);
+      targetDisplay = displays[requestedDisplay] || primaryDisplay;
     } else if (config.targetDisplay === 'secondary' && displays.length > 1) {
       targetDisplay = displays.find((d) => d.id !== primaryDisplay.id) || primaryDisplay;
     }
