@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isValidPolishNip,
   resolveSelfCheckoutMode,
   resolveSelfCheckoutRuntime,
 } from '../src/renderer/windows/self-checkout/self-checkout-model';
@@ -23,9 +22,4 @@ describe('self-checkout runtime model', () => {
     ]);
   });
 
-  it('validates Polish NIP with checksum, not just length', () => {
-    expect(isValidPolishNip('526-025-02-74')).toBe(true);
-    expect(isValidPolishNip('1234567890')).toBe(false);
-    expect(isValidPolishNip('526025027')).toBe(false);
-  });
 });

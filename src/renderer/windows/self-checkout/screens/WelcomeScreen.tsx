@@ -141,7 +141,7 @@ export default function WelcomeScreen({
               <ShoppingBasket size={24} />
               {t.welcomeTitle}
             </div>
-            <h1 className="max-w-4xl text-6xl font-black leading-[1.03] tracking-tight text-[var(--sc-ink)]">
+            <h1 className="max-w-4xl text-6xl font-black leading-[1.03] text-[var(--sc-ink)]">
               {t.startButton}
             </h1>
             <p className="mt-6 max-w-2xl text-3xl font-semibold leading-snug text-[var(--sc-muted)]">

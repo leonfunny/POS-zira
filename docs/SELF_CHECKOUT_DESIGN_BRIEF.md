@@ -101,7 +101,7 @@ Recommended palette:
 | `--sc-primary-soft` | `#FBE8DF` | Subtle brand background, never as full-page wash. |
 | `--sc-success` | `#15803D` | Open, paid, ready, item added. |
 | `--sc-info` | `#2563EB` | Scanner/terminal guidance, not primary CTA. |
-| `--sc-warning` | `#B7791F` | Demo mode, bag/faktura attention, retry warnings. |
+| `--sc-warning` | `#B7791F` | Demo mode, bag option, retry warnings. |
 | `--sc-danger` | `#B42318` | Closed, error, staff lock, payment failure. |
 
 Rules:
@@ -175,7 +175,7 @@ Purpose:
 - scan products
 - recover via category buttons if scanning fails
 - review basket
-- choose bag/faktura options
+- choose bag option
 - pay
 - show fiscal/receipt progress
 - thank the customer and reset
@@ -212,7 +212,7 @@ The customer kiosk should keep this exact high-level state model:
    - Primary CTA: go to summary.
 
 4. `summary`
-   - Review basket, quantity, price, bag option, NIP/faktura option.
+   - Review basket, quantity, price, and bag option.
    - Customer confirms before payment.
    - This is where mistakes are corrected.
 
@@ -301,10 +301,10 @@ The cart should not be a tiny POS table. It needs:
 Recommended structure:
 - left: cart review
 - right: transaction options and total due
-- options: bag, NIP/faktura, language still visible
+- options: bag, language still visible
 - actions: back to shopping, pay
 
-Do not bury bag/faktura in separate mandatory steps. They are checkout options, not full screens.
+Do not bury the bag option in a separate mandatory step. It is a checkout option, not a full screen.
 
 ### Payment
 
@@ -428,7 +428,7 @@ Ship V1 as pure checkout, no promo/media.
 Use:
 - PL and EN visible on kiosk; VI can remain supported if already useful for internal testing.
 - Card and BLIK visible only in demo mode until real terminal integration exists.
-- NIP/faktura as optional summary control, not a mandatory step.
+- NIP/faktura is staff-only for V1; do not ask self-checkout customers for NIP.
 - Bag fee as one summary option, not a separate screen.
 - Production mode fail-closed until payment, fiscal, and order creation are real.
 
@@ -441,10 +441,9 @@ These should be decided before visual implementation:
 1. Should version 1 be pure checkout with no promotions? Recommendation: yes.
 2. Which customer languages are required for launch: PL/EN only, or PL/EN/VI?
 3. Is BLIK a launch requirement or later terminal integration?
-4. Should NIP/faktura be available to self-checkout customers, or staff-only?
-5. What hardware status can the app actually know: printer, terminal, scale, scanner, cash drawer?
-6. Should staff help pause the entire kiosk or only block payment? Recommendation: pause/lock the kiosk.
-7. What is the production reset policy after failed payment?
+4. What hardware status can the app actually know: printer, terminal, scale, scanner, cash drawer?
+5. Should staff help pause the entire kiosk or only block payment? Recommendation: pause/lock the kiosk.
+6. What is the production reset policy after failed payment?
 
 ## 16. Redesign Checklist
 
@@ -453,7 +452,6 @@ Before touching UI implementation:
 - confirm palette tokens above
 - confirm no promo/media for V1
 - confirm which payment methods are real vs demo
-- confirm whether faktura/NIP stays in kiosk
 - sketch operator tab and customer kiosk separately
 
 Implementation order:

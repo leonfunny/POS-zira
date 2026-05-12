@@ -24,7 +24,7 @@ export default function HelpLockedOverlay({
       <div className="flex h-32 w-32 items-center justify-center rounded-[34px] bg-amber-100 text-amber-800">
         {acknowledged ? <UserRoundCheck size={72} /> : <Hand size={72} />}
       </div>
-      <h1 className="mt-8 max-w-4xl text-6xl font-black tracking-tight text-amber-950">
+      <h1 className="mt-8 max-w-4xl text-6xl font-black text-amber-950">
         {acknowledged ? t.staffComingTitle : t.staffCalledTitle}
       </h1>
       <p className="mt-5 text-2xl font-bold text-amber-800">{reasonLabel}</p>

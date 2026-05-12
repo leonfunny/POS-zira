@@ -27,7 +27,7 @@ export default function ThankYouScreen({
         <div className="mx-auto flex h-36 w-36 items-center justify-center rounded-[40px] bg-emerald-50 text-[var(--sc-success)]">
           <CheckCircle2 size={92} />
         </div>
-        <h1 className="mt-9 text-7xl font-black tracking-tight text-emerald-800">
+        <h1 className="mt-9 text-7xl font-black text-emerald-800">
           {t.thankYouTitle}
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">

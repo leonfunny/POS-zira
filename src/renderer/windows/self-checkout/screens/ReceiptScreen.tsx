@@ -37,7 +37,7 @@ export default function ReceiptScreen({
         <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
           {mode === 'demo' ? t.demoMode : t.productionMode}
         </div>
-        <h1 className="mt-7 text-6xl font-black tracking-tight">
+        <h1 className="mt-7 text-6xl font-black">
           {t.receiptTitle}
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">

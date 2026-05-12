@@ -230,20 +230,20 @@ export default function ScanScreen({
 
       <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_430px] gap-5 p-5">
         <section className="flex min-h-0 flex-col gap-5">
-          <div className="sc-surface flex min-h-[330px] flex-1 flex-col justify-center p-8">
-            <div className="flex items-center gap-8">
-              <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-[34px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]">
-                <ScanBarcode size={82} />
+          <div className="sc-surface flex min-h-[330px] flex-1 flex-col justify-center p-6 xl:p-8">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:gap-8">
+              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[24px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)] xl:h-32 xl:w-32 xl:rounded-[34px]">
+                <ScanBarcode className="h-16 w-16 xl:h-[82px] xl:w-[82px]" />
               </div>
-              <div className="min-w-0">
-                <h1 className="text-6xl font-black tracking-tight text-[var(--sc-ink)]">
+              <div className="min-w-0 w-full xl:w-auto">
+                <h1 className="text-5xl font-black text-[var(--sc-ink)] xl:text-6xl">
                   {t.scanPrompt}
                 </h1>
-                <p className="mt-4 text-2xl font-semibold leading-9 text-[var(--sc-muted)]">
+                <p className="mt-4 text-xl font-semibold leading-8 text-[var(--sc-muted)] xl:text-2xl xl:leading-9">
                   {t.scanHint}
                 </p>
-                <div className="mt-7 inline-flex items-center gap-4 rounded-3xl border-2 border-[var(--sc-border)] bg-white p-3">
-                  <div className="px-3">
+                <div className="mt-6 flex w-full max-w-[560px] flex-wrap items-center gap-3 rounded-3xl border-2 border-[var(--sc-border)] bg-white p-3 xl:mt-7 xl:inline-flex xl:w-auto xl:max-w-none xl:flex-nowrap xl:gap-4">
+                  <div className="min-w-[160px] flex-1 px-3 xl:flex-none">
                     <div className="text-base font-black text-[var(--sc-ink)]">
                       {t.scanQuantity}
                     </div>
@@ -255,19 +255,19 @@ export default function ScanScreen({
                     type="button"
                     onClick={() => onScanQuantityChange(scanQuantity - 1)}
                     disabled={scanQuantity <= 1}
-                    className="sc-focusable flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35"
+                    className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35 xl:h-16 xl:w-16"
                     aria-label="-"
                   >
                     <Minus size={28} />
                   </button>
-                  <div className="sc-tabular flex h-16 min-w-[88px] items-center justify-center rounded-2xl bg-[var(--sc-primary-soft)] px-5 text-4xl font-black text-[var(--sc-primary-deep)]">
+                  <div className="sc-tabular flex h-14 min-w-[76px] items-center justify-center rounded-2xl bg-[var(--sc-primary-soft)] px-5 text-3xl font-black text-[var(--sc-primary-deep)] xl:h-16 xl:min-w-[88px] xl:text-4xl">
                     {scanQuantity}
                   </div>
                   <button
                     type="button"
                     onClick={() => onScanQuantityChange(scanQuantity + 1)}
                     disabled={scanQuantity >= 99}
-                    className="sc-focusable flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35"
+                    className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)] disabled:opacity-35 xl:h-16 xl:w-16"
                     aria-label="+"
                   >
                     <Plus size={28} />
@@ -405,7 +405,7 @@ export default function ScanScreen({
               <span className="text-xl font-black text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="sc-tabular text-5xl font-black tracking-tight text-[var(--sc-ink)]">
+              <span className="sc-tabular text-5xl font-black text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </span>
             </div>
@@ -437,7 +437,6 @@ export default function ScanScreen({
     </div>
   );
 }
-
 interface CategoryBrowserProps {
   title: string;
   t: ReturnType<typeof getScStrings>;
@@ -517,72 +516,6 @@ function CategoryBrowser({
           )}
         </div>
       </section>
-    </div>
-  );
-}
-
-interface ManualNumpadProps {
-  title: string;
-  value: string;
-  onChange: (next: string) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-  okLabel: string;
-  cancelLabel: string;
-  maxLength?: number;
-}
-
-export function ManualNumpad({
-  title,
-  value,
-  onChange,
-  onCancel,
-  onSubmit,
-  okLabel,
-  cancelLabel,
-  maxLength = 14,
-}: ManualNumpadProps) {
-  const press = (k: string) => {
-    if (k === '<') onChange(value.slice(0, -1));
-    else if (value.length < maxLength) onChange(value + k);
-  };
-  const keys = ['1','2','3','4','5','6','7','8','9','<','0','OK'];
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-6">
-      <div className="sc-surface w-[440px] p-6">
-        {title && (
-          <h3 className="mb-4 text-center text-3xl font-black text-[var(--sc-ink)]">
-            {title}
-          </h3>
-        )}
-        <div className="sc-tabular mb-4 h-20 rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-4 text-center text-4xl font-black leading-[76px] tracking-widest text-[var(--sc-ink)]">
-          {value || <span className="text-[var(--sc-muted)]">-</span>}
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          {keys.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => (k === 'OK' ? onSubmit() : press(k))}
-              className={`sc-focusable h-20 rounded-2xl text-2xl font-black transition-colors ${
-                k === 'OK'
-                  ? 'bg-[var(--sc-success)] text-white hover:bg-emerald-800'
-                  : 'border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] hover:bg-[var(--sc-surface-muted)]'
-              }`}
-              aria-label={k}
-            >
-              {k === '<' ? 'Del' : k === 'OK' ? okLabel : k}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="sc-secondary-action sc-focusable mt-4 w-full text-lg"
-        >
-          {cancelLabel}
-        </button>
-      </div>
     </div>
   );
 }

@@ -406,11 +406,9 @@ export default function SelfCheckoutApp() {
           lang={lang}
           cartItems={cart.cart.items}
           totalGrosze={cart.cart.totalGrosze}
-          customerNip={cart.cart.customerNip}
           bagFeeGrosze={bagFeeGrosze}
           hasBagFee={hasBagFee}
           onSetBagFee={(enabled) => cart.setBagFee(enabled, bagFeeGrosze)}
-          onSetNip={(nip) => cart.setNip(nip)}
           onBack={() => goTo('shopping')}
           onPay={() => goTo('payment')}
           onCallStaff={() => callStaff('OTHER')}

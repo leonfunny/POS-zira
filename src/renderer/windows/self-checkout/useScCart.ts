@@ -22,15 +22,14 @@ export interface ScCartItem {
 export interface ScCart {
   items: ScCartItem[];
   totalGrosze: number;
-  customerNip: string | null;
 }
 
-const EMPTY: ScCart = { items: [], totalGrosze: 0, customerNip: null };
+const EMPTY: ScCart = { items: [], totalGrosze: 0 };
 const STORAGE_KEY = 'self-checkout:cart';
 
 function recalc(items: ScCartItem[]): ScCart {
   const totalGrosze = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
-  return { items, totalGrosze, customerNip: null };
+  return { items, totalGrosze };
 }
 
 export function useScCart() {
@@ -43,7 +42,7 @@ export function useScCart() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as ScCart;
       if (Array.isArray(parsed?.items) && parsed.items.length > 0) {
-        setCart(parsed);
+        setCart(recalc(parsed.items));
       }
     } catch {
       /* ignore corrupt cache */
@@ -75,7 +74,7 @@ export function useScCart() {
       } else {
         items.push({ ...item, quantity: item.isBagFee ? 1 : safeQuantity });
       }
-      return { ...recalc(items), customerNip: prev.customerNip };
+      return recalc(items);
     });
   }, []);
 
@@ -92,7 +91,7 @@ export function useScCart() {
           isBagFee: true,
         });
       }
-      return { ...recalc(items), customerNip: prev.customerNip };
+      return recalc(items);
     });
   }, []);
 
@@ -102,19 +101,15 @@ export function useScCart() {
         i.variantId === variantId ? { ...i, quantity: Math.max(0, quantity) } : i,
       );
       items = items.filter((i) => i.quantity > 0);
-      return { ...recalc(items), customerNip: prev.customerNip };
+      return recalc(items);
     });
   }, []);
 
   const remove = useCallback((variantId: string) => {
     setCart((prev) => {
       const items = prev.items.filter((i) => i.variantId !== variantId);
-      return { ...recalc(items), customerNip: prev.customerNip };
+      return recalc(items);
     });
-  }, []);
-
-  const setNip = useCallback((nip: string | null) => {
-    setCart((prev) => ({ ...prev, customerNip: nip || null }));
   }, []);
 
   const clear = useCallback(() => {
@@ -126,7 +121,7 @@ export function useScCart() {
     }
   }, []);
 
-  return { cart, add, setQuantity, remove, setNip, setBagFee, clear };
+  return { cart, add, setQuantity, remove, setBagFee, clear };
 }
 
 export function formatPLN(grosze: number): string {

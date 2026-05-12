@@ -51,7 +51,7 @@ export default function UnavailableScreen({
             <AlertTriangle size={24} />
             {t.productionMode}
           </div>
-          <h1 className="mt-6 text-6xl font-black tracking-tight text-[var(--sc-ink)]">
+          <h1 className="mt-6 text-6xl font-black text-[var(--sc-ink)]">
             {t.closedTitle}
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">

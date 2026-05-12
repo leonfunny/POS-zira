@@ -46,12 +46,6 @@ interface ScStrings {
   bagQuestion: string;
   bagYes: string;
   bagNo: string;
-  // NIP
-  addNipButton: string;
-  nipTitle: string;
-  nipPlaceholder: string;
-  noNip: string;
-  nipInvalid: string;
   // Summary / receipt
   summaryTitle: string;
   receiptTitle: string;
@@ -112,11 +106,6 @@ const PL: ScStrings = {
   bagQuestion: 'Czy potrzebujesz torby?',
   bagYes: 'Tak (+0,20 zł)',
   bagNo: 'Nie, dziękuję',
-  addNipButton: 'Dodaj NIP',
-  nipTitle: 'NIP do faktury',
-  nipPlaceholder: '0000000000',
-  noNip: 'Bez NIP',
-  nipInvalid: 'Nieprawidłowy NIP',
   summaryTitle: 'Podsumowanie zakupów',
   receiptTitle: 'Finalizacja sprzedaży',
   receiptDemoBody: 'Demo: płatność, zamówienie i wydruk fiskalny są pominięte.',
@@ -174,11 +163,6 @@ const EN: ScStrings = {
   bagQuestion: 'Do you need a bag?',
   bagYes: 'Yes (+0.20 zł)',
   bagNo: 'No, thanks',
-  addNipButton: 'Add NIP',
-  nipTitle: 'NIP for invoice',
-  nipPlaceholder: '0000000000',
-  noNip: 'No NIP',
-  nipInvalid: 'Invalid NIP',
   summaryTitle: 'Shopping summary',
   receiptTitle: 'Finalizing sale',
   receiptDemoBody: 'Demo: payment, order creation, and fiscal print are skipped.',
@@ -236,11 +220,6 @@ const VI: ScStrings = {
   bagQuestion: 'Bạn có cần túi không?',
   bagYes: 'Có (+0,20 zł)',
   bagNo: 'Không, cảm ơn',
-  addNipButton: 'Thêm NIP',
-  nipTitle: 'NIP cho hóa đơn',
-  nipPlaceholder: '0000000000',
-  noNip: 'Không có NIP',
-  nipInvalid: 'NIP không hợp lệ',
   summaryTitle: 'Tóm tắt giỏ hàng',
   receiptTitle: 'Hoàn tất giao dịch',
   receiptDemoBody: 'Demo: thanh toán, tạo đơn và in fiskal được bỏ qua.',

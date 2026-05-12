@@ -57,7 +57,7 @@ export default function PaymentScreen({
           <div className="mt-8 text-sm font-black uppercase tracking-[0.16em] text-[var(--sc-danger)]">
             {t.productionMode}
           </div>
-          <h2 className="mt-4 text-5xl font-black tracking-tight text-[var(--sc-ink)]">
+          <h2 className="mt-4 text-5xl font-black text-[var(--sc-ink)]">
             {t.closedTitle}
           </h2>
           <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
@@ -114,7 +114,7 @@ export default function PaymentScreen({
             <div className="flex h-28 w-28 items-center justify-center rounded-[32px] bg-violet-50 text-violet-700">
               <Smartphone size={72} />
             </div>
-            <h1 className="mt-8 text-6xl font-black tracking-tight text-[var(--sc-ink)]">
+            <h1 className="mt-8 text-6xl font-black text-[var(--sc-ink)]">
               {t.blik}
             </h1>
             <p className="mt-4 text-3xl font-black text-[var(--sc-muted)]">
@@ -161,10 +161,10 @@ export default function PaymentScreen({
 
       <main className="flex flex-1 items-center justify-center px-8 pb-10">
         <section className="w-full max-w-5xl text-center">
-          <h1 className="text-5xl font-black tracking-tight text-[var(--sc-ink)]">
+          <h1 className="text-5xl font-black text-[var(--sc-ink)]">
             {t.paymentTitle}
           </h1>
-          <div className="sc-tabular mt-7 text-7xl font-black tracking-tight text-[var(--sc-ink)]">
+          <div className="sc-tabular mt-7 text-7xl font-black text-[var(--sc-ink)]">
             {formatPLN(totalGrosze)}
           </div>
           <div className="mt-12 grid grid-cols-2 gap-6">
@@ -216,7 +216,7 @@ function ProcessingPayment({
         <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
           {badge}
         </div>
-        <h1 className="mt-7 text-6xl font-black tracking-tight text-[var(--sc-ink)]">
+        <h1 className="mt-7 text-6xl font-black text-[var(--sc-ink)]">
           {label}
         </h1>
         <div className="sc-tabular mt-6 text-6xl font-black text-[var(--sc-ink)]">

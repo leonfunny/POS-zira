@@ -1,19 +1,15 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Hand, ReceiptText, ShoppingBag, Trash2 } from 'lucide-react';
+import React from 'react';
+import { ArrowLeft, Hand, ReceiptText, ShoppingBag } from 'lucide-react';
 import { ScLanguage, getScStrings } from '../i18n';
-import { isValidPolishNip, normalizeNip } from '../self-checkout-model';
 import { ScCartItem, formatPLN } from '../useScCart';
-import { ManualNumpad } from './ScanScreen';
 
 interface SummaryScreenProps {
   lang: ScLanguage;
   cartItems: ScCartItem[];
   totalGrosze: number;
-  customerNip: string | null;
   bagFeeGrosze: number;
   hasBagFee: boolean;
   onSetBagFee: (enabled: boolean) => void;
-  onSetNip: (nip: string | null) => void;
   onBack: () => void;
   onPay: () => void;
   onCallStaff: () => void;
@@ -24,21 +20,16 @@ export default function SummaryScreen({
   lang,
   cartItems,
   totalGrosze,
-  customerNip,
   bagFeeGrosze,
   hasBagFee,
   onSetBagFee,
-  onSetNip,
   onBack,
   onPay,
   onCallStaff,
   onAbandon,
 }: SummaryScreenProps) {
   const t = getScStrings(lang);
-  const [nipOpen, setNipOpen] = useState(false);
-  const [nipValue, setNipValue] = useState(customerNip ?? '');
   const products = cartItems.filter((item) => !item.isBagFee);
-  const validNip = isValidPolishNip(nipValue);
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
@@ -144,36 +135,6 @@ export default function SummaryScreen({
                 {formatPLN(bagFeeGrosze)}
               </div>
             </section>
-
-            <section className="sc-surface-flat p-4">
-              <div className="text-sm font-black uppercase tracking-[0.12em] text-[var(--sc-muted)]">
-                {t.nipTitle}
-              </div>
-              <div className="mt-3 min-h-[32px] text-xl font-black text-[var(--sc-ink)]">
-                {customerNip || t.noNip}
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNipValue(customerNip ?? '');
-                    setNipOpen(true);
-                  }}
-                  className="sc-secondary-action sc-focusable px-3 text-base"
-                >
-                  {t.addNipButton}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSetNip(null)}
-                  disabled={!customerNip}
-                  className="sc-secondary-action sc-focusable flex items-center justify-center gap-2 px-3 text-base disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Trash2 size={18} />
-                  {t.remove}
-                </button>
-              </div>
-            </section>
           </div>
 
           <div className="mt-auto border-t border-[var(--sc-border)] pt-5">
@@ -181,7 +142,7 @@ export default function SummaryScreen({
               <span className="text-xl font-black text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="sc-tabular text-5xl font-black tracking-tight text-[var(--sc-ink)]">
+              <span className="sc-tabular text-5xl font-black text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </span>
             </div>
@@ -196,23 +157,6 @@ export default function SummaryScreen({
           </div>
         </aside>
       </main>
-
-      {nipOpen && (
-        <ManualNumpad
-          title={t.nipTitle}
-          value={nipValue}
-          onChange={(next) => setNipValue(normalizeNip(next))}
-          onCancel={() => setNipOpen(false)}
-          onSubmit={() => {
-            if (!validNip) return;
-            onSetNip(normalizeNip(nipValue));
-            setNipOpen(false);
-          }}
-          okLabel={validNip ? 'OK' : t.nipInvalid}
-          cancelLabel={t.back}
-          maxLength={10}
-        />
-      )}
     </div>
   );
 }
