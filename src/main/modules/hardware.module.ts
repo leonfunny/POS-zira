@@ -22,6 +22,7 @@ import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/
 import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
+import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
 import { listSerialPorts, listWindowsPrintersDetailed } from '../hardware/port-utils';
 import {
   IPC_CHANNELS,
@@ -145,9 +146,7 @@ export class HardwareModule extends BaseModule {
           !!entry.window && !entry.window.isDestroyed(),
         );
         const focusedWindow = BrowserWindow.getFocusedWindow();
-        const target = candidates.find((entry) => entry.window.id === focusedWindow?.id)
-          || candidates.find((entry) => entry.window.isFocused())
-          || candidates.find((entry) => entry.label === 'main');
+        const target = chooseScannerTargetWindow(candidates, focusedWindow?.id);
         try {
           target?.window.webContents.send(IPC_CHANNELS.BARCODE_SCANNED, barcode);
         } catch (err: any) {
