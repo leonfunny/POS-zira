@@ -1,7 +1,8 @@
-// Payment screen. Demo mode may auto-approve; production mode is fail-closed
-// until a real payment terminal SDK owns the payment state transition.
+// Payment overlay. The kiosk app chooses the tender type; the physical
+// payment terminal owns card tap/insert and BLIK code entry.
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowLeft, CreditCard, Loader2, Smartphone } from 'lucide-react';
+import { AlertTriangle, CreditCard, Loader2, Smartphone, X } from 'lucide-react';
+import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import type { SelfCheckoutMode } from '../self-checkout-model';
 import { formatPLN } from '../useScCart';
@@ -14,6 +15,7 @@ interface PaymentScreenProps {
   totalGrosze: number;
   onSuccess: (method: PaymentMethod) => void;
   onCancel: () => void;
+  onLangChange: (lang: ScLanguage) => void;
 }
 
 export default function PaymentScreen({
@@ -22,254 +24,155 @@ export default function PaymentScreen({
   totalGrosze,
   onSuccess,
   onCancel,
+  onLangChange,
 }: PaymentScreenProps) {
   const t = getScStrings(lang);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
-  const [blikCode, setBlikCode] = useState('');
   const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    if (mode !== 'demo' || method !== 'CARD' || !processing) return;
-    const id = window.setTimeout(() => {
-      onSuccess('CARD');
-    }, 1500);
-    return () => window.clearTimeout(id);
-  }, [method, mode, processing, onSuccess]);
-
-  useEffect(() => {
-    if (mode !== 'demo' || method !== 'BLIK' || !processing) return;
-    const id = window.setTimeout(() => onSuccess('BLIK'), 1200);
+    if (mode !== 'demo' || !method || !processing) return;
+    const id = window.setTimeout(() => onSuccess(method), 1500);
     return () => window.clearTimeout(id);
   }, [method, mode, onSuccess, processing]);
 
-  const submitBlik = () => {
-    if (blikCode.length !== 6 || processing) return;
+  const chooseMethod = (next: PaymentMethod) => {
+    if (processing) return;
+    setMethod(next);
     setProcessing(true);
   };
 
-  if (mode === 'production') {
-    return (
-      <div className="sc-shell flex h-screen w-screen items-center justify-center px-8 text-center select-none">
-        <section className="sc-surface w-full max-w-3xl p-12">
-          <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-[32px] bg-red-50 text-[var(--sc-danger)]">
-            <AlertTriangle size={68} />
-          </div>
-          <div className="mt-8 text-sm font-black uppercase tracking-[0.16em] text-[var(--sc-danger)]">
-            {t.productionMode}
-          </div>
-          <h2 className="mt-4 text-5xl font-black text-[var(--sc-ink)]">
-            {t.closedTitle}
-          </h2>
-          <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
-            {t.receiptProductionBlocked}
-          </p>
+  const selectedLabel = method === 'BLIK' ? t.blik : method === 'CARD' ? t.card : null;
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 p-6 select-none">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="self-checkout-payment-title"
+        className="sc-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden"
+      >
+        <header className="flex items-center justify-between border-b border-[var(--sc-border)] px-6 py-5">
           <button
             type="button"
             onClick={onCancel}
-            className="sc-secondary-action sc-focusable mt-9 inline-flex items-center gap-3 px-8 text-lg"
-          >
-            <ArrowLeft size={22} />
-            {t.back}
-          </button>
-        </section>
-      </div>
-    );
-  }
-
-  if (method === 'CARD') {
-    return (
-      <ProcessingPayment
-        label={t.card}
-        badge={t.demoMode}
-        amount={formatPLN(totalGrosze)}
-        icon={<CreditCard size={82} />}
-      />
-    );
-  }
-
-  if (method === 'BLIK') {
-    return (
-      <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
-        <header className="flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-8 py-4">
-          <button
-            type="button"
-            onClick={() => {
-              if (!processing) {
-                setMethod(null);
-                setBlikCode('');
-              }
-            }}
             disabled={processing}
             className="sc-secondary-action sc-focusable flex items-center gap-3 px-5 text-lg disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <ArrowLeft size={22} />
-            {t.back}
+            <X size={22} />
+            {t.cancel}
           </button>
-          <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
-            {t.demoMode}
+          <div className="flex items-center gap-3">
+            <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
+              {mode === 'demo' ? t.demoMode : t.productionMode}
+            </div>
+            <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
           </div>
         </header>
-        <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_430px] gap-6 p-8">
-          <section className="sc-surface flex flex-col justify-center p-10">
-            <div className="flex h-28 w-28 items-center justify-center rounded-[32px] bg-violet-50 text-violet-700">
-              <Smartphone size={72} />
+
+        {mode === 'production' ? (
+          <div className="p-10 text-center">
+            <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[28px] bg-red-50 text-[var(--sc-danger)]">
+              <AlertTriangle size={58} />
             </div>
-            <h1 className="mt-8 text-6xl font-black text-[var(--sc-ink)]">
-              {t.blik}
-            </h1>
-            <p className="mt-4 text-3xl font-black text-[var(--sc-muted)]">
-              {formatPLN(totalGrosze)}
+            <h2 className="mt-6 text-5xl font-black text-[var(--sc-ink)]">
+              {t.closedTitle}
+            </h2>
+            <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
+              {t.receiptProductionBlocked}
             </p>
-            <div className="sc-tabular mt-10 h-24 max-w-md rounded-3xl border-2 border-[var(--sc-border)] bg-white px-6 text-center text-5xl font-black leading-[92px] tracking-[0.32em] text-[var(--sc-ink)]">
-              {blikCode || <span className="text-[var(--sc-border)]">______</span>}
-            </div>
-            {processing && (
-              <div className="mt-8 flex items-center gap-3 text-2xl font-black text-violet-700">
-                <Loader2 size={28} className="animate-spin" />
-                {t.paymentSuccess}...
+          </div>
+        ) : (
+          <div className="grid min-h-0 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <main className="min-w-0">
+              <h1 id="self-checkout-payment-title" className="text-5xl font-black text-[var(--sc-ink)]">
+                {t.paymentTitle}
+              </h1>
+              <div className="sc-tabular mt-5 text-7xl font-black text-[var(--sc-ink)]">
+                {formatPLN(totalGrosze)}
               </div>
-            )}
-          </section>
+              <p className="mt-5 max-w-2xl text-2xl font-semibold leading-9 text-[var(--sc-muted)]">
+                {t.paymentTerminalHint}
+              </p>
 
-          <BlikPad
-            value={blikCode}
-            disabled={processing}
-            payLabel={t.pay}
-            onChange={setBlikCode}
-            onSubmit={submitBlik}
-          />
-        </main>
-      </div>
-    );
-  }
+              <div className="mt-8 grid grid-cols-2 gap-5">
+                <PaymentMethodButton
+                  active={method === 'CARD'}
+                  disabled={processing}
+                  icon={<CreditCard size={54} />}
+                  title={t.payWithCard}
+                  body={t.cardTerminalHint}
+                  onClick={() => chooseMethod('CARD')}
+                />
+                <PaymentMethodButton
+                  active={method === 'BLIK'}
+                  disabled={processing}
+                  icon={<Smartphone size={54} />}
+                  title={t.payWithBlik}
+                  body={t.blikTerminalHint}
+                  onClick={() => chooseMethod('BLIK')}
+                />
+              </div>
+            </main>
 
-  return (
-    <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
-      <header className="flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-8 py-4">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="sc-secondary-action sc-focusable flex items-center gap-3 px-5 text-lg"
-        >
-          <ArrowLeft size={22} />
-          {t.back}
-        </button>
-        <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
-          {t.demoMode}
-        </div>
-      </header>
-
-      <main className="flex flex-1 items-center justify-center px-8 pb-10">
-        <section className="w-full max-w-5xl text-center">
-          <h1 className="text-5xl font-black text-[var(--sc-ink)]">
-            {t.paymentTitle}
-          </h1>
-          <div className="sc-tabular mt-7 text-7xl font-black text-[var(--sc-ink)]">
-            {formatPLN(totalGrosze)}
+            <aside className="rounded-3xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-6">
+              <div className="flex h-20 w-20 items-center justify-center rounded-[24px] bg-white text-[var(--sc-info)]">
+                {method === 'BLIK' ? <Smartphone size={44} /> : <CreditCard size={44} />}
+              </div>
+              <h2 className="mt-6 text-3xl font-black text-[var(--sc-ink)]">
+                {selectedLabel || t.terminalReadyTitle}
+              </h2>
+              <p className="mt-4 text-xl font-semibold leading-8 text-[var(--sc-muted)]">
+                {processing ? t.waitForTerminal : t.terminalReadyBody}
+              </p>
+              {processing && (
+                <div
+                  role="status"
+                  className="mt-8 flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-xl font-black text-blue-800"
+                >
+                  <Loader2 size={28} className="animate-spin" />
+                  {t.paymentProcessing}
+                </div>
+              )}
+            </aside>
           </div>
-          <div className="mt-12 grid grid-cols-2 gap-6">
-            <button
-              type="button"
-              onClick={() => setMethod('BLIK')}
-              className="sc-focusable min-h-[220px] rounded-[28px] border-2 border-violet-200 bg-violet-50 p-8 text-left text-violet-800 transition-colors hover:border-violet-400 hover:bg-violet-100"
-            >
-              <Smartphone size={58} />
-              <div className="mt-8 text-5xl font-black">BLIK</div>
-              <div className="mt-3 text-2xl font-bold">{t.blik}</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMethod('CARD');
-                setProcessing(true);
-              }}
-              className="sc-focusable min-h-[220px] rounded-[28px] border-2 border-blue-200 bg-blue-50 p-8 text-left text-blue-800 transition-colors hover:border-blue-400 hover:bg-blue-100"
-            >
-              <CreditCard size={58} />
-              <div className="mt-8 text-5xl font-black">CARD</div>
-              <div className="mt-3 text-2xl font-bold">{t.card}</div>
-            </button>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function ProcessingPayment({
-  icon,
-  label,
-  badge,
-  amount,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  badge: string;
-  amount: string;
-}) {
-  return (
-    <div className="sc-shell flex h-screen w-screen items-center justify-center px-8 text-center select-none">
-      <section className="sc-surface w-full max-w-3xl p-12">
-        <div className="mx-auto flex h-32 w-32 items-center justify-center rounded-[34px] bg-blue-50 text-blue-700">
-          {icon}
-        </div>
-        <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
-          {badge}
-        </div>
-        <h1 className="mt-7 text-6xl font-black text-[var(--sc-ink)]">
-          {label}
-        </h1>
-        <div className="sc-tabular mt-6 text-6xl font-black text-[var(--sc-ink)]">
-          {amount}
-        </div>
-        <div className="mt-8 flex items-center justify-center gap-3 text-2xl font-black text-blue-700">
-          <Loader2 size={30} className="animate-spin" />
-          ...
-        </div>
+        )}
       </section>
     </div>
   );
 }
 
-function BlikPad({
-  value,
+function PaymentMethodButton({
+  active,
   disabled,
-  payLabel,
-  onChange,
-  onSubmit,
+  icon,
+  title,
+  body,
+  onClick,
 }: {
-  value: string;
+  active: boolean;
   disabled: boolean;
-  payLabel: string;
-  onChange: (next: string) => void;
-  onSubmit: () => void;
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+  onClick: () => void;
 }) {
-  const keys = ['1','2','3','4','5','6','7','8','9','<','0','OK'];
-  const press = (key: string) => {
-    if (disabled) return;
-    if (key === '<') onChange(value.slice(0, -1));
-    else if (key === 'OK') onSubmit();
-    else if (value.length < 6) onChange(value + key);
-  };
   return (
-    <aside className="sc-surface p-5">
-      <div className="grid h-full grid-cols-3 gap-3">
-        {keys.map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => press(key)}
-            disabled={disabled || (key === 'OK' && value.length !== 6)}
-            className={`sc-focusable rounded-2xl text-3xl font-black transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              key === 'OK'
-                ? 'bg-[var(--sc-success)] text-white hover:bg-emerald-800'
-                : 'border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] hover:bg-[var(--sc-surface-muted)]'
-            }`}
-          >
-            {key === '<' ? 'Del' : key === 'OK' ? payLabel : key}
-          </button>
-        ))}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`sc-focusable min-h-[190px] rounded-[24px] border-2 p-6 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+        active
+          ? 'border-[var(--sc-success)] bg-emerald-50 text-emerald-800'
+          : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)] hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)]'
+      }`}
+    >
+      <div className="text-[var(--sc-primary-deep)]">{icon}</div>
+      <div className="mt-8 text-4xl font-black leading-tight">{title}</div>
+      <div className="mt-3 text-lg font-bold leading-7 text-[var(--sc-muted)]">
+        {body}
       </div>
-    </aside>
+    </button>
   );
 }

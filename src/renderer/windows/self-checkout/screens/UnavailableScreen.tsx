@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Store } from 'lucide-react';
-import { ScLanguage, SC_LANGUAGES, getScStrings } from '../i18n';
+import LanguageSwitch from '../LanguageSwitch';
+import { ScLanguage, getScStrings } from '../i18n';
 
 interface UnavailableScreenProps {
   lang: ScLanguage;
@@ -26,20 +27,7 @@ export default function UnavailableScreen({
             Zira AI
           </div>
         </div>
-        <div className="flex gap-3">
-          {SC_LANGUAGES.map((l) => (
-            <button
-              key={l.code}
-              type="button"
-              onClick={() => onLangChange(l.code)}
-              className="sc-language-button sc-focusable"
-              data-active={l.code === lang}
-              aria-label={l.label}
-            >
-              {l.flag}
-            </button>
-          ))}
-        </div>
+        <LanguageSwitch lang={lang} onLangChange={onLangChange} />
       </header>
 
       <main className="flex flex-1 items-center justify-center px-10 pb-16">

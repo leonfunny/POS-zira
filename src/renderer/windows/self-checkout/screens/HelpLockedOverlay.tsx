@@ -2,12 +2,14 @@
 // terminal remains locked until staff resolves the request.
 import React from 'react';
 import { Hand, UserRoundCheck } from 'lucide-react';
+import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 
 interface HelpLockedOverlayProps {
   lang: ScLanguage;
   acknowledged: boolean;
   reason: string;
+  onLangChange: (lang: ScLanguage) => void;
   onCancel?: () => void;
 }
 
@@ -15,12 +17,16 @@ export default function HelpLockedOverlay({
   lang,
   acknowledged,
   reason,
+  onLangChange,
   onCancel,
 }: HelpLockedOverlayProps) {
   const t = getScStrings(lang);
   const reasonLabel = reason === 'OTHER' ? t.helpReasonOther : reason;
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#fff8ea] px-8 text-center select-none">
+      <div className="absolute right-10 top-8">
+        <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
+      </div>
       <div className="flex h-32 w-32 items-center justify-center rounded-[34px] bg-amber-100 text-amber-800">
         {acknowledged ? <UserRoundCheck size={72} /> : <Hand size={72} />}
       </div>

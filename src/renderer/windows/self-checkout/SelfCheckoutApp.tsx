@@ -1,5 +1,7 @@
 // Self-checkout terminal entry point. This owns the kiosk state machine:
-// unavailable -> welcome -> shopping -> summary -> payment -> receipt -> thank-you.
+// unavailable -> welcome -> shopping -> receipt -> thank-you.
+// Payment selection is an overlay on shopping; the customer should not leave
+// the cart screen just to pick card/BLIK.
 // Production payment/order/fiscal paths intentionally fail closed until real
 // terminal and fiscal-printer integrations are wired.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,7 +17,6 @@ import ScanScreen from './screens/ScanScreen';
 import PaymentScreen, { PaymentMethod } from './screens/PaymentScreen';
 import ThankYouScreen from './screens/ThankYouScreen';
 import HelpLockedOverlay from './screens/HelpLockedOverlay';
-import SummaryScreen from './screens/SummaryScreen';
 import ReceiptScreen from './screens/ReceiptScreen';
 import UnavailableScreen from './screens/UnavailableScreen';
 
@@ -83,6 +84,7 @@ export default function SelfCheckoutApp() {
   const [bagFeeGrosze, setBagFeeGrosze] = useState<number>(20);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [categories, setCategories] = useState<CategoryLookupResult[]>([]);
   const [scanQuantity, setScanQuantity] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
@@ -97,7 +99,8 @@ export default function SelfCheckoutApp() {
   const helpPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const cart = useScCart();
-  const hasBagFee = cart.cart.items.some((item) => item.isBagFee);
+  const bagItem = cart.cart.items.find((item) => item.isBagFee);
+  const bagQuantity = bagItem?.quantity ?? 0;
   const t = getScStrings(lang);
 
   const handleLangChange = useCallback((next: ScLanguage) => {
@@ -115,6 +118,7 @@ export default function SelfCheckoutApp() {
   const resetSession = useCallback(() => {
     cart.clear();
     setLastPaymentMethod(null);
+    setPaymentOpen(false);
     setScanQuantity(1);
     setAbandonOpen(false);
     setToast(null);
@@ -188,10 +192,17 @@ export default function SelfCheckoutApp() {
   }, []);
 
   useEffect(() => {
-    if (screen === 'welcome' || screen === 'thankyou' || screen === 'unavailable' || help) return;
+    if (
+      screen === 'welcome'
+      || screen === 'thankyou'
+      || screen === 'unavailable'
+      || screen === 'receipt'
+      || help
+      || paymentOpen
+    ) return;
     const timer = setTimeout(resetSession, idleTimeoutMs);
     return () => clearTimeout(timer);
-  }, [activityAt, help, idleTimeoutMs, resetSession, screen]);
+  }, [activityAt, help, idleTimeoutMs, paymentOpen, resetSession, screen]);
 
   const addProductToCart = useCallback(
     (product: ProductLookupResult, fallbackEan = '', requestedQuantity = scanQuantity): boolean => {
@@ -237,6 +248,9 @@ export default function SelfCheckoutApp() {
 
   const handleScan = useCallback(
     async (ean: string): Promise<boolean> => {
+      if (paymentOpen || screen === 'receipt' || screen === 'thankyou' || screen === 'unavailable') {
+        return false;
+      }
       const code = ean.trim();
       if (!code) return false;
       try {
@@ -254,7 +268,7 @@ export default function SelfCheckoutApp() {
         return false;
       }
     },
-    [addProductToCart, showToast, t],
+    [addProductToCart, paymentOpen, screen, showToast, t],
   );
 
   const handleWelcomeScan = useCallback(
@@ -325,6 +339,7 @@ export default function SelfCheckoutApp() {
   const handlePaymentSuccess = useCallback(
     (method: PaymentMethod) => {
       setLastPaymentMethod(method);
+      setPaymentOpen(false);
       goTo('receipt');
     },
     [goTo],
@@ -336,6 +351,7 @@ export default function SelfCheckoutApp() {
         lang={lang}
         acknowledged={help.acknowledged}
         reason={help.reason}
+        onLangChange={handleLangChange}
       />
     );
   }
@@ -373,14 +389,17 @@ export default function SelfCheckoutApp() {
           onScanQuantityChange={(quantity) => setScanQuantity(normalizeScanQuantity(quantity))}
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
-            if (item && !item.isBagFee) cart.setQuantity(id, item.quantity + 1);
+            if (item) cart.setQuantity(id, item.quantity + 1);
           }}
           onDecrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
             if (item) cart.setQuantity(id, item.quantity - 1);
           }}
           onRemove={(id) => cart.remove(id)}
-          onCheckout={() => goTo('summary')}
+          bagFeeGrosze={bagFeeGrosze}
+          bagQuantity={bagQuantity}
+          onBagQuantityChange={(quantity) => cart.setBagQuantity(quantity, bagFeeGrosze)}
+          onCheckout={() => setPaymentOpen(true)}
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}
           onLangChange={handleLangChange}
@@ -395,45 +414,17 @@ export default function SelfCheckoutApp() {
             onConfirm={handleAbandonConfirm}
           />
         )}
-      </>
-    );
-  }
-
-  if (screen === 'summary') {
-    return (
-      <>
-        <SummaryScreen
-          lang={lang}
-          cartItems={cart.cart.items}
-          totalGrosze={cart.cart.totalGrosze}
-          bagFeeGrosze={bagFeeGrosze}
-          hasBagFee={hasBagFee}
-          onSetBagFee={(enabled) => cart.setBagFee(enabled, bagFeeGrosze)}
-          onBack={() => goTo('shopping')}
-          onPay={() => goTo('payment')}
-          onCallStaff={() => callStaff('OTHER')}
-          onAbandon={() => setAbandonOpen(true)}
-        />
-        {abandonOpen && (
-          <AbandonConfirm
+        {paymentOpen && (
+          <PaymentScreen
             lang={lang}
-            onCancel={() => setAbandonOpen(false)}
-            onConfirm={handleAbandonConfirm}
+            mode={mode}
+            totalGrosze={cart.cart.totalGrosze}
+            onSuccess={handlePaymentSuccess}
+            onCancel={() => setPaymentOpen(false)}
+            onLangChange={handleLangChange}
           />
         )}
       </>
-    );
-  }
-
-  if (screen === 'payment') {
-    return (
-      <PaymentScreen
-        lang={lang}
-        mode={mode}
-        totalGrosze={cart.cart.totalGrosze}
-        onSuccess={handlePaymentSuccess}
-        onCancel={() => goTo('summary')}
-      />
     );
   }
 
@@ -445,6 +436,7 @@ export default function SelfCheckoutApp() {
         method={lastPaymentMethod}
         totalGrosze={cart.cart.totalGrosze}
         onComplete={() => goTo('thankyou')}
+        onLangChange={handleLangChange}
       />
     );
   }
@@ -455,6 +447,7 @@ export default function SelfCheckoutApp() {
         lang={lang}
         totalGrosze={cart.cart.totalGrosze}
         onReset={resetSession}
+        onLangChange={handleLangChange}
       />
     );
   }

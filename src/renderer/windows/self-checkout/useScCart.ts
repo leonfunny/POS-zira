@@ -15,7 +15,7 @@ export interface ScCartItem {
   quantity: number;
   vatRate?: number;
   imageUrl?: string;
-  /** True when added by the bag-fee toggle (UI shows it inline). */
+  /** True when added by the local bag-quantity control (UI shows it inline). */
   isBagFee?: boolean;
 }
 
@@ -26,6 +26,7 @@ export interface ScCart {
 
 const EMPTY: ScCart = { items: [], totalGrosze: 0 };
 const STORAGE_KEY = 'self-checkout:cart';
+const MAX_BAG_QUANTITY = 9;
 
 function recalc(items: ScCartItem[]): ScCart {
   const totalGrosze = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
@@ -69,25 +70,32 @@ export function useScCart() {
       const items = [...prev.items];
       if (idx >= 0) {
         items[idx] = item.isBagFee
-          ? { ...items[idx], ...item, quantity: 1 }
+          ? { ...items[idx], ...item, quantity: Math.min(MAX_BAG_QUANTITY, safeQuantity) }
           : { ...items[idx], quantity: items[idx].quantity + safeQuantity };
       } else {
-        items.push({ ...item, quantity: item.isBagFee ? 1 : safeQuantity });
+        items.push({
+          ...item,
+          quantity: item.isBagFee ? Math.min(MAX_BAG_QUANTITY, safeQuantity) : safeQuantity,
+        });
       }
       return recalc(items);
     });
   }, []);
 
-  const setBagFee = useCallback((enabled: boolean, price: number) => {
+  const setBagQuantity = useCallback((quantity: number, price: number) => {
+    const safeQuantity = Math.min(
+      MAX_BAG_QUANTITY,
+      Math.max(0, Math.floor(Number(quantity) || 0)),
+    );
     setCart((prev) => {
       const items = prev.items.filter((i) => !i.isBagFee);
-      if (enabled && price > 0) {
+      if (safeQuantity > 0 && price > 0) {
         items.push({
           variantId: '__bag-fee__',
           name: 'Torba foliowa',
           sku: 'BAG',
           price,
-          quantity: 1,
+          quantity: safeQuantity,
           isBagFee: true,
         });
       }
@@ -98,7 +106,14 @@ export function useScCart() {
   const setQuantity = useCallback((variantId: string, quantity: number) => {
     setCart((prev) => {
       let items = prev.items.map((i) =>
-        i.variantId === variantId ? { ...i, quantity: Math.max(0, quantity) } : i,
+        i.variantId === variantId
+          ? {
+              ...i,
+              quantity: i.isBagFee
+                ? Math.min(MAX_BAG_QUANTITY, Math.max(0, quantity))
+                : Math.max(0, quantity),
+            }
+          : i,
       );
       items = items.filter((i) => i.quantity > 0);
       return recalc(items);
@@ -121,7 +136,7 @@ export function useScCart() {
     }
   }, []);
 
-  return { cart, add, setQuantity, remove, setBagFee, clear };
+  return { cart, add, setQuantity, remove, setBagQuantity, clear };
 }
 
 export function formatPLN(grosze: number): string {

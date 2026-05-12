@@ -1,14 +1,13 @@
 // Self-checkout state machine. Each screen owns its own component;
 // this hook owns the transitions so reset paths (idle timeout, abandon,
-// payment success) all go through one place.
+// payment success) all go through one place. Payment selection is an overlay
+// owned by the shopping screen, not a separate route.
 import { useCallback, useState } from 'react';
 
 export type ScScreen =
   | 'unavailable'
   | 'welcome'
   | 'shopping'
-  | 'summary'
-  | 'payment'
   | 'receipt'
   | 'thankyou';
 

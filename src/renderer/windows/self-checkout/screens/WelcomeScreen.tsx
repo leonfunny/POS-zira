@@ -2,7 +2,8 @@
 // session just like the visible start button.
 import React, { useCallback, useEffect, useRef } from 'react';
 import { CreditCard, ScanBarcode, ShoppingBasket } from 'lucide-react';
-import { ScLanguage, SC_LANGUAGES, getScStrings } from '../i18n';
+import LanguageSwitch from '../LanguageSwitch';
+import { ScLanguage, getScStrings } from '../i18n';
 
 interface WelcomeScreenProps {
   lang: ScLanguage;
@@ -118,20 +119,7 @@ export default function WelcomeScreen({
           </div>
         </div>
 
-        <div className="flex gap-3">
-          {SC_LANGUAGES.map((l) => (
-            <button
-              key={l.code}
-              type="button"
-              onClick={() => onLangChange(l.code)}
-              className="sc-language-button sc-focusable"
-              data-active={l.code === lang}
-              aria-label={l.label}
-            >
-              {l.flag}
-            </button>
-          ))}
-        </div>
+        <LanguageSwitch lang={lang} onLangChange={onLangChange} />
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] gap-8 px-10 pb-10">

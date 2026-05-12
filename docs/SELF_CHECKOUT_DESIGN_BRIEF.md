@@ -90,7 +90,7 @@ Recommended palette:
 | Token | Hex | Role |
 | --- | --- | --- |
 | `--sc-canvas` | `#F7F8F6` | Main kiosk background. Neutral, light, not beige-heavy. |
-| `--sc-surface` | `#FFFFFF` | Cart, summary, settings, payment panels. |
+| `--sc-surface` | `#FFFFFF` | Cart, settings, payment panels. |
 | `--sc-surface-muted` | `#EEF1EE` | Secondary bands, category zone, inactive surfaces. |
 | `--sc-border` | `#D8DED6` | Panel/control borders. |
 | `--sc-ink` | `#202421` | Primary text, totals, commands. |
@@ -101,7 +101,7 @@ Recommended palette:
 | `--sc-primary-soft` | `#FBE8DF` | Subtle brand background, never as full-page wash. |
 | `--sc-success` | `#15803D` | Open, paid, ready, item added. |
 | `--sc-info` | `#2563EB` | Scanner/terminal guidance, not primary CTA. |
-| `--sc-warning` | `#B7791F` | Demo mode, bag option, retry warnings. |
+| `--sc-warning` | `#B7791F` | Demo mode, bag quantity, retry warnings. |
 | `--sc-danger` | `#B42318` | Closed, error, staff lock, payment failure. |
 
 Rules:
@@ -175,7 +175,7 @@ Purpose:
 - scan products
 - recover via category buttons if scanning fails
 - review basket
-- choose bag option
+- adjust bag quantity
 - pay
 - show fiscal/receipt progress
 - thank the customer and reset
@@ -192,7 +192,7 @@ This screen should feel like a kiosk storefront, not an admin dashboard.
 
 ## 8. State Model
 
-The customer kiosk should keep this exact high-level state model:
+The customer kiosk should keep this high-level state model:
 
 1. `unavailable`
    - Used when production dependencies are missing, kiosk is closed, printer/payment is unavailable, or staff disabled the terminal.
@@ -209,25 +209,25 @@ The customer kiosk should keep this exact high-level state model:
    - Main scan/cart state.
    - Left/center: scan prompt and category fallback.
    - Right: cart list and running total.
-   - Primary CTA: go to summary.
+   - Bag quantity is adjusted inline in the cart panel.
+   - Primary CTA: open the payment modal.
 
-4. `summary`
-   - Review basket, quantity, price, and bag option.
-   - Customer confirms before payment.
-   - This is where mistakes are corrected.
-
-5. `payment`
-   - Payment method selection and terminal status.
+4. `paymentModal`
+   - Overlay on top of the shopping/cart screen, not a separate route.
+   - Shows amount due, card/BLIK selection, and terminal status.
+   - The app never collects BLIK codes; the physical terminal owns card/BLIK input.
    - In demo mode, clearly label mocked payment.
    - In production mode, fail closed until terminal integration is real.
 
-6. `receipt`
+5. `receipt`
    - Fiscal/order/receipt progress.
    - Must not jump straight to thank-you before fiscal/order result is known in production.
+   - Language switch remains available.
 
-7. `thankyou`
+6. `thankyou`
    - Short completion screen.
    - Auto-reset after a brief delay.
+   - Language switch remains available.
 
 ## 9. UX Rules
 
@@ -282,7 +282,8 @@ Recommended structure:
 - main scan zone: large barcode icon/scan instruction/latest scanned item
 - category fallback row/grid below scan zone
 - cart panel on the right
-- sticky total + summary CTA at bottom-right
+- inline bag quantity control in the cart panel
+- sticky total + pay CTA at bottom-right
 
 Suggested desktop kiosk grid:
 - left/main content: 60-65%
@@ -295,18 +296,19 @@ The cart should not be a tiny POS table. It needs:
 - quantity controls
 - obvious remove affordance
 - price aligned with tabular numbers
+- bag quantity stepper capped for kiosk sanity
 
-### Summary
+### Cart And Bags
 
 Recommended structure:
-- left: cart review
-- right: transaction options and total due
-- options: bag, language still visible
-- actions: back to shopping, pay
+- cart review stays on the shopping screen
+- bag quantity is a small stepper near the total
+- language remains visible in the top bar
+- action: pay opens the payment modal immediately
 
-Do not bury the bag option in a separate mandatory step. It is a checkout option, not a full screen.
+Do not bury the bag option in a separate mandatory step. It is a cart option, not a full screen.
 
-### Payment
+### Payment Modal
 
 Reference: Lewiatan simplicity.
 
@@ -315,6 +317,8 @@ Recommended structure:
 - two large payment buttons: card and BLIK
 - terminal status below
 - cancel/back only before terminal is active
+- language switch still visible
+- no BLIK keypad or customer-entered payment credentials in the app
 
 Demo mode:
 - show demo badge
@@ -426,24 +430,29 @@ Reject:
 Ship V1 as pure checkout, no promo/media.
 
 Use:
-- PL and EN visible on kiosk; VI can remain supported if already useful for internal testing.
-- Card and BLIK visible only in demo mode until real terminal integration exists.
+- PL, EN, and VI visible on every customer state.
+- Card and BLIK as separate choices in demo mode; both hand off to the terminal.
 - NIP/faktura is staff-only for V1; do not ask self-checkout customers for NIP.
-- Bag fee as one summary option, not a separate screen.
+- Bag fee as a local inline cart quantity, not a separate screen.
+- No cash in self-checkout V1.
 - Production mode fail-closed until payment, fiscal, and order creation are real.
 
 The customer shopping screen should be the main redesign investment. If that screen is weak, the rest of the flow will still feel fake.
 
-## 15. Open Questions
+## 15. Current Decisions
 
-These should be decided before visual implementation:
+Decisions from the 2026-05-12 redesign pass:
 
-1. Should version 1 be pure checkout with no promotions? Recommendation: yes.
-2. Which customer languages are required for launch: PL/EN only, or PL/EN/VI?
-3. Is BLIK a launch requirement or later terminal integration?
-4. What hardware status can the app actually know: printer, terminal, scale, scanner, cash drawer?
-5. Should staff help pause the entire kiosk or only block payment? Recommendation: pause/lock the kiosk.
-6. What is the production reset policy after failed payment?
+1. Languages: PL, EN, VI.
+2. Payment methods: separate card and BLIK choices, no cash.
+3. Payment input: handled by the physical terminal, not by kiosk on-screen forms.
+4. Bag fee: local-only for now, exposed as quantity in the cart.
+5. Pay action: opens immediately from shopping/cart, without a mandatory summary screen.
+6. Welcome ads: possible later, but not part of the checkout flow until the core flow is stable.
+
+Still open before production:
+- What hardware status can the app actually know: printer, terminal, scale, scanner, cash drawer?
+- What is the production reset policy after failed payment?
 
 ## 16. Redesign Checklist
 
@@ -458,7 +467,7 @@ Implementation order:
 1. Redesign operator tab readiness/settings.
 2. Redesign customer welcome/unavailable.
 3. Redesign shopping/cart.
-4. Redesign summary/payment/receipt.
+4. Redesign payment modal/receipt.
 5. Run browser/manual visual checks on desktop kiosk viewport.
 
 Final UI QA:

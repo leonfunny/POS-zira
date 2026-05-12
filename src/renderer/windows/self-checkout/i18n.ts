@@ -44,10 +44,8 @@ interface ScStrings {
   abandonConfirm: string;
   // Bag fee
   bagQuestion: string;
-  bagYes: string;
-  bagNo: string;
-  // Summary / receipt
-  summaryTitle: string;
+  bagUnit: string;
+  // Receipt
   receiptTitle: string;
   receiptDemoBody: string;
   receiptProductionBlocked: string;
@@ -55,6 +53,15 @@ interface ScStrings {
   paymentTitle: string;
   blik: string;
   card: string;
+  payWithCard: string;
+  payWithBlik: string;
+  paymentTerminalHint: string;
+  cardTerminalHint: string;
+  blikTerminalHint: string;
+  terminalReadyTitle: string;
+  terminalReadyBody: string;
+  waitForTerminal: string;
+  paymentProcessing: string;
   paymentSuccess: string;
   popularCategories: string;
   productsInCategory: string;
@@ -71,7 +78,7 @@ const PL: ScStrings = {
   welcomeTitle: 'KASA OTWARTA',
   welcomeSubtitle: 'Zeskanuj produkt lub rozpocznij zakupy',
   startButton: 'Rozpocznij zakupy',
-  paymentNotice: 'Płatność tylko kartą lub BLIK',
+  paymentNotice: 'Płatność tylko przez terminal',
   closedTitle: 'Ta kasa jest zamknięta',
   closedSubtitle: 'Poproś obsługę lub skorzystaj z innej kasy.',
   back: 'Wstecz',
@@ -103,16 +110,23 @@ const PL: ScStrings = {
   abandonConfirmTitle: 'Porzucić zakupy?',
   abandonConfirmBody: 'Cały koszyk zostanie usunięty.',
   abandonConfirm: 'Tak, porzuć',
-  bagQuestion: 'Czy potrzebujesz torby?',
-  bagYes: 'Tak (+0,20 zł)',
-  bagNo: 'Nie, dziękuję',
-  summaryTitle: 'Podsumowanie zakupów',
+  bagQuestion: 'Torby foliowe',
+  bagUnit: 'szt.',
   receiptTitle: 'Finalizacja sprzedaży',
   receiptDemoBody: 'Demo: płatność, zamówienie i wydruk fiskalny są pominięte.',
   receiptProductionBlocked: 'Sprzedaż produkcyjna wymaga realnej płatności, zamówienia i drukarki fiskalnej.',
   paymentTitle: 'Wybierz formę płatności',
   blik: 'BLIK',
   card: 'Karta płatnicza',
+  payWithCard: 'Karta',
+  payWithBlik: 'BLIK',
+  paymentTerminalHint: 'Wybierz metodę, a następnie użyj terminala płatniczego.',
+  cardTerminalHint: 'Zapłać kartą lub telefonem na terminalu.',
+  blikTerminalHint: 'Kod BLIK wpisujesz na terminalu, nie na tym ekranie.',
+  terminalReadyTitle: 'Terminal gotowy',
+  terminalReadyBody: 'Po wyborze metody postępuj zgodnie z instrukcją na terminalu.',
+  waitForTerminal: 'Postępuj zgodnie z instrukcją na terminalu.',
+  paymentProcessing: 'Oczekiwanie na terminal',
   paymentSuccess: 'Płatność potwierdzona',
   popularCategories: 'Kategorie',
   productsInCategory: 'Produkty w kategorii',
@@ -128,7 +142,7 @@ const EN: ScStrings = {
   welcomeTitle: 'CHECKOUT OPEN',
   welcomeSubtitle: 'Scan a product or start shopping',
   startButton: 'Start shopping',
-  paymentNotice: 'Card or BLIK payment only',
+  paymentNotice: 'Payment by terminal only',
   closedTitle: 'This checkout is closed',
   closedSubtitle: 'Please ask staff or use another checkout.',
   back: 'Back',
@@ -160,16 +174,23 @@ const EN: ScStrings = {
   abandonConfirmTitle: 'Abandon shopping?',
   abandonConfirmBody: 'The entire cart will be cleared.',
   abandonConfirm: 'Yes, abandon',
-  bagQuestion: 'Do you need a bag?',
-  bagYes: 'Yes (+0.20 zł)',
-  bagNo: 'No, thanks',
-  summaryTitle: 'Shopping summary',
+  bagQuestion: 'Plastic bags',
+  bagUnit: 'each',
   receiptTitle: 'Finalizing sale',
   receiptDemoBody: 'Demo: payment, order creation, and fiscal print are skipped.',
   receiptProductionBlocked: 'Production sale requires real payment, order creation, and fiscal printer integration.',
   paymentTitle: 'Choose payment method',
   blik: 'BLIK',
   card: 'Card',
+  payWithCard: 'Card',
+  payWithBlik: 'BLIK',
+  paymentTerminalHint: 'Choose a method, then use the payment terminal.',
+  cardTerminalHint: 'Tap, insert, or use phone payment on the terminal.',
+  blikTerminalHint: 'Enter the BLIK code on the payment terminal, not here.',
+  terminalReadyTitle: 'Terminal ready',
+  terminalReadyBody: 'After choosing a method, follow the terminal instructions.',
+  waitForTerminal: 'Follow the instructions on the payment terminal.',
+  paymentProcessing: 'Waiting for terminal',
   paymentSuccess: 'Payment confirmed',
   popularCategories: 'Categories',
   productsInCategory: 'Products in category',
@@ -185,7 +206,7 @@ const VI: ScStrings = {
   welcomeTitle: 'QUẦY ĐANG MỞ',
   welcomeSubtitle: 'Quét sản phẩm hoặc bắt đầu mua sắm',
   startButton: 'Bắt đầu mua sắm',
-  paymentNotice: 'Chỉ thanh toán bằng thẻ hoặc BLIK',
+  paymentNotice: 'Chỉ thanh toán qua máy POS',
   closedTitle: 'Quầy này đang đóng',
   closedSubtitle: 'Vui lòng hỏi nhân viên hoặc dùng quầy khác.',
   back: 'Quay lại',
@@ -217,16 +238,23 @@ const VI: ScStrings = {
   abandonConfirmTitle: 'Hủy giao dịch?',
   abandonConfirmBody: 'Toàn bộ giỏ hàng sẽ bị xóa.',
   abandonConfirm: 'Có, hủy',
-  bagQuestion: 'Bạn có cần túi không?',
-  bagYes: 'Có (+0,20 zł)',
-  bagNo: 'Không, cảm ơn',
-  summaryTitle: 'Tóm tắt giỏ hàng',
+  bagQuestion: 'Túi nhựa',
+  bagUnit: 'cái',
   receiptTitle: 'Hoàn tất giao dịch',
   receiptDemoBody: 'Demo: thanh toán, tạo đơn và in fiskal được bỏ qua.',
   receiptProductionBlocked: 'Giao dịch thật cần tích hợp thanh toán, tạo đơn và máy in fiskal.',
   paymentTitle: 'Chọn phương thức thanh toán',
   blik: 'BLIK',
   card: 'Thẻ',
+  payWithCard: 'Thẻ',
+  payWithBlik: 'BLIK',
+  paymentTerminalHint: 'Chọn phương thức rồi dùng máy thanh toán.',
+  cardTerminalHint: 'Chạm thẻ, cắm thẻ hoặc dùng điện thoại trên máy POS.',
+  blikTerminalHint: 'Nhập mã BLIK trên máy POS, không nhập trên màn hình này.',
+  terminalReadyTitle: 'Máy POS sẵn sàng',
+  terminalReadyBody: 'Sau khi chọn phương thức, làm theo hướng dẫn trên máy POS.',
+  waitForTerminal: 'Làm theo hướng dẫn trên máy POS.',
+  paymentProcessing: 'Đang chờ máy POS',
   paymentSuccess: 'Thanh toán thành công',
   popularCategories: 'Danh mục',
   productsInCategory: 'Sản phẩm trong danh mục',
