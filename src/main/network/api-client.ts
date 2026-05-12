@@ -18,6 +18,8 @@ import { refreshAccessToken, AuthRefreshNetworkError } from './auth-refresh';
 
 // Default timeout for API requests (30 seconds)
 const DEFAULT_TIMEOUT = 30000;
+const BOOTSTRAP_POST_RETRY_DELAY_MS = 500;
+const BOOTSTRAP_POST_RETRY_STATUSES = new Set([405, 502, 503, 504]);
 
 type ServerPrinter = ServerPrinterMapping;
 
@@ -256,6 +258,37 @@ async function fetchWithTimeout(
  */
 export const fetchWithTimeoutForTests = fetchWithTimeout;
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchBootstrapPostWithRetry(
+  label: string,
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
+  const response = await fetchWithTimeout(url, options);
+  if (!BOOTSTRAP_POST_RETRY_STATUSES.has(response.status)) return response;
+
+  // api.enail.pro has briefly returned 405 for valid POST routes during
+  // backend/proxy churn. Retry only these pre-login bootstrap POSTs once.
+  logger.warn(`[ApiClient] ${label} returned HTTP ${response.status}; retrying once...`);
+  await delay(BOOTSTRAP_POST_RETRY_DELAY_MS);
+  return fetchWithTimeout(url, options);
+}
+
+function normalizeTelegramTokenResponse(data: any): TelegramLoginTokenResponse {
+  const token = data?.token;
+  const expiresAt = data?.expiresAt || data?.expires_at;
+  const deepLink = data?.deepLink || data?.deep_link;
+
+  if (!token || !expiresAt || !deepLink) {
+    throw new Error('Invalid Telegram token response');
+  }
+
+  return { token, expiresAt, deepLink };
+}
+
 /**
  * REST API client for eNail backend
  */
@@ -356,7 +389,7 @@ export class ApiClient {
       apiKey: apiKey.substring(0, 10) + '...',
     }));
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchBootstrapPostWithRetry('print-agent connect', url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -477,7 +510,7 @@ export class ApiClient {
     const url = `${this.baseUrl}/api/v1/auth/telegram/login-token`;
     logger.info(`[ApiClient] Generating Telegram login token...`);
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchBootstrapPostWithRetry('Telegram login token', url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: 'print-agent' }),
@@ -488,7 +521,7 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = normalizeTelegramTokenResponse(await response.json());
     logger.info(`[ApiClient] Login token generated, expires: ${data.expiresAt}`);
     return data;
   }
@@ -521,7 +554,7 @@ export class ApiClient {
     const url = `${this.baseUrl}/api/v1/auth/telegram/register-token`;
     logger.info(`[ApiClient] Generating Telegram register token...`);
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchBootstrapPostWithRetry('Telegram register token', url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: 'print-agent' }),
@@ -532,7 +565,7 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = normalizeTelegramTokenResponse(await response.json());
     logger.info(`[ApiClient] Register token generated`);
     return data;
   }
@@ -1257,7 +1290,7 @@ export class ApiClient {
     const url = `${this.baseUrl}/api/v1/auth/login`;
     logger.info(`[ApiClient] Logging in with email: ${email}...`);
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchBootstrapPostWithRetry('email login', url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emailOrPhone: email, password }),
