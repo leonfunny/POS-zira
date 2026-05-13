@@ -32,6 +32,29 @@ interface CustomerDisplayBehavior {
   useKiosk: boolean;
 }
 
+type KioskInput = {
+  key?: string;
+  control?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  meta?: boolean;
+};
+
+function isSelfCheckoutStaffExit(input: KioskInput): boolean {
+  return !!input.control && !!input.shift && (input.key === 'Q' || input.key === 'q');
+}
+
+function isBlockedKioskShortcut(input: KioskInput): boolean {
+  const key = (input.key || '').toLowerCase();
+  if (!key) return false;
+  if (key === 'escape' || key === 'f5' || key === 'f11' || key === 'f12') return true;
+  if (/^f\d{1,2}$/.test(key)) return true;
+  if (input.alt || input.meta) return true;
+  if (input.control && input.shift) return true;
+  if (input.control && ['0', '+', '-', '=', 'i', 'j', 'n', 'o', 'p', 'q', 'r', 's', 'u', 'w'].includes(key)) return true;
+  return false;
+}
+
 const WINDOW_CONFIGS: Record<string, WindowConfig> = {
   pos: {
     id: 'pos',
@@ -181,11 +204,7 @@ export class WindowManager {
     const bounds = this.getCustomerDisplayBounds(behavior);
 
     if (behavior.useKiosk) {
-      win.setBounds(bounds);
-      win.setMenuBarVisibility(false);
-      win.setAutoHideMenuBar(true);
-      win.setAlwaysOnTop(true, 'screen-saver');
-      win.setKiosk(true);
+      this.applyKioskPresentation(win, bounds);
       return;
     }
 
@@ -195,6 +214,15 @@ export class WindowManager {
     win.setFullScreen(false);
     win.setAlwaysOnTop(false);
     win.setBounds(bounds);
+  }
+
+  private applyKioskPresentation(win: BrowserWindow, bounds: Rectangle): void {
+    if (win.isDestroyed()) return;
+    win.setBounds(bounds);
+    win.setMenuBarVisibility(false);
+    win.setAutoHideMenuBar(true);
+    win.setAlwaysOnTop(true, 'screen-saver');
+    win.setKiosk(true);
   }
 
   getWindow(id: string): BrowserWindow | null {
@@ -251,13 +279,23 @@ export class WindowManager {
       targetDisplay = displays.find((d) => d.id !== primaryDisplay.id) || primaryDisplay;
     }
 
+    const selfCheckoutBounds: Rectangle | null = isSelfCheckout
+      ? {
+        x: targetDisplay.bounds.x,
+        y: targetDisplay.bounds.y,
+        width: targetDisplay.bounds.width,
+        height: targetDisplay.bounds.height,
+      }
+      : null;
+    const lockedKioskBounds = customerBounds ?? selfCheckoutBounds;
     const hasMultipleDisplays = customerBehavior?.hasMultipleDisplays ?? displays.length > 1;
     // Force kiosk flag (default true): when set, customer display goes true-fullscreen kiosk
     // even on single-monitor machines. Toggle it off in Settings on dev machines that need
     // the old windowed fallback. Esc and 3-finger swipe-down (CustomerApp.tsx) still exit.
     const forceKiosk = customerBehavior?.forceKiosk ?? false;
-    const useKiosk = customerBehavior?.useKiosk ?? false;
-    const useAlwaysOnTop = useKiosk;
+    const useKiosk = customerBehavior?.useKiosk ?? isSelfCheckout;
+    const useAlwaysOnTop = useKiosk || !!config.alwaysOnTop;
+    const isLockedKioskSurface = (isCustomer || isSelfCheckout) && useKiosk;
 
     if (isCustomer && !hasMultipleDisplays) {
       if (forceKiosk) {
@@ -267,28 +305,28 @@ export class WindowManager {
       }
     }
 
-    // For customer display: disable Windows edge-swipe gestures before opening
-    if (isCustomer && useKiosk) {
+    // For customer-facing kiosk surfaces: disable Windows edge-swipe gestures before opening
+    if (isLockedKioskSurface) {
       this.disableEdgeSwipeGestures().catch((e) => { logger.debug('[WindowManager] edge-swipe disable failed:', e?.message); });
     }
 
     const win = new BrowserWindow({
-      width: customerBounds?.width ?? (config.fullscreen ? targetDisplay.bounds.width : config.width),
-      height: customerBounds?.height ?? (config.fullscreen ? targetDisplay.bounds.height : config.height),
-      x: customerBounds?.x ?? targetDisplay.bounds.x,
-      y: customerBounds?.y ?? targetDisplay.bounds.y,
+      width: lockedKioskBounds?.width ?? (config.fullscreen ? targetDisplay.bounds.width : config.width),
+      height: lockedKioskBounds?.height ?? (config.fullscreen ? targetDisplay.bounds.height : config.height),
+      x: lockedKioskBounds?.x ?? targetDisplay.bounds.x,
+      y: lockedKioskBounds?.y ?? targetDisplay.bounds.y,
       minWidth: config.minWidth,
       minHeight: config.minHeight,
-      fullscreen: isCustomer ? useKiosk : (config.fullscreen || false),
+      fullscreen: isCustomer ? useKiosk : (isLockedKioskSurface ? true : (config.fullscreen || false)),
       alwaysOnTop: useAlwaysOnTop,
       kiosk: useKiosk,
-      frame: isCustomer ? false : true, // Frameless removes the top bar on customer display
-      closable: isCustomer ? !useKiosk : true,
-      minimizable: !isCustomer,
-      maximizable: !isCustomer,
-      movable: isCustomer ? !useKiosk : true,
-      resizable: isCustomer ? !useKiosk : true,
-      skipTaskbar: isCustomer && useKiosk,
+      frame: isCustomer ? false : !isLockedKioskSurface,
+      closable: isLockedKioskSurface ? false : true,
+      minimizable: !isCustomer && !isLockedKioskSurface,
+      maximizable: !isCustomer && !isLockedKioskSurface,
+      movable: isLockedKioskSurface ? false : (isCustomer ? !useKiosk : true),
+      resizable: isLockedKioskSurface ? false : (isCustomer ? !useKiosk : true),
+      skipTaskbar: isLockedKioskSurface,
       webPreferences: {
         preload: join(__dirname, `../../preload/${config.preload}`),
         contextIsolation: true,
@@ -308,6 +346,8 @@ export class WindowManager {
 
     if (customerBehavior) {
       this.applyCustomerDisplayPresentation(win, customerBehavior);
+    } else if (isSelfCheckout && selfCheckoutBounds) {
+      this.applyKioskPresentation(win, selfCheckoutBounds);
     }
 
     // Load HTML
@@ -362,47 +402,67 @@ export class WindowManager {
         event.preventDefault();
         return;
       }
+
+      if (isSelfCheckout && isLockedKioskSurface) {
+        if (isSelfCheckoutStaffExit(input)) {
+          logger.info('[WindowManager] Ctrl+Shift+Q on self-checkout - closing');
+          event.preventDefault();
+          win.destroy();
+          return;
+        }
+
+        // Allow F12 in dev mode only
+        if (input.key === 'F12' && isDev) {
+          win.webContents.toggleDevTools();
+          return;
+        }
+
+        if (isBlockedKioskShortcut(input)) {
+          event.preventDefault();
+          return;
+        }
+
+        return;
+      }
+
       // F12 for DevTools on other windows
       if (input.key === 'F12') {
         win.webContents.toggleDevTools();
-      }
-      // Self-checkout kiosk: Ctrl+Shift+Q exits (single-monitor escape hatch)
-      if (id === 'selfCheckout' && input.control && input.shift && (input.key === 'Q' || input.key === 'q')) {
-        logger.info('[WindowManager] Ctrl+Shift+Q on self-checkout - closing');
-        event.preventDefault();
-        win.destroy();
       }
     });
 
     win.once('ready-to-show', () => win.show());
 
-    // Kiosk lock: if the customer display exits fullscreen unexpectedly (OS touch gesture,
+    // Kiosk lock: if a customer-facing kiosk exits fullscreen unexpectedly (OS touch gesture,
     // Win+D, etc.) re-enter kiosk/fullscreen immediately so customers can't escape.
     // Only skipped when staff intentionally closes via the display:close IPC channel.
-    if (isCustomer && useKiosk) {
+    if (isLockedKioskSurface && lockedKioskBounds) {
       win.on('leave-full-screen', () => {
-        if (this.customerExitRequested) return;
-        logger.info('[WindowManager] Customer display left fullscreen unexpectedly - restoring');
+        if (isCustomer && this.customerExitRequested) return;
+        logger.info(`[WindowManager] ${id} left fullscreen unexpectedly - restoring`);
         const restoreTimer = setTimeout(() => {
-          if (win.isDestroyed() || this.customerExitRequested) return;
-          if (win.isKiosk()) return;
-          this.applyCustomerDisplayPresentation(win, this.resolveCustomerDisplayBehavior());
-          logger.info('[WindowManager] Customer display kiosk/fullscreen restored');
+          if (win.isDestroyed() || (isCustomer && this.customerExitRequested)) return;
+          if (isCustomer) {
+            this.applyCustomerDisplayPresentation(win, this.resolveCustomerDisplayBehavior());
+          } else {
+            this.applyKioskPresentation(win, lockedKioskBounds);
+          }
+          logger.info(`[WindowManager] ${id} kiosk/fullscreen restored`);
         }, 50);
         win.once('closed', () => clearTimeout(restoreTimer));
       });
 
       // Prevent OS from stealing focus via swipe gestures - immediately reclaim
       win.on('blur', () => {
-        if (this.customerExitRequested || win.isDestroyed()) return;
+        if ((isCustomer && this.customerExitRequested) || win.isDestroyed()) return;
         setTimeout(() => {
-          if (!win.isDestroyed() && !this.customerExitRequested) {
+          if (!win.isDestroyed() && !(isCustomer && this.customerExitRequested)) {
             win.focus();
           }
         }, 100);
       });
 
-      logger.info(`[WindowManager] Customer display kiosk=true, frameless=true, blur-refocus=on`);
+      logger.info(`[WindowManager] ${id} kiosk=true, frameless=true, blur-refocus=on`);
     } else if (isCustomer) {
       logger.info(`[WindowManager] Customer display kiosk=false, frameless=true, windowed mode`);
     }

@@ -203,6 +203,12 @@ function makeDisplay(id: number, x: number, y: number, width: number, height: nu
   };
 }
 
+function emitBeforeInput(win: MockBrowserWindow, input: Record<string, any>) {
+  const event = { preventDefault: vi.fn() };
+  win.webContents.emit('before-input-event', event, input);
+  return event;
+}
+
 describe('WindowManager customer display behavior', () => {
   let WindowManager: typeof import('../src/main/windows/window-manager').WindowManager;
   const posStore = {
@@ -278,6 +284,7 @@ describe('WindowManager customer display behavior', () => {
       height: 768,
     });
     expect(win.alwaysOnTopHistory.some((entry) => entry.flag && entry.level === 'screen-saver')).toBe(false);
+    expect(emitBeforeInput(win, { key: 'a' }).preventDefault).toHaveBeenCalledOnce();
 
     manager.destroy();
   });
@@ -330,6 +337,89 @@ describe('WindowManager customer display behavior', () => {
 
     expect(win.boundsHistory.at(-1)).toEqual(displays[1].bounds);
     expect(win.alwaysOnTopHistory.at(-1)).toEqual({ flag: true, level: 'screen-saver' });
+
+    manager.destroy();
+  });
+
+  it('opens self-checkout as a locked kiosk on the configured monitor', () => {
+    configValues.selfCheckoutEnabled = true;
+    configValues.selfCheckoutMonitor = 1;
+    displays = [
+      makeDisplay(1, 0, 0, 1920, 1080),
+      makeDisplay(2, 1920, 0, 1280, 1024),
+    ];
+    primaryDisplay = displays[0];
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('selfCheckout') as unknown as MockBrowserWindow;
+
+    expect(win).toBeTruthy();
+    expect(win.options.width).toBe(1280);
+    expect(win.options.height).toBe(1024);
+    expect(win.options.x).toBe(1920);
+    expect(win.options.y).toBe(0);
+    expect(win.options.kiosk).toBe(true);
+    expect(win.options.fullscreen).toBe(true);
+    expect(win.options.frame).toBe(false);
+    expect(win.options.closable).toBe(false);
+    expect(win.options.minimizable).toBe(false);
+    expect(win.options.maximizable).toBe(false);
+    expect(win.options.movable).toBe(false);
+    expect(win.options.resizable).toBe(false);
+    expect(win.options.skipTaskbar).toBe(true);
+    expect(win.boundsHistory.at(-1)).toEqual(displays[1].bounds);
+    expect(win.alwaysOnTopHistory).toContainEqual({ flag: true, level: 'screen-saver' });
+
+    manager.destroy();
+  });
+
+  it('blocks self-checkout kiosk escape/debug shortcuts while preserving scanner input and staff exit', () => {
+    configValues.selfCheckoutEnabled = true;
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('selfCheckout') as unknown as MockBrowserWindow;
+
+    const scannerDigit = emitBeforeInput(win, { key: '5' });
+    expect(scannerDigit.preventDefault).not.toHaveBeenCalled();
+
+    const scannerEnter = emitBeforeInput(win, { key: 'Enter' });
+    expect(scannerEnter.preventDefault).not.toHaveBeenCalled();
+
+    const escape = emitBeforeInput(win, { key: 'Escape' });
+    expect(escape.preventDefault).toHaveBeenCalledOnce();
+    expect(win.destroyed).toBe(false);
+
+    const reload = emitBeforeInput(win, { key: 'r', control: true });
+    expect(reload.preventDefault).toHaveBeenCalledOnce();
+
+    const devtools = emitBeforeInput(win, { key: 'I', control: true, shift: true });
+    expect(devtools.preventDefault).toHaveBeenCalledOnce();
+    expect(win.webContents.toggleDevTools).not.toHaveBeenCalled();
+
+    const staffExit = emitBeforeInput(win, { key: 'Q', control: true, shift: true });
+    expect(staffExit.preventDefault).toHaveBeenCalledOnce();
+    expect(win.destroyed).toBe(true);
+
+    manager.destroy();
+  });
+
+  it('restores self-checkout kiosk presentation after fullscreen loss and refocuses on blur', () => {
+    configValues.selfCheckoutEnabled = true;
+
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('selfCheckout') as unknown as MockBrowserWindow;
+
+    win.setKiosk(false);
+    win.emit('leave-full-screen');
+    vi.advanceTimersByTime(50);
+
+    expect(win.kioskHistory.at(-1)).toBe(true);
+    expect(win.boundsHistory.at(-1)).toEqual(primaryDisplay.bounds);
+    expect(win.alwaysOnTopHistory.at(-1)).toEqual({ flag: true, level: 'screen-saver' });
+
+    win.emit('blur');
+    vi.advanceTimersByTime(100);
+    expect(win.focus).toHaveBeenCalled();
 
     manager.destroy();
   });
