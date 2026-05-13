@@ -446,13 +446,14 @@ foreach ($vid in $vids) {
       // UI auto-runs Windows driver scan, so it's safer to drop than risk
       // showing a phantom card.
       if (!isPosnet && !matchedPrinter && hit.comPort) {
+        const isKnownSerialFiscal = brand === 'ELZAB';
         logger.info(
-          `[DriverInstaller] Section 2: exposing manual-only generic serial candidate on ${hit.comPort} (${hit.model})`
+          `[DriverInstaller] Section 2: exposing manual-only ${isKnownSerialFiscal ? brand : 'generic'} serial candidate on ${hit.comPort} (${hit.model})`
         );
         devices.push({
           vid: hit.vid,
           pid: (hit.instanceId.match(/PID_([0-9A-F]+)/i) || [])[1] || '',
-          brand: 'Generic Serial',
+          brand: isKnownSerialFiscal ? brand : 'Generic Serial',
           model: hit.model || hit.comPort,
           windowsPrinterName: null,
           comPort: hit.comPort,

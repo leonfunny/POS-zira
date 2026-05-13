@@ -238,6 +238,8 @@ class Database {
       'sync_state',
       // Local device mirrors
       'local_printers',
+      // Local fiscal journal (contains order payloads and tax-device safety state)
+      'fiscal_attempts',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

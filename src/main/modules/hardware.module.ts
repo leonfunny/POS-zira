@@ -44,6 +44,7 @@ import {
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
+import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
 import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -121,6 +122,10 @@ export class HardwareModule extends BaseModule {
 
   async init(): Promise<void> {
     logger.info('[HardwareModule] Initializing printers...');
+    const unknownFiscalAttempts = fiscalAttemptRepo.markOpenSentAsUnknownOnStartup();
+    if (unknownFiscalAttempts > 0) {
+      logger.warn(`[HardwareModule] Marked ${unknownFiscalAttempts} SENT fiscal attempt(s) as UNKNOWN_NEEDS_RECONCILIATION after startup`);
+    }
     await this.reinitializePrinter();
 
     logger.info('[HardwareModule] Initializing barcode scanner...');
@@ -1950,7 +1955,15 @@ export class HardwareModule extends BaseModule {
             else await targetPrinter.printZReport(rd);
           } else throw new Error('Reports require Thermal printer');
         } else {
-          await targetPrinter.printReceipt(job.payload as ReceiptData);
+          const receiptPayload = job.payload as ReceiptData;
+          if (targetPrinter instanceof ElzabDriver) {
+            await targetPrinter.printReceipt({
+              ...receiptPayload,
+              orderId: receiptPayload.orderId || job.referenceId || receiptPayload.orderNumber,
+            });
+          } else {
+            await targetPrinter.printReceipt(receiptPayload);
+          }
         }
 
         socket?.sendJobStatus(job.jobId, 'COMPLETED');

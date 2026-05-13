@@ -38,4 +38,8 @@ describe('database.clearSalonData() table list', () => {
     expect(block).toMatch(/'local_sync_log'/);
     expect(block).toMatch(/'sync_state'/);
   });
+
+  it('clears the local fiscal_attempts journal on salon switch', () => {
+    expect(block).toMatch(/'fiscal_attempts'/);
+  });
 });

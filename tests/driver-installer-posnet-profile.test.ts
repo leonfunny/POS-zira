@@ -20,6 +20,7 @@ import {
   requiresManualPosnetProtocolSelection,
   type DetectedDevice,
 } from '../src/main/hardware/driver-installer';
+import { BRAND_PATTERNS } from '../src/main/hardware/detection/types';
 import { ALLOWED_PROTOCOLS_BY_TYPE } from '../src/shared/types';
 
 function device(overrides: Partial<DetectedDevice>): DetectedDevice {
@@ -84,6 +85,24 @@ describe('POSNET Thermal profile routing', () => {
     });
 
     expect(classifyPrinterCategory(elzab)).toEqual({ targetType: 'FISCAL', protocol: 'ELZAB_STX' });
+  });
+
+  it('knows the ELZAB Zeta Online USB CDC VID seen by Windows as a generic COM port', () => {
+    const elzabPattern = BRAND_PATTERNS.find((pattern) => pattern.brand === 'ELZAB');
+    expect(elzabPattern?.vids).toContain('C1CA');
+
+    const elzabCdc = device({
+      vid: 'C1CA',
+      pid: 'BA70',
+      brand: 'ELZAB',
+      model: 'Zeta online',
+      windowsPrinterName: null,
+      comPort: 'COM4',
+      portName: 'COM4',
+      connectionType: 'SERIAL',
+    });
+
+    expect(classifyPrinterCategory(elzabCdc)).toEqual({ targetType: 'FISCAL', protocol: 'ELZAB_STX' });
   });
 
   it('keeps non-POSNET thermal serial printers on RECEIPT with THERMAL protocol', () => {

@@ -85,6 +85,7 @@ export class PaymentController {
     }
 
     const receiptData: ReceiptData = {
+      orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
       sellerName: this.getSellerName?.(),
@@ -145,6 +146,7 @@ export class PaymentController {
     }
 
     const receiptData: ReceiptData = {
+      orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
       sellerName: this.getSellerName?.(),
@@ -295,6 +297,7 @@ export class PaymentController {
     }
 
     const receiptData: ReceiptData = {
+      orderId,
       orderNumber: `R-${order.order_number || orderId.substring(0, 8)}`,
       salonName: this.getSalonName?.(),
       sellerName: this.getSellerName?.(),

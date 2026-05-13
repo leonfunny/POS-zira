@@ -1032,4 +1032,28 @@ export const migrations: Migration[] = [
       ALTER TABLE local_printers ADD COLUMN paper_height INTEGER;
     `,
   },
+  {
+    version: 27,
+    name: 'fiscal_attempts',
+    up: `
+      CREATE TABLE IF NOT EXISTS fiscal_attempts (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        payment_id TEXT,
+        attempt_no INTEGER NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        printer_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        result_json TEXT,
+        error_code TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        sent_at TEXT,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_order_payment ON fiscal_attempts(order_id, payment_id);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_status ON fiscal_attempts(status);
+    `,
+  },
 ];

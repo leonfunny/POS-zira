@@ -1,4 +1,10 @@
+import { createHash } from 'crypto';
 import type { DailyReportData, PrinterStatusInfo, ReceiptData } from '../../../shared/types';
+import {
+  fiscalAttemptRepo,
+  type FiscalAttemptJournal,
+  type FiscalAttemptRow,
+} from '../../database/repos/fiscal-attempt-repo';
 import {
   createDefaultElzabBridge,
   type ElzabBridge,
@@ -14,16 +20,19 @@ export interface ElzabDriverOptions {
   address?: string;
   baudRate?: number;
   bridge?: ElzabBridge;
+  fiscalJournal?: FiscalAttemptJournal;
 }
 
 export class ElzabDriver {
   private connectionState: ElzabConnectionState = 'disconnected';
   private lastDiagnostic: { code: ElzabDiagnosticCode; detail?: string } | undefined;
   private bridge: ElzabBridge;
+  private fiscalJournal: FiscalAttemptJournal;
 
   constructor(private options: ElzabDriverOptions) {
     this.options.baudRate = options.baudRate || 9600;
     this.bridge = options.bridge || createDefaultElzabBridge();
+    this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
   }
 
   getConnectionState(): ElzabConnectionState { return this.connectionState; }
@@ -111,10 +120,43 @@ export class ElzabDriver {
 
   async printReceipt(data: ReceiptData): Promise<void> {
     this.assertConnected();
-    await this.requireOk(
-      await this.bridge.printReceipt(this.connectionConfig(), data),
-      'ELZAB_STX fiscal receipt failed',
-    );
+    const context = this.createReceiptAttempt(data);
+
+    try {
+      this.assertRealFiscalAllowed('receipt');
+    } catch (error: any) {
+      this.fiscalJournal.markBlocked(context.attempt.id, 'REAL_FISCAL_PRINT_DISABLED', {
+        detail: error?.message || String(error),
+      });
+      throw error;
+    }
+
+    this.fiscalJournal.markSent(context.attempt.id);
+
+    let result: ElzabOperationResult;
+    try {
+      result = await this.bridge.printReceipt(this.connectionConfig(), data);
+    } catch (error: any) {
+      this.fiscalJournal.markUnknown(context.attempt.id, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', {
+        detail: error?.message || String(error),
+      });
+      throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after bridge error: ${error?.message || String(error)}`);
+    }
+
+    if (result.ok) {
+      this.fiscalJournal.markSuccess(context.attempt.id, result);
+      return;
+    }
+
+    const code = result.code || 'ELZAB_COMMAND_FAILED';
+    if (this.isAmbiguousAfterSent(result)) {
+      this.fiscalJournal.markUnknown(context.attempt.id, code, result);
+      this.setFailure(result);
+      throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after ${code}${result.detail ? `: ${result.detail}` : ''}`);
+    }
+
+    this.fiscalJournal.markFailed(context.attempt.id, code, result);
+    await this.requireOk(result, 'ELZAB_STX fiscal receipt failed');
   }
 
   async printDailyReport(data: DailyReportData): Promise<void> {
@@ -147,6 +189,7 @@ export class ElzabDriver {
 
   private async printReport(kind: 'DAILY' | 'X' | 'Z', data: DailyReportData): Promise<void> {
     this.assertConnected();
+    this.assertRealFiscalAllowed(`${kind} report`);
     if (!this.bridge.printReport) {
       throw new Error(`ELZAB_STX ${kind} report is not implemented until the official sidecar supports it.`);
     }
@@ -163,6 +206,54 @@ export class ElzabDriver {
       address: this.options.address,
       baudRate: this.options.baudRate || 9600,
     };
+  }
+
+  private createReceiptAttempt(data: ReceiptData): { attempt: FiscalAttemptRow } {
+    const orderId = (data.orderId || data.orderNumber || '').trim();
+    const paymentId = data.paymentId?.trim() || null;
+    if (!orderId) {
+      const detail = 'ELZAB_STX fiscal receipt requires ReceiptData.orderId or orderNumber for idempotency.';
+      this.lastDiagnostic = { code: 'FISCAL_IDEMPOTENCY_KEY_MISSING', detail };
+      throw new Error(`FISCAL_IDEMPOTENCY_KEY_MISSING: ${detail}`);
+    }
+
+    const blocking = this.fiscalJournal.findBlockingAttempt(orderId, paymentId);
+    if (blocking) {
+      const detail = `Existing fiscal attempt ${blocking.id} for order ${orderId} is ${blocking.status}; automatic retry is blocked.`;
+      this.lastDiagnostic = { code: 'FISCAL_ATTEMPT_RETRY_BLOCKED', detail };
+      throw new Error(`FISCAL_ATTEMPT_RETRY_BLOCKED: ${detail}`);
+    }
+
+    const payloadJson = stableStringify(data);
+    const payloadHash = createHash('sha256').update(payloadJson).digest('hex');
+    const attemptNo = this.fiscalJournal.getNextAttemptNo(orderId, paymentId);
+    const idempotencyKey = `${orderId}:${paymentId || 'default'}:${attemptNo}`;
+
+    return {
+      attempt: this.fiscalJournal.createPending({
+        orderId,
+        paymentId,
+        attemptNo,
+        idempotencyKey,
+        printerType: 'FISCAL',
+        payloadJson,
+        payloadHash,
+      }),
+    };
+  }
+
+  private isAmbiguousAfterSent(result: ElzabOperationResult): boolean {
+    const code = result.code || 'ELZAB_COMMAND_FAILED';
+    if (code === 'ELZAB_BRIDGE_BAD_RESPONSE' || code === 'ELZAB_COMMAND_FAILED') return true;
+    const detail = (result.detail || '').toLowerCase();
+    return /timeout|timed out|etimedout|econnreset|econnaborted|broken pipe|crash|exited|killed/.test(detail);
+  }
+
+  private assertRealFiscalAllowed(operation: string): void {
+    if (process.env.ALLOW_REAL_FISCAL_PRINT === 'true') return;
+    const detail = `Real ELZAB fiscal ${operation} is disabled. Set ALLOW_REAL_FISCAL_PRINT=true only during controlled production go-live.`;
+    this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
+    throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
   }
 
   private assertConnected(): void {
@@ -183,4 +274,18 @@ export class ElzabDriver {
     this.lastDiagnostic = { code, detail: result.detail };
     this.connectionState = code === 'ELZAB_PROTOCOL_NOT_READY' ? 'physical_present' : 'disconnected';
   }
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortForStableStringify(value));
+}
+
+function sortForStableStringify(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortForStableStringify);
+  if (!value || typeof value !== 'object') return value;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = sortForStableStringify((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
 }

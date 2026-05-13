@@ -463,6 +463,10 @@ export interface ReceiptPayment {
 
 // Receipt data
 export interface ReceiptData {
+  /** Stable POS order id used for fiscal idempotency. */
+  orderId?: string;
+  /** Optional stable payment attempt id used for split/terminal fiscal idempotency. */
+  paymentId?: string;
   orderNumber?: string;
   salonName?: string;
   sellerName?: string;      // Legal entity name (paragon header)

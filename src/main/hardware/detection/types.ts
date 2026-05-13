@@ -119,7 +119,7 @@ export const BRAND_PATTERNS: BrandPattern[] = [
   {
     brand: 'ELZAB',
     namePatterns: ['elzab', 'zeta online'],
-    vids: [],
+    vids: ['C1CA'],
     defaultProtocol: 'ELZAB_STX',
     defaultType: 'FISCAL',
   },
