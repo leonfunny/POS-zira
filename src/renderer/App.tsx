@@ -433,7 +433,9 @@ export default function App() {
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
               {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
-              {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && <SelfCheckoutTab />}
+              {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && (
+                <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
+              )}
               {activeTab === 'billiard' && isFeatureEnabled('billiard') && (
                 <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
               )}

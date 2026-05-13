@@ -14,6 +14,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
+import { Language } from '../i18n/translations';
+import { useTranslation } from '../i18n/useTranslation';
 import {
   SelfCheckoutMode,
   resolveSelfCheckoutRuntime,
@@ -30,10 +32,21 @@ interface DisplayInfo {
   label?: string;
 }
 
-export default function SelfCheckoutTab() {
-  const { config, saveConfig } = useConfig();
+const PRODUCTION_BLOCKER_KEYS = [
+  'selfCheckout.blocker.paymentTerminal',
+  'selfCheckout.blocker.fiscalPrinter',
+  'selfCheckout.blocker.orderCreation',
+];
 
-  const [language, setLanguage] = useState<ScLang>('pl');
+interface SelfCheckoutTabProps {
+  language: Language;
+}
+
+export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTabProps) {
+  const { config, saveConfig } = useConfig();
+  const { t } = useTranslation(uiLanguage);
+
+  const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [bagFee, setBagFee] = useState<number>(0.20);
   const [monitor, setMonitor] = useState<number>(0);
@@ -45,7 +58,7 @@ export default function SelfCheckoutTab() {
   useEffect(() => {
     if (!config) return;
     const c = config as any;
-    setLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
+    setKioskLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
     setBagFee(typeof c.selfCheckoutBagFeeAmount === 'number' ? c.selfCheckoutBagFeeAmount : 0.20);
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
@@ -69,6 +82,9 @@ export default function SelfCheckoutTab() {
     [mode],
   );
   const isProductionBlocked = runtime.unavailableReasons.length > 0;
+  const modeLabel = mode === 'demo'
+    ? t('selfCheckout.mode.demo')
+    : t('selfCheckout.mode.production');
 
   const persist = async (patch: Record<string, any>) => {
     try {
@@ -85,7 +101,7 @@ export default function SelfCheckoutTab() {
       await persist({
         selfCheckoutEnabled: true,
         selfCheckoutMode: mode,
-        selfCheckoutLanguage: language,
+        selfCheckoutLanguage: kioskLanguage,
         selfCheckoutBagFeeAmount: bagFee,
         selfCheckoutMonitor: monitor,
         selfCheckoutIdleTimeoutMs: idleTimeoutMs,
@@ -93,11 +109,11 @@ export default function SelfCheckoutTab() {
       const result = await window.electronAPI.window.open('selfCheckout');
       if (!result?.success) {
         rlog.error('[SelfCheckoutTab] Failed to open kiosk:', result?.error);
-        alert(`Could not open kiosk: ${result?.error || 'unknown error'}`);
+        alert(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
       }
     } catch (err: any) {
       rlog.error('[SelfCheckoutTab] openKiosk failed:', err);
-      alert(`Could not open kiosk: ${err?.message || err}`);
+      alert(`${t('selfCheckout.openError')}: ${err?.message || err}`);
     } finally {
       setOpening(false);
     }
@@ -111,19 +127,18 @@ export default function SelfCheckoutTab() {
         <div>
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[var(--sand-200)] bg-white px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-[var(--ink-muted)]">
             <ScanBarcode size={14} className="text-[var(--primary-deep)]" />
-            POS kiosk control
+            {t('selfCheckout.badge')}
           </div>
           <h1 className="text-3xl font-black tracking-tight text-[var(--ink)]">
-            Self-Checkout Kiosk
+            {t('selfCheckout.title')}
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[var(--ink-muted)]">
-            Operator control for the customer-facing kiosk. Demo can be opened;
-            production intentionally fails closed until payment, fiscal, and order paths are real.
+            {t('selfCheckout.subtitle')}
           </p>
         </div>
         {justSaved && (
           <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-            Saved
+            {t('selfCheckout.saved')}
           </div>
         )}
       </header>
@@ -147,12 +162,12 @@ export default function SelfCheckoutTab() {
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-black text-[var(--ink)]">
-              {mode === 'demo' ? 'Demo kiosk is available' : 'Production kiosk opens closed'}
+              {mode === 'demo' ? t('selfCheckout.demoAvailable') : t('selfCheckout.productionClosed')}
             </h2>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-muted)]">
               {mode === 'demo'
-                ? 'Use this for UI flow, scanning, summary, payment simulation, and receipt state testing. It does not create a real sale.'
-                : 'This is the correct behavior until the missing integrations are wired. Do not make production look sellable before it is real.'}
+                ? t('selfCheckout.demoAvailableDesc')
+                : t('selfCheckout.productionClosedDesc')}
             </p>
           </div>
         </div>
@@ -164,10 +179,10 @@ export default function SelfCheckoutTab() {
             <div>
               <h2 className="flex items-center gap-2 text-lg font-black text-[var(--ink)]">
                 <Power size={20} className="text-[var(--primary-deep)]" />
-                Launch
+                {t('selfCheckout.launch')}
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-muted)]">
-                Opens the kiosk on the selected customer display.
+                {t('selfCheckout.launchDesc')}
               </p>
             </div>
             <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.1em] ${
@@ -175,7 +190,7 @@ export default function SelfCheckoutTab() {
                 ? 'bg-amber-100 text-amber-800'
                 : 'bg-slate-100 text-slate-700'
             }`}>
-              {mode}
+              {modeLabel}
             </span>
           </div>
 
@@ -187,26 +202,26 @@ export default function SelfCheckoutTab() {
           >
             <Maximize size={24} />
             {opening
-              ? 'Opening kiosk...'
+              ? t('selfCheckout.opening')
               : mode === 'demo'
-                ? 'Open demo self-checkout'
-                : 'Open closed production kiosk'}
+                ? t('selfCheckout.openDemo')
+                : t('selfCheckout.openProductionClosed')}
           </button>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <RuntimePill
-              label="Payment"
-              state={mode === 'demo' ? 'Demo only' : 'Blocked'}
+              label={t('selfCheckout.payment')}
+              state={mode === 'demo' ? t('selfCheckout.demoOnly') : t('selfCheckout.blocked')}
               blocked={mode === 'production'}
             />
             <RuntimePill
-              label="Fiscal print"
-              state={mode === 'demo' ? 'Skipped' : 'Blocked'}
+              label={t('selfCheckout.fiscalPrint')}
+              state={mode === 'demo' ? t('selfCheckout.skipped') : t('selfCheckout.blocked')}
               blocked={mode === 'production'}
             />
             <RuntimePill
-              label="Order create"
-              state={mode === 'demo' ? 'Skipped' : 'Blocked'}
+              label={t('selfCheckout.orderCreate')}
+              state={mode === 'demo' ? t('selfCheckout.skipped') : t('selfCheckout.blocked')}
               blocked={mode === 'production'}
             />
           </div>
@@ -215,20 +230,20 @@ export default function SelfCheckoutTab() {
         <section className="panel p-5">
           <h2 className="flex items-center gap-2 text-lg font-black text-[var(--ink)]">
             <ShieldAlert size={20} className={isProductionBlocked ? 'text-amber-600' : 'text-emerald-600'} />
-            Production readiness
+            {t('selfCheckout.productionReadiness')}
           </h2>
           <div className="mt-4 space-y-2">
             {isProductionBlocked ? (
-              runtime.unavailableReasons.map((reason) => (
+              runtime.unavailableReasons.map((reason, index) => (
                 <div key={reason} className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-900">
                   <XCircle size={17} className="mt-0.5 shrink-0" />
-                  <span>{reason}</span>
+                  <span>{PRODUCTION_BLOCKER_KEYS[index] ? t(PRODUCTION_BLOCKER_KEYS[index]) : reason}</span>
                 </div>
               ))
             ) : (
               <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-800">
                 <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
-                <span>Demo flow is available for UI and state testing.</span>
+                <span>{t('selfCheckout.demoReady')}</span>
               </div>
             )}
           </div>
@@ -239,9 +254,9 @@ export default function SelfCheckoutTab() {
         <div className="mb-5 flex items-center gap-2">
           <Settings size={20} className="text-[var(--primary-deep)]" />
           <div>
-            <h2 className="text-lg font-black text-[var(--ink)]">Kiosk settings</h2>
+            <h2 className="text-lg font-black text-[var(--ink)]">{t('selfCheckout.settings')}</h2>
             <p className="text-sm text-[var(--ink-muted)]">
-              These settings save immediately and apply on next kiosk launch.
+              {t('selfCheckout.settingsDesc')}
             </p>
           </div>
         </div>
@@ -249,8 +264,8 @@ export default function SelfCheckoutTab() {
         <div className="grid gap-4 lg:grid-cols-2">
           <SettingField
             icon={<AlertTriangle size={17} />}
-            label="Runtime mode"
-            help="Production stays closed until real integrations are done."
+            label={t('selfCheckout.runtimeMode')}
+            help={t('selfCheckout.runtimeModeHelp')}
           >
             <select
               value={mode}
@@ -261,21 +276,21 @@ export default function SelfCheckoutTab() {
               }}
               className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
             >
-              <option value="demo">Demo only - mocked payment, no real order</option>
-              <option value="production">Production - fail closed until integrations are ready</option>
+              <option value="demo">{t('selfCheckout.option.demo')}</option>
+              <option value="production">{t('selfCheckout.option.production')}</option>
             </select>
           </SettingField>
 
           <SettingField
             icon={<Languages size={17} />}
-            label="Default language"
-            help="Customer changes are session-only."
+            label={t('selfCheckout.defaultLanguage')}
+            help={t('selfCheckout.defaultLanguageHelp')}
           >
             <select
-              value={language}
+              value={kioskLanguage}
               onChange={(e) => {
                 const v = e.target.value as ScLang;
-                setLanguage(v);
+                setKioskLanguage(v);
                 persist({ selfCheckoutLanguage: v });
               }}
               className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
@@ -288,8 +303,8 @@ export default function SelfCheckoutTab() {
 
           <SettingField
             icon={<Coins size={17} />}
-            label="Bag fee (PLN)"
-            help="Added only when the customer chooses a bag in summary."
+            label={t('selfCheckout.bagFee')}
+            help={t('selfCheckout.bagFeeHelp')}
           >
             <input
               type="number"
@@ -307,8 +322,8 @@ export default function SelfCheckoutTab() {
 
           <SettingField
             icon={<Monitor size={17} />}
-            label="Display monitor"
-            help="Use a customer-facing display if available."
+            label={t('selfCheckout.displayMonitor')}
+            help={t('selfCheckout.displayMonitorHelp')}
           >
             <select
               value={monitor}
@@ -322,16 +337,16 @@ export default function SelfCheckoutTab() {
               {displays.length > 0 ? (
                 displays.map((d) => (
                   <option key={d.index} value={d.index}>
-                    {d.isPrimary ? 'Primary' : `Secondary ${d.index}`}
+                    {d.isPrimary ? t('selfCheckout.monitor.primary') : `${t('selfCheckout.monitor.secondary')} ${d.index}`}
                     {' - '}{d.width}x{d.height}
                     {d.label && d.label !== `Display ${d.index + 1}` ? ` (${d.label})` : ''}
                   </option>
                 ))
               ) : (
                 <>
-                  <option value={0}>Primary</option>
-                  <option value={1}>Secondary (1)</option>
-                  <option value={2}>Secondary (2)</option>
+                  <option value={0}>{t('selfCheckout.monitor.primary')}</option>
+                  <option value={1}>{t('selfCheckout.monitor.secondary')} (1)</option>
+                  <option value={2}>{t('selfCheckout.monitor.secondary')} (2)</option>
                 </>
               )}
             </select>
@@ -339,8 +354,8 @@ export default function SelfCheckoutTab() {
 
           <SettingField
             icon={<Clock size={17} />}
-            label="Idle timeout"
-            help="Cart resets after no touch, keyboard, or scanner input."
+            label={t('selfCheckout.idleTimeout')}
+            help={t('selfCheckout.idleTimeoutHelp')}
           >
             <select
               value={idleTimeoutMs}
@@ -351,10 +366,10 @@ export default function SelfCheckoutTab() {
               }}
               className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
             >
-              <option value={60000}>1 min</option>
-              <option value={90000}>1.5 min</option>
-              <option value={120000}>2 min</option>
-              <option value={300000}>5 min</option>
+              <option value={60000}>{t('selfCheckout.timeout.1m')}</option>
+              <option value={90000}>{t('selfCheckout.timeout.1_5m')}</option>
+              <option value={120000}>{t('selfCheckout.timeout.2m')}</option>
+              <option value={300000}>{t('selfCheckout.timeout.5m')}</option>
             </select>
           </SettingField>
         </div>
