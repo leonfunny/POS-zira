@@ -14,6 +14,7 @@ interface SettingsProps {
 // Printer types - defined locally for Vite compatibility
 const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
+type SettingsTab = 'general' | 'pos' | 'printers';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 
 function isPaperControlPrinterType(printerType: PrinterTypeValue): boolean {
@@ -241,6 +242,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   // Tab visibility
   const [hiddenTabs, setHiddenTabs] = useState<Tab[]>((config?.hiddenTabs as Tab[]) ?? []);
   const t = getTranslation(language);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
 
   // Test print state
   const [testingPrinter, setTestingPrinter] = useState<string | null>(null);
@@ -1206,8 +1208,37 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   return (
     <div className="space-y-4">
-      {/* General Settings */}
-      <div className="panel p-4">
+      <div role="tablist" aria-label="Settings sections" className="flex gap-2 rounded-lg border border-slate-200 bg-white p-1">
+        {([
+          { id: 'general' as const, label: t('settings.general'), icon: <LayoutDashboard size={15} /> },
+          { id: 'pos' as const, label: t('settings.pos'), icon: <ShoppingCart size={15} /> },
+          { id: 'printers' as const, label: t('settings.printers'), icon: <Printer size={15} /> },
+        ]).map((tab) => {
+          const active = settingsTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setSettingsTab(tab.id)}
+              className={`min-h-10 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                active
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {settingsTab === 'general' && (
+        <>
+          {/* General Settings */}
+          <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">
           {t('settings.general')}
         </h2>
@@ -1279,10 +1310,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             </button>
           </div>
         </div>
-      </div>
+          </div>
+        </>
+      )}
 
-      {/* Printer Detection */}
-      <div className="panel p-4">
+      {settingsTab === 'printers' && (
+        <>
+          {/* Printer Detection */}
+          <div className="panel p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-sm font-semibold text-slate-700">Printer Detection</h2>
@@ -1567,10 +1602,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               : autoSetupResult.message}
           </div>
         )}
-      </div>
+          </div>
 
-      {/* Printer Settings */}
-      <div className="panel p-4">
+          {/* Printer Settings */}
+          <div className="panel p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
             {t('settings.printers')}
@@ -2503,10 +2538,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             )}
           </div>
         </div>
-      </div>
+          </div>
+        </>
+      )}
 
-      {/* POS Settings */}
-      <div className="panel p-4">
+      {settingsTab === 'pos' && (
+        <>
+          {/* POS Settings */}
+          <div className="panel p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
             {t('settings.pos')}
@@ -2843,10 +2882,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             )}
           </div>
         )}
-      </div>
+          </div>
 
-      {/* Pairing Card */}
-      <div className="panel p-4">
+        </>
+      )}
+
+      {settingsTab === 'general' && (
+        <>
+          {/* Pairing Card */}
+          <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">
           {t('pairing.title')}
         </h2>
@@ -3362,6 +3406,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           })}
         </div>
       </div>
+
+        </>
+      )}
 
       {/* Auto-save indicator */}
       <p className="text-center text-xs text-slate-400">{t('settings.autoSaveHint')}</p>

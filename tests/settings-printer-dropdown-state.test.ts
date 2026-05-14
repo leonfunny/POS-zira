@@ -8,6 +8,28 @@ const settingsSource = readFileSync(
 );
 
 describe('Settings printer dropdown state', () => {
+  it('keeps Settings sections behind dedicated tabs and POS scoped to POS controls', () => {
+    expect(settingsSource).toContain("type SettingsTab = 'general' | 'pos' | 'printers'");
+    expect(settingsSource).toContain("const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')");
+    expect(settingsSource).toContain('role="tablist"');
+    expect(settingsSource).toContain("id: 'pos' as const");
+    expect(settingsSource).toContain("settingsTab === 'pos'");
+    expect(settingsSource).toContain("settingsTab === 'printers'");
+
+    const posTabStart = settingsSource.indexOf("{settingsTab === 'pos' &&");
+    const nextGeneralTab = settingsSource.indexOf("{settingsTab === 'general' &&", posTabStart + 1);
+    const posTabSource = settingsSource.slice(posTabStart, nextGeneralTab);
+
+    expect(posTabStart).toBeGreaterThan(-1);
+    expect(nextGeneralTab).toBeGreaterThan(posTabStart);
+    expect(posTabSource).toContain("{t('settings.pos')}");
+    expect(posTabSource).not.toContain('Pairing Card');
+    expect(posTabSource).not.toContain('Telegram Remote Control');
+    expect(posTabSource).not.toContain('Zira AI Tools');
+    expect(posTabSource).not.toContain('App Updates');
+    expect(posTabSource).not.toContain('SSH Tunnel Status');
+    expect(posTabSource).not.toContain('Tab Visibility');
+  });
   it('hydrates Windows printer options from cached detection and saved config', () => {
     expect(settingsSource).toContain('function readCachedPrinterDetectionStatus()');
     expect(settingsSource).toContain('readCachedPrinterDetectionStatus()?.windowsPrinters');
