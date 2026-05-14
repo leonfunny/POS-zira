@@ -75,21 +75,22 @@ export const localPrinterRepo = {
             ON CONFLICT(id) DO UPDATE SET
               agent_id = excluded.agent_id,
               printer_type = excluded.printer_type,
-             display_name = excluded.display_name,
-             name = excluded.name,
-             protocol = excluded.protocol,
-             windows_printer_name = excluded.windows_printer_name,
-             address = excluded.address,
+              display_name = excluded.display_name,
+              name = excluded.name,
+              protocol = excluded.protocol,
+              windows_printer_name = excluded.windows_printer_name,
+              address = excluded.address,
               port = excluded.port,
               baud_rate = excluded.baud_rate,
               paper_width = excluded.paper_width,
               paper_height = excluded.paper_height,
               chars_per_line = excluded.chars_per_line,
               supports_cut = excluded.supports_cut,
-             supports_cash_drawer = excluded.supports_cash_drawer,
-             is_enabled = excluded.is_enabled,
-             last_seen_at = excluded.last_seen_at,
-             updated_at = excluded.updated_at`,
+              supports_cash_drawer = excluded.supports_cash_drawer,
+              is_enabled = excluded.is_enabled,
+              is_online = excluded.is_online,
+              last_seen_at = excluded.last_seen_at,
+              updated_at = excluded.updated_at`,
           [
             printer.id,
             printer.agentId ?? agentId,
@@ -118,7 +119,7 @@ export const localPrinterRepo = {
         const placeholders = [...seenIds].map(() => '?').join(', ');
         database.run(
           `UPDATE local_printers
-           SET is_enabled = 0, updated_at = ?
+           SET is_enabled = 0, is_online = 0, updated_at = ?
            WHERE agent_id = ? AND id NOT IN (${placeholders})`,
           [now, agentId, ...seenIds],
         );

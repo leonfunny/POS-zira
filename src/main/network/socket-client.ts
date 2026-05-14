@@ -238,6 +238,11 @@ export default class SocketClient extends EventEmitter {
     printerPort: string | null;
     scannerActive: boolean;
     appVersion: string;
+    printerStatuses?: Array<{
+      printerId: string;
+      isOnline: boolean;
+      lastError?: string | null;
+    }>;
   }): void {
     if (!this.socket?.connected) {
       return;

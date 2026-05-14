@@ -107,6 +107,45 @@ function normalizeServerPrinters(printers?: ConnectResponse['printers']): Printe
   return Object.keys(mapped).length > 0 ? mapped : null;
 }
 
+type AgentPrinterApiPayload = Record<string, string | number | boolean | null>;
+
+function addDefinedPayloadValue(
+  payload: AgentPrinterApiPayload,
+  key: string,
+  value: string | number | boolean | null | undefined,
+): void {
+  if (value !== undefined) payload[key] = value;
+}
+
+function normalizeAgentPrinterCreatePayload(body: Partial<ServerPrinterMapping>): AgentPrinterApiPayload {
+  const payload: AgentPrinterApiPayload = {};
+  addDefinedPayloadValue(payload, 'displayName', body.displayName ?? body.name ?? undefined);
+  addDefinedPayloadValue(payload, 'printerType', body.printerType ?? undefined);
+  addDefinedPayloadValue(payload, 'protocol', body.protocol ?? undefined);
+  addDefinedPayloadValue(payload, 'baudRate', body.baudRate);
+  addDefinedPayloadValue(payload, 'paperWidth', body.paperWidth);
+  addDefinedPayloadValue(payload, 'charsPerLine', body.charsPerLine);
+  addDefinedPayloadValue(payload, 'supportsCut', body.supportsCut);
+  addDefinedPayloadValue(payload, 'supportsCashDrawer', body.supportsCashDrawer);
+  return payload;
+}
+
+function normalizeAgentPrinterUpdatePayload(body: Partial<ServerPrinterMapping>): AgentPrinterApiPayload {
+  const payload: AgentPrinterApiPayload = {};
+  addDefinedPayloadValue(payload, 'displayName', body.displayName ?? body.name ?? undefined);
+  addDefinedPayloadValue(payload, 'protocol', body.protocol ?? undefined);
+  addDefinedPayloadValue(payload, 'windowsPrinterName', body.windowsPrinterName);
+  addDefinedPayloadValue(payload, 'address', body.address);
+  addDefinedPayloadValue(payload, 'baudRate', body.baudRate);
+  addDefinedPayloadValue(payload, 'paperWidth', body.paperWidth);
+  if (body.paperHeight !== null) addDefinedPayloadValue(payload, 'paperHeight', body.paperHeight);
+  addDefinedPayloadValue(payload, 'charsPerLine', body.charsPerLine);
+  addDefinedPayloadValue(payload, 'supportsCut', body.supportsCut);
+  addDefinedPayloadValue(payload, 'supportsCashDrawer', body.supportsCashDrawer);
+  addDefinedPayloadValue(payload, 'isEnabled', body.isEnabled);
+  return payload;
+}
+
 export function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): LocalPrinterUpsert[] {
   if (!printers?.length) return [];
 
@@ -380,12 +419,27 @@ export class ApiClient {
     agentId: string,
     body: Partial<ServerPrinterMapping>,
   ): Promise<ServerPrinterMapping> {
-    return this.request(
+    const created = await this.request(
       'POST',
       `/print-agent/agents/${encodeURIComponent(agentId)}/printers`,
       token,
-      body,
+      normalizeAgentPrinterCreatePayload(body),
     );
+    const printerId = typeof created?.id === 'string'
+      ? created.id
+      : typeof created?.printer?.id === 'string'
+        ? created.printer.id
+        : null;
+    const updatePayload = normalizeAgentPrinterUpdatePayload(body);
+    if (printerId && Object.keys(updatePayload).length > 0) {
+      return this.request(
+        'PUT',
+        `/print-agent/agents/${encodeURIComponent(agentId)}/printers/${encodeURIComponent(printerId)}`,
+        token,
+        updatePayload,
+      );
+    }
+    return created;
   }
 
   async updateAgentPrinter(
@@ -398,7 +452,7 @@ export class ApiClient {
       'PUT',
       `/print-agent/agents/${encodeURIComponent(agentId)}/printers/${encodeURIComponent(printerId)}`,
       token,
-      body,
+      normalizeAgentPrinterUpdatePayload(body),
     );
   }
 
@@ -1504,6 +1558,8 @@ export class ApiClient {
 export const printerMappingForTests = {
   normalizeProtocol,
   mapServerPrinter,
+  normalizeAgentPrinterCreatePayload,
+  normalizeAgentPrinterUpdatePayload,
   normalizeServerPrinters,
   normalizeServerPrinterRows,
 };

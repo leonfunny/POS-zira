@@ -825,14 +825,19 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   const buildCustomPrinterPayload = (form: CustomPrinterForm): Partial<ServerPrinterMapping> => {
     const usesWindowsPrinter = form.protocol === 'WINDOWS' || form.protocol === 'ZEBRA' || form.protocol === 'THERMAL';
+    const paperWidth = form.paperWidth || (form.printerType === 'LABEL' ? 100 : 80);
     return {
       displayName: form.displayName.trim(),
       printerType: form.printerType,
       protocol: form.protocol,
       windowsPrinterName: usesWindowsPrinter ? form.windowsPrinterName.trim() : null,
       address: usesWindowsPrinter ? null : form.address.trim(),
-      paperWidth: form.paperWidth,
+      baudRate: 9600,
+      paperWidth,
       paperHeight: form.printerType === 'LABEL' ? form.paperHeight : null,
+      charsPerLine: charsPerLineFor(paperWidth),
+      supportsCut: form.printerType !== 'LABEL' && form.printerType !== 'A4',
+      supportsCashDrawer: form.printerType === 'RECEIPT',
       isEnabled: form.isEnabled,
     };
   };

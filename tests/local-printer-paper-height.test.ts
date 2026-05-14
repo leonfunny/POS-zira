@@ -79,4 +79,26 @@ describe('local printer mirror paper dimensions', () => {
       labelHeight: 150,
     });
   });
+
+  it('updates mirrored online state instead of leaving stale online rows', () => {
+    (database.run as any).mockClear();
+    (database.save as any).mockClear();
+
+    localPrinterRepo.upsertMany('agent-1', [{
+      id: 'printer-1',
+      printerType: PrinterType.LABEL,
+      displayName: 'Xprinter 100x150',
+      protocol: 'WINDOWS',
+      windowsPrinterName: 'Xprinter XP-423B',
+      isEnabled: false,
+      isOnline: false,
+    }]);
+
+    const insertSql = (database.run as any).mock.calls[0][0] as string;
+    const staleSql = (database.run as any).mock.calls[1][0] as string;
+
+    expect(insertSql).toContain('is_online = excluded.is_online');
+    expect(staleSql).toContain('SET is_enabled = 0, is_online = 0');
+    expect(database.save).toHaveBeenCalled();
+  });
 });

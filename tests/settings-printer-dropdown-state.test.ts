@@ -22,6 +22,14 @@ const authModuleSource = readFileSync(
   join(__dirname, '../src/main/modules/auth.module.ts'),
   'utf8',
 );
+const hardwareModuleSource = readFileSync(
+  join(__dirname, '../src/main/modules/hardware.module.ts'),
+  'utf8',
+);
+const socketClientSource = readFileSync(
+  join(__dirname, '../src/main/network/socket-client.ts'),
+  'utf8',
+);
 const apiClientSource = readFileSync(
   join(__dirname, '../src/main/network/api-client.ts'),
   'utf8',
@@ -74,6 +82,14 @@ describe('Settings printer dropdown state', () => {
     expect(authModuleSource).toContain('ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LOCAL_LIST');
     expect(authModuleSource).toContain('return localPrinterRepo.getAll()');
     expect(localPrinterRepoSource).toContain('getAll(): LocalPrinterRow[]');
+  });
+
+  it('reports per-printer online status to the backend socket', () => {
+    expect(sharedTypesSource).toContain('printerStatuses?: Array<{');
+    expect(socketClientSource).toContain('printerStatuses?: Array<{');
+    expect(hardwareModuleSource).toContain('for (const row of localPrinterRepo.getAll())');
+    expect(hardwareModuleSource).toContain('printerStatuses.push({ printerId: row.id, isOnline })');
+    expect(hardwareModuleSource).toContain('socket.sendDeviceStatus(status)');
   });
 
   it('wires salon-level shared printer assignments through Settings and IPC', () => {

@@ -590,6 +590,11 @@ export interface DeviceStatus {
   printerPort: string | null;
   scannerActive: boolean;
   appVersion: string;
+  printerStatuses?: Array<{
+    printerId: string;
+    isOnline: boolean;
+    lastError?: string | null;
+  }>;
 }
 
 // Connection status

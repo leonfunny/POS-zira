@@ -650,14 +650,18 @@ export class HardwareModule extends BaseModule {
 
     let printerConnected = false;
     let printerPort: string | null = null;
+    const printerStatuses: DeviceStatus['printerStatuses'] = [];
 
     if (multiPrinterMode) {
       const connectedPrinters: string[] = [];
       const seenPrinterIds = new Set<string>();
-      for (const row of localPrinterRepo.getEnabled()) {
+      for (const row of localPrinterRepo.getAll()) {
         const driver = this.printersById[row.id];
+        const isOnline = row.is_enabled === 1 && !!driver?.isConnected();
         seenPrinterIds.add(row.id);
-        if (driver?.isConnected()) {
+        printerStatuses.push({ printerId: row.id, isOnline });
+        if (row.is_enabled !== 1) continue;
+        if (isOnline) {
           printerConnected = true;
           connectedPrinters.push(`${row.printer_type || 'PRINTER'}:${row.display_name || row.id}`);
         }
@@ -666,7 +670,11 @@ export class HardwareModule extends BaseModule {
         if (!pc?.enabled) continue;
         if (pc.serverPrinterId && seenPrinterIds.has(pc.serverPrinterId)) continue;
         const driver = this.printers[pt as PrinterType];
-        if (driver?.isConnected()) {
+        const isOnline = !!driver?.isConnected();
+        if (pc.serverPrinterId) {
+          printerStatuses.push({ printerId: pc.serverPrinterId, isOnline });
+        }
+        if (isOnline) {
           printerConnected = true;
           connectedPrinters.push(`${pt}: ${pc.protocol === 'ZEBRA' || pc.protocol === 'WINDOWS' ? pc.windowsPrinter : pc.port}`);
         }
@@ -690,6 +698,7 @@ export class HardwareModule extends BaseModule {
       printerPort,
       scannerActive: this.scanner?.isActive() || false,
       appVersion: app.getVersion(),
+      ...(printerStatuses.length > 0 && { printerStatuses }),
     };
   }
 
