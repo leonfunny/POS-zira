@@ -158,7 +158,22 @@ export const productRepo = {
   },
 
   getCategories(): CategoryRow[] {
-    return database.all<CategoryRow>('SELECT * FROM categories ORDER BY sort_order, name');
+    return database.all<CategoryRow>(
+      `SELECT c.*
+       FROM categories c
+       WHERE EXISTS (
+         SELECT 1
+         FROM product_variants p
+         WHERE p.category_id = c.id
+           AND p.is_active = 1
+           AND p.id NOT IN (
+             SELECT DISTINCT pv.template_id
+             FROM product_variants pv
+             WHERE pv.template_id IS NOT NULL AND pv.is_active = 1
+           )
+       )
+       ORDER BY c.sort_order, c.name`,
+    );
   },
 
   /**

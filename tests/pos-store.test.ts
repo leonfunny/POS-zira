@@ -343,6 +343,30 @@ describe('Display state transitions', () => {
     store.destroy();
   });
 
+  it('retail_assisted recovers stale checkin state when an item is added', () => {
+    mockConfig.customerDisplayProfile = 'retail_assisted';
+    const store = new PosStore();
+    store.dispatch({ type: 'display/setMode', payload: { mode: 'checkin' } });
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+
+    expect(store.getState().cart.items).toHaveLength(1);
+    expect(store.getState().display.mode).toBe('cart');
+    store.destroy();
+  });
+
+  it('salon_checkin preserves active self-service state when an item is added', () => {
+    mockConfig.customerDisplayProfile = 'salon_checkin';
+    const store = new PosStore();
+    store.dispatch({ type: 'display/setMode', payload: { mode: 'checkin' } });
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+
+    expect(store.getState().cart.items).toHaveLength(1);
+    expect(store.getState().display.mode).toBe('checkin');
+    store.destroy();
+  });
+
   it('stores selected services and derives legacy serviceName for multi-service walk-ins', () => {
     const store = new PosStore();
     store.handleCheckIn({

@@ -24,7 +24,7 @@ import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-rep
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
 import SocketClient from '../network/socket-client';
-import { WindowManager } from '../windows/window-manager';
+import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { ShiftController } from '../pos/shift-controller';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
@@ -360,8 +360,6 @@ export class SyncModule extends BaseModule {
     bus.on('socket:connected', async () => {
       if (this._syncInProgress) return;
       this._syncInProgress = true;
-      const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
-
       try {
         // ── Path B: Detect server capability and auto-upgrade mode ──
         let syncMode = this.syncLogService?.getSyncMode() ?? 'path_a';
@@ -394,8 +392,7 @@ export class SyncModule extends BaseModule {
             } else {
               await this.productSync.deltaSync();
             }
-            const posWindow = wm?.getWindow('pos');
-            if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:products-synced');
+            notifyPosRenderers(this.container, 'pos:products-synced');
           } catch (err) { logger.warn(`[SyncModule] Product sync failed: ${err}`); }
         }
 
@@ -448,9 +445,7 @@ export class SyncModule extends BaseModule {
       if (!this.productSync) return;
       try {
         await this.productSync.deltaSync();
-        const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
-        const posWindow = wm?.getWindow('pos');
-        if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:products-synced');
+        notifyPosRenderers(this.container, 'pos:products-synced');
         logger.info('[SyncModule] Post-login product sync completed');
       } catch (err) { logger.warn(`[SyncModule] Post-login product sync failed: ${err}`); }
     });
@@ -468,8 +463,6 @@ export class SyncModule extends BaseModule {
    * Wire up real-time socket events.
    */
   setupSocketHandlers(socket: SocketClient): void {
-    const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
-
     // Billiard real-time events
     socket.on('billiard:session-updated', () => {
       this.billiardSync?.refreshDashboard().catch((e: any) => { logger.debug('[SyncModule] billiard dashboard refresh failed:', e?.message); });
@@ -494,33 +487,29 @@ export class SyncModule extends BaseModule {
         const entityType = entry.entityType ?? entry.entity_type;
         const entityId = entry.entityId ?? entry.entity_id;
 
-        // Notify renderer about the change
-        const posWindow = wm?.getWindow('pos');
-        if (posWindow && !posWindow.isDestroyed()) {
-          // Targeted notification based on entity type
-          if (entityType === 'product' || entityType === 'category') {
-            posWindow.webContents.send('pos:products-synced');
-          } else if (entityType === 'stock') {
-            posWindow.webContents.send('pos:stock-updated', {
-              variantId: entityId,
-              newStock: entry.payload?.newStock,
-            });
-          } else if (entityType === 'order') {
-            posWindow.webContents.send('pos:order-status-changed', entry.payload);
-          } else if (entityType === 'staff') {
-            posWindow.webContents.send('pos:staff-updated', entry.payload);
-          } else if (entityType === 'booking') {
-            posWindow.webContents.send('pos:bookings-updated', {
-              bookingId: entityId,
-              event: entry.event,
-            });
-          } else if (entityType === 'service' || entityType === 'service_rule') {
-            posWindow.webContents.send('pos:services-updated');
-          }
-
-          // Always send generic sync event
-          posWindow.webContents.send('pos:sync-entry', entry);
+        // Targeted notification based on entity type.
+        if (entityType === 'product' || entityType === 'category') {
+          notifyPosRenderers(this.container, 'pos:products-synced');
+        } else if (entityType === 'stock') {
+          notifyPosRenderers(this.container, 'pos:stock-updated', {
+            variantId: entityId,
+            newStock: entry.payload?.newStock,
+          });
+        } else if (entityType === 'order') {
+          notifyPosRenderers(this.container, 'pos:order-status-changed', entry.payload);
+        } else if (entityType === 'staff') {
+          notifyPosRenderers(this.container, 'pos:staff-updated', entry.payload);
+        } else if (entityType === 'booking') {
+          notifyPosRenderers(this.container, 'pos:bookings-updated', {
+            bookingId: entityId,
+            event: entry.event,
+          });
+        } else if (entityType === 'service' || entityType === 'service_rule') {
+          notifyPosRenderers(this.container, 'pos:services-updated');
         }
+
+        // Always send generic sync event.
+        notifyPosRenderers(this.container, 'pos:sync-entry', entry);
       } catch (err: any) {
         logger.debug(`[SyncModule] sync:entry processing failed: ${err.message}`);
       }
@@ -576,11 +565,7 @@ export class SyncModule extends BaseModule {
       this._productBackoffStep = 0;
       this._productSkipUntil = 0;
       // Notify renderer so the product/category grid reloads.
-      const wm = this.container.getOptional<WindowManager>(SERVICE_TOKENS.WINDOW_MANAGER);
-      const posWindow = wm?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) {
-        posWindow.webContents.send('pos:products-synced');
-      }
+      notifyPosRenderers(this.container, 'pos:products-synced');
       return { success: true, productsCount };
     } catch (err: any) {
       const step = Math.min(this._productBackoffStep, SyncModule.PRODUCT_BACKOFF_MS.length - 1);

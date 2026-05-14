@@ -249,8 +249,12 @@ export class WindowManager {
 
     const existing = this.getWindow(id);
     if (existing) {
-      existing.show();
-      existing.focus();
+      if (id === 'customer') {
+        existing.showInactive();
+      } else {
+        existing.show();
+        existing.focus();
+      }
       if (id === 'customer') {
         existing.webContents.send('customer-display:refresh-config');
       }
@@ -431,7 +435,13 @@ export class WindowManager {
       }
     });
 
-    win.once('ready-to-show', () => win.show());
+    win.once('ready-to-show', () => {
+      if (isCustomer) {
+        win.showInactive();
+      } else {
+        win.show();
+      }
+    });
 
     // Kiosk lock: if a customer-facing kiosk exits fullscreen unexpectedly (OS touch gesture,
     // Win+D, etc.) re-enter kiosk/fullscreen immediately so customers can't escape.
@@ -452,17 +462,19 @@ export class WindowManager {
         win.once('closed', () => clearTimeout(restoreTimer));
       });
 
-      // Prevent OS from stealing focus via swipe gestures - immediately reclaim
-      win.on('blur', () => {
-        if ((isCustomer && this.customerExitRequested) || win.isDestroyed()) return;
-        setTimeout(() => {
-          if (!win.isDestroyed() && !(isCustomer && this.customerExitRequested)) {
-            win.focus();
-          }
-        }, 100);
-      });
+      if (isSelfCheckout) {
+        // Prevent OS from stealing focus via swipe gestures - immediately reclaim
+        win.on('blur', () => {
+          if (win.isDestroyed()) return;
+          setTimeout(() => {
+            if (!win.isDestroyed()) {
+              win.focus();
+            }
+          }, 100);
+        });
+      }
 
-      logger.info(`[WindowManager] ${id} kiosk=true, frameless=true, blur-refocus=on`);
+      logger.info(`[WindowManager] ${id} kiosk=true, frameless=true, blur-refocus=${isSelfCheckout ? 'on' : 'off'}`);
     } else if (isCustomer) {
       logger.info(`[WindowManager] Customer display kiosk=false, frameless=true, windowed mode`);
     }

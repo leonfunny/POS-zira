@@ -208,14 +208,16 @@ function posReducer(
       } else {
         items = [...state.cart.items, p];
       }
-      // Don't yank the customer display out of an active self-service flow.
-      // If the customer is in checkin/interactive on the second screen, leave
-      // them there — the cart preview only appears once they're idle/promo or
-      // already viewing the cart.
+      // Don't yank a salon customer display out of an active self-service flow.
+      // Retail-assisted displays should always show the cart once the cashier
+      // adds an item, even if stale state was left behind by another mode.
       const currentMode = state.display.mode;
+      const preserveSelfService =
+        options.customerDisplayProfile === 'salon_checkin'
+          && (currentMode === 'checkin' || currentMode === 'interactive');
       const nextMode = options.customerDisplayProfile === 'promo_only'
         ? (currentMode === 'promo' ? 'promo' : 'idle')
-        : currentMode === 'checkin' || currentMode === 'interactive'
+        : preserveSelfService
           ? currentMode
           : 'cart';
       return { ...state, cart: recalcCart({ ...state.cart, items }), display: { ...state.display, mode: nextMode } };

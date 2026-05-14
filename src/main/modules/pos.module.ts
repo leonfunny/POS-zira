@@ -53,6 +53,7 @@ import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
 import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
+import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import {
   writeBookingStatusChanged,
   writeBookingCancelled,
@@ -501,12 +502,17 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:orders:create', (_e, order, items) => {
       try {
         const id = orderRepo.create(order, items);
+        let stockChanged = false;
         for (const item of items) {
           if (item.variant_id && item.quantity > 0) {
             productRepo.decrementStock(item.variant_id, item.quantity);
+            stockChanged = true;
           }
         }
         database.save();
+        if (stockChanged) {
+          notifyPosRenderers(this.container, 'pos:products-synced');
+        }
 
         // Path B: write to sync log for outbound push
         try {

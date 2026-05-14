@@ -72,6 +72,7 @@ class MockBrowserWindow extends EventEmitter {
   }
 
   show = vi.fn();
+  showInactive = vi.fn();
   focus = vi.fn();
   loadURL = vi.fn();
   loadFile = vi.fn();
@@ -299,8 +300,8 @@ describe('WindowManager customer display behavior', () => {
     const existing = manager.createWindow('customer') as unknown as MockBrowserWindow;
 
     expect(existing).toBe(win);
-    expect(win.show).toHaveBeenCalledOnce();
-    expect(win.focus).toHaveBeenCalledOnce();
+    expect(win.showInactive).toHaveBeenCalledOnce();
+    expect(win.focus).not.toHaveBeenCalled();
     expect(win.webContents.sentMessages).toContainEqual({
       channel: 'customer-display:refresh-config',
       payload: undefined,
@@ -337,6 +338,18 @@ describe('WindowManager customer display behavior', () => {
 
     expect(win.boundsHistory.at(-1)).toEqual(displays[1].bounds);
     expect(win.alwaysOnTopHistory.at(-1)).toEqual({ flag: true, level: 'screen-saver' });
+
+    manager.destroy();
+  });
+
+  it('does not steal focus back to customer display after blur', () => {
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('customer') as unknown as MockBrowserWindow;
+
+    win.emit('blur');
+    vi.advanceTimersByTime(100);
+
+    expect(win.focus).not.toHaveBeenCalled();
 
     manager.destroy();
   });

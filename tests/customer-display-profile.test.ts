@@ -96,4 +96,18 @@ describe('customer display profile runtime wiring', () => {
     expect(appSource).toContain('onRefreshConfig');
     expect(appSource).toContain('resolveCustomerDisplayProfile(config)');
   });
+
+  it('normalizes retail customer display mode immediately after opening', () => {
+    const retailSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/components/pos/templates/retail/RetailTemplate.tsx'),
+      'utf8',
+    );
+    const handlerStart = retailSource.indexOf('const handleOpenCustomerDisplay');
+    const handlerEnd = retailSource.indexOf('const handleCloseCustomerDisplay', handlerStart);
+    const handler = retailSource.slice(handlerStart, handlerEnd);
+
+    expect(handler).toContain("window.electronAPI.window.open('customer')");
+    expect(handler).toContain("type: 'display/setMode'");
+    expect(handler).toContain("mode: cart.items.length > 0 ? 'cart' : 'idle'");
+  });
 });

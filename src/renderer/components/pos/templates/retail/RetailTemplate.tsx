@@ -307,7 +307,13 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
 
   const handleOpenCustomerDisplay = () => {
     window.electronAPI.window.open('customer').then((result: any) => {
-      if (result?.success) setIsCustomerDisplayOpen(true);
+      if (result?.success) {
+        setIsCustomerDisplayOpen(true);
+        dispatch({
+          type: 'display/setMode',
+          payload: { mode: cart.items.length > 0 ? 'cart' : 'idle' },
+        });
+      }
     });
   };
 

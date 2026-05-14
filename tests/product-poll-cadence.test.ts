@@ -208,7 +208,7 @@ describe('SyncModule.runProductSync', () => {
     const m = await freshModule();
     await m.runProductSync();
     expect(getWindowMock).toHaveBeenCalledWith('pos');
-    expect(posWindowSendMock).toHaveBeenCalledWith('pos:products-synced');
+    expect(posWindowSendMock).toHaveBeenCalledWith('pos:products-synced', undefined);
   });
 
   it('does NOT send pos:products-synced when the sync fails', async () => {

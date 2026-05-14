@@ -33,6 +33,7 @@ import { seedIfEmpty } from '../database/seed';
 import {
   getConfig,
   getConfigValue,
+  getSecureAuthToken,
   setConfig,
   setConfigValue,
 } from '../config/store';
@@ -163,7 +164,13 @@ export class AgentOrchestrator implements TrayManagerHost {
 
       this.logStep('Initializing SQLite database...');
       await database.initialize();
-      seedIfEmpty();
+      const isPaired = !!getConfigValue('isPaired');
+      const hasAuthToken = !!getSecureAuthToken();
+      if (!isPaired && !hasAuthToken) {
+        seedIfEmpty();
+      } else {
+        logger.info('[Seed] Skipped demo seed for paired/authenticated app');
+      }
       this.logStep('SQLite database ready');
 
       // Initialize socket client
