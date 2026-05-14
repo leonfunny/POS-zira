@@ -93,6 +93,16 @@ describe('Settings printer dropdown state', () => {
     expect(hardwareModuleSource).toContain('socket.sendDeviceStatus(status)');
   });
 
+  it('sends machineId with API-key socket auth and Windows printer sync', () => {
+    expect(socketClientSource).toContain('async connectWithApiKey(serverUrl: string, apiKey: string, machineId?: string)');
+    expect(socketClientSource).toContain('...(machineId && { machineId })');
+    expect(socketClientSource).toContain('this.connectRemoteSocket(serverUrl, apiKey, machineId)');
+    expect(authModuleSource).toContain("socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey, latestConfig.machineId)");
+    expect(apiClientSource).toContain('syncWindowsPrinters(apiKey: string, printers: Array<{ name: string; isDefault?: boolean }>, machineId?: string)');
+    expect(apiClientSource).toContain('...(machineId && { machineId })');
+    expect(authModuleSource).toContain('config.machineId');
+  });
+
   it('wires salon-level shared printer assignments through Settings and IPC', () => {
     expect(settingsSource).toContain('Shared receipt route');
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");

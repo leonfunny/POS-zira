@@ -26,7 +26,7 @@ export default class SocketClient extends EventEmitter {
   /**
    * Connect to the server using API Key
    */
-  async connectWithApiKey(serverUrl: string, apiKey: string): Promise<void> {
+  async connectWithApiKey(serverUrl: string, apiKey: string, machineId?: string): Promise<void> {
     if (this.socket?.connected) {
       logger.warn('Already connected');
       return;
@@ -40,6 +40,7 @@ export default class SocketClient extends EventEmitter {
     this.socket = io(`${serverUrl}/print-agent`, {
       auth: {
         apiKey,
+        ...(machineId && { machineId }),
       },
       transports: ['websocket'],
       reconnection: true,
@@ -50,7 +51,7 @@ export default class SocketClient extends EventEmitter {
     this.setupEventHandlers();
 
     // Connect remote socket to /print-agent-remote namespace
-    this.connectRemoteSocket(serverUrl, apiKey);
+    this.connectRemoteSocket(serverUrl, apiKey, machineId);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -507,7 +508,7 @@ export default class SocketClient extends EventEmitter {
   /**
    * Connect to the /print-agent-remote namespace for remote control signaling
    */
-  private connectRemoteSocket(serverUrl: string, apiKey: string): void {
+  private connectRemoteSocket(serverUrl: string, apiKey: string, machineId?: string): void {
     if (this.remoteSocket?.connected) {
       logger.warn('Remote socket already connected');
       return;
@@ -516,7 +517,10 @@ export default class SocketClient extends EventEmitter {
     logger.info(`Connecting to ${serverUrl}/print-agent-remote...`);
 
     this.remoteSocket = io(`${serverUrl}/print-agent-remote`, {
-      auth: { apiKey },
+      auth: {
+        apiKey,
+        ...(machineId && { machineId }),
+      },
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,

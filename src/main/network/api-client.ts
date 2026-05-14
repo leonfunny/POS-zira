@@ -549,7 +549,7 @@ export class ApiClient {
    * Sync installed Windows printer names to dashboard.
    * POST /api/v1/print-agent/windows-printers/sync
    */
-  async syncWindowsPrinters(apiKey: string, printers: Array<{ name: string; isDefault?: boolean }>): Promise<{ success: boolean; count: number }> {
+  async syncWindowsPrinters(apiKey: string, printers: Array<{ name: string; isDefault?: boolean }>, machineId?: string): Promise<{ success: boolean; count: number }> {
     if (!apiKey?.startsWith('pa_')) {
       throw new Error('Missing print-agent API key');
     }
@@ -560,6 +560,7 @@ export class ApiClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         apiKey,
+        ...(machineId && { machineId }),
         printers: printers.map((printer) => ({
           name: printer.name,
           isDefault: !!printer.isDefault,

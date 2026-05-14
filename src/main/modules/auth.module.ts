@@ -554,7 +554,7 @@ export class AuthModule extends BaseModule {
     }
 
     const latestConfig = getConfig();
-    await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey);
+    await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey, latestConfig.machineId);
   }
 
   private getAuthenticatedApiContext(): { client: ApiClient; token: string } {
@@ -612,6 +612,7 @@ export class AuthModule extends BaseModule {
       const result = await client.syncWindowsPrinters(
         key,
         printers.map((printer) => ({ name: printer.name, isDefault: !!printer.isDefault })),
+        config.machineId,
       );
       logger.info(`[AuthModule] Synced ${result.count} Windows printer(s) to backend`);
     } catch (err: any) {
