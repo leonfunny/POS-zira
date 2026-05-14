@@ -7,11 +7,7 @@ export interface SelfCheckoutRuntime {
   unavailableReasons: string[];
 }
 
-export const SELF_CHECKOUT_PRODUCTION_BLOCKERS = [
-  'Payment terminal SDK is not integrated.',
-  'Fiscal printer flow is not wired to self-checkout.',
-  'Real order creation for kiosk sales is not wired.',
-];
+export const SELF_CHECKOUT_PRODUCTION_BLOCKERS: string[] = [];
 
 export function resolveSelfCheckoutMode(value: unknown): SelfCheckoutMode {
   return value === 'production' ? 'production' : 'demo';

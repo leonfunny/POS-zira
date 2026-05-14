@@ -2,8 +2,8 @@
 // unavailable -> welcome -> shopping -> receipt -> thank-you.
 // Payment selection is an overlay on shopping; the customer should not leave
 // the cart screen just to pick card/BLIK.
-// Production payment/order/fiscal paths intentionally fail closed until real
-// terminal and fiscal-printer integrations are wired.
+// Production checkout reuses the existing POS order, card terminal, receipt,
+// and order-sync IPC paths.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScLanguage, getScStrings } from './i18n';
 import {
@@ -11,7 +11,7 @@ import {
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
 import { useScreenState } from './screen-state';
-import { useScCart } from './useScCart';
+import { type ScCartItem, useScCart } from './useScCart';
 import WelcomeScreen from './screens/WelcomeScreen';
 import ScanScreen from './screens/ScanScreen';
 import PaymentScreen, { PaymentMethod } from './screens/PaymentScreen';
@@ -76,6 +76,72 @@ function formatScMessage(
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
+function calculateIncludedTax(items: ScCartItem[]): number {
+  return items.reduce((sum, item) => {
+    const rate = item.vatRate ?? 0;
+    if (rate <= 0) return sum;
+    const lineGross = item.price * item.quantity;
+    return sum + Math.round(lineGross - lineGross * 100 / (100 + rate));
+  }, 0);
+}
+
+function buildSelfCheckoutSale(
+  items: ScCartItem[],
+  orderId: string,
+  method: PaymentMethod,
+  kioskUserId: string | null,
+) {
+  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const staffName = 'Self-checkout';
+  const order = {
+    id: orderId,
+    order_number: null as string | null,
+    status: 'COMPLETED',
+    subtotal: total,
+    discount: 0,
+    tax: calculateIncludedTax(items),
+    total,
+    payment_method: method,
+    payment_amount: total,
+    change_amount: 0,
+    staff_id: kioskUserId,
+    staff_name: staffName,
+    customer_id: null,
+    customer_name: null,
+    customer_nip: null,
+    shift_id: null,
+    source: 'SELF_CHECKOUT',
+    table_id: null,
+    covers: null,
+    order_type: 'standard',
+    tip: 0,
+    mode: 'retail',
+    synced: 0,
+    backend_id: null,
+    created_at: new Date().toISOString(),
+    synced_at: null,
+    payment_tenders: null,
+  };
+
+  const orderItems = items.map((item) => ({
+    id: crypto.randomUUID(),
+    order_id: orderId,
+    variant_id: item.isBagFee ? null : item.variantId,
+    name: item.name,
+    sku: item.sku || null,
+    price: item.price,
+    quantity: item.quantity,
+    total: item.price * item.quantity,
+    vat_rate: item.vatRate ?? 23,
+    staff_id: kioskUserId,
+    staff_name: staffName,
+    notes: item.isBagFee ? 'SELF_CHECKOUT_BAG_FEE' : null,
+    course: null,
+  }));
+
+  return { order, items: orderItems };
+}
+
 export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
@@ -84,7 +150,12 @@ export default function SelfCheckoutApp() {
   const [bagFeeGrosze, setBagFeeGrosze] = useState<number>(20);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [lastReceiptPrinted, setLastReceiptPrinted] = useState(true);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [kioskUserId, setKioskUserId] = useState<string | null>(null);
+  const [fakePaymentEnabled, setFakePaymentEnabled] = useState(false);
   const [categories, setCategories] = useState<CategoryLookupResult[]>([]);
   const [scanQuantity, setScanQuantity] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
@@ -118,7 +189,10 @@ export default function SelfCheckoutApp() {
   const resetSession = useCallback(() => {
     cart.clear();
     setLastPaymentMethod(null);
+    setLastReceiptPrinted(true);
     setPaymentOpen(false);
+    setPaymentStatus(null);
+    setCheckoutError(null);
     setScanQuantity(1);
     setAbandonOpen(false);
     setToast(null);
@@ -154,6 +228,10 @@ export default function SelfCheckoutApp() {
         if (Number.isFinite(timeout) && timeout >= 30_000) {
           setIdleTimeoutMs(timeout);
         }
+
+        const configuredKioskUserId = String(config?.selfCheckoutKioskUserId || '').trim();
+        setKioskUserId(configuredKioskUserId || null);
+        setFakePaymentEnabled(Boolean(config?.selfCheckoutFakePaymentEnabled));
       } catch {
         /* keep safe defaults */
       }
@@ -177,6 +255,15 @@ export default function SelfCheckoutApp() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.pos?.payment?.onElavonStatus?.((data: any) => {
+      if (data?.status) setPaymentStatus(String(data.status));
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
 
@@ -337,12 +424,69 @@ export default function SelfCheckoutApp() {
   }, [help, showToast]);
 
   const handlePaymentSuccess = useCallback(
-    (method: PaymentMethod) => {
+    async (method: PaymentMethod) => {
+      setCheckoutError(null);
+      setPaymentStatus(null);
+
+      if (mode === 'demo') {
+        setLastReceiptPrinted(true);
+        setLastPaymentMethod(method);
+        setPaymentOpen(false);
+        goTo('receipt');
+        return;
+      }
+
+      const fail = (message: string) => {
+        setCheckoutError(message);
+        showToast('error', message);
+        throw new Error(message);
+      };
+
+      if (method === 'BLIK') {
+        fail(t.blikProductionUnsupported);
+      }
+      if (cart.cart.items.length === 0 || cart.cart.totalGrosze <= 0) {
+        fail(t.emptyCart);
+      }
+      if (cart.cart.items.some((item) => item.isBagFee)) {
+        fail(t.bagFeeProductionBlocked);
+      }
+
+      const orderId = crypto.randomUUID();
+      if (fakePaymentEnabled) {
+        setPaymentStatus(t.fakePaymentActive);
+      } else {
+        const paymentResult = await window.electronAPI?.pos?.payment?.cardPayment?.({
+          amount: cart.cart.totalGrosze,
+          orderId,
+        });
+        if (!paymentResult?.success) {
+          fail(paymentResult?.error || 'Payment terminal failed');
+        }
+      }
+
+      const sale = buildSelfCheckoutSale(cart.cart.items, orderId, method, kioskUserId);
+      const orderResult = await window.electronAPI?.pos?.orders?.create?.(sale.order, sale.items);
+      if (!orderResult?.success) {
+        fail(orderResult?.error || 'Failed to save order');
+      }
+
+      window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
+
+      const printResult = await window.electronAPI?.pos?.payment?.printReceipt?.(orderId).catch(
+        () => ({ success: false, receiptPrinted: false }),
+      );
+      const receiptPrinted = !!printResult?.receiptPrinted;
+      if (!receiptPrinted) {
+        showToast('error', t.receiptPrintFailed);
+      }
+
+      setLastReceiptPrinted(receiptPrinted);
       setLastPaymentMethod(method);
       setPaymentOpen(false);
       goTo('receipt');
     },
-    [goTo],
+    [cart.cart.items, cart.cart.totalGrosze, fakePaymentEnabled, goTo, kioskUserId, mode, showToast, t],
   );
 
   if (help) {
@@ -419,8 +563,13 @@ export default function SelfCheckoutApp() {
             lang={lang}
             mode={mode}
             totalGrosze={cart.cart.totalGrosze}
+            terminalStatus={paymentStatus}
+            errorText={checkoutError}
             onSuccess={handlePaymentSuccess}
-            onCancel={() => setPaymentOpen(false)}
+            onCancel={() => {
+              setCheckoutError(null);
+              setPaymentOpen(false);
+            }}
             onLangChange={handleLangChange}
           />
         )}
@@ -435,6 +584,7 @@ export default function SelfCheckoutApp() {
         mode={mode}
         method={lastPaymentMethod}
         totalGrosze={cart.cart.totalGrosze}
+        receiptPrinted={lastReceiptPrinted}
         onComplete={() => goTo('thankyou')}
         onLangChange={handleLangChange}
       />

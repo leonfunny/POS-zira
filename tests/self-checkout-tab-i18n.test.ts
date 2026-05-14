@@ -21,6 +21,8 @@ const REQUIRED_KEYS = [
   'selfCheckout.openDemo',
   'selfCheckout.settings',
   'selfCheckout.runtimeMode',
+  'selfCheckout.fakePayment',
+  'selfCheckout.fakePaymentHelp',
   'selfCheckout.defaultLanguage',
   'selfCheckout.bagFee',
   'selfCheckout.displayMonitor',

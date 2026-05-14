@@ -201,6 +201,11 @@ interface ElectronAPI {
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;
   printAgentPrinters: {
     list: () => Promise<import('./types').AgentPrintersResponse>;
+    localList: () => Promise<import('./types').LocalPrinterMirrorRow[]>;
+    salonList: () => Promise<import('./types').SalonPrintersResponse>;
+    assignmentsList: () => Promise<import('./types').SalonPrinterAssignmentsResponse>;
+    upsertAssignment: (role: import('./types').SalonPrinterRole, printerId: string) => Promise<import('./types').SalonPrinterAssignmentResponse>;
+    deleteAssignment: (role: import('./types').SalonPrinterRole) => Promise<import('./types').SalonPrinterAssignmentsResponse>;
     create: (body: Partial<import('./types').ServerPrinterMapping>) => Promise<import('./types').AgentPrintersResponse>;
     update: (printerId: string, body: Partial<import('./types').ServerPrinterMapping>) => Promise<import('./types').AgentPrintersResponse>;
     delete: (printerId: string) => Promise<import('./types').AgentPrintersResponse>;

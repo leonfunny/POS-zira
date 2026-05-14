@@ -45,10 +45,12 @@ interface ScStrings {
   // Bag fee
   bagQuestion: string;
   bagUnit: string;
+  bagFeeProductionBlocked: string;
   // Receipt
   receiptTitle: string;
   receiptDemoBody: string;
   receiptProductionBlocked: string;
+  receiptPrintFailed: string;
   // Payment
   paymentTitle: string;
   blik: string;
@@ -58,11 +60,13 @@ interface ScStrings {
   paymentTerminalHint: string;
   cardTerminalHint: string;
   blikTerminalHint: string;
+  blikProductionUnsupported: string;
   terminalReadyTitle: string;
   terminalReadyBody: string;
   waitForTerminal: string;
   paymentProcessing: string;
   paymentSuccess: string;
+  fakePaymentActive: string;
   popularCategories: string;
   productsInCategory: string;
   addProduct: string;
@@ -112,9 +116,11 @@ const PL: ScStrings = {
   abandonConfirm: 'Tak, porzuć',
   bagQuestion: 'Torby foliowe',
   bagUnit: 'szt.',
+  bagFeeProductionBlocked: 'Opłata za torbę wymaga produktu z backendu przed sprzedażą produkcyjną.',
   receiptTitle: 'Finalizacja sprzedaży',
   receiptDemoBody: 'Demo: płatność, zamówienie i wydruk fiskalny są pominięte.',
   receiptProductionBlocked: 'Sprzedaż produkcyjna wymaga realnej płatności, zamówienia i drukarki fiskalnej.',
+  receiptPrintFailed: 'Płatność przyjęta, ale paragon nie został wydrukowany. Wezwij obsługę.',
   paymentTitle: 'Wybierz formę płatności',
   blik: 'BLIK',
   card: 'Karta płatnicza',
@@ -123,11 +129,13 @@ const PL: ScStrings = {
   paymentTerminalHint: 'Wybierz metodę, a następnie użyj terminala płatniczego.',
   cardTerminalHint: 'Zapłać kartą lub telefonem na terminalu.',
   blikTerminalHint: 'Kod BLIK wpisujesz na terminalu, nie na tym ekranie.',
+  blikProductionUnsupported: 'BLIK nie jest jeszcze podłączony do tego kiosku. Użyj karty.',
   terminalReadyTitle: 'Terminal gotowy',
   terminalReadyBody: 'Po wyborze metody postępuj zgodnie z instrukcją na terminalu.',
   waitForTerminal: 'Postępuj zgodnie z instrukcją na terminalu.',
   paymentProcessing: 'Oczekiwanie na terminal',
   paymentSuccess: 'Płatność potwierdzona',
+  fakePaymentActive: 'Płatność testowa zatwierdzona',
   popularCategories: 'Kategorie',
   productsInCategory: 'Produkty w kategorii',
   addProduct: 'Dodaj',
@@ -176,9 +184,11 @@ const EN: ScStrings = {
   abandonConfirm: 'Yes, abandon',
   bagQuestion: 'Plastic bags',
   bagUnit: 'each',
+  bagFeeProductionBlocked: 'Bag fee needs a real backend product before production checkout.',
   receiptTitle: 'Finalizing sale',
   receiptDemoBody: 'Demo: payment, order creation, and fiscal print are skipped.',
   receiptProductionBlocked: 'Production sale requires real payment, order creation, and fiscal printer integration.',
+  receiptPrintFailed: 'Payment was accepted, but the receipt did not print. Please call staff.',
   paymentTitle: 'Choose payment method',
   blik: 'BLIK',
   card: 'Card',
@@ -187,11 +197,13 @@ const EN: ScStrings = {
   paymentTerminalHint: 'Choose a method, then use the payment terminal.',
   cardTerminalHint: 'Tap, insert, or use phone payment on the terminal.',
   blikTerminalHint: 'Enter the BLIK code on the payment terminal, not here.',
+  blikProductionUnsupported: 'BLIK is not wired for this kiosk yet. Use card payment.',
   terminalReadyTitle: 'Terminal ready',
   terminalReadyBody: 'After choosing a method, follow the terminal instructions.',
   waitForTerminal: 'Follow the instructions on the payment terminal.',
   paymentProcessing: 'Waiting for terminal',
   paymentSuccess: 'Payment confirmed',
+  fakePaymentActive: 'Test payment approved',
   popularCategories: 'Categories',
   productsInCategory: 'Products in category',
   addProduct: 'Add',
@@ -240,9 +252,11 @@ const VI: ScStrings = {
   abandonConfirm: 'Có, hủy',
   bagQuestion: 'Túi nhựa',
   bagUnit: 'cái',
+  bagFeeProductionBlocked: 'Phí túi cần có sản phẩm thật trên backend trước khi bán production.',
   receiptTitle: 'Hoàn tất giao dịch',
   receiptDemoBody: 'Demo: thanh toán, tạo đơn và in fiskal được bỏ qua.',
   receiptProductionBlocked: 'Giao dịch thật cần tích hợp thanh toán, tạo đơn và máy in fiskal.',
+  receiptPrintFailed: 'Đã nhận thanh toán, nhưng chưa in được hóa đơn. Vui lòng gọi nhân viên.',
   paymentTitle: 'Chọn phương thức thanh toán',
   blik: 'BLIK',
   card: 'Thẻ',
@@ -251,11 +265,13 @@ const VI: ScStrings = {
   paymentTerminalHint: 'Chọn phương thức rồi dùng máy thanh toán.',
   cardTerminalHint: 'Chạm thẻ, cắm thẻ hoặc dùng điện thoại trên máy POS.',
   blikTerminalHint: 'Nhập mã BLIK trên máy POS, không nhập trên màn hình này.',
+  blikProductionUnsupported: 'BLIK chưa được nối cho kiosk này. Hãy dùng thẻ.',
   terminalReadyTitle: 'Máy POS sẵn sàng',
   terminalReadyBody: 'Sau khi chọn phương thức, làm theo hướng dẫn trên máy POS.',
   waitForTerminal: 'Làm theo hướng dẫn trên máy POS.',
   paymentProcessing: 'Đang chờ máy POS',
   paymentSuccess: 'Thanh toán thành công',
+  fakePaymentActive: 'Đã duyệt thanh toán test',
   popularCategories: 'Danh mục',
   productsInCategory: 'Sản phẩm trong danh mục',
   addProduct: 'Thêm',

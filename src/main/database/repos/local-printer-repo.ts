@@ -1,28 +1,7 @@
-import { PrinterConfig, PrinterProtocol, PrinterType } from '../../../shared/types';
+import { LocalPrinterMirrorRow, PrinterConfig, PrinterProtocol, PrinterType } from '../../../shared/types';
 import { database } from '../database';
 
-export interface LocalPrinterRow {
-  id: string;
-  agent_id: string | null;
-  printer_type: string | null;
-  display_name: string | null;
-  name: string | null;
-  protocol: PrinterProtocol;
-  windows_printer_name: string | null;
-  address: string | null;
-  port: string | null;
-  baud_rate: number;
-  paper_width: number;
-  paper_height: number | null;
-  chars_per_line: number;
-  supports_cut: number;
-  supports_cash_drawer: number;
-  is_enabled: number;
-  is_online: number;
-  last_seen_at: string | null;
-  last_used_at: string | null;
-  updated_at: string | null;
-}
+export interface LocalPrinterRow extends LocalPrinterMirrorRow {}
 
 export interface LocalPrinterUpsert {
   id: string;
@@ -41,6 +20,7 @@ export interface LocalPrinterUpsert {
   supportsCut?: boolean;
   supportsCashDrawer?: boolean;
   isEnabled?: boolean;
+  isOnline?: boolean;
 }
 
 function boolToInt(value: boolean | undefined, fallback: number): number {
@@ -88,10 +68,10 @@ export const localPrinterRepo = {
            `INSERT INTO local_printers (
               id, agent_id, printer_type, display_name, name, protocol,
               windows_printer_name, address, port, baud_rate, paper_width,
-              paper_height, chars_per_line, supports_cut, supports_cash_drawer, is_enabled,
+              paper_height, chars_per_line, supports_cut, supports_cash_drawer, is_enabled, is_online,
               last_seen_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               agent_id = excluded.agent_id,
               printer_type = excluded.printer_type,
@@ -127,6 +107,7 @@ export const localPrinterRepo = {
             boolToInt(printer.supportsCut, 1),
             boolToInt(printer.supportsCashDrawer, 0),
             boolToInt(printer.isEnabled, 0),
+            boolToInt(printer.isOnline, 0),
             now,
             now,
           ],
@@ -153,6 +134,13 @@ export const localPrinterRepo = {
   getEnabled(): LocalPrinterRow[] {
     return database.all<LocalPrinterRow>(
       'SELECT * FROM local_printers WHERE is_enabled = 1 ORDER BY printer_type, display_name, id',
+    );
+  },
+
+  getAll(): LocalPrinterRow[] {
+    return database.all<LocalPrinterRow>(
+      `SELECT * FROM local_printers
+       ORDER BY is_online DESC, is_enabled DESC, printer_type, display_name, id`,
     );
   },
 

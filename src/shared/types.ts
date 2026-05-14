@@ -227,8 +227,63 @@ export interface ServerPrinterMapping {
   createdAt?: string;
 }
 
+export interface SalonPrinterMapping extends ServerPrinterMapping {
+  agentId: string;
+  agentName?: string | null;
+  machineId?: string | null;
+  agentStatus?: string | null;
+  agentIsOnline?: boolean;
+  agentLastSeenAt?: string | null;
+}
+
+export type SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
+
+export interface SalonPrinterAssignment {
+  id: string;
+  salonId: string;
+  role: SalonPrinterRole | string;
+  printerId: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LocalPrinterMirrorRow {
+  id: string;
+  agent_id: string | null;
+  printer_type: string | null;
+  display_name: string | null;
+  name: string | null;
+  protocol: PrinterProtocol;
+  windows_printer_name: string | null;
+  address: string | null;
+  port: string | null;
+  baud_rate: number;
+  paper_width: number;
+  paper_height: number | null;
+  chars_per_line: number;
+  supports_cut: number;
+  supports_cash_drawer: number;
+  is_enabled: number;
+  is_online: number;
+  last_seen_at: string | null;
+  last_used_at: string | null;
+  updated_at: string | null;
+}
+
 export interface AgentPrintersResponse {
   printers: ServerPrinterMapping[];
+}
+
+export interface SalonPrintersResponse {
+  printers: SalonPrinterMapping[];
+}
+
+export interface SalonPrinterAssignmentsResponse {
+  assignments: SalonPrinterAssignment[];
+}
+
+export interface SalonPrinterAssignmentResponse {
+  assignment: SalonPrinterAssignment;
 }
 
 /**
@@ -382,6 +437,7 @@ export interface AgentConfig {
   selfCheckoutTerminalId?: string;       // Stable ID generated on first launch
   selfCheckoutKioskUserId?: string;      // Dedicated staff user for kiosk sales
   selfCheckoutMode?: 'demo' | 'production'; // Demo allows mocked terminal/fiscal flow; production must pass readiness gates.
+  selfCheckoutFakePaymentEnabled?: boolean; // Test only: bypass terminal but still create/sync/print production checkout.
   selfCheckoutBagFeeAmount?: number;     // Bag fee in PLN (default 0.20)
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
@@ -507,6 +563,25 @@ export interface PrintJobEvent {
   referenceType: string | null;
   referenceId: string | null;
   createdAt: string;
+}
+
+export interface CreatePrintJobRequest {
+  jobType?: PrintJobType;
+  printerType?: PrinterType;
+  printerId?: string | null;
+  payload: PrintJobEvent['payload'];
+  referenceType?: string | null;
+  referenceId?: string | null;
+}
+
+export interface CreatePrintJobResponse {
+  jobId?: string;
+  id?: string;
+  sent?: boolean;
+  status?: string;
+  message?: string;
+  printerId?: string | null;
+  [key: string]: unknown;
 }
 
 // Device status
@@ -759,9 +834,14 @@ export const IPC_CHANNELS = {
   POSNET_RESCAN_KNOWN: 'posnet-rescan-known',
   POSNET_DIAGNOSE_PORT: 'posnet-diagnose-port',
   PRINT_AGENT_PRINTERS_LIST: 'print-agent-printers-list',
+  PRINT_AGENT_PRINTERS_LOCAL_LIST: 'print-agent-printers-local-list',
   PRINT_AGENT_PRINTERS_CREATE: 'print-agent-printers-create',
   PRINT_AGENT_PRINTERS_UPDATE: 'print-agent-printers-update',
   PRINT_AGENT_PRINTERS_DELETE: 'print-agent-printers-delete',
+  PRINT_AGENT_SALON_PRINTERS_LIST: 'print-agent-salon-printers-list',
+  PRINT_AGENT_PRINTER_ASSIGNMENTS_LIST: 'print-agent-printer-assignments-list',
+  PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT: 'print-agent-printer-assignments-upsert',
+  PRINT_AGENT_PRINTER_ASSIGNMENTS_DELETE: 'print-agent-printer-assignments-delete',
   // Universal printer detection (all brands)
   UNIVERSAL_SCAN_DEVICES: 'universal-scan-devices',
   UNIVERSAL_LIST_DEVICES: 'universal-list-devices',

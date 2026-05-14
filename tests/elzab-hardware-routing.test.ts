@@ -218,9 +218,10 @@ describe('ELZAB fiscal protocol routing', () => {
       windowsPrinterName: 'Xprinter XP-423B',
       paperWidth: 100,
       paperHeight: 150,
+      isOnline: true,
       isEnabled: true,
     }]);
-    expect(rows[0]).toMatchObject({ paperWidth: 100, paperHeight: 150 });
+    expect(rows[0]).toMatchObject({ paperWidth: 100, paperHeight: 150, isOnline: true });
   });
 
   it('routes print jobs by ELZAB server printerId through ElzabDriver', async () => {

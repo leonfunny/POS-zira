@@ -17,14 +17,10 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutMode('bogus')).toBe('demo');
   });
 
-  it('fails production mode closed until payment/order/fiscal wiring exists', () => {
+  it('allows production mode once self-checkout uses the POS sale path', () => {
     expect(resolveSelfCheckoutRuntime({ selfCheckoutMode: 'demo' }).unavailableReasons).toEqual([]);
     const production = resolveSelfCheckoutRuntime({ selfCheckoutMode: 'production' });
-    expect(production.unavailableReasons).toEqual([
-      'Payment terminal SDK is not integrated.',
-      'Fiscal printer flow is not wired to self-checkout.',
-      'Real order creation for kiosk sales is not wired.',
-    ]);
+    expect(production.unavailableReasons).toEqual([]);
   });
 
   it('keeps customer checkout out of separate summary and payment routes', () => {
@@ -44,7 +40,23 @@ describe('self-checkout runtime model', () => {
     expect(paymentSource).not.toContain('BlikPad');
     expect(paymentSource).not.toContain('blikCode');
     expect(paymentSource).toContain('paymentTerminalHint');
+    expect(paymentSource).toContain('blikProductionUnsupported');
     expect(paymentSource).toContain('onLangChange');
+  });
+
+  it('connects production self-checkout to POS order, payment, print, and sync IPC', () => {
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const preloadSource = readSource('src/preload/preload-display.ts');
+
+    expect(appSource).toContain("source: 'SELF_CHECKOUT'");
+    expect(appSource).toContain('pos?.payment?.cardPayment');
+    expect(appSource).toContain('pos?.orders?.create');
+    expect(appSource).toContain('pos?.payment?.printReceipt');
+    expect(appSource).toContain('pos?.sync?.orders');
+    expect(appSource).toContain('selfCheckoutFakePaymentEnabled');
+    expect(preloadSource).toContain("ipcRenderer.invoke('pos:payment:card', data)");
+    expect(preloadSource).toContain("ipcRenderer.invoke('pos:print-receipt', orderId)");
+    expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");
   });
 
   it('models bag fee as a local quantity instead of a single yes/no toggle', () => {

@@ -11,6 +11,7 @@ interface ReceiptScreenProps {
   mode: SelfCheckoutMode;
   method: PaymentMethod;
   totalGrosze: number;
+  receiptPrinted?: boolean;
   onComplete: () => void;
   onLangChange: (lang: ScLanguage) => void;
 }
@@ -20,16 +21,17 @@ export default function ReceiptScreen({
   mode,
   method,
   totalGrosze,
+  receiptPrinted = true,
   onComplete,
   onLangChange,
 }: ReceiptScreenProps) {
   const t = getScStrings(lang);
 
   useEffect(() => {
-    if (mode !== 'demo') return;
+    if (!receiptPrinted) return;
     const id = window.setTimeout(onComplete, 1800);
     return () => window.clearTimeout(id);
-  }, [mode, onComplete]);
+  }, [onComplete, receiptPrinted]);
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col text-[var(--sc-ink)] select-none">
@@ -48,13 +50,25 @@ export default function ReceiptScreen({
             {t.receiptTitle}
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
-            {mode === 'demo' ? t.receiptDemoBody : t.receiptProductionBlocked}
+            {mode === 'demo'
+              ? t.receiptDemoBody
+              : receiptPrinted
+                ? t.thankYouSub
+                : t.receiptPrintFailed}
           </p>
 
           <div className="mt-9 space-y-3 text-left">
             <ReceiptStep icon={<CheckCircle2 size={24} />} label={t.paymentSuccess} done />
-            <ReceiptStep icon={<FileText size={24} />} label={mode === 'demo' ? t.receiptDemoBody : t.receiptTitle} done={mode === 'demo'} />
-            <ReceiptStep icon={<Loader2 size={24} className="animate-spin" />} label={t.thankYouSub} done={false} />
+            <ReceiptStep
+              icon={<FileText size={24} />}
+              label={mode === 'demo' ? t.receiptDemoBody : t.receiptTitle}
+              done={mode === 'demo' || receiptPrinted}
+            />
+            <ReceiptStep
+              icon={<Loader2 size={24} className={receiptPrinted ? 'animate-spin' : ''} />}
+              label={receiptPrinted ? t.thankYouSub : t.callStaff}
+              done={false}
+            />
           </div>
 
           <div className="mt-9 flex items-center justify-between border-t border-[var(--sc-border)] pt-6">

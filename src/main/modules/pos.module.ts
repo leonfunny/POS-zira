@@ -15,6 +15,7 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
+import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
 import {
   buildRefundMutationError,
@@ -122,6 +123,7 @@ export class PosModule extends BaseModule {
       () => getConfig().receiptSellerName,
       () => getConfig().receiptSellerAddress,
       () => getConfig().receiptSellerNip,
+      submitSharedReceiptPrint,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,
@@ -1218,6 +1220,8 @@ export class PosModule extends BaseModule {
     socket.on('elavon:payment-status-update', (data: any) => {
       const posWindow = this.windowManager?.getWindow('pos');
       if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:elavon-status', data);
+      const selfCheckoutWindow = this.windowManager?.getWindow('selfCheckout');
+      if (selfCheckoutWindow && !selfCheckoutWindow.isDestroyed()) selfCheckoutWindow.webContents.send('pos:elavon-status', data);
       // Forward payment status to customer display via PosStore broadcast
       if (this.posStore) {
         const currentDisplay = this.posStore.getState().display;

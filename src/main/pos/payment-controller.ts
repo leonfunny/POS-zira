@@ -23,6 +23,10 @@ type PrinterDriver = {
 };
 
 type GetPrinter = (type: string) => PrinterDriver | null;
+type SharedReceiptPrinter = (
+  data: ReceiptData,
+  meta: { referenceType?: string; referenceId?: string; source?: string },
+) => Promise<{ handled: boolean; printed: boolean; printerId?: string; error?: string }>;
 
 export class PaymentController {
   constructor(
@@ -32,6 +36,7 @@ export class PaymentController {
     private getSellerName?: () => string | undefined,
     private getSellerAddress?: () => string | undefined,
     private getSellerNip?: () => string | undefined,
+    private sharedReceiptPrinter?: SharedReceiptPrinter,
   ) {}
 
   /**
@@ -43,6 +48,45 @@ export class PaymentController {
       const tenders = JSON.parse(order.payment_tenders);
       return Array.isArray(tenders) && tenders.length > 1 ? tenders : undefined;
     } catch { return undefined; }
+  }
+
+  private async printReceiptData(
+    receiptData: ReceiptData,
+    meta: { referenceType?: string; referenceId?: string; source?: string },
+    successMessage: string,
+    failureMessage: string,
+    missingPrinterMessage: string,
+  ): Promise<boolean> {
+    if (this.sharedReceiptPrinter) {
+      try {
+        const shared = await this.sharedReceiptPrinter(receiptData, meta);
+        if (shared.handled) {
+          if (shared.printed) {
+            logger.info(`${successMessage} via shared printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
+          } else {
+            logger.error(`${failureMessage}: ${shared.error || 'shared printer did not accept the job'}`);
+          }
+          return shared.printed;
+        }
+      } catch (err: any) {
+        logger.warn(`[Payment] Shared receipt route failed before assignment; falling back to local printer: ${err?.message || err}`);
+      }
+    }
+
+    const printer = this.getPrinter(PrinterType.RECEIPT);
+    if (!printer || !printer.isConnected()) {
+      logger.warn(missingPrinterMessage);
+      return false;
+    }
+
+    try {
+      await printer.printReceipt(receiptData);
+      logger.info(successMessage);
+      return true;
+    } catch (err) {
+      logger.error(`${failureMessage}: ${err}`);
+      return false;
+    }
   }
 
   /**
@@ -77,13 +121,6 @@ export class PaymentController {
     }
 
     const items = orderRepo.getItemsByOrderId(orderId);
-    const printer = this.getPrinter(PrinterType.RECEIPT);
-
-    if (!printer || !printer.isConnected()) {
-      logger.warn('[Payment] No receipt printer connected, skipping print');
-      return false;
-    }
-
     const receiptData: ReceiptData = {
       orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
@@ -117,14 +154,13 @@ export class PaymentController {
       tenders: this.parseTenders(order),
     };
 
-    try {
-      await printer.printReceipt(receiptData);
-      logger.info(`[Payment] Receipt printed for order ${order.order_number}`);
-      return true;
-    } catch (err) {
-      logger.error(`[Payment] Receipt print failed: ${err}`);
-      return false;
-    }
+    return this.printReceiptData(
+      receiptData,
+      { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos' },
+      `[Payment] Receipt printed for order ${order.order_number}`,
+      '[Payment] Receipt print failed',
+      '[Payment] No receipt printer connected, skipping print',
+    );
   }
 
   /**
@@ -138,13 +174,6 @@ export class PaymentController {
     }
 
     const items = orderRepo.getItemsByOrderId(orderId);
-    const printer = this.getPrinter(PrinterType.RECEIPT);
-
-    if (!printer || !printer.isConnected()) {
-      logger.warn('[Payment] No receipt printer connected, cannot reprint');
-      return false;
-    }
-
     const receiptData: ReceiptData = {
       orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
@@ -179,14 +208,13 @@ export class PaymentController {
       originalDate: order.created_at,
     };
 
-    try {
-      await printer.printReceipt(receiptData);
-      logger.info(`[Payment] Receipt REPRINTED for order ${order.order_number}`);
-      return true;
-    } catch (err) {
-      logger.error(`[Payment] Receipt reprint failed: ${err}`);
-      return false;
-    }
+    return this.printReceiptData(
+      receiptData,
+      { referenceType: 'POS_RECEIPT_REPRINT', referenceId: orderId, source: 'pos-reprint' },
+      `[Payment] Receipt REPRINTED for order ${order.order_number}`,
+      '[Payment] Receipt reprint failed',
+      '[Payment] No receipt printer connected, cannot reprint',
+    );
   }
 
   /**
@@ -248,12 +276,6 @@ export class PaymentController {
     const order = orderRepo.getById(orderId);
     if (!order) {
       logger.warn(`[Payment] Cannot print refund receipt: order ${orderId} not found`);
-      return false;
-    }
-
-    const printer = this.getPrinter(PrinterType.RECEIPT);
-    if (!printer || !printer.isConnected()) {
-      logger.warn('[Payment] No receipt printer connected, cannot print refund receipt');
       return false;
     }
 
@@ -320,13 +342,12 @@ export class PaymentController {
       originalDate: order.created_at || undefined,
     };
 
-    try {
-      await printer.printReceipt(receiptData);
-      logger.info(`[Payment] Refund receipt printed for order ${order.order_number}`);
-      return true;
-    } catch (err) {
-      logger.error(`[Payment] Refund receipt print failed: ${err}`);
-      return false;
-    }
+    return this.printReceiptData(
+      receiptData,
+      { referenceType: 'POS_REFUND_RECEIPT', referenceId: orderId, source: 'pos-refund' },
+      `[Payment] Refund receipt printed for order ${order.order_number}`,
+      '[Payment] Refund receipt print failed',
+      '[Payment] No receipt printer connected, cannot print refund receipt',
+    );
   }
 }

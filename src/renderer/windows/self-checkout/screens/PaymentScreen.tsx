@@ -13,7 +13,9 @@ interface PaymentScreenProps {
   lang: ScLanguage;
   mode: SelfCheckoutMode;
   totalGrosze: number;
-  onSuccess: (method: PaymentMethod) => void;
+  terminalStatus?: string | null;
+  errorText?: string | null;
+  onSuccess: (method: PaymentMethod) => void | Promise<void>;
   onCancel: () => void;
   onLangChange: (lang: ScLanguage) => void;
 }
@@ -22,6 +24,8 @@ export default function PaymentScreen({
   lang,
   mode,
   totalGrosze,
+  terminalStatus,
+  errorText,
   onSuccess,
   onCancel,
   onLangChange,
@@ -32,14 +36,24 @@ export default function PaymentScreen({
 
   useEffect(() => {
     if (mode !== 'demo' || !method || !processing) return;
-    const id = window.setTimeout(() => onSuccess(method), 1500);
+    const id = window.setTimeout(() => {
+      void onSuccess(method);
+    }, 1500);
     return () => window.clearTimeout(id);
   }, [method, mode, onSuccess, processing]);
 
-  const chooseMethod = (next: PaymentMethod) => {
+  const chooseMethod = async (next: PaymentMethod) => {
     if (processing) return;
+    if (mode === 'production' && next === 'BLIK') return;
     setMethod(next);
     setProcessing(true);
+    if (mode === 'demo') return;
+    try {
+      await onSuccess(next);
+    } catch {
+      setProcessing(false);
+      setMethod(null);
+    }
   };
 
   const selectedLabel = method === 'BLIK' ? t.blik : method === 'CARD' ? t.card : null;
@@ -70,20 +84,7 @@ export default function PaymentScreen({
           </div>
         </header>
 
-        {mode === 'production' ? (
-          <div className="p-10 text-center">
-            <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[28px] bg-red-50 text-[var(--sc-danger)]">
-              <AlertTriangle size={58} />
-            </div>
-            <h2 className="mt-6 text-5xl font-black text-[var(--sc-ink)]">
-              {t.closedTitle}
-            </h2>
-            <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
-              {t.receiptProductionBlocked}
-            </p>
-          </div>
-        ) : (
-          <div className="grid min-h-0 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-h-0 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <main className="min-w-0">
               <h1 id="self-checkout-payment-title" className="text-5xl font-black text-[var(--sc-ink)]">
                 {t.paymentTitle}
@@ -106,10 +107,10 @@ export default function PaymentScreen({
                 />
                 <PaymentMethodButton
                   active={method === 'BLIK'}
-                  disabled={processing}
+                  disabled={processing || mode === 'production'}
                   icon={<Smartphone size={54} />}
                   title={t.payWithBlik}
-                  body={t.blikTerminalHint}
+                  body={mode === 'production' ? t.blikProductionUnsupported : t.blikTerminalHint}
                   onClick={() => chooseMethod('BLIK')}
                 />
               </div>
@@ -123,7 +124,7 @@ export default function PaymentScreen({
                 {selectedLabel || t.terminalReadyTitle}
               </h2>
               <p className="mt-4 text-xl font-semibold leading-8 text-[var(--sc-muted)]">
-                {processing ? t.waitForTerminal : t.terminalReadyBody}
+                {processing ? (terminalStatus || t.waitForTerminal) : t.terminalReadyBody}
               </p>
               {processing && (
                 <div
@@ -134,9 +135,17 @@ export default function PaymentScreen({
                   {t.paymentProcessing}
                 </div>
               )}
+              {errorText && (
+                <div
+                  role="alert"
+                  className="mt-5 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-left text-lg font-black leading-7 text-red-800"
+                >
+                  <AlertTriangle size={26} className="mt-0.5 shrink-0" />
+                  <span>{errorText}</span>
+                </div>
+              )}
             </aside>
-          </div>
-        )}
+        </div>
       </section>
     </div>
   );

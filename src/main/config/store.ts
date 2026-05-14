@@ -222,6 +222,7 @@ const store = new Store<AgentConfig>({
      */
     selfCheckoutKioskUserId: { type: 'string', default: '' },
     selfCheckoutMode: { type: 'string', enum: ['demo', 'production'], default: 'demo' },
+    selfCheckoutFakePaymentEnabled: { type: 'boolean', default: false },
     selfCheckoutBagFeeAmount: { type: 'number', default: 0.2 },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },

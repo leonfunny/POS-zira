@@ -61,7 +61,10 @@ function makeFakePrinter(opts: {
   };
 }
 
-function buildController(printer: ReturnType<typeof makeFakePrinter> | null) {
+function buildController(
+  printer: ReturnType<typeof makeFakePrinter> | null,
+  sharedReceiptPrinter?: any,
+) {
   return new PaymentController(
     (_type: string) => printer as any,
     () => true,
@@ -69,6 +72,7 @@ function buildController(printer: ReturnType<typeof makeFakePrinter> | null) {
     () => 'Chè Sài Gòn Sp. z o.o.',
     () => 'ul. Marszałkowska 1',
     () => '5220052349',
+    sharedReceiptPrinter,
   );
 }
 
@@ -136,6 +140,41 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     const result = await ctl.completeCardPayment('order-1');
     expect(result.success).toBe(true);
     expect(result.receiptPrinted).toBe(false);
+  });
+
+  it('completeCardPayment can route the receipt through a shared backend printer when local printer is missing', async () => {
+    const sharedReceiptPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'printer-remote-1' }));
+    const ctl = buildController(null, sharedReceiptPrinter);
+    const result = await ctl.completeCardPayment('order-1');
+    expect(result.success).toBe(true);
+    expect(result.receiptPrinted).toBe(true);
+    expect(sharedReceiptPrinter).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-1', orderNumber: 'POS-20260505-0001' }),
+      expect.objectContaining({ referenceType: 'POS_RECEIPT', referenceId: 'order-1', source: 'pos' }),
+    );
+  });
+
+  it('falls back to the local printer when no shared receipt assignment exists', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({ handled: false, printed: false }));
+    const ctl = buildController(printer, sharedReceiptPrinter);
+    const result = await ctl.completeCardPayment('order-1');
+    expect(result.receiptPrinted).toBe(true);
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not print a second local receipt when the shared route handled the job but failed', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: false,
+      printerId: 'printer-remote-1',
+      error: 'Owning print agent is offline',
+    }));
+    const ctl = buildController(printer, sharedReceiptPrinter);
+    const result = await ctl.completeCardPayment('order-1');
+    expect(result.receiptPrinted).toBe(false);
+    expect(printer.printReceipt).not.toHaveBeenCalled();
   });
 
   it('completeCashPayment with NO printer attached still returns success', async () => {

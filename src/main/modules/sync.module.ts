@@ -26,6 +26,7 @@ import { getConfig, getSecureAuthToken } from '../config/store';
 import SocketClient from '../network/socket-client';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { ShiftController } from '../pos/shift-controller';
+import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
 
@@ -241,12 +242,6 @@ export class SyncModule extends BaseModule {
           return { success: false, receiptPrinted: false };
         }
 
-        const hw = this.container.getOptional<HardwareModule>(SERVICE_TOKENS.HARDWARE_MODULE);
-        const printer = hw?.getPrinterForType(PrinterType.RECEIPT);
-        if (!printer || !printer.isConnected()) {
-          logger.warn('[SyncModule] billiard:print:receipt — no receipt printer connected');
-          return { success: true, receiptPrinted: false };
-        }
 
         // Look up the table/resource name
         const resource = session.resource_id ? billiardResourceRepo.getById(session.resource_id) : null;
@@ -308,6 +303,22 @@ export class SyncModule extends BaseModule {
           subtotal: total,
           total,
         };
+
+        const shared = await submitSharedReceiptPrint(receiptData, {
+          referenceType: 'BILLIARD_RECEIPT',
+          referenceId: sessionId,
+          source: 'billiard',
+        });
+        if (shared.handled) {
+          return { success: true, receiptPrinted: shared.printed };
+        }
+
+        const hw = this.container.getOptional<HardwareModule>(SERVICE_TOKENS.HARDWARE_MODULE);
+        const printer = hw?.getPrinterForType(PrinterType.RECEIPT);
+        if (!printer || !printer.isConnected()) {
+          logger.warn('[SyncModule] billiard:print:receipt - no receipt printer connected');
+          return { success: true, receiptPrinted: false };
+        }
 
         await printer.printReceipt(receiptData);
         logger.info(`[SyncModule] Billiard receipt printed for session ${sessionId.substring(0, 8)}`);

@@ -120,6 +120,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   autoSetupPrinter: (printerType: string, device?: any) => ipcRenderer.invoke(IPC_CHANNELS.AUTO_SETUP_PRINTER, printerType, device),
   printAgentPrinters: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LIST),
+    localList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LOCAL_LIST),
+    salonList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST),
+    assignmentsList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_LIST),
+    upsertAssignment: (role: string, printerId: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT, role, printerId),
+    deleteAssignment: (role: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_DELETE, role),
     create: (body: any) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_CREATE, body),
     update: (printerId: string, body: any) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_UPDATE, printerId, body),
     delete: (printerId: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_DELETE, printerId),

@@ -18,6 +18,7 @@ import {
   AgentConfig,
   AuthUser,
   AgentPrintersResponse,
+  SalonPrinterRole,
   ServerPrinterMapping,
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
@@ -455,6 +456,10 @@ export class AuthModule extends BaseModule {
       return this.refreshAgentPrinters();
     });
 
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LOCAL_LIST, async () => {
+      return localPrinterRepo.getAll();
+    });
+
     ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTERS_CREATE, async (_, body: Partial<ServerPrinterMapping>) => {
       const { client, token, agentId } = this.getPrinterApiContext();
       await client.createAgentPrinter(token, agentId, body);
@@ -473,6 +478,30 @@ export class AuthModule extends BaseModule {
       const { client, token, agentId } = this.getPrinterApiContext();
       await client.deleteAgentPrinter(token, agentId, printerId);
       return this.refreshAgentPrinters();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST, async () => {
+      const { client, token } = this.getAuthenticatedApiContext();
+      return client.listSalonPrinters(token);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_LIST, async () => {
+      const { client, token } = this.getAuthenticatedApiContext();
+      return client.listPrinterAssignments(token);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT, async (_, role: SalonPrinterRole, printerId: string) => {
+      if (!role) throw new Error('Missing printer assignment role');
+      if (!printerId) throw new Error('Missing printer id');
+      const { client, token } = this.getAuthenticatedApiContext();
+      return client.upsertPrinterAssignment(token, role, printerId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_DELETE, async (_, role: SalonPrinterRole) => {
+      if (!role) throw new Error('Missing printer assignment role');
+      const { client, token } = this.getAuthenticatedApiContext();
+      await client.deletePrinterAssignment(token, role);
+      return client.listPrinterAssignments(token);
     });
 
     logger.info('[AuthModule] IPC handlers registered');
@@ -528,16 +557,25 @@ export class AuthModule extends BaseModule {
     await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey);
   }
 
-  private getPrinterApiContext(): { client: ApiClient; token: string; agentId: string } {
+  private getAuthenticatedApiContext(): { client: ApiClient; token: string } {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
 
+    const config = getConfig();
+    return {
+      client: new ApiClient(config.serverUrl || 'https://api.enail.pro'),
+      token,
+    };
+  }
+
+  private getPrinterApiContext(): { client: ApiClient; token: string; agentId: string } {
+    const { client, token } = this.getAuthenticatedApiContext();
     const config = getConfig();
     const agentId = config.agentId;
     if (!agentId) throw new Error('Print Agent is not paired');
 
     return {
-      client: new ApiClient(config.serverUrl || 'https://api.enail.pro'),
+      client,
       token,
       agentId,
     };

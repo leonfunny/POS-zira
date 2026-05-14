@@ -26,6 +26,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       create: (order: any, items: any[]) =>
         ipcRenderer.invoke('pos:orders:create', order, items),
     },
+    payment: {
+      printReceipt: (orderId: string) =>
+        ipcRenderer.invoke('pos:print-receipt', orderId),
+      cardPayment: (data: { amount: number; orderId: string }) =>
+        ipcRenderer.invoke('pos:payment:card', data),
+      onElavonStatus: (callback: (data: any) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:elavon-status', listener);
+        return () => ipcRenderer.removeListener('pos:elavon-status', listener);
+      },
+    },
+    sync: {
+      orders: () => ipcRenderer.invoke('pos:sync:orders'),
+    },
   },
   onBarcodeScanned: (callback: (barcode: string) => void) => {
     const listener = (_event: any, barcode: string) => callback(barcode);

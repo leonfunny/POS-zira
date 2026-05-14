@@ -3,11 +3,17 @@ import * as os from 'os';
 import logger from '../logger';
 import {
   ConnectResponse,
+  CreatePrintJobRequest,
+  CreatePrintJobResponse,
   AgentPrintersResponse,
   PrinterConfig,
   PrinterProtocol,
   PrintersConfig,
   PrinterType,
+  SalonPrinterAssignmentResponse,
+  SalonPrinterAssignmentsResponse,
+  SalonPrinterRole,
+  SalonPrintersResponse,
   ServerPrinterMapping,
   TelegramLoginTokenResponse,
   TelegramLoginTokenStatus,
@@ -125,6 +131,7 @@ export function normalizeServerPrinterRows(printers?: ConnectResponse['printers'
       supportsCut: result.config.supportsCut,
       supportsCashDrawer: result.config.supportsCashDrawer,
       isEnabled: result.config.enabled,
+      isOnline: item.isOnline,
     });
   }
   return rows;
@@ -330,6 +337,42 @@ export class ApiClient {
       token,
     );
     return { printers: Array.isArray(result?.printers) ? result.printers : [] };
+  }
+
+  async listSalonPrinters(token: string): Promise<SalonPrintersResponse> {
+    const result = await this.request('GET', '/print-agent/salons/me/printers', token);
+    return { printers: Array.isArray(result?.printers) ? result.printers : [] };
+  }
+
+  async listPrinterAssignments(token: string): Promise<SalonPrinterAssignmentsResponse> {
+    const result = await this.request('GET', '/print-agent/salons/me/printer-assignments', token);
+    return { assignments: Array.isArray(result?.assignments) ? result.assignments : [] };
+  }
+
+  async upsertPrinterAssignment(
+    token: string,
+    role: SalonPrinterRole,
+    printerId: string,
+  ): Promise<SalonPrinterAssignmentResponse> {
+    const result = await this.request(
+      'PUT',
+      `/print-agent/salons/me/printer-assignments/${encodeURIComponent(role)}`,
+      token,
+      { printerId },
+    );
+    return { assignment: result.assignment };
+  }
+
+  async deletePrinterAssignment(token: string, role: SalonPrinterRole): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/print-agent/salons/me/printer-assignments/${encodeURIComponent(role)}`,
+      token,
+    );
+  }
+
+  async createPrintJob(token: string, body: CreatePrintJobRequest): Promise<CreatePrintJobResponse> {
+    return this.request('POST', '/print-agent/jobs', token, body);
   }
 
   async createAgentPrinter(

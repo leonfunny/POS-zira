@@ -48,6 +48,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
 
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
+  const [fakePayment, setFakePayment] = useState(false);
   const [bagFee, setBagFee] = useState<number>(0.20);
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
@@ -60,6 +61,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     const c = config as any;
     setKioskLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
+    setFakePayment(Boolean(c.selfCheckoutFakePaymentEnabled));
     setBagFee(typeof c.selfCheckoutBagFeeAmount === 'number' ? c.selfCheckoutBagFeeAmount : 0.20);
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
@@ -82,6 +84,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     [mode],
   );
   const isProductionBlocked = runtime.unavailableReasons.length > 0;
+  const isProductionReady = mode === 'production' && !isProductionBlocked;
   const modeLabel = mode === 'demo'
     ? t('selfCheckout.mode.demo')
     : t('selfCheckout.mode.production');
@@ -101,6 +104,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
       await persist({
         selfCheckoutEnabled: true,
         selfCheckoutMode: mode,
+        selfCheckoutFakePaymentEnabled: fakePayment,
         selfCheckoutLanguage: kioskLanguage,
         selfCheckoutBagFeeAmount: bagFee,
         selfCheckoutMonitor: monitor,
@@ -133,7 +137,11 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
             {t('selfCheckout.title')}
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[var(--ink-muted)]">
-            {t('selfCheckout.subtitle')}
+            {isProductionBlocked
+              ? t('selfCheckout.productionClosedDesc')
+              : mode === 'demo'
+                ? t('selfCheckout.demoAvailableDesc')
+                : t('selfCheckout.launchDesc')}
           </p>
         </div>
         {justSaved && (
@@ -162,12 +170,18 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-black text-[var(--ink)]">
-              {mode === 'demo' ? t('selfCheckout.demoAvailable') : t('selfCheckout.productionClosed')}
+              {isProductionBlocked
+                ? t('selfCheckout.productionClosed')
+                : mode === 'demo'
+                  ? t('selfCheckout.demoAvailable')
+                  : t('selfCheckout.mode.production')}
             </h2>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-muted)]">
-              {mode === 'demo'
-                ? t('selfCheckout.demoAvailableDesc')
-                : t('selfCheckout.productionClosedDesc')}
+              {isProductionBlocked
+                ? t('selfCheckout.productionClosedDesc')
+                : mode === 'demo'
+                  ? t('selfCheckout.demoAvailableDesc')
+                  : t('selfCheckout.launchDesc')}
             </p>
           </div>
         </div>
@@ -205,24 +219,26 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               ? t('selfCheckout.opening')
               : mode === 'demo'
                 ? t('selfCheckout.openDemo')
-                : t('selfCheckout.openProductionClosed')}
+                : isProductionBlocked
+                  ? t('selfCheckout.openProductionClosed')
+                  : t('selfCheckout.launch')}
           </button>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <RuntimePill
               label={t('selfCheckout.payment')}
-              state={mode === 'demo' ? t('selfCheckout.demoOnly') : t('selfCheckout.blocked')}
-              blocked={mode === 'production'}
+              state={mode === 'demo' ? t('selfCheckout.demoOnly') : fakePayment ? t('selfCheckout.fakePayment') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
+              blocked={isProductionBlocked}
             />
             <RuntimePill
               label={t('selfCheckout.fiscalPrint')}
-              state={mode === 'demo' ? t('selfCheckout.skipped') : t('selfCheckout.blocked')}
-              blocked={mode === 'production'}
+              state={mode === 'demo' ? t('selfCheckout.skipped') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
+              blocked={isProductionBlocked}
             />
             <RuntimePill
               label={t('selfCheckout.orderCreate')}
-              state={mode === 'demo' ? t('selfCheckout.skipped') : t('selfCheckout.blocked')}
-              blocked={mode === 'production'}
+              state={mode === 'demo' ? t('selfCheckout.skipped') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
+              blocked={isProductionBlocked}
             />
           </div>
         </section>
@@ -243,7 +259,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
             ) : (
               <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-800">
                 <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
-                <span>{t('selfCheckout.demoReady')}</span>
+                <span>{isProductionReady ? t('selfCheckout.launchDesc') : t('selfCheckout.demoReady')}</span>
               </div>
             )}
           </div>
@@ -265,7 +281,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
           <SettingField
             icon={<AlertTriangle size={17} />}
             label={t('selfCheckout.runtimeMode')}
-            help={t('selfCheckout.runtimeModeHelp')}
+            help={isProductionReady ? t('selfCheckout.launchDesc') : t('selfCheckout.runtimeModeHelp')}
           >
             <select
               value={mode}
@@ -277,7 +293,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
             >
               <option value="demo">{t('selfCheckout.option.demo')}</option>
-              <option value="production">{t('selfCheckout.option.production')}</option>
+              <option value="production">{t('selfCheckout.mode.production')}</option>
             </select>
           </SettingField>
 
@@ -299,6 +315,28 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               <option value="en">English (EN)</option>
               <option value="vi">Tiếng Việt (VI)</option>
             </select>
+          </SettingField>
+
+          <SettingField
+            icon={<AlertTriangle size={17} />}
+            label={t('selfCheckout.fakePayment')}
+            help={t('selfCheckout.fakePaymentHelp')}
+          >
+            <div className="flex min-h-[44px] items-center justify-between gap-4 rounded-lg border border-[var(--sand-300)] bg-white px-3">
+              <span className="text-sm font-bold text-[var(--ink)]">
+                {fakePayment ? t('selfCheckout.fakePaymentOn') : t('selfCheckout.fakePaymentOff')}
+              </span>
+              <input
+                type="checkbox"
+                checked={fakePayment}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setFakePayment(v);
+                  persist({ selfCheckoutFakePaymentEnabled: v });
+                }}
+                className="h-5 w-5 accent-[var(--primary)]"
+              />
+            </div>
           </SettingField>
 
           <SettingField
