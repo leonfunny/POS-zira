@@ -914,7 +914,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       await window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE);
       await loadSharedPrinterRouting();
     } catch (err: any) {
-      setSharedPrintersError(err?.message || 'Failed to clear shared printer assignment');
+      setSharedPrintersError(err?.message || 'Failed to stop shared printer assignment');
     } finally {
       setSharedPrinterSavingId(null);
     }
@@ -1338,6 +1338,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
   const predefinedServerPrinters = serverPrinters.filter((printer) => printer.isPredefined);
   const customServerPrinters = serverPrinters.filter((printer) => !printer.isPredefined);
+  const currentAgentId = config?.agentId || '';
   const sharedReceiptAssignment = printerAssignments.find((assignment) => assignment.role === SELF_CHECKOUT_RECEIPT_ROLE) || null;
   const sharedReceiptPrinter = sharedReceiptAssignment
     ? salonPrinters.find((printer) => printer.id === sharedReceiptAssignment.printerId) || null
@@ -1352,6 +1353,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const getLocalPrinterTarget = (printer: LocalPrinterMirrorRow): string => (
     printer.windows_printer_name || printer.port || printer.address || 'no target'
   );
+  const isPrinterOwnedByThisPos = (printer: ServerPrinterMapping | SalonPrinterMapping): boolean => (
+    !!currentAgentId && !!printer.agentId && printer.agentId === currentAgentId
+  );
+  const getServerPrinterOwnerLabel = (printer: ServerPrinterMapping | SalonPrinterMapping): string => {
+    if (isPrinterOwnedByThisPos(printer)) {
+      return 'This POS';
+    }
+    return (printer as SalonPrinterMapping).agentName || printer.agentId || 'Unknown POS';
+  };
 
   return (
     <div className="space-y-4">
@@ -2231,8 +2241,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             <div className="border border-slate-200 rounded-lg p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-sm font-medium text-slate-700">Shared receipt printer</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Backend role: {SELF_CHECKOUT_RECEIPT_ROLE}</p>
+                  <h3 className="text-sm font-medium text-slate-700">Shared receipt route</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Self-checkout receipts use this salon-level route.</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 break-all">This POS agent: {currentAgentId || 'not paired'}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -2250,7 +2261,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       disabled={sharedPrinterSavingId === 'clear'}
                       className="px-3 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                     >
-                      {sharedPrinterSavingId === 'clear' ? 'Clearing...' : 'Clear'}
+                      {sharedPrinterSavingId === 'clear' ? 'Stopping...' : 'Stop sharing'}
                     </button>
                   )}
                 </div>
@@ -2263,7 +2274,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               )}
 
               <div className="mt-4 border-t border-slate-100 pt-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current shared receipt route</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Active shared receipt route</div>
                 {sharedReceiptAssignment ? (
                   <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
@@ -2275,29 +2286,32 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       </div>
                       {sharedReceiptPrinter && (
                         <div className="mt-1 text-xs text-slate-500 truncate">
-                          {sharedReceiptPrinter.agentName || 'Unknown POS'} - {getServerPrinterTarget(sharedReceiptPrinter)}
+                          Owner: {getServerPrinterOwnerLabel(sharedReceiptPrinter)} - {getServerPrinterTarget(sharedReceiptPrinter)}
                         </div>
                       )}
                     </div>
                     {sharedReceiptPrinter && (
                       <div className="flex flex-wrap gap-1.5 text-[11px]">
                         <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.agentIsOnline ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                          {sharedReceiptPrinter.agentIsOnline ? 'Agent online' : 'Agent offline'}
+                          {sharedReceiptPrinter.agentIsOnline ? 'POS online' : 'POS offline'}
                         </span>
                         <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.isOnline ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {sharedReceiptPrinter.isOnline ? 'Printer online' : 'Printer offline'}
+                          {sharedReceiptPrinter.isOnline ? 'Device online' : 'Device offline'}
                         </span>
                       </div>
                     )}
                   </div>
                 ) : (
                   <div className="mt-2 text-xs text-slate-500">
-                    No shared receipt printer assigned.
+                    No shared receipt route assigned.
                   </div>
                 )}
               </div>
 
               <div className="mt-4 space-y-2">
+                <div className="text-xs text-slate-500">
+                  POS online means the remote Zira app is connected. Device online means that POS recently detected the physical printer.
+                </div>
                 {sharedReceiptPrinters.length === 0 && (
                   <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
                     {sharedPrintersLoading ? 'Loading salon receipt printers...' : 'No salon RECEIPT printers found'}
@@ -2315,12 +2329,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             {selected && (
                               <span className="text-[11px] px-2 py-1 rounded-full bg-brand-100 text-brand-700">Selected</span>
                             )}
+                            {isPrinterOwnedByThisPos(printer) && (
+                              <span className="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-600">This POS</span>
+                            )}
                           </div>
                           <div className="mt-1 text-[11px] font-mono text-slate-500 break-all">
                             {printer.id}
                           </div>
                           <div className="mt-1 grid gap-1 text-xs text-slate-500 md:grid-cols-3">
-                            <span className="truncate">{printer.agentName || 'Unknown POS'}</span>
+                            <span className="truncate">{getServerPrinterOwnerLabel(printer)}</span>
                             <span className="truncate">{printer.protocol || 'UNKNOWN'}</span>
                             <span className="truncate">{getServerPrinterTarget(printer)}</span>
                           </div>
@@ -2328,29 +2345,38 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         <div className="flex flex-col gap-2 md:items-end">
                           <div className="flex flex-wrap gap-1.5 text-[11px] md:justify-end">
                             <span className={`px-2 py-1 rounded-full ${printer.agentIsOnline ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                              {printer.agentIsOnline ? 'Agent online' : 'Agent offline'}
+                              {printer.agentIsOnline ? 'POS online' : 'POS offline'}
                             </span>
                             <span className={`px-2 py-1 rounded-full ${printer.isOnline ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                              {printer.isOnline ? 'Printer online' : 'Printer offline'}
+                              {printer.isOnline ? 'Device online' : 'Device offline'}
                             </span>
                             <span className={`px-2 py-1 rounded-full ${printer.isEnabled !== false ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
                               {printer.isEnabled !== false ? 'Enabled' : 'Disabled'}
                             </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleAssignSharedPrinter(printer.id)}
-                            disabled={selected || disabled || sharedPrinterSavingId === printer.id}
-                            className={`min-h-10 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                              selected
-                                ? 'bg-slate-100 text-slate-500'
-                                : disabled
+                          {selected ? (
+                            <button
+                              type="button"
+                              onClick={() => handleClearSharedPrinter()}
+                              disabled={sharedPrinterSavingId === 'clear'}
+                              className="min-h-10 px-3 py-2 rounded-lg border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {sharedPrinterSavingId === 'clear' ? 'Stopping...' : 'Stop sharing'}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleAssignSharedPrinter(printer.id)}
+                              disabled={disabled || sharedPrinterSavingId === printer.id}
+                              className={`min-h-10 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                disabled
                                   ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                                   : 'bg-brand-600 text-white hover:bg-brand-700'
-                            }`}
-                          >
-                            {selected ? 'In use' : sharedPrinterSavingId === printer.id ? 'Saving...' : 'Use as shared receipt'}
-                          </button>
+                              }`}
+                            >
+                              {sharedPrinterSavingId === printer.id ? 'Saving...' : 'Use as shared receipt'}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2362,78 +2388,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             <div className="border border-slate-200 rounded-lg p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-sm font-medium text-slate-700">Online printer IDs (SQLite)</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {localOnlinePrinterCount} online / {localPrinterRows.length} mirrored rows
+                  <h3 className="text-sm font-medium text-slate-700">Local printer config (this POS)</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 break-all">Agent ID: {currentAgentId || 'not paired'}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Edit these rows only on the POS that owns the connected printer. If two POS devices show the same agent ID, re-pair one device before editing.
                   </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => loadLocalPrinterRows()}
-                    disabled={localPrinterRowsLoading}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {localPrinterRowsLoading ? 'Loading...' : 'Refresh SQLite'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadServerPrinters()}
-                    disabled={serverPrintersLoading || !config?.agentId}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Sync backend
-                  </button>
-                </div>
-              </div>
-
-              {localPrinterRowsError && (
-                <div className="mt-3 px-3 py-2 rounded-lg text-xs bg-red-50 text-red-700">
-                  {localPrinterRowsError}
-                </div>
-              )}
-
-              <div className="mt-4 space-y-2">
-                {localPrinterRows.length === 0 && (
-                  <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
-                    {localPrinterRowsLoading ? 'Loading SQLite printer rows...' : 'No local printer rows in SQLite yet'}
-                  </div>
-                )}
-                {localPrinterRows.map((printer) => (
-                  <div key={printer.id} className="border border-slate-200 rounded-lg px-3 py-2">
-                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-slate-700 truncate">
-                          {printer.display_name || printer.name || printer.printer_type || 'Printer'}
-                        </div>
-                        <div className="mt-1 text-[11px] font-mono text-slate-500 break-all">
-                          {printer.id}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 text-[11px]">
-                        <span className={`px-2 py-1 rounded-full ${printer.is_online === 1 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {printer.is_online === 1 ? 'Online' : 'Offline'}
-                        </span>
-                        <span className={`px-2 py-1 rounded-full ${printer.is_enabled === 1 ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {printer.is_enabled === 1 ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-2 grid gap-1 text-xs text-slate-500 md:grid-cols-4">
-                      <span>{printer.printer_type || 'UNKNOWN'}</span>
-                      <span>{printer.protocol}</span>
-                      <span className="truncate">{getLocalPrinterTarget(printer)}</span>
-                      <span className="truncate">seen: {printer.last_seen_at || '-'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border border-slate-200 rounded-lg p-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h3 className="text-sm font-medium text-slate-700">Backend printer rows</h3>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -2681,6 +2640,80 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 </div>
               )}
           </div>
+
+            <div className="border border-slate-200 rounded-lg p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-slate-700">Advanced diagnostics: SQLite mirror</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {localOnlinePrinterCount} online / {localPrinterRows.length} mirrored rows
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Debug cache only. It shows what this POS last synced locally, not the salon-wide sharing choice.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loadLocalPrinterRows()}
+                    disabled={localPrinterRowsLoading}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {localPrinterRowsLoading ? 'Loading...' : 'Refresh SQLite'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loadServerPrinters()}
+                    disabled={serverPrintersLoading || !config?.agentId}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Reload backend
+                  </button>
+                </div>
+              </div>
+
+              {localPrinterRowsError && (
+                <div className="mt-3 px-3 py-2 rounded-lg text-xs bg-red-50 text-red-700">
+                  {localPrinterRowsError}
+                </div>
+              )}
+
+              <div className="mt-4 space-y-2">
+                {localPrinterRows.length === 0 && (
+                  <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
+                    {localPrinterRowsLoading ? 'Loading SQLite printer rows...' : 'No local printer rows in SQLite yet'}
+                  </div>
+                )}
+                {localPrinterRows.map((printer) => (
+                  <div key={printer.id} className="border border-slate-200 rounded-lg px-3 py-2">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-700 truncate">
+                          {printer.display_name || printer.name || printer.printer_type || 'Printer'}
+                        </div>
+                        <div className="mt-1 text-[11px] font-mono text-slate-500 break-all">
+                          {printer.id}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 text-[11px]">
+                        <span className={`px-2 py-1 rounded-full ${printer.is_online === 1 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {printer.is_online === 1 ? 'Online' : 'Offline'}
+                        </span>
+                        <span className={`px-2 py-1 rounded-full ${printer.is_enabled === 1 ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {printer.is_enabled === 1 ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-1 text-xs text-slate-500 md:grid-cols-4">
+                      <span>{printer.printer_type || 'UNKNOWN'}</span>
+                      <span>{printer.protocol}</span>
+                      <span className="truncate">{getLocalPrinterTarget(printer)}</span>
+                      <span className="truncate">seen: {printer.last_seen_at || '-'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         ) : (
           /* Legacy single printer mode */

@@ -67,12 +67,13 @@ describe('Settings printer dropdown state', () => {
   });
 
   it('shows SQLite local printer ids in the printer Settings tab', () => {
-    expect(settingsSource).toContain('Online printer IDs (SQLite)');
+    expect(settingsSource).toContain('Advanced diagnostics: SQLite mirror');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.localList()');
     expect(settingsSource).toContain('localPrinterRows.map((printer) =>');
     expect(settingsSource).toContain('{printer.id}');
     expect(settingsSource).toContain("printer.is_online === 1 ? 'Online' : 'Offline'");
-    expect(settingsSource).toContain('Sync backend');
+    expect(settingsSource).toContain('Debug cache only');
+    expect(settingsSource).toContain('Reload backend');
   });
 
   it('wires the SQLite local printer list through IPC', () => {
@@ -93,13 +94,17 @@ describe('Settings printer dropdown state', () => {
   });
 
   it('wires salon-level shared printer assignments through Settings and IPC', () => {
-    expect(settingsSource).toContain('Shared receipt printer');
+    expect(settingsSource).toContain('Shared receipt route');
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.assignmentsList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.upsertAssignment(SELF_CHECKOUT_RECEIPT_ROLE, printerId)');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE)');
-    expect(settingsSource).toContain('Current shared receipt route');
+    expect(settingsSource).toContain('Active shared receipt route');
+    expect(settingsSource).toContain('This POS agent');
+    expect(settingsSource).toContain("printer.agentIsOnline ? 'POS online' : 'POS offline'");
+    expect(settingsSource).toContain("printer.isOnline ? 'Device online' : 'Device offline'");
+    expect(settingsSource).toContain('Stop sharing');
     expect(settingsSource).toContain('Use as shared receipt');
 
     expect(sharedTypesSource).toContain("PRINT_AGENT_SALON_PRINTERS_LIST: 'print-agent-salon-printers-list'");
@@ -109,6 +114,12 @@ describe('Settings printer dropdown state', () => {
     expect(authModuleSource).toContain('ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT');
     expect(apiClientSource).toContain('/print-agent/salons/me/printer-assignments');
     expect(apiClientSource).toContain('/print-agent/salons/me/printers');
+  });
+
+  it('labels backend printer rows as this POS local config', () => {
+    expect(settingsSource).toContain('Local printer config (this POS)');
+    expect(settingsSource).toContain("Agent ID: {currentAgentId || 'not paired'}");
+    expect(settingsSource).toContain('If two POS devices show the same agent ID');
   });
 
   it('hydrates Windows printer options from cached detection and saved config', () => {
