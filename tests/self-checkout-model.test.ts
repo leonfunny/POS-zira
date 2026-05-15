@@ -59,6 +59,17 @@ describe('self-checkout runtime model', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");
   });
 
+  it('keeps the self-checkout staff swipe-down exit wired to its own close IPC', () => {
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const preloadSource = readSource('src/preload/preload-display.ts');
+
+    expect(appSource).toContain("document.addEventListener('touchstart'");
+    expect(appSource).toContain("document.addEventListener('touchmove'");
+    expect(appSource).toContain('STAFF_SWIPE_PX');
+    expect(appSource).toContain('selfCheckout?.close?.()');
+    expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:close')");
+  });
+
   it('models bag fee as a local quantity instead of a single yes/no toggle', () => {
     const cartSource = readSource('src/renderer/windows/self-checkout/useScCart.ts');
     const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');

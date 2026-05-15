@@ -5,7 +5,7 @@
  * This checks the customer flow, not implementation internals:
  * welcome -> scanner-start shopping -> cart/bag quantity -> payment modal
  * -> terminal-driven BLIK/card -> receipt -> thank-you/reset, plus abandon,
- * staff lock, empty-cart pay disabled, and unavailable language switching.
+ * staff lock, empty-cart pay disabled, and production welcome language switching.
  */
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
@@ -22,6 +22,30 @@ const PRODUCT = {
   vat_rate: 23,
   in_stock: 20,
 };
+const COMPACT_CART_PRODUCTS = [
+  PRODUCT,
+  {
+    ...PRODUCT,
+    id: 'prd-smoke-bamboo-1l',
+    template_id: 'prd-smoke-bamboo',
+    name: 'Bamboo Tree coconut water 1L',
+    sku: 'BAMBOO-1L',
+    barcode: '5900000000012',
+    retail_price: 700,
+  },
+  {
+    ...PRODUCT,
+    id: 'prd-smoke-gengar-case',
+    template_id: 'prd-smoke-gengar',
+    name: 'Etui-sluchawki-gengar',
+    sku: 'GENGAR-CASE',
+    barcode: '5900000000013',
+    retail_price: 200,
+  },
+];
+const PRODUCTS_BY_BARCODE = Object.fromEntries(
+  COMPACT_CART_PRODUCTS.map((product) => [product.barcode, product]),
+);
 
 const browserCandidates = [
   process.env.PLAYWRIGHT_BROWSER_EXECUTABLE,
@@ -44,7 +68,7 @@ async function createPage(browser, options = {}) {
   });
   const page = await context.newPage();
 
-  await page.addInitScript(({ product, config }) => {
+  await page.addInitScript(({ productsByBarcode, config }) => {
     const scanCallbacks = [];
     window.__scSmoke = {
       emitBarcode: (barcode) => {
@@ -65,7 +89,7 @@ async function createPage(browser, options = {}) {
       pos: {
         categories: { getAll: async () => [] },
         products: {
-          getByBarcode: async (barcode) => barcode === product.barcode ? product : null,
+          getByBarcode: async (barcode) => productsByBarcode[barcode] || null,
           getByCategory: async () => [],
         },
       },
@@ -75,7 +99,7 @@ async function createPage(browser, options = {}) {
       },
     };
   }, {
-    product: PRODUCT,
+    productsByBarcode: PRODUCTS_BY_BARCODE,
     config: {
       selfCheckoutLanguage: options.lang || 'en',
       selfCheckoutMode: options.mode || 'demo',
@@ -115,7 +139,51 @@ async function assertNoOverflow(page, label) {
   assert(metrics.scrollHeight <= metrics.clientHeight, `${label}: vertical overflow`);
 }
 
-async function runEmptyCartAndUnavailableChecks(browser) {
+async function assertCartRowsVisible(page, minRows, label) {
+  const metrics = await page.evaluate(() => {
+    const footer = document.querySelector('aside > div:last-child');
+    const footerTop = footer?.getBoundingClientRect().top ?? window.innerHeight;
+    const rows = Array.from(document.querySelectorAll('aside li')).map((row) => {
+      const rect = row.getBoundingClientRect();
+      return {
+        full: rect.top >= 0 && rect.bottom <= footerTop,
+        height: rect.height,
+      };
+    });
+    return {
+      rowCount: rows.length,
+      fullRows: rows.filter((row) => row.full).length,
+      cartViewportHeight: document.querySelector('aside .overflow-y-auto')?.clientHeight ?? 0,
+      footerHeight: footer?.getBoundingClientRect().height ?? 0,
+    };
+  });
+  assert(metrics.rowCount >= minRows, `${label}: expected ${minRows} cart rows, got ${metrics.rowCount}`);
+  assert(
+    metrics.fullRows >= minRows,
+    `${label}: expected ${minRows} fully visible cart rows, got ${metrics.fullRows} (cart=${metrics.cartViewportHeight}, footer=${metrics.footerHeight})`,
+  );
+}
+
+async function assertReceiptTotalVisible(page, label) {
+  const metrics = await page.evaluate(() => {
+    const totals = Array.from(document.querySelectorAll('.sc-tabular'));
+    const total = totals[totals.length - 1];
+    const rect = total?.getBoundingClientRect();
+    return {
+      exists: Boolean(rect),
+      top: rect?.top ?? -1,
+      bottom: rect?.bottom ?? -1,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  assert(metrics.exists, `${label}: receipt total is missing`);
+  assert(
+    metrics.top >= 0 && metrics.bottom <= metrics.viewportHeight,
+    `${label}: receipt total is clipped (${metrics.top}-${metrics.bottom} of ${metrics.viewportHeight})`,
+  );
+}
+
+async function runEmptyCartAndProductionChecks(browser) {
   {
     const { context, page } = await createPage(browser);
     assert(await languageButtonCount(page) === 3, 'welcome exposes PL/EN/VI');
@@ -130,10 +198,9 @@ async function runEmptyCartAndUnavailableChecks(browser) {
 
   {
     const { context, page } = await createPage(browser, { mode: 'production' });
-    await page.waitForSelector('text=This checkout is closed');
-    assert(await languageButtonCount(page) === 3, 'unavailable exposes PL/EN/VI');
-    assert(await page.getByRole('button', { name: /start shopping/i }).count() === 0, 'unavailable has no shopping CTA');
-    await assertNoOverflow(page, 'unavailable');
+    assert(await languageButtonCount(page) === 3, 'production welcome exposes PL/EN/VI');
+    assert(await page.getByRole('button', { name: /start shopping/i }).count() > 0, 'production welcome has shopping CTA');
+    await assertNoOverflow(page, 'production welcome');
     await context.close();
   }
 }
@@ -195,6 +262,29 @@ async function runCardTerminalFlow(browser) {
   await context.close();
 }
 
+async function runCompactViewportChecks(browser) {
+  const { context, page } = await createPage(browser, {
+    viewport: { width: 1280, height: 720 },
+  });
+
+  for (const product of COMPACT_CART_PRODUCTS) {
+    await emitBarcode(page, product.barcode);
+  }
+  await page.waitForSelector(`text=${COMPACT_CART_PRODUCTS[2].name}`);
+  await assertNoOverflow(page, 'compact shopping');
+  await assertCartRowsVisible(page, 3, 'compact shopping');
+
+  await page.getByRole('button', { name: /^pay$/i }).click();
+  await page.waitForSelector('[role="dialog"]');
+  await assertNoOverflow(page, 'compact payment modal');
+  await page.getByRole('button', { name: /^Card/ }).click();
+  await page.waitForSelector('text=Finalizing sale', { timeout: 5000 });
+  await assertNoOverflow(page, 'compact receipt');
+  await assertReceiptTotalVisible(page, 'compact receipt');
+
+  await context.close();
+}
+
 async function runAbandonAndStaffChecks(browser) {
   {
     const { context, page } = await createPage(browser);
@@ -229,9 +319,10 @@ async function main() {
     ...(executablePath ? { executablePath } : {}),
   });
   try {
-    await runEmptyCartAndUnavailableChecks(browser);
+    await runEmptyCartAndProductionChecks(browser);
     await runPrimaryBLIKFlow(browser);
     await runCardTerminalFlow(browser);
+    await runCompactViewportChecks(browser);
     await runAbandonAndStaffChecks(browser);
   } finally {
     await browser.close();
@@ -248,9 +339,10 @@ async function main() {
       'cancel payment returns to cart',
       'BLIK and card terminal-driven demo paths reach receipt',
       'receipt and thank-you language availability',
+      'compact viewport shows three cart rows and unclipped receipt total',
       'abandon clears cart',
       'call staff locks kiosk',
-      'production unavailable has no shopping CTA',
+      'production welcome remains available',
     ],
   }, null, 2));
 }

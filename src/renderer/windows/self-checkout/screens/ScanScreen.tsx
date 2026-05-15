@@ -188,7 +188,7 @@ export default function ScanScreen({
         tabIndex={-1}
         className="pointer-events-none fixed h-px w-px opacity-0"
       />
-      <header className="flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-8 py-4">
+      <header className="sc-shopping-header flex items-center justify-between border-b border-[var(--sc-border)] bg-white/95 px-6 py-3">
         <div className="flex items-center gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--sc-primary)] text-xl font-black text-white">
             Z
@@ -223,21 +223,21 @@ export default function ScanScreen({
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_430px] gap-5 p-5">
-        <section className="flex min-h-0 flex-col gap-5">
-          <div className="sc-surface flex min-h-[330px] flex-1 flex-col justify-center p-6 xl:p-8">
+      <main className="sc-shopping-main grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(380px,430px)] gap-4 p-4">
+        <section className="flex min-h-0 flex-col gap-4">
+          <div className="sc-surface sc-scan-panel flex min-h-[280px] flex-1 flex-col justify-center p-5 xl:p-6">
             <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:gap-8">
-              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[24px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)] xl:h-32 xl:w-32 xl:rounded-[34px]">
-                <ScanBarcode className="h-16 w-16 xl:h-[82px] xl:w-[82px]" />
+              <div className="sc-scan-icon flex h-24 w-24 shrink-0 items-center justify-center rounded-[24px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)] xl:h-28 xl:w-28 xl:rounded-[30px]">
+                <ScanBarcode className="h-16 w-16 xl:h-20 xl:w-20" />
               </div>
               <div className="min-w-0 w-full xl:w-auto">
-                <h1 className="text-5xl font-black text-[var(--sc-ink)] xl:text-6xl">
+                <h1 className="sc-scan-title text-5xl font-black text-[var(--sc-ink)] xl:text-6xl">
                   {t.scanPrompt}
                 </h1>
-                <p className="mt-4 text-xl font-semibold leading-8 text-[var(--sc-muted)] xl:text-2xl xl:leading-9">
+                <p className="sc-scan-hint mt-3 text-xl font-semibold leading-8 text-[var(--sc-muted)] xl:text-2xl xl:leading-9">
                   {t.scanHint}
                 </p>
-                <div className="mt-6 flex w-full max-w-[560px] flex-wrap items-center gap-3 rounded-3xl border-2 border-[var(--sc-border)] bg-white p-3 xl:mt-7 xl:inline-flex xl:w-auto xl:max-w-none xl:flex-nowrap xl:gap-4">
+                <div className="sc-scan-quantity mt-5 flex w-full max-w-[560px] flex-wrap items-center gap-3 rounded-3xl border-2 border-[var(--sc-border)] bg-white p-3 xl:mt-6 xl:inline-flex xl:w-auto xl:max-w-none xl:flex-nowrap xl:gap-3">
                   <div className="min-w-[160px] flex-1 px-3 xl:flex-none">
                     <div className="text-base font-black text-[var(--sc-ink)]">
                       {t.scanQuantity}
@@ -285,9 +285,9 @@ export default function ScanScreen({
             )}
           </div>
 
-          <div className="sc-surface-flat p-5">
+          <div className="sc-surface-flat sc-category-panel p-4">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-2xl font-black text-[var(--sc-ink)]">
+              <h2 className="text-xl font-black text-[var(--sc-ink)]">
                 {t.popularCategories}
               </h2>
               <span className="text-sm font-semibold text-[var(--sc-muted)]">
@@ -301,7 +301,7 @@ export default function ScanScreen({
                     key={category.id}
                     type="button"
                     onClick={() => openCategory(category)}
-                    className="sc-secondary-action sc-focusable flex min-h-[76px] items-center justify-center px-3 text-center text-lg leading-tight"
+                    className="sc-secondary-action sc-category-button sc-focusable flex min-h-[64px] items-center justify-center px-3 text-center text-base leading-tight"
                   >
                     {category.name}
                   </button>
@@ -315,12 +315,12 @@ export default function ScanScreen({
           </div>
         </section>
 
-        <aside className="sc-surface flex min-h-0 flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5 py-4">
+        <aside className="sc-surface sc-cart-panel flex min-h-0 flex-col overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-4 py-3">
             <div className="flex items-center gap-3">
-              <ShoppingCart size={26} className="text-[var(--sc-primary-deep)]" />
+              <ShoppingCart size={24} className="text-[var(--sc-primary-deep)]" />
               <div>
-                <div className="text-2xl font-black text-[var(--sc-ink)]">
+                <div className="text-xl font-black text-[var(--sc-ink)]">
                   {t.total}
                 </div>
                 <div className="text-sm font-semibold text-[var(--sc-muted)]">
@@ -343,14 +343,14 @@ export default function ScanScreen({
                 {cartItems.map((item) => (
                   <li
                     key={item.variantId + (item.isBagFee ? '-bag' : '')}
-                    className="px-5 py-4"
+                    className="sc-cart-item px-4 py-3"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="text-xl font-black leading-snug text-[var(--sc-ink)]">
+                        <div className="text-lg font-black leading-snug text-[var(--sc-ink)]">
                           {item.name}
                         </div>
-                        <div className="mt-1 text-base font-semibold text-[var(--sc-muted)]">
+                        <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
                           {formatPLN(item.price)}
                           {item.sku ? ` · ${item.sku}` : ''}
                         </div>
@@ -358,17 +358,17 @@ export default function ScanScreen({
                       <button
                         type="button"
                         onClick={() => onRemove(item.variantId)}
-                        className="sc-focusable flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
+                        className="sc-focusable flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
                         aria-label={t.remove}
                       >
                         <Trash2 size={22} />
                       </button>
                     </div>
-                    <div className="mt-4 flex items-center gap-3">
+                    <div className="mt-2 flex items-center gap-3">
                       <button
                         type="button"
                         onClick={() => onDecrement(item.variantId)}
-                        className="sc-focusable flex h-12 w-12 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
+                        className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
                         aria-label="-"
                       >
                         <Minus size={22} />
@@ -379,12 +379,12 @@ export default function ScanScreen({
                       <button
                         type="button"
                         onClick={() => onIncrement(item.variantId)}
-                        className="sc-focusable flex h-12 w-12 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
+                        className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
                         aria-label="+"
                       >
                         <Plus size={22} />
                       </button>
-                      <span className="sc-tabular ml-auto text-xl font-black text-[var(--sc-ink)]">
+                      <span className="sc-tabular ml-auto text-lg font-black text-[var(--sc-ink)]">
                         {formatPLN(item.price * item.quantity)}
                       </span>
                     </div>
@@ -394,14 +394,14 @@ export default function ScanScreen({
             )}
           </div>
 
-          <div className="border-t border-[var(--sc-border)] bg-white p-5">
-            <div className="mb-4 rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-[var(--sc-primary-deep)]">
+          <div className="sc-cart-footer border-t border-[var(--sc-border)] bg-white p-4">
+            <div className="sc-bag-control mb-3 grid grid-cols-[minmax(0,1fr)_178px] items-center gap-3 rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--sc-primary-deep)]">
                   <ShoppingBag size={26} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-lg font-black leading-tight text-[var(--sc-ink)]">
+                  <div className="text-base font-black leading-tight text-[var(--sc-ink)]">
                     {t.bagQuestion}
                   </div>
                   <div className="mt-1 text-sm font-bold text-[var(--sc-muted)]">
@@ -409,35 +409,35 @@ export default function ScanScreen({
                   </div>
                 </div>
               </div>
-              <div className="mt-4 grid grid-cols-[56px_minmax(0,1fr)_56px] items-center gap-3">
+              <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
                 <button
                   type="button"
                   onClick={() => onBagQuantityChange(bagQuantity - 1)}
                   disabled={bagQuantity <= 0}
-                  className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
+                  className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label="-"
                 >
                   <Minus size={24} />
                 </button>
-                <div className="sc-tabular flex h-14 items-center justify-center rounded-2xl bg-white px-4 text-3xl font-black text-[var(--sc-ink)]">
+                <div className="sc-tabular flex h-11 items-center justify-center rounded-xl bg-white px-3 text-2xl font-black text-[var(--sc-ink)]">
                   {bagQuantity}
                 </div>
                 <button
                   type="button"
                   onClick={() => onBagQuantityChange(bagQuantity + 1)}
                   disabled={bagQuantity >= 9}
-                  className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
+                  className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label="+"
                 >
                   <Plus size={24} />
                 </button>
               </div>
             </div>
-            <div className="mb-4 flex items-end justify-between gap-4">
-              <span className="text-xl font-black text-[var(--sc-muted)]">
+            <div className="mb-3 flex items-end justify-between gap-4">
+              <span className="text-lg font-black text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="sc-tabular text-5xl font-black text-[var(--sc-ink)]">
+              <span className="sc-tabular text-4xl font-black text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </span>
             </div>
@@ -445,7 +445,7 @@ export default function ScanScreen({
               type="button"
               onClick={onCheckout}
               disabled={productCount === 0}
-              className="sc-action sc-action-success sc-focusable flex w-full items-center justify-center gap-3 text-2xl"
+              className="sc-action sc-action-success sc-cart-pay sc-focusable flex w-full items-center justify-center gap-3 text-2xl"
             >
               {t.pay}
             </button>

@@ -162,6 +162,7 @@ export default function SelfCheckoutApp() {
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const staffGestureStartY = useRef<number[]>([]);
 
   const [help, setHelp] = useState<
     | { id: string; reason: string; acknowledged: boolean }
@@ -275,6 +276,67 @@ export default function SelfCheckoutApp() {
     return () => {
       document.removeEventListener('pointerdown', markActivity);
       document.removeEventListener('keydown', markActivity);
+    };
+  }, []);
+
+  useEffect(() => {
+    const EDGE_BLOCK_PX = 20;
+    const STAFF_ZONE_Y = 120;
+    const STAFF_SWIPE_PX = 80;
+
+    const onTouchStart = (event: TouchEvent) => {
+      const touches = event.touches;
+
+      if (touches.length >= 3) {
+        const allInZone = Array.from(touches).every((touch) => touch.clientY < STAFF_ZONE_Y);
+        if (allInZone) {
+          staffGestureStartY.current = Array.from(touches).map((touch) => touch.clientY);
+          event.preventDefault();
+          return;
+        }
+      }
+
+      staffGestureStartY.current = [];
+
+      if (touches.length === 1) {
+        const touch = touches[0];
+        const nearTop = touch.clientY < EDGE_BLOCK_PX;
+        const nearLeft = touch.clientX < EDGE_BLOCK_PX;
+        const nearRight = touch.clientX > window.innerWidth - EDGE_BLOCK_PX;
+        if (nearTop || nearLeft || nearRight) {
+          event.preventDefault();
+        }
+      }
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length >= 3 && staffGestureStartY.current.length >= 3) {
+        event.preventDefault();
+        const currentY = Array.from(event.touches).map((touch) => touch.clientY);
+        const allMovedDown = currentY.every(
+          (y, index) => y - (staffGestureStartY.current[index] ?? 0) >= STAFF_SWIPE_PX,
+        );
+        if (allMovedDown) {
+          staffGestureStartY.current = [];
+          void window.electronAPI?.selfCheckout?.close?.();
+        }
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (staffGestureStartY.current.length > 0) {
+        staffGestureStartY.current = [];
+      }
+    };
+
+    document.addEventListener('touchstart', onTouchStart, { passive: false });
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
     };
   }, []);
 

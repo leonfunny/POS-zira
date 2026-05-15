@@ -382,6 +382,13 @@ interface ElectronAPI {
     close: () => Promise<{ success: boolean }>;
   };
 
+  selfCheckout: {
+    helpRequest: (payload: { reason: string; cartTotalGrosze: number }) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
+    checkStatus: (id: string) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
+    /** Staff intentional exit for the self-checkout kiosk gesture */
+    close: () => Promise<{ success: boolean; error?: string }>;
+  };
+
   // Checkin
   checkin: {
     getToday: () => Promise<CheckinRecord[]>;

@@ -35,21 +35,21 @@ export default function ReceiptScreen({
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col text-[var(--sc-ink)] select-none">
-      <header className="flex justify-end px-10 py-6">
+      <header className="flex justify-end px-8 py-4">
         <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
       </header>
-      <main className="flex min-h-0 flex-1 items-center justify-center px-8 pb-8 text-center">
-        <section className="sc-surface w-full max-w-3xl p-12">
-          <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-[32px] bg-emerald-50 text-[var(--sc-success)]">
-            <Printer size={68} />
+      <main className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-6 pb-6 text-center">
+        <section className="sc-surface sc-receipt-panel w-full max-w-3xl p-8">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[24px] bg-emerald-50 text-[var(--sc-success)]">
+            <Printer size={52} />
           </div>
-          <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
+          <div className="mt-5 inline-flex items-center gap-3 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-amber-800">
             {mode === 'demo' ? t.demoMode : t.productionMode}
           </div>
-          <h1 className="mt-7 text-6xl font-black">
+          <h1 className="mt-5 text-5xl font-black">
             {t.receiptTitle}
           </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-2xl leading-9 text-[var(--sc-muted)]">
+          <p className="mx-auto mt-4 max-w-2xl text-xl leading-8 text-[var(--sc-muted)]">
             {mode === 'demo'
               ? t.receiptDemoBody
               : receiptPrinted
@@ -57,7 +57,7 @@ export default function ReceiptScreen({
                 : t.receiptPrintFailed}
           </p>
 
-          <div className="mt-9 space-y-3 text-left">
+          <div className="mt-6 space-y-2 text-left">
             <ReceiptStep icon={<CheckCircle2 size={24} />} label={t.paymentSuccess} done />
             <ReceiptStep
               icon={<FileText size={24} />}
@@ -71,7 +71,7 @@ export default function ReceiptScreen({
             />
           </div>
 
-          <div className="mt-9 flex items-center justify-between border-t border-[var(--sc-border)] pt-6">
+          <div className="mt-6 flex items-center justify-between border-t border-[var(--sc-border)] pt-5">
             <div className="text-left">
               <div className="text-sm font-black uppercase tracking-[0.12em] text-[var(--sc-muted)]">
                 {method}
@@ -80,7 +80,7 @@ export default function ReceiptScreen({
                 {t.total}
               </div>
             </div>
-            <div className="sc-tabular text-5xl font-black">
+            <div className="sc-tabular text-4xl font-black">
               {formatPLN(totalGrosze)}
             </div>
           </div>
@@ -100,7 +100,7 @@ function ReceiptStep({
   done: boolean;
 }) {
   return (
-    <div className={`flex items-center gap-4 rounded-2xl border px-5 py-4 text-lg font-black ${
+    <div className={`flex items-center gap-4 rounded-2xl border px-4 py-3 text-base font-black ${
       done
         ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
         : 'border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]'

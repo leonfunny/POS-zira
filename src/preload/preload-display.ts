@@ -81,5 +81,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
      */
     checkStatus: (id: string) =>
       ipcRenderer.invoke('self-checkout:help-status', id),
+    /**
+     * Staff intentional exit for the self-checkout kiosk. Used by the
+     * three-finger swipe-down gesture from the top edge.
+     */
+    close: () => ipcRenderer.invoke('self-checkout:close'),
   },
 });

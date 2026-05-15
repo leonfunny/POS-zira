@@ -511,6 +511,17 @@ export class WindowManager {
       return { success: true };
     });
 
+    // Staff intentional close for the self-checkout kiosk gesture.
+    ipcMain.handle('self-checkout:close', (event) => {
+      const senderWin = BrowserWindow.fromWebContents(event.sender);
+      const selfCheckoutWin = this.getWindow('selfCheckout');
+      if (senderWin && selfCheckoutWin && senderWin === selfCheckoutWin && !senderWin.isDestroyed()) {
+        senderWin.destroy();
+        return { success: true };
+      }
+      return { success: false, error: 'not_self_checkout_window' };
+    });
+
     ipcMain.handle('window:setFullScreen', (event, value: boolean) => {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (win) win.setFullScreen(value);
@@ -664,6 +675,7 @@ export class WindowManager {
     try { ipcMain.removeHandler('window:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:close failed:', err?.message); }
     try { ipcMain.removeHandler('window:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:list failed:', err?.message); }
     try { ipcMain.removeHandler('display:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:list failed:', err?.message); }
+    try { ipcMain.removeHandler('self-checkout:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler self-checkout:close failed:', err?.message); }
     // Destroy windows
     for (const [_id, win] of this.windows) {
       if (!win.isDestroyed()) win.destroy();

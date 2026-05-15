@@ -416,6 +416,28 @@ describe('WindowManager customer display behavior', () => {
     manager.destroy();
   });
 
+  it('closes only the sender self-checkout window through staff close IPC', () => {
+    configValues.selfCheckoutEnabled = true;
+
+    const manager = new WindowManager(posStore as any);
+    const customerWin = manager.createWindow('customer') as unknown as MockBrowserWindow;
+    const selfCheckoutWin = manager.createWindow('selfCheckout') as unknown as MockBrowserWindow;
+    const handler = ipcHandlers.get('self-checkout:close');
+
+    expect(handler).toBeDefined();
+    expect(handler?.({ sender: customerWin.webContents })).toEqual({
+      success: false,
+      error: 'not_self_checkout_window',
+    });
+    expect(customerWin.destroyed).toBe(false);
+    expect(selfCheckoutWin.destroyed).toBe(false);
+
+    expect(handler?.({ sender: selfCheckoutWin.webContents })).toEqual({ success: true });
+    expect(selfCheckoutWin.destroyed).toBe(true);
+
+    manager.destroy();
+  });
+
   it('restores self-checkout kiosk presentation after fullscreen loss and refocuses on blur', () => {
     configValues.selfCheckoutEnabled = true;
 
