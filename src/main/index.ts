@@ -18,6 +18,10 @@ import {
   registerPromoImageProtocolHandler,
   registerPromoImageProtocolScheme,
 } from './pos/promo-image-protocol';
+import {
+  startSuppressingTouchKeyboard,
+  stopSuppressingTouchKeyboard,
+} from './system/touch-keyboard-suppressor';
 
 // Module imports
 import { HardwareModule } from './modules/hardware.module';
@@ -266,6 +270,13 @@ async function startApp() {
 
     registerPromoImageProtocolHandler();
 
+    // The app ships its own on-screen keyboards (POS, customer display,
+    // self-checkout) so the Windows touch keyboard (TabTip / TextInputHost)
+    // only gets in the way — it floats on top of our UI. Suppress it for
+    // the lifetime of the app; the OS keyboard returns to normal once Zira
+    // AI exits.
+    await startSuppressingTouchKeyboard();
+
     // Force receipt printer toggle ON for this session before any module
     // reads config — a forgotten "off" from a previous shift must not
     // silently stop receipts at the till.
@@ -303,6 +314,7 @@ async function startApp() {
       if (orchestrator) {
         e.preventDefault();
         logger.info('[Shutdown] before-quit triggered, running graceful shutdown...');
+        await stopSuppressingTouchKeyboard();
         cleanupUpdater();
         const orch = orchestrator;
         orchestrator = null; // prevent re-entry
