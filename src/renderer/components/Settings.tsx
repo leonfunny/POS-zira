@@ -116,6 +116,18 @@ function getServerPrinterTarget(printer: ServerPrinterMapping): string {
   return printer.windowsPrinterName || printer.address || 'no target';
 }
 
+function hasServerPrinterTarget(printer: ServerPrinterMapping): boolean {
+  return !!(printer.windowsPrinterName?.trim() || printer.address?.trim());
+}
+
+function isReceiptServerPrinter(printer: ServerPrinterMapping): boolean {
+  return String(printer.printerType || '').toUpperCase() === 'RECEIPT';
+}
+
+function isSharedReceiptRouteCandidate(printer: SalonPrinterMapping, selectedPrinterId: string): boolean {
+  return isReceiptServerPrinter(printer) && (printer.id === selectedPrinterId || hasServerPrinterTarget(printer));
+}
+
 function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
   if (!config) return false;
   if (typeof config.multiPrinterMode === 'boolean') return config.multiPrinterMode;
@@ -512,7 +524,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     setSharedPrintersError(null);
     try {
       const [printersResult, assignmentsResult] = await Promise.allSettled([
-        window.electronAPI.printAgentPrinters.salonList(),
+        window.electronAPI.printAgentPrinters.salonList({
+          shareableOnly: true,
+          role: SELF_CHECKOUT_RECEIPT_ROLE,
+        }),
         window.electronAPI.printAgentPrinters.assignmentsList(),
       ]);
 
@@ -1343,8 +1358,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const sharedReceiptPrinter = sharedReceiptAssignment
     ? salonPrinters.find((printer) => printer.id === sharedReceiptAssignment.printerId) || null
     : null;
-  const sharedReceiptPrinters = salonPrinters.filter((printer) => String(printer.printerType || '').toUpperCase() === 'RECEIPT');
   const selectedSharedPrinterId = sharedReceiptAssignment?.printerId || '';
+  const sharedReceiptPrinters = salonPrinters.filter((printer) => isSharedReceiptRouteCandidate(printer, selectedSharedPrinterId));
   const customFormAllowedProtocols = ALLOWED_PROTOCOLS_BY_TYPE[customPrinterForm.printerType as PrinterType] || [];
   const customFormUsesWindowsPrinter = customPrinterForm.protocol === 'WINDOWS'
     || customPrinterForm.protocol === 'ZEBRA'

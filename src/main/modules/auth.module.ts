@@ -19,6 +19,7 @@ import {
   AuthUser,
   AgentPrintersResponse,
   SalonPrinterRole,
+  SalonPrintersListOptions,
   ServerPrinterMapping,
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
@@ -480,9 +481,9 @@ export class AuthModule extends BaseModule {
       return this.refreshAgentPrinters();
     });
 
-    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST, async () => {
+    ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST, async (_, options?: SalonPrintersListOptions) => {
       const { client, token } = this.getAuthenticatedApiContext();
-      return client.listSalonPrinters(token);
+      return client.listSalonPrinters(token, options);
     });
 
     ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_LIST, async () => {

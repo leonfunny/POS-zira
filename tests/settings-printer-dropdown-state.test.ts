@@ -106,12 +106,16 @@ describe('Settings printer dropdown state', () => {
   it('wires salon-level shared printer assignments through Settings and IPC', () => {
     expect(settingsSource).toContain('Shared receipt route');
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
-    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList()');
+    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList({');
+    expect(settingsSource).toContain('shareableOnly: true');
+    expect(settingsSource).toContain('role: SELF_CHECKOUT_RECEIPT_ROLE');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.assignmentsList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.upsertAssignment(SELF_CHECKOUT_RECEIPT_ROLE, printerId)');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE)');
     expect(settingsSource).toContain('Active shared receipt route');
     expect(settingsSource).toContain('This POS agent');
+    expect(settingsSource).toContain('function isSharedReceiptRouteCandidate');
+    expect(settingsSource).toContain("printer.id === selectedPrinterId || hasServerPrinterTarget(printer)");
     expect(settingsSource).toContain("printer.agentIsOnline ? 'POS online' : 'POS offline'");
     expect(settingsSource).toContain("printer.isOnline ? 'Device online' : 'Device offline'");
     expect(settingsSource).toContain('Stop sharing');
@@ -119,11 +123,15 @@ describe('Settings printer dropdown state', () => {
 
     expect(sharedTypesSource).toContain("PRINT_AGENT_SALON_PRINTERS_LIST: 'print-agent-salon-printers-list'");
     expect(sharedTypesSource).toContain("PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT: 'print-agent-printer-assignments-upsert'");
-    expect(preloadSource).toContain('salonList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST)');
+    expect(preloadSource).toContain('SalonPrintersListOptions');
+    expect(preloadSource).toContain('salonList: (options?: SalonPrintersListOptions)');
     expect(electronDtsSource).toContain('upsertAssignment: (role: import(\'./types\').SalonPrinterRole, printerId: string)');
     expect(authModuleSource).toContain('ipcMain.handle(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT');
+    expect(authModuleSource).toContain('client.listSalonPrinters(token, options)');
+    expect(apiClientSource).toContain("params.set('shareableOnly', 'true')");
+    expect(apiClientSource).toContain("params.set('role', options.role)");
     expect(apiClientSource).toContain('/print-agent/salons/me/printer-assignments');
-    expect(apiClientSource).toContain('/print-agent/salons/me/printers');
+    expect(apiClientSource).toContain('/print-agent/salons/me/printers${query ? `?${query}` : \'\'}');
   });
 
   it('labels backend printer rows as this POS local config', () => {

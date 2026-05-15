@@ -278,6 +278,11 @@ export interface SalonPrintersResponse {
   printers: SalonPrinterMapping[];
 }
 
+export interface SalonPrintersListOptions {
+  shareableOnly?: boolean;
+  role?: SalonPrinterRole;
+}
+
 export interface SalonPrinterAssignmentsResponse {
   assignments: SalonPrinterAssignment[];
 }

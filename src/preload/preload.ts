@@ -46,6 +46,7 @@ import {
   SecurityStatus,
   SecurityAlert,
   SecurityAnalytics,
+  SalonPrintersListOptions,
 } from '../shared/types';
 
 // Log preload initialization
@@ -121,7 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printAgentPrinters: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LIST),
     localList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTERS_LOCAL_LIST),
-    salonList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST),
+    salonList: (options?: SalonPrintersListOptions) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_SALON_PRINTERS_LIST, options),
     assignmentsList: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_LIST),
     upsertAssignment: (role: string, printerId: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT, role, printerId),
     deleteAssignment: (role: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_AGENT_PRINTER_ASSIGNMENTS_DELETE, role),

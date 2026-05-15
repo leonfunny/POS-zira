@@ -12,6 +12,7 @@ import {
   PrinterType,
   SalonPrinterAssignmentResponse,
   SalonPrinterAssignmentsResponse,
+  SalonPrintersListOptions,
   SalonPrinterRole,
   SalonPrintersResponse,
   ServerPrinterMapping,
@@ -378,8 +379,12 @@ export class ApiClient {
     return { printers: Array.isArray(result?.printers) ? result.printers : [] };
   }
 
-  async listSalonPrinters(token: string): Promise<SalonPrintersResponse> {
-    const result = await this.request('GET', '/print-agent/salons/me/printers', token);
+  async listSalonPrinters(token: string, options: SalonPrintersListOptions = {}): Promise<SalonPrintersResponse> {
+    const params = new URLSearchParams();
+    if (options.shareableOnly) params.set('shareableOnly', 'true');
+    if (options.role) params.set('role', options.role);
+    const query = params.toString();
+    const result = await this.request('GET', `/print-agent/salons/me/printers${query ? `?${query}` : ''}`, token);
     return { printers: Array.isArray(result?.printers) ? result.printers : [] };
   }
 
