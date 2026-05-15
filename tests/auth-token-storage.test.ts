@@ -253,4 +253,13 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
     const block = nextHandler > 0 ? after.slice(0, nextHandler) : after.slice(0, 500);
     expect(block).not.toMatch(/setSecureRefreshToken/);
   });
+
+  it('login auto-connect falls back to the current print-agent key when the stored key is stale', () => {
+    expect(source).toContain('connectWithAvailablePrintAgentKey');
+    expect(source).toContain('Stored print-agent key failed after');
+    expect(source).toContain('client.getMyPrintAgentKey(accessToken)');
+    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'telegram login')");
+    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'email login')");
+    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, token, 'startup')");
+  });
 });

@@ -306,13 +306,7 @@ export class AuthModule extends BaseModule {
 
           // Auto-connect Socket.IO (same as email login)
           try {
-            const existingKey = getSecureApiKey();
-            if (existingKey?.startsWith('pa_')) {
-              await this.connectWithApiKey(existingKey);
-            } else {
-              const keyResult = await client.getMyPrintAgentKey(result.access_token);
-              if (keyResult?.apiKey) await this.connectWithApiKey(keyResult.apiKey);
-            }
+            await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'telegram login');
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -408,13 +402,7 @@ export class AuthModule extends BaseModule {
 
           // Auto-connect
           try {
-            const existingKey = getSecureApiKey();
-            if (existingKey?.startsWith('pa_')) {
-              await this.connectWithApiKey(existingKey);
-            } else {
-              const keyResult = await client.getMyPrintAgentKey(result.access_token);
-              if (keyResult?.apiKey) await this.connectWithApiKey(keyResult.apiKey);
-            }
+            await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'email login');
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after email login failed:', err?.message); }
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -558,6 +546,29 @@ export class AuthModule extends BaseModule {
     await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey, latestConfig.machineId);
   }
 
+  private async connectWithAvailablePrintAgentKey(
+    client: ApiClient,
+    accessToken: string,
+    context: string,
+  ): Promise<void> {
+    const existingKey = getSecureApiKey();
+    if (existingKey?.startsWith('pa_')) {
+      try {
+        await this.connectWithApiKey(existingKey);
+        return;
+      } catch (err: any) {
+        logger.warn(`[AuthModule] Stored print-agent key failed after ${context}; fetching current key: ${err?.message || err}`);
+      }
+    }
+
+    const keyResult = await client.getMyPrintAgentKey(accessToken);
+    if (!keyResult?.apiKey) {
+      throw new Error('No print-agent API key available');
+    }
+
+    await this.connectWithApiKey(keyResult.apiKey);
+  }
+
   private getAuthenticatedApiContext(): { client: ApiClient; token: string } {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
@@ -642,7 +653,20 @@ export class AuthModule extends BaseModule {
       const hasMachineId = !!config.machineId;
 
       if (hasApiKey || (secureKey && hasMachineId)) {
-        try { await this.connect(); } catch (e) { logger.warn('[AuthModule] Auto-connect failed:', e); }
+        try {
+          await this.connect();
+        } catch (e: any) {
+          logger.warn('[AuthModule] Auto-connect failed:', e);
+          const token = getSecureAuthToken();
+          if (token) {
+            try {
+              const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+              await this.connectWithAvailablePrintAgentKey(client, token, 'startup');
+            } catch (retryErr: any) {
+              logger.warn('[AuthModule] Auto-connect retry with current print-agent key failed:', retryErr?.message || retryErr);
+            }
+          }
+        }
       } else {
         logger.error('[AuthModule] isPaired=true but no valid credentials found (apiKey=%s, machineId=%s). Resetting isPaired.',
           hasApiKey, hasMachineId);

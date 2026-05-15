@@ -56,6 +56,14 @@ type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
 
+function isDriverInstance<T>(driver: unknown, constructorFn: unknown): driver is T {
+  return typeof constructorFn === 'function' && driver instanceof (constructorFn as new (...args: any[]) => T);
+}
+
+function isElzabDriver(driver: unknown): driver is ElzabDriver {
+  return isDriverInstance<ElzabDriver>(driver, ElzabDriver);
+}
+
 function shouldRenderInfoLabelViaWindows(config?: PrinterConfig | null): boolean {
   const printerName = config?.windowsPrinter || config?.address || '';
   return /xprinter|xp-?423|xp-?42/i.test(printerName);
@@ -605,7 +613,7 @@ export class HardwareModule extends BaseModule {
     if ((printerType === PrinterType.RECEIPT || printerType === PrinterType.TICKET || printerType === PrinterType.KITCHEN) && this.receiptPrinter) {
       return this.receiptPrinter;
     }
-    if (this.printerDriver instanceof ElzabDriver) {
+    if (isElzabDriver(this.printerDriver)) {
       return printerType === PrinterType.FISCAL ? this.printerDriver : null;
     }
     return this.printerDriver;
@@ -866,7 +874,7 @@ export class HardwareModule extends BaseModule {
             if (state === 'physical_present') throw new Error(`DEVICE_DETECTED_NO_PROTOCOL_RESPONSE: ${diag?.detail || `Device detected on ${driver.getPort()} but no POSNET protocol response`}`);
             throw new Error(`PORT_NOT_FOUND: ${diag?.detail || 'Printer not found'}`);
           }
-          if (driver instanceof ElzabDriver) {
+          if (isElzabDriver(driver)) {
             const diag = driver.getLastDiagnostic();
             if (diag) throw new Error(`${diag.code}: ${diag.detail || 'ELZAB_STX is not ready'}`);
             throw new Error('ELZAB_STX_NOT_READY: official sidecar or fiscal printer is not available');
@@ -878,7 +886,7 @@ export class HardwareModule extends BaseModule {
           const pidInfo = pid ? ` (PID 0x${pid.toString(16).toUpperCase()})` : '';
           return { detail: `Connected on ${driver.getPort()}${pidInfo}` };
         }
-        if (driver instanceof ElzabDriver) {
+        if (isElzabDriver(driver)) {
           return { detail: `Connected via ${driver.getPort() || driver.getAddress()}` };
         }
         return { detail: 'Connected' };
@@ -1884,7 +1892,7 @@ export class HardwareModule extends BaseModule {
     const driver = this.getPrinterForJob(job);
     if (
       (job.jobType === PrintJobType.RECEIPT || job.jobType === PrintJobType.INVOICE) &&
-      (driver instanceof PosnetDriver || driver instanceof ElzabDriver)
+      (driver instanceof PosnetDriver || isElzabDriver(driver))
     ) {
       return true;
     }
@@ -1957,7 +1965,7 @@ export class HardwareModule extends BaseModule {
             if (job.jobType === PrintJobType.DAILY_REPORT) await targetPrinter.printDailyReport(rd);
             else if (job.jobType === PrintJobType.X_REPORT) await targetPrinter.printXReport(rd);
             else await targetPrinter.printZReport(rd);
-          } else if (targetPrinter instanceof ElzabDriver) {
+          } else if (isElzabDriver(targetPrinter)) {
             const rd = job.payload as DailyReportData;
             if (job.jobType === PrintJobType.DAILY_REPORT) await targetPrinter.printDailyReport(rd);
             else if (job.jobType === PrintJobType.X_REPORT) await targetPrinter.printXReport(rd);
@@ -1965,7 +1973,7 @@ export class HardwareModule extends BaseModule {
           } else throw new Error('Reports require Thermal printer');
         } else {
           const receiptPayload = job.payload as ReceiptData;
-          if (targetPrinter instanceof ElzabDriver) {
+          if (isElzabDriver(targetPrinter)) {
             await targetPrinter.printReceipt({
               ...receiptPayload,
               orderId: receiptPayload.orderId || job.referenceId || receiptPayload.orderNumber,
