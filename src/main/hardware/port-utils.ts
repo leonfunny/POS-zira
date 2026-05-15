@@ -187,6 +187,43 @@ export async function listSerialPorts(): Promise<string[]> {
 }
 
 /**
+ * Read the USB Vendor ID for a specific COM port via Windows PnP.
+ *
+ * Returns the 4-char uppercase VID hex (e.g. "C1CA" for ELZAB Zeta Online,
+ * "1424" for POSNET) or null when the port is not a USB-CDC device or
+ * cannot be queried. ACPI motherboard serial ports return null because they
+ * have no USB VID.
+ *
+ * Used for live protocol validation: if a slot is wired for POSNET but the
+ * COM port hosts a VID_C1CA (ELZAB) device, we can fail fast with a clear
+ * mismatch error instead of looping the baud fan-out.
+ */
+export async function getVidForPort(port: string): Promise<string | null> {
+  const portUpper = port.trim().toUpperCase();
+  if (!COM_PORT_RE.test(portUpper)) return null;
+  try {
+    const psScript =
+      "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      `$dev = Get-PnpDevice -Class Ports -PresentOnly | Where-Object { $_.FriendlyName -like '*(${portUpper})*' } | Select-Object -First 1\n` +
+      'if ($dev) { Write-Output $dev.InstanceId }\n';
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { encoding: 'utf8', timeout: 8000 },
+    );
+    const instanceId = stdout.trim();
+    if (!instanceId) return null;
+    const match = instanceId.match(/VID_([0-9A-F]{4})/i);
+    if (!match) return null;
+    return match[1].toUpperCase();
+  } catch (err: any) {
+    logger.warn(`[PortUtils] getVidForPort(${portUpper}) failed:`, err?.message);
+    return null;
+  }
+}
+
+/**
  * Get the set of USB VIDs currently present on the system that match
  * any known printer brand. Returns lowercase VID strings.
  *

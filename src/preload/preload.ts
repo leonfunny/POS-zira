@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
+  validatePrinterPort: (port: string, protocol: string) => ipcRenderer.invoke(IPC_CHANNELS.VALIDATE_PRINTER_PORT, port, protocol),
   onTestPrintProgress: (callback: (step: any) => void) => {
     const listener = (_event: any, step: any) => callback(step);
     ipcRenderer.on(IPC_CHANNELS.TEST_PRINT_PROGRESS, listener);

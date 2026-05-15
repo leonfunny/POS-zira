@@ -832,6 +832,7 @@ export const IPC_CHANNELS = {
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
   TEST_PRINT_PROGRESS: 'test-print-progress',  // Main → Renderer: per-step progress stream
+  VALIDATE_PRINTER_PORT: 'validate-printer-port',
   OPEN_LOG_FOLDER: 'open-log-folder',
   CALIBRATE_PRINTER: 'calibrate-printer',
   GET_POSNET_DRIVER_STATUS: 'get-posnet-driver-status',

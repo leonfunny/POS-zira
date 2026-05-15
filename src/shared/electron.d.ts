@@ -196,6 +196,14 @@ interface ElectronAPI {
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
+  validatePrinterPort: (port: string, protocol: import('./types').PrinterProtocol) => Promise<{
+    ok: boolean;
+    code: 'OK' | 'PROTOCOL_DEVICE_MISMATCH' | 'UNKNOWN_DEVICE' | 'NO_DEVICE_ON_PORT';
+    detail?: string;
+    detectedBrand?: string;
+    detectedVid?: string;
+    suggestedProtocol?: import('./types').PrinterProtocol;
+  }>;
   onTestPrintProgress: (callback: (step: import('./types').TestPrintStep) => void) => () => void;
   openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
   calibratePrinter: (config: import('./types').PrinterConfig) => Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }>;

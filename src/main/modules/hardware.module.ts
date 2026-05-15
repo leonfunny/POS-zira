@@ -23,7 +23,8 @@ import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '..
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
-import { listSerialPorts, listWindowsPrintersDetailed } from '../hardware/port-utils';
+import { listSerialPorts, listWindowsPrintersDetailed, getVidForPort } from '../hardware/port-utils';
+import { validateProtocolAgainstVid, type ValidationResult as PortValidationResult } from '../hardware/detection/vid-protocol-registry';
 import {
   IPC_CHANNELS,
   PrinterType,
@@ -279,6 +280,12 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig, printerType?: string) => {
       return this.testPrinterByConfig(config, printerType);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.VALIDATE_PRINTER_PORT, async (_, port: string, protocol: PrinterProtocol): Promise<PortValidationResult> => {
+      if (!port) return { ok: true, code: 'NO_DEVICE_ON_PORT' };
+      const vid = await getVidForPort(port);
+      return validateProtocolAgainstVid(vid, protocol);
     });
 
     ipcMain.handle(IPC_CHANNELS.OPEN_LOG_FOLDER, async () => {
@@ -847,6 +854,19 @@ export class HardwareModule extends BaseModule {
       if (!config.port && !config.windowsPrinter && !config.address) {
         throw new Error('Missing port (COM), address, or windowsPrinter name in config');
       }
+      // VID-aware protocol mismatch check: if the COM port hosts a known
+      // printer brand, refuse before opening the serial port. Saves the
+      // user from a 15s baud fan-out + cryptic "no response" error.
+      if (config.port) {
+        const vid = await getVidForPort(config.port);
+        const validation = validateProtocolAgainstVid(vid, config.protocol);
+        if (!validation.ok) {
+          throw new Error(
+            `PROTOCOL_DEVICE_MISMATCH: ${validation.detail} ` +
+            `Suggested fix: change protocol to ${validation.suggestedProtocol}.`,
+          );
+        }
+      }
       return { detail: `protocol=${config.protocol} target=${config.port || config.address || config.windowsPrinter}` };
     });
     if (!configOk) return result;
@@ -1056,11 +1076,38 @@ export class HardwareModule extends BaseModule {
     return { success: true, port, message: `POSNET printer configured on ${port}`, action: 'configured' };
   }
 
-  private async autoSetupElzab(device: DetectedDevice): Promise<{ success: boolean; message: string; action?: string }> {
+  private async autoSetupElzab(device: DetectedDevice): Promise<{ success: boolean; port?: string; message: string; action?: string }> {
+    const printerType: PrinterType = PrinterType.FISCAL;
+    const port = device.comPort;
+    if (!port) {
+      return {
+        success: false,
+        message: `ELZAB ${device.model || 'printer'} has no COM port detected. Install the ELZAB USB CDC driver so Windows assigns a COMx, then run detection again.`,
+        action: 'not_found',
+      };
+    }
+
+    const config = getConfig();
+    const currentPrinters = { ...(config.printers || {}) };
+    currentPrinters[printerType] = {
+      ...(currentPrinters[printerType] || {}),
+      enabled: true,
+      protocol: 'ELZAB_STX' as PrinterProtocol,
+      port,
+      baudRate: 9600,
+      address: '',
+      windowsPrinter: '',
+    };
+    setConfig({ multiPrinterMode: true, printers: currentPrinters });
+
+    await this.reinitializePrinter();
+
+    logger.info(`[HardwareModule] autoSetupElzab: configured FISCAL with ELZAB_STX on ${port}`);
     return {
-      success: false,
-      message: `ELZAB ${device.model || 'printer'} detected. Install ELZAB USB/RNDIS drivers, verify communication in Stampa, and configure the FISCAL slot with ELZAB_STX plus an official elzabdr/STX sidecar. The app will not treat it as a generic thermal printer.`,
-      action: 'manual_required',
+      success: true,
+      port,
+      message: `ELZAB ${device.model || 'printer'} configured on ${port} (FISCAL/ELZAB_STX). Fiscal output still requires the official elzabdr/STX sidecar — set ZIRA_ELZAB_BRIDGE_PATH before live use.`,
+      action: 'configured',
     };
   }
 

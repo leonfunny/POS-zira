@@ -448,7 +448,7 @@ foreach ($vid in $vids) {
       if (!isPosnet && !matchedPrinter && hit.comPort) {
         const isKnownSerialFiscal = brand === 'ELZAB';
         logger.info(
-          `[DriverInstaller] Section 2: exposing manual-only ${isKnownSerialFiscal ? brand : 'generic'} serial candidate on ${hit.comPort} (${hit.model})`
+          `[DriverInstaller] Section 2: exposing ${isKnownSerialFiscal ? `${brand} (auto-setup eligible)` : 'manual-only generic'} serial candidate on ${hit.comPort} (${hit.model})`
         );
         devices.push({
           vid: hit.vid,
@@ -460,7 +460,7 @@ foreach ($vid in $vids) {
           portName: hit.comPort,
           connectionType: 'SERIAL',
           driverInstalled: true,
-          autoSetupEligible: false,
+          autoSetupEligible: isKnownSerialFiscal,
         });
         continue;
       }
@@ -567,9 +567,7 @@ foreach ($vid in $vids) {
     const classification = classifyPrinterCategory(dev);
     dev.targetType = classification.targetType;
     dev.recommendedProtocol = classification.protocol;
-    if (classification.protocol === 'ELZAB_STX') {
-      dev.autoSetupEligible = false;
-    } else if (requiresManualPosnetProtocolSelection(dev)) {
+    if (requiresManualPosnetProtocolSelection(dev)) {
       dev.autoSetupEligible = false;
     } else if (dev.autoSetupEligible === undefined) {
       dev.autoSetupEligible = dev.brand !== 'Generic Serial';

@@ -59,6 +59,90 @@ export class MissingElzabBridge implements ElzabBridge {
 }
 
 /**
+ * Dev-only mock that simulates a healthy ELZAB sidecar so the UI flow
+ * (test print, status check) can be verified without the official
+ * elzabdr.dll + real hardware.
+ *
+ *  ┌─ FISCAL SAFETY GUARDRAILS ─────────────────────────────────────────┐
+ *  │ • Refuses to instantiate inside a packaged production build       │
+ *  │   (app.isPackaged === true) — only dev mode (npm run dev).        │
+ *  │ • Refuses printReceipt / printReport — these would generate fake  │
+ *  │   fiscal output, which is illegal under Polish tax law.           │
+ *  │ • printTest is OK because it's a non-fiscal diagnostic page.      │
+ *  │ • Logs a loud banner every time it is mounted so it cannot be     │
+ *  │   accidentally enabled in production.                             │
+ *  └────────────────────────────────────────────────────────────────────┘
+ *
+ * Activate by setting the env var `ZIRA_ELZAB_MOCK=true` BEFORE starting
+ * Electron in development. Example:
+ *
+ *   $env:ZIRA_ELZAB_MOCK = "true"
+ *   npx electron .
+ */
+export class DevMockElzabBridge implements ElzabBridge {
+  private static readonly MOCK_MODEL = 'ELZAB Zeta Online (MOCK)';
+  private static readonly MOCK_FIRMWARE = 'MOCK-0.0.0';
+
+  private refuseReal(operation: string): ElzabOperationResult {
+    return {
+      ok: false,
+      code: 'ELZAB_UNSUPPORTED_OPERATION',
+      detail:
+        `ELZAB_MOCK_REFUSES_REAL_FISCAL: The dev mock bridge refuses ${operation} because it would generate ` +
+        'fake fiscal output. Polish tax law requires fiscalization with authorized ELZAB service ' +
+        'before any real fiscal command. Unset ZIRA_ELZAB_MOCK and install the official sidecar to print real receipts.',
+    };
+  }
+
+  async checkAvailability(): Promise<ElzabOperationResult> {
+    return {
+      ok: true,
+      code: undefined,
+      detail: 'DEV MOCK bridge available — non-fiscal diagnostics only',
+      data: { mock: true, model: DevMockElzabBridge.MOCK_MODEL, firmware: DevMockElzabBridge.MOCK_FIRMWARE },
+    };
+  }
+
+  async connect(config: ElzabConnectionConfig): Promise<ElzabOperationResult> {
+    return {
+      ok: true,
+      detail: `DEV MOCK connected via ${config.port || config.address} @ ${config.baudRate}`,
+      data: { mock: true },
+    };
+  }
+
+  async getStatus(config: ElzabConnectionConfig): Promise<ElzabOperationResult> {
+    return {
+      ok: true,
+      data: {
+        mock: true,
+        model: DevMockElzabBridge.MOCK_MODEL,
+        firmware: DevMockElzabBridge.MOCK_FIRMWARE,
+        paper: 'OK',
+        target: config.port || config.address,
+      },
+    };
+  }
+
+  async printTest(config: ElzabConnectionConfig): Promise<ElzabOperationResult> {
+    // Test pages are NON-FISCAL diagnostic prints — safe to simulate.
+    return {
+      ok: true,
+      detail: `DEV MOCK printed test page to ${config.port || config.address} (nothing actually sent to hardware)`,
+      data: { mock: true, lines: ['*** DEV MOCK TEST PAGE ***', 'Zira AI Print Agent', 'ELZAB_STX simulation', new Date().toISOString()] },
+    };
+  }
+
+  async printReceipt(): Promise<ElzabOperationResult> {
+    return this.refuseReal('printReceipt');
+  }
+
+  async printReport(): Promise<ElzabOperationResult> {
+    return this.refuseReal('printReport');
+  }
+}
+
+/**
  * Sidecar boundary for the official ELZAB library.
  *
  * Do not load elzabdr.dll directly into Electron. The helper process owns the
@@ -137,7 +221,83 @@ export class ElzabSidecarBridge implements ElzabBridge {
   }
 }
 
+function isPackagedProductionBuild(): boolean {
+  try {
+    // Lazy require so this module stays testable outside Electron.
+    const electron = require('electron');
+    return !!electron?.app?.isPackaged;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dev mock can be enabled via either:
+ *   • ZIRA_ELZAB_MOCK=true env var (CI / shell launches)
+ *   • A file `elzab-dev-mock.flag` inside the app userData directory
+ *     (survives Electron restarts and spawn-chain env loss; toggle by
+ *     creating/deleting the file)
+ *   • A boolean key `elzabDevMock: true` inside config.json next to it.
+ *
+ * The file/config flag is the recommended way for local dev because env
+ * vars are lost across cmd/npx/Electron auto-restart boundaries.
+ */
+function isMockEnabled(): boolean {
+  const envOn = process.env.ZIRA_ELZAB_MOCK === 'true';
+  let userData: string | undefined;
+  let flagExists = false;
+  let configFlagOn = false;
+  try {
+    const electron = require('electron');
+    userData = electron?.app?.getPath?.('userData');
+    if (userData) {
+      const fs = require('fs');
+      const path = require('path');
+      flagExists = fs.existsSync(path.join(userData, 'elzab-dev-mock.flag'));
+      const cfgPath = path.join(userData, 'config.json');
+      if (fs.existsSync(cfgPath)) {
+        const raw = fs.readFileSync(cfgPath, 'utf8');
+        const cfg = JSON.parse(raw);
+        if (cfg?.elzabDevMock === true) configFlagOn = true;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  const enabled = envOn || flagExists || configFlagOn;
+  // Audit log so we can prove which path triggered (or didn't).
+  try {
+    const logger = require('../../logger').default;
+    logger?.info?.(
+      `[ElzabBridge] isMockEnabled probe: env=${envOn} flag=${flagExists} configKey=${configFlagOn} userData=${userData || 'NIL'} → ${enabled}`,
+    );
+  } catch {
+    /* logger optional */
+  }
+  return enabled;
+}
+
 export function createDefaultElzabBridge(): ElzabBridge {
+  if (isMockEnabled()) {
+    if (isPackagedProductionBuild()) {
+      // HARD FAIL — never allow mock in shipped builds. Sales would be illegal.
+      throw new Error(
+        'ELZAB_MOCK_REFUSED_IN_PRODUCTION: ZIRA_ELZAB_MOCK=true is rejected in packaged production builds. ' +
+        'The mock bridge is dev-only because it cannot produce valid Polish fiscal receipts.',
+      );
+    }
+    // Loud warning so this is never missed in logs or screen captures.
+    const banner = '*'.repeat(72);
+    // eslint-disable-next-line no-console
+    console.warn(`\n${banner}\n[ElzabBridge] DEV MOCK BRIDGE ACTIVE — DO NOT USE IN PRODUCTION\n[ElzabBridge] Test prints will succeed without real hardware. Real fiscal\n[ElzabBridge] commands (printReceipt, printReport) will be REFUSED.\n${banner}\n`);
+    try {
+      // Best-effort: log via app logger if available so it lands in combined.log.
+      const logger = require('../../logger').default;
+      logger?.warn?.('[ElzabBridge] DEV MOCK ACTIVE — dev only, fiscal receipts will be refused');
+    } catch { /* logger optional for unit tests */ }
+    return new DevMockElzabBridge();
+  }
+
   const executablePath = process.env.ZIRA_ELZAB_BRIDGE_PATH?.trim();
   if (!executablePath) return new MissingElzabBridge();
   return new ElzabSidecarBridge(executablePath);

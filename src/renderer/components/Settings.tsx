@@ -6,6 +6,71 @@ import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
 import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2 } from 'lucide-react';
 
+interface PortMismatchValidation {
+  ok: boolean;
+  code: 'OK' | 'PROTOCOL_DEVICE_MISMATCH' | 'UNKNOWN_DEVICE' | 'NO_DEVICE_ON_PORT';
+  detail?: string;
+  detectedBrand?: string;
+  detectedVid?: string;
+  suggestedProtocol?: PrinterProtocol;
+}
+
+/**
+ * Live banner that warns when a slot is configured with a protocol that
+ * doesn't match the device actually present on the chosen COM port.
+ *
+ * Example: slot has protocol=POSNET, port=COM3, but COM3 hosts an ELZAB
+ * Zeta Online (VID_C1CA). Without this warning the user would only see
+ * cryptic "no response" errors on test print.
+ */
+function PortProtocolMismatchBanner({
+  port,
+  protocol,
+  onApplySuggested,
+}: {
+  port: string | undefined;
+  protocol: PrinterProtocol;
+  onApplySuggested: (suggested: PrinterProtocol) => void;
+}) {
+  const [validation, setValidation] = useState<PortMismatchValidation | null>(null);
+
+  useEffect(() => {
+    if (!port) { setValidation(null); return; }
+    let cancelled = false;
+    const validateFn = (window.electronAPI as any).validatePrinterPort;
+    if (typeof validateFn !== 'function') return;
+    validateFn(port, protocol).then((r: PortMismatchValidation) => {
+      if (!cancelled) setValidation(r);
+    }).catch(() => { if (!cancelled) setValidation(null); });
+    return () => { cancelled = true; };
+  }, [port, protocol]);
+
+  if (!validation || validation.ok) return null;
+  if (validation.code !== 'PROTOCOL_DEVICE_MISMATCH') return null;
+
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-2.5">
+      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-bold text-amber-900">
+          {validation.detectedBrand ? `${validation.detectedBrand} detected on ${port}` : 'Protocol mismatch'}
+        </p>
+        <p className="mt-0.5 text-xs text-amber-800">{validation.detail}</p>
+        {validation.suggestedProtocol && (
+          <button
+            type="button"
+            onClick={() => onApplySuggested(validation.suggestedProtocol!)}
+            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white rounded-md text-xs font-bold transition-colors cursor-pointer"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Switch to {validation.suggestedProtocol}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface SettingsProps {
   config: AgentConfig | null;
   onConfigChange: (config: Partial<AgentConfig>) => void | Promise<any>;
@@ -1911,6 +1976,12 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                           </p>
                         )}
                       </div>
+
+                      <PortProtocolMismatchBanner
+                        port={printerConfig.port}
+                        protocol={printerConfig.protocol}
+                        onApplySuggested={(suggested) => updateProtocol(suggested)}
+                      />
 
                       {printerConfig.protocol === 'POSNET' ? (
                         <>
