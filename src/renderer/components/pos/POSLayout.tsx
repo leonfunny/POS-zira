@@ -52,31 +52,63 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // inputMode="none" prevents the on-screen touch keyboard from appearing.
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
+  // Tracks the most recent time a real text input received keyboard activity.
+  // The auto-refocus uses this to back off so SearchBar / customer name fields
+  // can be typed via the TouchKeyboard without losing focus to the hidden
+  // barcode capture input.
+  const lastTextInputActivityRef = useRef(0);
 
   const focusBarcode = useCallback(() => {
     const el = barcodeRef.current;
     if (!el) return;
     const active = document.activeElement;
-    // Only skip if a VISIBLE text input/textarea/select has focus (user is typing).
-    // Buttons, divs, body — always reclaim focus for scanner.
+    // Back off entirely if a visible text input had keyboard activity in the
+    // last 5 seconds. HID barcode scanners inject the whole code in <100ms
+    // and trigger Enter, so they don't need the hidden input to be focused
+    // ahead of time.
+    if (Date.now() - lastTextInputActivityRef.current < 5000) return;
     if (active && active !== el) {
       const tag = active.tagName;
       if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && active !== el) {
         const type = (active as HTMLInputElement).type;
-        // Allow reclaiming from hidden inputs and non-text inputs (buttons etc.)
         if (type !== 'hidden' && (active as HTMLElement).offsetParent !== null) return;
       }
     }
     el.focus();
   }, []);
 
-  // Re-focus hidden input after clicks + periodically (catches focus lost to
-  // buttons, shift-open, tab switches, etc.)
+  // Track input/keyup activity on real text inputs so focusBarcode can back off.
+  useEffect(() => {
+    const isTextInputTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA') return false;
+      if ((el as HTMLInputElement).type === 'hidden') return false;
+      if ((el as HTMLElement).offsetParent === null) return false;
+      if ((el as HTMLInputElement).dataset.keyboard === 'false') return false;
+      return true;
+    };
+    const handler = (e: Event) => {
+      if (isTextInputTarget(e.target)) lastTextInputActivityRef.current = Date.now();
+    };
+    document.addEventListener('input', handler, true);
+    document.addEventListener('keydown', handler, true);
+    document.addEventListener('focusin', handler, true);
+    return () => {
+      document.removeEventListener('input', handler, true);
+      document.removeEventListener('keydown', handler, true);
+      document.removeEventListener('focusin', handler, true);
+    };
+  }, []);
+
+  // Re-focus hidden input only after clicks (not on a polling interval) and
+  // only when no text input has had recent activity. Polling every second
+  // races with TouchKeyboard taps and steals focus from SearchBar mid-type.
   useEffect(() => {
     const handler = () => setTimeout(focusBarcode, 300);
     document.addEventListener('click', handler);
-    const interval = setInterval(focusBarcode, 1000);
-    return () => { document.removeEventListener('click', handler); clearInterval(interval); };
+    return () => { document.removeEventListener('click', handler); };
   }, [focusBarcode]);
 
   useEffect(() => { focusBarcode(); }, [focusBarcode]);
