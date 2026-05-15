@@ -117,6 +117,19 @@ export const productRepo = {
     );
   },
 
+  // Code-only search: match the EAN barcode and the SKU but NOT the product
+  // name. The retail till uses this so cashiers typing into the search bar
+  // are scanning/keying a code, not browsing by name.
+  searchByCode(query: string): ProductVariantRow[] {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const like = `%${trimmed}%`;
+    return database.all<ProductVariantRow>(
+      `SELECT * FROM product_variants WHERE is_active = 1 AND (barcode LIKE ? OR sku LIKE ?) ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+      [like, like],
+    );
+  },
+
   search(query: string): ProductVariantRow[] {
     // Try exact SQL LIKE first (fast path for SKU/barcode)
     const like = `%${query}%`;

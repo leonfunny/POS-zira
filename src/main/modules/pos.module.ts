@@ -497,6 +497,7 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:getAll', () => productRepo.getAll());
     ipcMain.handle('pos:products:getByCategory', (_e, catId: string) => productRepo.getByCategory(catId));
     ipcMain.handle('pos:products:search', (_e, query: string) => productRepo.search(query));
+    ipcMain.handle('pos:products:searchByCode', (_e, query: string) => productRepo.searchByCode(query));
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
 

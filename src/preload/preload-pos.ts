@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getAll: () => ipcRenderer.invoke('pos:products:getAll'),
       getByCategory: (catId: string) => ipcRenderer.invoke('pos:products:getByCategory', catId),
       search: (query: string) => ipcRenderer.invoke('pos:products:search', query),
+      searchByCode: (query: string) => ipcRenderer.invoke('pos:products:searchByCode', query),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:products:getByBarcode', barcode),
     },
     categories: {

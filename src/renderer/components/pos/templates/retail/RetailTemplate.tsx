@@ -142,7 +142,9 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
   // the cashier back to the full catalogue mid-sale.
   const loadFilteredProducts = useCallback(async (): Promise<Product[]> => {
     if (searchQuery) {
-      const result = await window.electronAPI.pos.products.search(searchQuery);
+      // Retail till searches by EAN/SKU only — the cashier is keying or
+      // scanning a code off the packaging, not browsing by product name.
+      const result = await window.electronAPI.pos.products.searchByCode(searchQuery);
       return activeCategoryId
         ? result.filter((p: any) => p.category_id === activeCategoryId)
         : result;
@@ -337,7 +339,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
                 value={searchQuery}
                 onChange={setSearchQuery}
                 onBarcodeScanned={handleBarcodeScanned}
-                placeholder={tOr('pos.search', 'Search or scan barcode')}
+                placeholder={tOr('pos.searchByCode', 'Search by EAN / SKU...')}
               />
               </div>
 

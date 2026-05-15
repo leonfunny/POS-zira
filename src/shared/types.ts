@@ -926,6 +926,7 @@ export const IPC_CHANNELS = {
   POS_PRODUCTS_GET_ALL: 'pos:products:getAll',
   POS_PRODUCTS_GET_BY_CATEGORY: 'pos:products:getByCategory',
   POS_PRODUCTS_SEARCH: 'pos:products:search',
+  POS_PRODUCTS_SEARCH_BY_CODE: 'pos:products:searchByCode',
   POS_PRODUCTS_GET_BY_BARCODE: 'pos:products:getByBarcode',
 
   // POS - Categories
