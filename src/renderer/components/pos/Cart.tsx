@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow from './CartItem';
+import POSNumpad from './POSNumpad';
+import { usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 
 interface CartProps {
   cart: CartState;
@@ -20,6 +22,31 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
     return value !== key ? value : fallback;
   };
 
+  const controller = usePOSNumpadController({ dispatch });
+
+  const handleSelectField = useCallback(
+    (id: string, field: 'qty' | 'price') => {
+      const item = cart.items.find((i) => i.id === id);
+      if (!item) return;
+      controller.selectCartItem(item, field);
+    },
+    [cart.items, controller],
+  );
+
+  const activeFieldFor = (id: string): 'qty' | 'price' | null => {
+    if (controller.target.kind !== 'cartItem') return null;
+    if (controller.target.itemId !== id) return null;
+    return controller.target.field;
+  };
+
+  const numpadLabel = (() => {
+    const t = controller.target;
+    if (t.kind === 'payment') return tOr('pos.numpad.cash', 'Cash');
+    if (t.kind === 'discount') return tOr('pos.numpad.discount', 'Discount');
+    const fieldLabel = t.field === 'qty' ? tOr('pos.numpad.qty', 'Qty') : tOr('pos.numpad.price', 'Price');
+    return `${fieldLabel}: ${t.itemName}`;
+  })();
+
   return (
     <div className="flex flex-col h-full bg-white">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 shrink-0">
@@ -35,7 +62,7 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
           confirmClear ? (
             <span className="flex items-center gap-2">
               <button
-                onClick={() => { dispatch({ type: 'cart/clear' }); setConfirmClear(false); }}
+                onClick={() => { dispatch({ type: 'cart/clear' }); setConfirmClear(false); controller.selectPayment(); }}
                 className="h-10 px-3 text-sm text-red-700 hover:text-red-800 transition-colors cursor-pointer rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 font-bold"
               >
                 {tOr('pos.cart.confirmClear', 'Confirm')}
@@ -61,7 +88,13 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 bg-slate-50">
+      <div
+        className="flex-1 overflow-y-auto px-3 py-3 bg-slate-50"
+        onClick={(e) => {
+          // Tap empty area inside cart list → deselect
+          if (e.target === e.currentTarget) controller.selectPayment();
+        }}
+      >
         {cart.items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
             <div className="w-16 h-16 rounded-lg bg-white border border-slate-200 flex items-center justify-center shadow-sm">
@@ -81,8 +114,10 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
                 item={item}
                 onUpdateQuantity={(id, qty) => dispatch({ type: 'cart/updateQuantity', payload: { id, quantity: qty } })}
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
-                onSetPrice={(id, price) => dispatch({ type: 'cart/setItemPrice', payload: { id, price } })}
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
+                onSelectField={handleSelectField}
+                activeField={activeFieldFor(item.id)}
+                activeBuffer={controller.buffer}
                 t={t}
               />
               {renderItemExtra?.(item)}
@@ -129,6 +164,29 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
         </div>
       )}
 
+      {cart.items.length > 0 && (
+        <div className="shrink-0">
+          <POSNumpad
+            mode={controller.mode}
+            buffer={controller.buffer}
+            label={numpadLabel}
+            currency={currency}
+            isPercent={controller.isPercent}
+            total={cart.total}
+            onKey={controller.pressDigit}
+            onBackspace={controller.pressBackspace}
+            onClear={controller.pressClear}
+            onDecimal={controller.pressDecimal}
+            onDoubleZero={controller.pressDoubleZero}
+            onTogglePercent={controller.pressTogglePercent}
+            onPreset={controller.pressPreset}
+            onExact={() => controller.pressExact(cart.total)}
+            onDone={controller.pressDone}
+            t={t}
+          />
+        </div>
+      )}
+
       <div className="px-3 pb-3 shrink-0">
         {!shiftOpen && (
           <div className="flex items-center gap-2 px-3 py-3 mb-2 bg-amber-50 border border-amber-300 rounded-lg">
@@ -139,7 +197,7 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
           </div>
         )}
         <button
-          onClick={onPay}
+          onClick={() => { controller.selectPayment(); onPay(); }}
           disabled={cart.items.length === 0 || !shiftOpen}
           className="w-full h-14 rounded-lg font-extrabold text-base text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-brand-600 hover:bg-brand-700 active:bg-brand-800 shadow-md touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-200 focus:ring-offset-2"
         >
