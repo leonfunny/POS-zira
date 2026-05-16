@@ -38,6 +38,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
+  const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [coversInput, setCoversInput] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -123,6 +124,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
 
   const handlePaymentComplete = useCallback(() => {
     setShowPayment(false);
+    setPaymentPrefillCashGrosze(undefined);
     if (activeTableId) {
       window.electronAPI.pos.tables.clearTable(activeTableId);
       refreshTables();
@@ -130,6 +132,17 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
       dispatch({ type: 'table/setActive', payload: { tableId: null } });
     }
   }, [activeTableId, dispatch, refreshTables]);
+
+  const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
+    if (!activeTableId) return;
+    setPaymentPrefillCashGrosze(prefillCashGrosze);
+    setShowPayment(true);
+  }, [activeTableId]);
+
+  const handleClosePayment = useCallback(() => {
+    setShowPayment(false);
+    setPaymentPrefillCashGrosze(undefined);
+  }, []);
 
   const activeTable = tables.find((t) => t.id === activeTableId);
   useEffect(() => {
@@ -252,10 +265,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
           <Cart
             cart={cart}
             dispatch={dispatch}
-            onPay={() => {
-              if (!activeTableId) return;
-              setShowPayment(true);
-            }}
+            onPay={handleOpenPayment}
             t={t}
             renderItemExtra={(item: CartItem) => (
               item.course ? (
@@ -272,12 +282,13 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
         <PaymentModal
           cart={cart}
           dispatch={dispatch}
-          onClose={() => setShowPayment(false)}
+          onClose={handleClosePayment}
           onComplete={handlePaymentComplete}
           t={t}
           shiftId={session.shiftId}
           staffId={session.staffId}
           staffName={session.staffName}
+          initialCashAmountGrosze={paymentPrefillCashGrosze}
           extraOrderFields={{
             table_id: activeTableId,
             covers: activeTable?.covers ?? 0,

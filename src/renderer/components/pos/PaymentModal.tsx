@@ -16,6 +16,7 @@ interface PaymentModalProps {
   shiftId: string | null;
   staffId: string | null;
   staffName: string | null;
+  initialCashAmountGrosze?: number;
   extraOrderFields?: Record<string, any>;
 }
 
@@ -42,9 +43,24 @@ const PM_ICONS: Record<string, React.ReactNode> = {
   INVOICE: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
 
-export default function PaymentModal({ cart, dispatch, onClose, onComplete, t, shiftId, staffId, staffName, extraOrderFields }: PaymentModalProps) {
+export function formatInitialCashAmount(grosze?: number): string {
+  return grosze && grosze > 0 ? (grosze / 100).toFixed(2) : '';
+}
+
+export default function PaymentModal({
+  cart,
+  dispatch,
+  onClose,
+  onComplete,
+  t,
+  shiftId,
+  staffId,
+  staffName,
+  initialCashAmountGrosze,
+  extraOrderFields,
+}: PaymentModalProps) {
   const [method, setMethod] = useState<PaymentMethod>('CASH');
-  const [cashAmount, setCashAmount] = useState('');
+  const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
   const [saving, setSaving] = useState(false);
   const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);

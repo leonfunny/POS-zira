@@ -33,6 +33,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
   const [searchQuery, setSearchQuery] = useState('');
   const [showCustomerPrompt, setShowCustomerPrompt] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -127,6 +128,21 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
     ? afterDebt <= creditLimit
     : false;
 
+  const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
+    if (!selectedCustomer) {
+      setShowCustomerPrompt(true);
+      return;
+    }
+    if (cart.items.length === 0) return;
+    setPaymentPrefillCashGrosze(prefillCashGrosze);
+    setShowPayment(true);
+  }, [cart.items.length, selectedCustomer]);
+
+  const handleClosePayment = useCallback(() => {
+    setShowPayment(false);
+    setPaymentPrefillCashGrosze(undefined);
+  }, []);
+
   return (
     <>
       {/* Customer header bar */}
@@ -208,13 +224,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
           <Cart
             cart={cart}
             dispatch={dispatch}
-            onPay={() => {
-              if (!selectedCustomer) {
-                setShowCustomerPrompt(true);
-                return;
-              }
-              if (cart.items.length > 0) setShowPayment(true);
-            }}
+            onPay={handleOpenPayment}
             t={t}
           />
           {/* Invoice credit warning */}
@@ -230,11 +240,12 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
         <PaymentModal
           cart={cart}
           dispatch={dispatch}
-          onClose={() => setShowPayment(false)}
+          onClose={handleClosePayment}
           t={t}
           shiftId={session.shiftId}
           staffId={session.staffId}
           staffName={session.staffName}
+          initialCashAmountGrosze={paymentPrefillCashGrosze}
           extraOrderFields={{
             customer_id: selectedCustomer?.id,
             customer_name: selectedCustomer?.name,

@@ -2,12 +2,12 @@ import React, { useCallback, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow from './CartItem';
 import POSNumpad from './POSNumpad';
-import { usePOSNumpadController } from '../../hooks/usePOSNumpadController';
+import { parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 
 interface CartProps {
   cart: CartState;
   dispatch: (action: PosAction) => void;
-  onPay: () => void;
+  onPay: (prefillCashGrosze?: number) => void;
   t: (key: string) => string;
   shiftOpen?: boolean;
   renderItemExtra?: (item: CartItem) => React.ReactNode;
@@ -24,7 +24,18 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
     return value !== key ? value : fallback;
   };
 
-  const controller = usePOSNumpadController({ dispatch });
+  const requestPayment = useCallback(
+    (prefillCashGrosze?: number) => {
+      if (cart.items.length === 0 || !shiftOpen) return;
+      onPay(prefillCashGrosze && prefillCashGrosze > 0 ? prefillCashGrosze : undefined);
+    },
+    [cart.items.length, onPay, shiftOpen],
+  );
+
+  const controller = usePOSNumpadController({
+    dispatch,
+    onPaymentConfirm: requestPayment,
+  });
 
   const handleSelectField = useCallback(
     (id: string, field: 'qty' | 'price') => {
@@ -48,6 +59,14 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
     const fieldLabel = t.field === 'qty' ? tOr('pos.numpad.qty', 'Qty') : tOr('pos.numpad.price', 'Price');
     return `${fieldLabel}: ${t.itemName}`;
   })();
+
+  const handlePayClick = useCallback(() => {
+    const prefillCashGrosze = controller.target.kind === 'payment'
+      ? parseBufferGrosze(controller.buffer)
+      : undefined;
+    controller.selectPayment();
+    requestPayment(prefillCashGrosze);
+  }, [controller, requestPayment]);
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -198,7 +217,7 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
           </div>
         )}
         <button
-          onClick={() => { controller.selectPayment(); onPay(); }}
+          onClick={handlePayClick}
           disabled={cart.items.length === 0 || !shiftOpen}
           className="w-full h-14 rounded-lg font-extrabold text-base text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-brand-600 hover:bg-brand-700 active:bg-brand-800 shadow-md touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-200 focus:ring-offset-2"
         >

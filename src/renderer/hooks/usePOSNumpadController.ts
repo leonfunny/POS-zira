@@ -100,7 +100,12 @@ export function usePOSNumpadController({
     }
   }, [buffer, target, onPaymentBufferChange]);
 
-  const commit = useCallback((currentTarget: NumpadTarget, currentBuffer: string, currentPercent: boolean) => {
+  const commit = useCallback((
+    currentTarget: NumpadTarget,
+    currentBuffer: string,
+    currentPercent: boolean,
+    confirmPayment = false,
+  ) => {
     if (!currentBuffer) return;
 
     if (currentTarget.kind === 'cartItem') {
@@ -119,7 +124,7 @@ export function usePOSNumpadController({
           payload: { amount: currentPercent ? value : Math.round(value), discountType: currentPercent ? 'percentage' : 'fixed' },
         });
       }
-    } else if (currentTarget.kind === 'payment') {
+    } else if (currentTarget.kind === 'payment' && confirmPayment) {
       onPaymentConfirm?.(parseBufferGrosze(currentBuffer));
     }
   }, [dispatch, onPaymentConfirm]);
@@ -185,7 +190,7 @@ export function usePOSNumpadController({
   }, []);
 
   const pressDone = useCallback(() => {
-    commit(target, buffer, isPercent);
+    commit(target, buffer, isPercent, true);
     setBuffer('');
     if (target.kind !== 'payment') {
       setTarget({ kind: 'payment' });

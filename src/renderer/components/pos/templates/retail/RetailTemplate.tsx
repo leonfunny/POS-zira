@@ -24,6 +24,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
+  const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [showHistory, setShowHistory] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -330,6 +331,16 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     });
   };
 
+  const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
+    setPaymentPrefillCashGrosze(prefillCashGrosze);
+    setShowPayment(true);
+  }, []);
+
+  const handleClosePayment = useCallback(() => {
+    setShowPayment(false);
+    setPaymentPrefillCashGrosze(undefined);
+  }, []);
+
   return (
     <>
       {/* Main content */}
@@ -453,7 +464,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
           <Cart
             cart={cart}
             dispatch={dispatch}
-            onPay={() => setShowPayment(true)}
+            onPay={handleOpenPayment}
             t={t}
             shiftOpen={session.isOpen}
             lang={lang}
@@ -466,9 +477,9 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
         <PaymentModal
           cart={cart}
           dispatch={dispatch}
-          onClose={() => setShowPayment(false)}
+          onClose={handleClosePayment}
           onComplete={() => {
-            setShowPayment(false);
+            handleClosePayment();
             setSearchQuery('');
             setActiveCategoryId(null);
             // Clear saved cart after successful payment
@@ -480,6 +491,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
           shiftId={session.shiftId}
           staffId={session.staffId}
           staffName={session.staffName}
+          initialCashAmountGrosze={paymentPrefillCashGrosze}
         />
       )}
 
