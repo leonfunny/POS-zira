@@ -118,4 +118,41 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).not.toContain("^LL");
     expect(zpl).toContain("Bánh mì");
   });
+
+  it("puts a wrapped product title above a 50x30 linear barcode", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({
+      barcode: "8801047626671",
+      barcodeType: "EAN13",
+      text1: "Pra\u017cone wodorosty Yangban Korea 30g",
+      text2: "3.00 PLN",
+      text3: "SKU prazone-wodorosty",
+      quantity: 1,
+    });
+
+    const firstLineIndex = zpl.indexOf("Pra\u017cone wodorosty Yangban");
+    const secondLineIndex = zpl.indexOf("Korea 30g");
+    const barcodeIndex = zpl.indexOf("^BE,");
+
+    expect(firstLineIndex).toBeGreaterThan(-1);
+    expect(secondLineIndex).toBeGreaterThan(firstLineIndex);
+    expect(barcodeIndex).toBeGreaterThan(secondLineIndex);
+    expect(zpl).toContain("3.00 PLN");
+    expect(zpl).toContain("SKU prazone-wodorosty");
+  });
+
+  it("honors explicit text1 line breaks and resolves AUTO EAN13 payloads", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({
+      barcode: "8801047626671",
+      barcodeType: "AUTO",
+      text1: "Pra\u017cone wodorosty\nYangban Korea 30g",
+      quantity: 1,
+    });
+
+    expect(zpl).toContain("Pra\u017cone wodorosty");
+    expect(zpl).toContain("Yangban Korea 30g");
+    expect(zpl).not.toContain("Pra\u017cone wodorostyYangban");
+    expect(zpl).toContain("^BE,");
+  });
 });

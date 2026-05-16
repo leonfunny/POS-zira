@@ -113,7 +113,7 @@ export interface DailyReportData {
 }
 
 // Barcode types for label printing
-export type BarcodeType = 'CODE128' | 'QR' | 'EAN13';
+export type BarcodeType = 'CODE128' | 'QR' | 'EAN13' | 'AUTO';
 
 // Label data interface for Zebra printing
 export interface LabelData {

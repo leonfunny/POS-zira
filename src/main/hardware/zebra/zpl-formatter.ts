@@ -3,7 +3,7 @@ import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData, InfoLabel
 /**
  * ZPL command mappings for barcode types
  */
-const BARCODE_COMMANDS: Record<BarcodeType, string> = {
+const BARCODE_COMMANDS: Record<Exclude<BarcodeType, 'AUTO'>, string> = {
   CODE128: '^BC',
   EAN13: '^BE',
   QR: '^BQ',
@@ -81,10 +81,94 @@ export class ZplFormatter {
   }
 
   /**
+   * Resolve backend "AUTO" labels without widening the runtime surface.
+   * EAN-13 is the only auto-detectable linear barcode we need today; all
+   * other values keep the legacy Code128 fallback.
+   */
+  private resolveBarcodeType(data: LabelData): Exclude<BarcodeType, 'AUTO'> {
+    if (data.barcodeType !== 'AUTO') {
+      return data.barcodeType;
+    }
+
+    return /^\d{13}$/.test(data.barcode) ? 'EAN13' : 'CODE128';
+  }
+
+  /**
+   * Wrap label copy into at most two readable lines. Explicit backend line
+   * breaks are honored first; longer content wraps at word boundaries and
+   * gets an ellipsis if it still exceeds the two-line budget.
+   */
+  private wrapLabelText(text: string, maxCharsPerLine: number, maxLines: number = 2): string[] {
+    const paragraphs = text.replace(/\r\n?/g, '\n').split('\n');
+    const wrapped: string[] = [];
+    let overflow = false;
+
+    const appendLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      if (wrapped.length < maxLines) {
+        wrapped.push(trimmed);
+      } else {
+        overflow = true;
+      }
+    };
+
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex++) {
+      const words = paragraphs[paragraphIndex].trim().split(/\s+/).filter(Boolean);
+      let current = '';
+
+      for (const word of words) {
+        if (word.length > maxCharsPerLine) {
+          if (current) {
+            appendLine(current);
+            current = '';
+          }
+
+          let remainder = word;
+          while (remainder.length > maxCharsPerLine) {
+            appendLine(remainder.slice(0, maxCharsPerLine));
+            remainder = remainder.slice(maxCharsPerLine);
+          }
+          current = remainder;
+          continue;
+        }
+
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length <= maxCharsPerLine) {
+          current = candidate;
+        } else {
+          appendLine(current);
+          current = word;
+        }
+      }
+
+      if (current) {
+        appendLine(current);
+      }
+
+      if (paragraphIndex < paragraphs.length - 1 && wrapped.length >= maxLines) {
+        overflow = true;
+      }
+    }
+
+    if (overflow && wrapped.length > 0) {
+      const lastIndex = Math.min(wrapped.length, maxLines) - 1;
+      const maxContentLength = Math.max(1, maxCharsPerLine - 1);
+      wrapped[lastIndex] = `${wrapped[lastIndex].slice(0, maxContentLength).trimEnd()}…`;
+    }
+
+    return wrapped
+      .slice(0, maxLines)
+      .map((line) => this.sanitizeText(line, maxCharsPerLine));
+  }
+
+  /**
    * Format label with barcode
    */
   formatLabel(data: LabelData): string {
     const lines: string[] = [];
+    const resolvedBarcodeType = this.resolveBarcodeType(data);
 
     // Start ZPL format
     lines.push('^XA');
@@ -99,13 +183,11 @@ export class ZplFormatter {
 
     // Adaptive vertical budget based on configured label height (mm).
     const H = this.labelHeight;
-    const topMarginMm = Math.max(2, H * 0.10);
+    const topMarginMm = Math.max(2, H * 0.07);
     const barcodeHeightMm = Math.max(8, H * 0.40);
-    const text1FontMm = Math.max(2, H * 0.10);
-    const text1GapMm = text1FontMm + 0.5;
-    const text2FontMm = Math.max(1.8, H * 0.085);
-    const text2GapMm = text2FontMm + 0.3;
-    const text3FontMm = text2FontMm;
+    const text2FontMm = Math.max(2.2, H * 0.10);
+    const text2GapMm = text2FontMm + 0.2;
+    const text3FontMm = Math.max(1.8, H * 0.075);
 
     // Helper: returns true if a text field at yDots with given font height would still fit
     const labelHeightDots = this.mmToDots(this.labelHeight);
@@ -117,27 +199,52 @@ export class ZplFormatter {
     let currentY = this.mmToDots(topMarginMm);
 
     // Add barcode based on type
-    if (data.barcodeType === 'QR') {
+    if (resolvedBarcodeType === 'QR') {
       // QR Code
       lines.push(`^FO${barcodeX},${currentY}`);
       lines.push('^BQN,2,5');  // QR code, normal orientation, magnification 5
       lines.push(`^FDQA,${data.barcode}^FS`);
       currentY += this.mmToDots(25);
+
+      // Keep the legacy QR path intact. On a 30mm label the QR symbol itself
+      // consumes almost the full vertical budget, so the new title-above-barcode
+      // layout is intentionally limited to linear barcodes.
+      const legacyText1FontMm = Math.max(2, H * 0.10);
+      const legacyText1GapMm = legacyText1FontMm + 0.5;
+      if (data.text1 && wouldFit(currentY, legacyText1FontMm)) {
+        lines.push(`^FO${barcodeX},${currentY}`);
+        lines.push(`^A0,${this.mmToDots(legacyText1FontMm)},${this.mmToDots(legacyText1FontMm)}`);
+        lines.push(`^FD${this.sanitizeText(data.text1)}^FS`);
+        currentY += this.mmToDots(legacyText1GapMm);
+      }
     } else {
-      // Linear barcode (CODE128 or EAN13) — height scales with label
+      // Product title first: the old order wasted the whole upper half of
+      // 50x30mm product labels by placing every text line below the barcode.
+      const titleCharsPerLine = Math.max(18, Math.floor((this.labelWidth - 10) / 1.5));
+      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
+      const text1FontMm = text1Lines.length > 1
+        ? Math.max(2.2, H * 0.085)
+        : Math.max(2.6, H * 0.10);
+      const text1GapMm = text1FontMm + 0.25;
+
+      for (const textLine of text1Lines) {
+        if (!wouldFit(currentY, text1FontMm)) break;
+        lines.push(`^FO${barcodeX},${currentY}`);
+        lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1FontMm)}`);
+        lines.push(`^FD${textLine}^FS`);
+        currentY += this.mmToDots(text1GapMm);
+      }
+
+      if (text1Lines.length > 0) {
+        currentY += this.mmToDots(0.4);
+      }
+
+      // Linear barcode (CODE128 or EAN13) - preserve the existing bar height.
       lines.push(`^FO${barcodeX},${currentY}^BY2`);  // Barcode defaults, module width 2
-      const barcodeCmd = BARCODE_COMMANDS[data.barcodeType] || '^BC';
+      const barcodeCmd = BARCODE_COMMANDS[resolvedBarcodeType];
       lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},Y,N,N`);  // Adaptive height, interpretation line
       lines.push(`^FD${data.barcode}^FS`);
       currentY += this.mmToDots(barcodeHeightMm + 2);  // ~2mm gap below barcode
-    }
-
-    // Add text lines — skip any that would overflow the label
-    if (data.text1 && wouldFit(currentY, text1FontMm)) {
-      lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1FontMm)}`);
-      lines.push(`^FD${this.sanitizeText(data.text1)}^FS`);
-      currentY += this.mmToDots(text1GapMm);
     }
 
     if (data.text2 && wouldFit(currentY, text2FontMm)) {
