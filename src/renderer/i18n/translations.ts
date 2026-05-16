@@ -42,8 +42,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'No Windows printers detected.',
 
     // Printer types
-    'printer.RECEIPT': 'Receipts',
-    'printer.RECEIPT.desc': 'Receipts and invoices',
+    'printer.RECEIPT': 'Orders',
+    'printer.RECEIPT.desc': 'Sales orders and receipts',
     'printer.FISCAL': 'Fiscal',
     'printer.FISCAL.desc': 'Posnet / ELZAB fiscal printer',
     'printer.LABEL': 'Labels',
@@ -1127,8 +1127,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Không phát hiện máy in Windows.',
 
     // Printer types
-    'printer.RECEIPT': 'Hóa đơn',
-    'printer.RECEIPT.desc': 'Hóa đơn và phiếu thu',
+    'printer.RECEIPT': 'Đơn đặt hàng',
+    'printer.RECEIPT.desc': 'Đơn đặt hàng và phiếu thu',
     'printer.FISCAL': 'Tài chính',
     'printer.FISCAL.desc': 'Máy in hóa đơn Posnet / ELZAB',
     'printer.LABEL': 'Nhãn',
@@ -2171,8 +2171,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Windows yazıcısı bulunamadı.',
 
     // Printer types
-    'printer.RECEIPT': 'Fişler',
-    'printer.RECEIPT.desc': 'Fişler ve faturalar',
+    'printer.RECEIPT': 'Siparişler',
+    'printer.RECEIPT.desc': 'Satış siparişleri ve fişler',
     'printer.FISCAL': 'Mali',
     'printer.FISCAL.desc': 'Posnet / ELZAB mali yazıcı',
     'printer.LABEL': 'Etiketler',
@@ -3181,8 +3181,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': '未检测到Windows打印机。',
 
     // Printer types
-    'printer.RECEIPT': '收据',
-    'printer.RECEIPT.desc': '收据和发票',
+    'printer.RECEIPT': '订单',
+    'printer.RECEIPT.desc': '销售订单和收据',
     'printer.FISCAL': '财务',
     'printer.FISCAL.desc': 'Posnet / ELZAB财务打印机',
     'printer.LABEL': '标签',
@@ -4191,8 +4191,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Windows принтери не виявлено.',
 
     // Printer types
-    'printer.RECEIPT': 'Чеки',
-    'printer.RECEIPT.desc': 'Чеки та рахунки',
+    'printer.RECEIPT': 'Замовлення',
+    'printer.RECEIPT.desc': 'Замовлення та чеки',
     'printer.FISCAL': 'Фіскальний',
     'printer.FISCAL.desc': 'Фіскальний принтер Posnet / ELZAB',
     'printer.LABEL': 'Етикетки',
@@ -5201,8 +5201,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Windows принтеры не обнаружены.',
 
     // Printer types
-    'printer.RECEIPT': 'Чеки',
-    'printer.RECEIPT.desc': 'Чеки и счета',
+    'printer.RECEIPT': 'Заказы',
+    'printer.RECEIPT.desc': 'Заказы и чеки',
     'printer.FISCAL': 'Фискальный',
     'printer.FISCAL.desc': 'Фискальный принтер Posnet / ELZAB',
     'printer.LABEL': 'Этикетки',
@@ -6213,8 +6213,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Nie wykryto żadnych drukarek Windows.',
 
     // Printer types
-    'printer.RECEIPT': 'Paragony',
-    'printer.RECEIPT.desc': 'Paragony i faktury',
+    'printer.RECEIPT': 'Zamówienia',
+    'printer.RECEIPT.desc': 'Zamówienia sprzedaży i paragony',
     'printer.FISCAL': 'Fiskalny',
     'printer.FISCAL.desc': 'Drukarka fiskalna Posnet / ELZAB',
     'printer.LABEL': 'Etykiety',
