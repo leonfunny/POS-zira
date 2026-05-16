@@ -394,7 +394,14 @@ export class AgentOrchestrator implements TrayManagerHost {
       logger.info('[Window] Page loaded successfully');
     });
 
-    this.mainWindow.webContents.on('before-input-event', (_event, input) => {
+    this.mainWindow.webContents.on('before-input-event', (event, input) => {
+      const win = this.mainWindow;
+      if (input.key === 'F11' && win && !win.isKiosk()) {
+        event.preventDefault();
+        win.setFullScreen(!win.isFullScreen());
+        return;
+      }
+
       if (!isDebugMode) return;
       if (input.key === 'F12') {
         this.mainWindow?.webContents.toggleDevTools();

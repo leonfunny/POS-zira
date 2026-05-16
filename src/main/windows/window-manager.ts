@@ -429,6 +429,12 @@ export class WindowManager {
         return;
       }
 
+      if (input.key === 'F11') {
+        event.preventDefault();
+        win.setFullScreen(!win.isFullScreen());
+        return;
+      }
+
       // F12 for DevTools on other windows
       if (input.key === 'F12') {
         win.webContents.toggleDevTools();

@@ -96,6 +96,10 @@ class MockBrowserWindow extends EventEmitter {
     this.fullscreenHistory.push(flag);
   }
 
+  isFullScreen() {
+    return this.fullscreen;
+  }
+
   setAlwaysOnTop(flag: boolean, level?: string) {
     this.alwaysOnTopHistory.push({ flag, level });
   }
@@ -412,6 +416,21 @@ describe('WindowManager customer display behavior', () => {
     const staffExit = emitBeforeInput(win, { key: 'Q', control: true, shift: true });
     expect(staffExit.preventDefault).toHaveBeenCalledOnce();
     expect(win.destroyed).toBe(true);
+
+    manager.destroy();
+  });
+
+  it('toggles fullscreen with F11 on ordinary POS windows', () => {
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('pos') as unknown as MockBrowserWindow;
+
+    const enter = emitBeforeInput(win, { key: 'F11' });
+    expect(enter.preventDefault).toHaveBeenCalledOnce();
+    expect(win.fullscreenHistory.at(-1)).toBe(true);
+
+    const exit = emitBeforeInput(win, { key: 'F11' });
+    expect(exit.preventDefault).toHaveBeenCalledOnce();
+    expect(win.fullscreenHistory.at(-1)).toBe(false);
 
     manager.destroy();
   });
