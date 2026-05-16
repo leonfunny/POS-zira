@@ -2,7 +2,16 @@ import { ReceiptData, ReceiptItem, charsPerLineFor } from '../../../shared/types
 
 export type EscPosCharset = 'utf8' | 'cp1250' | 'ascii';
 export type EscPosCutMode = 'partial' | 'full' | 'none';
-export type EscPosPlainLine = { text: string; rightText?: string; bold?: boolean; big?: boolean; center?: boolean; separator?: boolean };
+export type EscPosPlainLine = {
+  text: string;
+  rightText?: string;
+  bold?: boolean;
+  big?: boolean;
+  center?: boolean;
+  separator?: boolean;
+  separatorChar?: '-' | '=';
+  textSize?: 'double-size' | 'double-height';
+};
 
 /**
  * Subset of CP1250 (Polish) mappings for the characters most likely to appear
@@ -443,7 +452,7 @@ export class EscPosFormatter {
     }
 
     // Seller header
-    lines.push({ text: data.salonName || 'Zira AI POS', big: true, center: true });
+    lines.push({ text: data.salonName || 'Zira AI POS', big: true, center: true, textSize: 'double-size' });
     if (data.sellerName) lines.push({ text: data.sellerName, center: true });
     if (data.sellerAddress) lines.push({ text: data.sellerAddress, center: true });
     if (data.sellerNip) lines.push({ text: `NIP: ${data.sellerNip}`, center: true });
@@ -460,7 +469,7 @@ export class EscPosFormatter {
     lines.push({ text: '' });
 
     // Items
-    lines.push({ separator: true, text: '' });
+    lines.push({ separator: true, separatorChar: '-', text: '' });
     for (const item of data.items) {
       const name = this.truncate(item.name, this.charsPerLine);
       lines.push({ text: name });
@@ -469,7 +478,7 @@ export class EscPosFormatter {
       const detail = `  ${qty} x ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}`;
       lines.push(lr(detail, this.ptuLetter(item.vatRate)));
     }
-    lines.push({ separator: true, text: '' });
+    lines.push({ separator: true, separatorChar: '-', text: '' });
 
     // PTU breakdown
     const ptu = this.computePtuBreakdown(data.items);
@@ -485,17 +494,17 @@ export class EscPosFormatter {
     }
 
     // Totals
-    lines.push({ separator: true, text: '' });
+    lines.push({ separator: true, separatorChar: '=', text: '' });
     if (data.isRefund) {
-      lines.push(lr('ZWROT PLN', `-${this.formatMoney(data.total)}`, { bold: true, big: true }));
+      lines.push(lr('ZWROT PLN', `-${this.formatMoney(data.total)}`, { bold: true, big: true, textSize: 'double-height' }));
     } else if (data.discount && data.discount > 0) {
       lines.push(lr('SUMA PLN', this.formatMoney(data.subtotal), { bold: true }));
       lines.push(lr('Rabat:', `-${this.formatMoney(data.discount)}`));
-      lines.push(lr('DO ZAPLATY PLN', this.formatMoney(data.total), { bold: true, big: true }));
+      lines.push(lr('DO ZAPLATY PLN', this.formatMoney(data.total), { bold: true, big: true, textSize: 'double-height' }));
     } else {
-      lines.push(lr('SUMA PLN', this.formatMoney(data.total), { bold: true, big: true }));
+      lines.push(lr('SUMA PLN', this.formatMoney(data.total), { bold: true, big: true, textSize: 'double-height' }));
     }
-    lines.push({ separator: true, text: '' });
+    lines.push({ separator: true, separatorChar: '=', text: '' });
 
     // Payment
     if (data.isRefund) {
@@ -539,6 +548,66 @@ export class EscPosFormatter {
     lines.push({ text: 'Zapraszamy ponownie', center: true });
 
     return lines;
+  }
+
+  /**
+   * Render structured plain lines back to native ESC/POS text.
+   *
+   * This is intentionally narrower than formatReceipt(): it exists for
+   * hybrid receipts where only the Unicode span is rasterized and the
+   * surrounding ASCII-only prefix/suffix should stay on the fast text path.
+   */
+  formatPlainLinesAsText(
+    lines: EscPosPlainLine[],
+    opts?: { includeInit?: boolean; includeReceiptTrailer?: boolean },
+  ): Buffer {
+    const parts: Buffer[] = [];
+    if (opts?.includeInit) parts.push(ESCPOS.INIT);
+
+    for (const line of lines) {
+      parts.push(line.center ? ESCPOS.ALIGN_CENTER : ESCPOS.ALIGN_LEFT);
+
+      if (line.bold) parts.push(ESCPOS.BOLD_ON);
+      const textSize = line.textSize ?? (line.big ? 'double-size' : undefined);
+      if (textSize === 'double-size') parts.push(ESCPOS.DOUBLE_SIZE_ON);
+      if (textSize === 'double-height') parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
+
+      if (line.separator) {
+        parts.push(this.text(this.repeatChar(line.separatorChar ?? '-', this.charsPerLine)));
+      } else if (line.rightText) {
+        parts.push(this.formatLine(line.text, line.rightText));
+      } else {
+        parts.push(this.text(line.text));
+      }
+
+      if (textSize) parts.push(ESCPOS.NORMAL_SIZE);
+      if (line.bold) parts.push(ESCPOS.BOLD_OFF);
+    }
+
+    if (opts?.includeReceiptTrailer) parts.push(this.getReceiptTrailer());
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * ESC/POS reset/init bytes for callers composing a hybrid receipt.
+   */
+  getInitCommand(): Buffer {
+    return ESCPOS.INIT;
+  }
+
+  /**
+   * Raster images are pre-laid-out across the full paper width, so hybrid
+   * callers should force the printer back to the left edge before GS v 0.
+   */
+  getAlignLeftCommand(): Buffer {
+    return ESCPOS.ALIGN_LEFT;
+  }
+
+  /**
+   * Standard receipt footer: same 4-line feed + configured cut as formatReceipt().
+   */
+  getReceiptTrailer(): Buffer {
+    return Buffer.concat([ESCPOS.FEED_LINES(4), this.cutBytes()]);
   }
 
   /**

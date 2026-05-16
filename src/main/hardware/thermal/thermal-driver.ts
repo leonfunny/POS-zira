@@ -518,13 +518,51 @@ export class ThermalDriver {
     const escposData = this.formatter.formatReceipt(data);
 
     // Check if ESC/POS data contains non-ASCII text (Vietnamese, Polish, etc.).
-    // If so, re-render the entire receipt as a raster image — this bypasses
-    // codepage issues on budget printers that don't support UTF-8 mode.
+    // Keep the safe raster fallback for Unicode, but avoid bitmap-printing the
+    // whole receipt when only a smaller visible span actually needs it.
     if (this.bufferHasNonAsciiText(escposData)) {
-      logger.info('[ThermalDriver] Non-ASCII detected — rendering receipt as raster image');
       const lines = this.formatter.formatReceiptPlainLines(data);
-      const rasterData = await this.renderTextToRaster(lines);
-      await this.printRaw(rasterData);
+      const firstUnicodeLine = lines.findIndex((line) => this.plainLineHasNonAsciiText(line));
+      let lastUnicodeLine = -1;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (this.plainLineHasNonAsciiText(lines[i])) {
+          lastUnicodeLine = i;
+          break;
+        }
+      }
+
+      // Defensive fallback: if the byte-level detector fired but the
+      // structured lines disagree, preserve the old full-raster behavior
+      // rather than risk emitting mangled text.
+      if (firstUnicodeLine < 0 || lastUnicodeLine < 0) {
+        logger.info('[ThermalDriver] Non-ASCII detected — rendering full receipt as raster image');
+        const rasterData = await this.renderTextToRaster(lines);
+        await this.printRaw(rasterData);
+      } else if (firstUnicodeLine === 0 && lastUnicodeLine === lines.length - 1) {
+        logger.info('[ThermalDriver] Non-ASCII spans the full receipt — rendering full receipt as raster image');
+        const rasterData = await this.renderTextToRaster(lines);
+        await this.printRaw(rasterData);
+      } else {
+        const rasterLines = lines.slice(firstUnicodeLine, lastUnicodeLine + 1);
+        logger.info(
+          `[ThermalDriver] Non-ASCII detected — rasterizing receipt lines ` +
+          `${firstUnicodeLine + 1}-${lastUnicodeLine + 1}/${lines.length} and keeping the rest as ESC/POS text`,
+        );
+        const rasterData = await this.renderTextToRaster(rasterLines, {
+          includeInit: false,
+          includeFeed: false,
+          includeCut: false,
+        });
+        const hybridReceipt = Buffer.concat([
+          this.formatter.getInitCommand(),
+          this.formatter.formatPlainLinesAsText(lines.slice(0, firstUnicodeLine)),
+          this.formatter.getAlignLeftCommand(),
+          rasterData,
+          this.formatter.formatPlainLinesAsText(lines.slice(lastUnicodeLine + 1)),
+          this.formatter.getReceiptTrailer(),
+        ]);
+        await this.printRaw(hybridReceipt);
+      }
     } else {
       await this.printRaw(escposData);
     }
@@ -550,12 +588,24 @@ export class ThermalDriver {
   }
 
   /**
+   * Check structured receipt lines for actual user-visible non-ASCII text.
+   * This lets the hybrid path choose the visible raster span without parsing
+   * raw ESC/POS bytes back into lines.
+   */
+  private plainLineHasNonAsciiText(line: EscPosPlainLine): boolean {
+    return /[^\x00-\x7F]/.test(`${line.text}${line.rightText ?? ''}`);
+  }
+
+  /**
    * Render an array of plain-text lines to ESC/POS raster image data.
    * Uses PowerShell System.Drawing to render Unicode text to a monochrome
    * bitmap, then converts to GS v 0 raster format. Works with ALL languages
    * regardless of printer codepage support.
    */
-  private async renderTextToRaster(lines: EscPosPlainLine[]): Promise<Buffer> {
+  private async renderTextToRaster(
+    lines: EscPosPlainLine[],
+    opts?: { includeInit?: boolean; includeFeed?: boolean; includeCut?: boolean },
+  ): Promise<Buffer> {
     // pixels at 203 DPI: 58mm→384, 76mm→432 (Epson TM-U220 / dot-matrix
     // legacy), 80mm→576 standard. Default to 576 so paperWidth values
     // outside this set still produce a reasonable raster (printer trims
@@ -653,13 +703,13 @@ export class ThermalDriver {
       '  }\n' +
       '}\n' +
       '$bmp.Dispose()\n' +
-      // Build ESC/POS: INIT + GS v 0 + raster + feed + cut
-      '$esc = [byte[]]@(0x1B, 0x40)\n' + // ESC @
+      // Build ESC/POS: optional INIT + GS v 0 + raster + optional feed/cut
+      `$esc = [byte[]]@(${opts?.includeInit === false ? '' : '0x1B, 0x40'})\n` + // ESC @
       '$xL = $bw -band 0xFF; $xH = ($bw -shr 8) -band 0xFF\n' +
       '$yL = $H -band 0xFF; $yH = ($H -shr 8) -band 0xFF\n' +
       '$gsv = [byte[]]@(0x1D, 0x76, 0x30, 0x00, $xL, $xH, $yL, $yH)\n' + // GS v 0
-      '$feed = [byte[]]@(0x1B, 0x64, 0x03)\n' + // ESC d 3
-      '$cut = [byte[]]@(0x1D, 0x56, 0x01)\n' + // GS V 1
+      `$feed = [byte[]]@(${opts?.includeFeed === false ? '' : '0x1B, 0x64, 0x03'})\n` + // ESC d 3
+      `$cut = [byte[]]@(${opts?.includeCut === false ? '' : '0x1D, 0x56, 0x01'})\n` + // GS V 1
       // Write all to binary file
       `$outFile = '${tempBmp.replace(/\\/g, '\\\\')}'\n` +
       '$fs = [IO.File]::Create($outFile)\n' +
