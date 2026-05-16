@@ -1,9 +1,10 @@
 // Display-name localization for catalog rows (products + categories).
 //
-// Contract ([[zira-catalog-localization-canonical-display-split]]):
-// - `name` is canonical: receipts, fiscal payloads, and order lines MUST keep this exact string.
-// - `name_translations` is display-only: drives in-app rendering for category pills,
-//   product cards, search/scan toasts, and cart rows in the operator's chosen language.
+// Contract:
+// - `name` is canonical: order lines and fiscal payloads MUST keep this exact string.
+// - `name_translations` is localized display data: drives in-app rendering for
+//   category pills, product cards, search/scan toasts, cart rows, and customer
+//   receipt rendering when a locale-specific paper name is required.
 // - Missing/empty translations fall back to canonical `name`, so a fully un-translated
 //   catalog still renders correctly in any UI language.
 //

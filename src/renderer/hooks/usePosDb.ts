@@ -21,8 +21,9 @@ export interface Product {
   vat_amount?: number;
   is_on_sale?: number;
   thumbnail_url?: string | null;
-  // Display-only translation map (migration v28). JSON string of `{lang: name}`.
-  // Receipts/fiscal payloads always use canonical `name` — never substitute this.
+  // Translation map (migration v28). JSON string of `{lang: name}`.
+  // Orders/fiscal payloads use canonical `name`; paper receipts localize
+  // separately at print time.
   name_translations?: string | null;
 }
 

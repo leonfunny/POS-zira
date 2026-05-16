@@ -6,9 +6,9 @@ interface ProductCardProps {
   product: Product;
   onAdd: (product: Product) => void;
   t?: (key: string) => string;
-  /** Operator UI language — drives display-only name resolution. Canonical
-   *  `product.name` is still used for placeholder-color stability and is what
-   *  receipts/fiscal lines see. */
+  /** Operator UI language — drives display-name resolution. Canonical
+   *  `product.name` is still used for placeholder-color stability and for
+   *  persisted order/fiscal lines; paper receipts localize at print time. */
   lang?: string;
 }
 

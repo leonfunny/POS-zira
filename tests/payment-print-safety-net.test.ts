@@ -21,10 +21,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // vi.mock() is hoisted above module-level const declarations, so any
 // helper the factory references must be defined inside vi.hoisted().
-const { orderRepoGetById, orderRepoGetItemsByOrderId, productRepoGetById } = vi.hoisted(() => ({
+const { orderRepoGetById, orderRepoGetItemsByOrderId, productRepoGetById, productRepoGetBySku } = vi.hoisted(() => ({
   orderRepoGetById: vi.fn(),
   orderRepoGetItemsByOrderId: vi.fn(),
   productRepoGetById: vi.fn(),
+  productRepoGetBySku: vi.fn(),
 }));
 
 vi.mock('../src/main/database/repos/order-repo', () => ({
@@ -35,7 +36,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
 }));
 
 vi.mock('../src/main/database/repos/product-repo', () => ({
-  productRepo: { getById: productRepoGetById },
+  productRepo: { getById: productRepoGetById, getBySku: productRepoGetBySku },
 }));
 
 vi.mock('../src/main/logger', () => ({
@@ -97,6 +98,7 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     orderRepoGetById.mockReset();
     orderRepoGetItemsByOrderId.mockReset();
     productRepoGetById.mockReset();
+    productRepoGetBySku.mockReset();
     orderRepoGetById.mockReturnValue(sampleOrder);
     orderRepoGetItemsByOrderId.mockReturnValue([
       { name: 'Bulka', quantity: 2, price: 200, total: 400, vat_rate: 5, sku: 'BULKA-1', variant_id: null },
@@ -202,6 +204,37 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     const ctl = buildController(printer);
     await expect(ctl.openCashDrawer()).resolves.toBe(false);
   });
+
+  it('prints the Polish catalog name on the customer receipt while keeping order rows canonical', async () => {
+    const printer = makeFakePrinter({});
+    const ctl = buildController(printer);
+    orderRepoGetItemsByOrderId.mockReturnValue([
+      {
+        name: 'Máy POS Ingenico Move/5000 Elavon',
+        quantity: 1,
+        price: 100,
+        total: 100,
+        vat_rate: 23,
+        sku: 'terminal-platniczy-ingenico-elavon',
+        variant_id: 'variant-1',
+      },
+    ]);
+    productRepoGetById.mockReturnValue({
+      id: 'variant-1',
+      name: 'Máy POS Ingenico Move/5000 Elavon',
+      name_translations: '{"pl":"Terminal płatniczy Ingenico Move/5000 Elavon"}',
+      sale_unit: 'szt.',
+    });
+
+    const ok = await ctl.printReceipt('order-1');
+
+    expect(ok).toBe(true);
+    const data = (printer.printReceipt.mock.calls[0] as any[])[0];
+    expect(data.items[0]).toMatchObject({
+      name: 'Terminal płatniczy Ingenico Move/5000 Elavon',
+      unit: 'szt.',
+    });
+  });
 });
 
 describe('PaymentController.printRefundReceipt — refund_lines parsing (G2)', () => {
@@ -210,6 +243,7 @@ describe('PaymentController.printRefundReceipt — refund_lines parsing (G2)', (
     orderRepoGetById.mockReset();
     orderRepoGetItemsByOrderId.mockReset();
     productRepoGetById.mockReturnValue(null);
+    productRepoGetBySku.mockReset();
   });
 
   it('parses stored refund_lines (grosze + vatRate shape) into ReceiptItem', async () => {
@@ -333,5 +367,35 @@ describe('PaymentController.printRefundReceipt — refund_lines parsing (G2)', (
     // Used the fallback path (order items), not the corrupt refund_lines.
     const data = (printer.printReceipt.mock.calls[0] as any[])[0];
     expect(data.items).toHaveLength(1);
+  });
+
+  it('uses the Polish catalog name for stored refund lines when SKU can still resolve the product', async () => {
+    const printer = makeFakePrinter({});
+    const ctl = buildController(printer);
+    orderRepoGetById.mockReturnValue({
+      ...sampleOrder,
+      refund_amount: 100,
+      refund_reason: 'Klient zwrocil towar',
+      refund_lines: JSON.stringify([
+        {
+          name: 'Máy POS Ingenico Move/5000 Elavon',
+          quantity: 1,
+          unitPrice: 100,
+          refundAmount: 100,
+          vatRate: 23,
+          sku: 'terminal-platniczy-ingenico-elavon',
+        },
+      ]),
+    });
+    productRepoGetBySku.mockReturnValue({
+      name: 'Máy POS Ingenico Move/5000 Elavon',
+      name_translations: '{"pl":"Terminal płatniczy Ingenico Move/5000 Elavon"}',
+    });
+
+    const ok = await ctl.printRefundReceipt('order-1');
+
+    expect(ok).toBe(true);
+    const data = (printer.printReceipt.mock.calls[0] as any[])[0];
+    expect(data.items[0].name).toBe('Terminal płatniczy Ingenico Move/5000 Elavon');
   });
 });

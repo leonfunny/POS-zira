@@ -26,11 +26,11 @@ export interface ProductVariantRow {
   is_on_sale: number;
   thumbnail_url: string | null;
   sale_unit: string | null;
-  // Display-only localization (migration v28). JSON-encoded `{lang: name}`.
+  // UI localization (migration v28). JSON-encoded `{lang: name}`.
   // Optional: legacy seeds, old backend payloads, and tests can omit it —
   // renderer's resolveName falls back to canonical `name`.
-  // Receipts / fiscal payloads still use canonical `name` — see
-  // wiki: zira-catalog-localization-canonical-display-split.
+  // Orders / fiscal payloads keep canonical `name`; local customer receipts
+  // may resolve Polish at print time.
   name_translations?: string | null;
 }
 
@@ -75,6 +75,13 @@ export const productRepo = {
 
   getById(id: string): ProductVariantRow | null {
     return database.get<ProductVariantRow>('SELECT * FROM product_variants WHERE id = ?', [id]);
+  },
+
+  getBySku(sku: string): ProductVariantRow | null {
+    return database.get<ProductVariantRow>(
+      `SELECT * FROM product_variants WHERE sku = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
+      [sku],
+    );
   },
 
   getByBarcode(barcode: string): ProductVariantRow | null {

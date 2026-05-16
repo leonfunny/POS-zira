@@ -1,6 +1,7 @@
 import { ReceiptData, PrinterType } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
 import { productRepo } from '../database/repos/product-repo';
+import { resolveName } from '../../shared/catalog-names';
 import logger from '../logger';
 
 export interface PaymentResult {
@@ -48,6 +49,22 @@ export class PaymentController {
       const tenders = JSON.parse(order.payment_tenders);
       return Array.isArray(tenders) && tenders.length > 1 ? tenders : undefined;
     } catch { return undefined; }
+  }
+
+  /**
+   * Customer-facing receipt lines should be Polish for this shop, while the
+   * persisted order row stays canonical for backend/fiscal reconciliation.
+   * Prefer the current catalog's PL translation when we can still identify the
+   * product, and fall back to the stored order/refund name for legacy or removed
+   * products.
+   */
+  private getReceiptItemName(item: { name: string; variant_id?: string | null; sku?: string | null }): string {
+    const product = item.variant_id
+      ? productRepo.getById(item.variant_id)
+      : item.sku
+        ? productRepo.getBySku(item.sku)
+        : null;
+    return resolveName(product, 'pl') || item.name;
   }
 
   private async printReceiptData(
@@ -132,7 +149,7 @@ export class PaymentController {
         // Look up sale_unit from product catalog
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
-          name: i.name,
+          name: this.getReceiptItemName(i),
           quantity: i.quantity,
           unitPrice: i.price,
           totalPrice: i.total,
@@ -184,7 +201,7 @@ export class PaymentController {
       items: items.map((i) => {
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
-          name: i.name,
+          name: this.getReceiptItemName(i),
           quantity: i.quantity,
           unitPrice: i.price,
           totalPrice: i.total,
@@ -293,7 +310,7 @@ export class PaymentController {
 
     if (storedLines && storedLines.length > 0) {
       receiptItems = storedLines.map(l => ({
-        name: l.name,
+        name: this.getReceiptItemName(l),
         quantity: l.quantity,
         unitPrice: l.unitPrice,
         totalPrice: l.refundAmount,
@@ -306,7 +323,7 @@ export class PaymentController {
       receiptItems = items.map(i => {
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
-          name: i.name,
+          name: this.getReceiptItemName(i),
           quantity: i.quantity,
           unitPrice: i.price,
           totalPrice: i.total,

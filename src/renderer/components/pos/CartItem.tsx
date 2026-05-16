@@ -12,7 +12,8 @@ interface CartItemProps {
   activeBuffer?: string;
   t?: (key: string) => string;
   /** Operator UI language. Resolves item.name_translations for display only;
-   *  receipts/fiscal lines keep canonical item.name. */
+   *  orders/fiscal lines keep canonical item.name while paper receipts
+   *  localize separately at print time. */
   lang?: string;
 }
 

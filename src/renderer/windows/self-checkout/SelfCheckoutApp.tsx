@@ -335,7 +335,7 @@ export default function SelfCheckoutApp() {
     (product: ProductLookupResult, fallbackEan = '', requestedQuantity = scanQuantity): boolean => {
       const quantity = normalizeScanQuantity(requestedQuantity);
       // Toasts and out-of-stock messages use the customer-facing display name;
-      // cart row stores canonical `name` + raw translations so receipts stay
+      // cart row stores canonical `name` + raw translations so orders stay
       // canonical and live language switches re-render the cart correctly.
       const displayName = resolveName(product, lang);
       const stock = getProductStock(product);
