@@ -49,6 +49,14 @@ export default function SearchBar({ value, onChange, onBarcodeScanned, placehold
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return;
+          const barcode = value.trim();
+          if (!barcode || !onBarcodeScanned) return;
+          e.preventDefault();
+          onBarcodeScanned(barcode);
+          onChange('');
+        }}
         placeholder={placeholder || 'Search or scan barcode'}
         className="w-full h-12 pl-11 pr-12 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-900 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-shadow shadow-sm"
       />
