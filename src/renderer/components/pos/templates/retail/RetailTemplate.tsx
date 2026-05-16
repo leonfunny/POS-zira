@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
 import rlog from '../../../../utils/logger';
+import { useConfig } from '../../../../hooks/useConfig';
+import { resolveName } from '../../../../../shared/catalog-names';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -17,6 +19,8 @@ interface RetailTemplateProps {
 }
 
 export default function RetailTemplate({ state, dispatch, t, session }: RetailTemplateProps) {
+  const { config } = useConfig();
+  const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
@@ -253,6 +257,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
         total: product.retail_price,
         imageUrl: product.image_url || undefined,
         vatRate: product.vat_rate,
+        name_translations: product.name_translations ?? null,
       },
     });
   }, [dispatch]);
@@ -406,7 +411,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
                     style={{ backgroundColor: cat.color || '#da7756' }}
                     aria-hidden="true"
                   />
-                  {cat.name}
+                  {resolveName(cat, lang)}
                 </button>
               ))}
               </div>
@@ -417,6 +422,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
             onAddProduct={handleAddProduct}
             t={t}
             resetScrollKey={activeCategoryId ?? 'all'}
+            lang={lang}
           />
           <div className="-mx-3 -mb-3 shrink-0">
             <QuickActions
@@ -450,6 +456,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
             onPay={() => setShowPayment(true)}
             t={t}
             shiftOpen={session.isOpen}
+            lang={lang}
           />
         </div>
       </div>

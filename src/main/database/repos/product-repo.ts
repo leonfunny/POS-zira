@@ -26,6 +26,12 @@ export interface ProductVariantRow {
   is_on_sale: number;
   thumbnail_url: string | null;
   sale_unit: string | null;
+  // Display-only localization (migration v28). JSON-encoded `{lang: name}`.
+  // Optional: legacy seeds, old backend payloads, and tests can omit it —
+  // renderer's resolveName falls back to canonical `name`.
+  // Receipts / fiscal payloads still use canonical `name` — see
+  // wiki: zira-catalog-localization-canonical-display-split.
+  name_translations?: string | null;
 }
 
 export interface CategoryRow {
@@ -35,6 +41,8 @@ export interface CategoryRow {
   color: string | null;
   sort_order: number;
   updated_at: string | null;
+  // Display-only localization (migration v28). Same contract as products.
+  name_translations?: string | null;
 }
 
 // Hide template rows that have variant children. The sync layer mirrors
@@ -163,9 +171,9 @@ export const productRepo = {
         throw new Error(`Invalid product: missing id or name (id=${p.id})`);
       }
       database.run(
-        `INSERT OR REPLACE INTO product_variants (id, template_id, name, sku, barcode, retail_price, category_id, image_url, in_stock, vat_rate, is_active, updated_at, available_qty, price_gross, price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0, p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23, p.is_active ?? 1, p.updated_at, p.available_qty ?? 0, p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0, p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit],
+        `INSERT OR REPLACE INTO product_variants (id, template_id, name, sku, barcode, retail_price, category_id, image_url, in_stock, vat_rate, is_active, updated_at, available_qty, price_gross, price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, name_translations)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0, p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23, p.is_active ?? 1, p.updated_at, p.available_qty ?? 0, p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0, p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit, p.name_translations ?? null],
       );
     }
   },
@@ -229,8 +237,8 @@ export const productRepo = {
         throw new Error(`Invalid category: missing id or name (id=${c.id})`);
       }
       database.run(
-        'INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at],
+        'INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null],
       );
     }
   },

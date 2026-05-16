@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
+import { resolveName } from '../../../shared/catalog-names';
 
 interface ProductCardProps {
   product: Product;
   onAdd: (product: Product) => void;
   t?: (key: string) => string;
+  /** Operator UI language — drives display-only name resolution. Canonical
+   *  `product.name` is still used for placeholder-color stability and is what
+   *  receipts/fiscal lines see. */
+  lang?: string;
 }
 
 const PLACEHOLDER_COLORS = [
@@ -28,7 +33,7 @@ export function isProductSoldOut(product: Product): boolean {
   return qty <= 0;
 }
 
-function ProductCard({ product, onAdd, t }: ProductCardProps) {
+function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const isService = product.category_id === 'cat-5';
   const stockQty = product.available_qty ?? product.in_stock;
@@ -36,7 +41,10 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
   const lowStock = !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';
+  // Placeholder color hashes canonical `name` so the same product keeps the
+  // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
+  const displayName = resolveName(product, lang);
   const imgSrc = product.thumbnail_url || product.image_url;
   const showImage = imgSrc && !imgError;
   const handleAdd = () => { if (!soldOut) onAdd(product); };
@@ -53,7 +61,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
       tabIndex={soldOut ? -1 : 0}
       onClick={handleAdd}
       onKeyDown={handleKeyDown}
-      aria-label={soldOut ? `${product.name} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${product.name}`}
+      aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
       className={`group bg-white rounded-lg border shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-100 transition-colors duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
         soldOut
@@ -65,7 +73,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
         {showImage ? (
           <img
             src={imgSrc!}
-            alt={product.name}
+            alt={displayName}
             loading="lazy"
             onError={() => setImgError(true)}
             className={`w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
@@ -75,7 +83,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
             <svg className="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 7v10a2 2 0 01-2 2H6a2 2 0 01-2-2V7m16 0a2 2 0 00-2-2H6a2 2 0 00-2 2m16 0H4m5 4h6" />
             </svg>
-            <span>{product.name.charAt(0).toUpperCase()}</span>
+            <span>{(displayName || product.name).charAt(0).toUpperCase()}</span>
           </div>
         )}
         {soldOut && (
@@ -98,7 +106,7 @@ function ProductCard({ product, onAdd, t }: ProductCardProps) {
       </div>
 
       <div className="flex-1 pt-1.5 pb-1 flex flex-col min-h-[54px]">
-        <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">{product.name}</p>
+        <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
         {product.sku && (
           <p className="text-[10px] text-slate-500 mt-1 truncate tracking-wide">{product.sku}</p>
         )}

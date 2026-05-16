@@ -24,6 +24,10 @@ interface CartItem {
   notes?: string;
   course?: number;
   vatRate?: number;
+  // Display-only translation map carried alongside canonical `name`.
+  // Cart row renders this via `resolveName` so language toggles refresh the
+  // cart without re-fetching products. Receipt/fiscal lines still use `name`.
+  name_translations?: string | null;
 }
 
 interface CartState {

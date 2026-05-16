@@ -8,9 +8,11 @@ interface ProductGridProps {
   t?: (key: string) => string;
   /** When this value changes (e.g. activeCategoryId), scroll resets to top */
   resetScrollKey?: string | null;
+  /** Operator UI language — forwarded to ProductCard for display-only localization. */
+  lang?: string;
 }
 
-export default function ProductGrid({ products, onAddProduct, t, resetScrollKey }: ProductGridProps) {
+export default function ProductGrid({ products, onAddProduct, t, resetScrollKey, lang }: ProductGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,7 +36,7 @@ export default function ProductGrid({ products, onAddProduct, t, resetScrollKey 
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="grid [grid-template-columns:repeat(auto-fill,minmax(154px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(172px,1fr))] gap-2 p-1 pb-2">
         {products.map((product) => (
-          <ProductCard key={product.id} product={product} onAdd={onAddProduct} t={t} />
+          <ProductCard key={product.id} product={product} onAdd={onAddProduct} t={t} lang={lang} />
         ))}
       </div>
     </div>

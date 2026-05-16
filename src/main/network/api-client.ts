@@ -786,6 +786,20 @@ export class ApiClient {
     const items = allItems;
     logger.info(`[ApiClient] Fetched ${items.length} products across ${page} page(s)`);
 
+    // Serialize embedded translation maps to TEXT for SQLite storage.
+    // Backend Phase 1 ships `nameTranslations: { pl, vi }` on template + category;
+    // older backends omit it, in which case we store NULL and renderer falls back to `name`.
+    const encodeTranslations = (raw: any): string | null => {
+      if (!raw || typeof raw !== 'object') return null;
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (typeof k === 'string' && typeof v === 'string' && v.trim() !== '') {
+          cleaned[k.toLowerCase()] = v;
+        }
+      }
+      return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null;
+    };
+
     // Extract unique categories from embedded template.category
     const categoryMap = new Map<string, any>();
     for (const item of items) {
@@ -798,6 +812,7 @@ export class ApiClient {
           color: cat.color ?? null,
           sort_order: cat.displayOrder ?? 0,
           updated_at: cat.updatedAt ?? null,
+          name_translations: encodeTranslations(cat.nameTranslations ?? cat.name_translations),
         });
       }
     }
@@ -806,6 +821,9 @@ export class ApiClient {
     const toGrosze = (v: any) => v != null ? Math.round(parseFloat(v) * 100) : 0;
     const products = items.map((item: any) => {
       const retailGrosze = toGrosze(item.retailPrice);
+      // Product display name follows the template's translations (Phase 1 scope —
+      // variant-specific translations are deferred). Variant-level overrides land later.
+      const translationSource = item.nameTranslations ?? item.name_translations ?? item.template?.nameTranslations ?? item.template?.name_translations;
       return {
         id: item.id,
         template_id: item.templateId ?? null,
@@ -827,6 +845,7 @@ export class ApiClient {
         is_on_sale: item.isOnSale ? 1 : 0,
         thumbnail_url: item.thumbnailUrl ?? null,
         sale_unit: item.saleUnit ?? item.template?.baseUnit ?? null,
+        name_translations: encodeTranslations(translationSource),
       };
     });
 

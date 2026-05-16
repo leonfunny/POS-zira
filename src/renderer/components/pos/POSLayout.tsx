@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePosStore } from '../../hooks/usePosStore';
 import { useConfig } from '../../hooks/useConfig';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
+import { resolveName } from '../../../shared/catalog-names';
 import rlog from '../../utils/logger';
 import ShiftModal from './ShiftModal';
 import ShiftReportModal from './ShiftReport';
@@ -118,6 +119,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     setTimeout(() => setScanToast(null), 2000);
   }, []);
 
+  // Resolve translator above the barcode callback so it can localize the
+  // "Sold out" toast string for scanned items.
+  const t = getTranslation(language);
+
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -127,8 +132,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         try {
           const product = await window.electronAPI.pos.products.getByBarcode(code);
           if (product) {
+            // Toast shows the operator-language display name; cart line stores
+            // canonical `name` + raw `name_translations` so it re-resolves on
+            // language change and receipts keep canonical text.
+            const displayName = resolveName(product, language);
             if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
-              showScanToast(`${product.name} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
+              showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
             } else {
               dispatch({
                 type: 'cart/addItem',
@@ -142,9 +151,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                   total: product.retail_price,
                   imageUrl: product.image_url || undefined,
                   vatRate: product.vat_rate,
+                  name_translations: product.name_translations ?? null,
                 },
               });
-              showScanToast(`+ ${product.name}`, 'ok');
+              showScanToast(`+ ${displayName}`, 'ok');
             }
           } else {
             showScanToast(`Barcode not found: ${code}`, 'err');
@@ -155,7 +165,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, dispatch, showScanToast]);
+  }, [barcodeBuffer, dispatch, showScanToast, language, t]);
 
   // Sync language/mode from config
   useEffect(() => {
@@ -194,7 +204,6 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => unsub?.();
   }, []);
 
-  const t = getTranslation(language);
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
 
   const handleShiftOpen = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {

@@ -95,6 +95,11 @@ function applyProduct(entry: SyncLogEntry): boolean {
   const rawRetail = p.retail_price ?? p.retailPrice;
   const retailGrosze = rawRetail != null ? normalizePrice(rawRetail) : 0;
 
+  // Pull display-only translations from either the variant payload or the
+  // embedded template — backend Phase 1 emits at the template level.
+  const productTranslations =
+    encodeNameTranslations(p) ?? encodeNameTranslations(p.template);
+
   productRepo.upsertMany([{
     id: entry.entity_id,
     template_id: p.template_id ?? p.templateId ?? null,
@@ -115,6 +120,7 @@ function applyProduct(entry: SyncLogEntry): boolean {
     is_on_sale: p.is_on_sale ?? (p.isOnSale ? 1 : 0),
     thumbnail_url: p.thumbnail_url ?? p.thumbnailUrl ?? null,
     sale_unit: p.sale_unit ?? p.saleUnit ?? null,
+    name_translations: productTranslations,
   }]);
 
   return true;
@@ -575,6 +581,21 @@ function applyServiceRule(entry: SyncLogEntry): boolean {
 
 // ─── Category ───────────────────────────────────────────────
 
+// Serialize a payload's translation map (camelCase or snake_case) into TEXT for SQLite.
+// Returns null when the payload omits translations so an older backend doesn't
+// nuke any previously stored map via INSERT OR REPLACE.
+function encodeNameTranslations(payload: any): string | null {
+  const raw = payload?.nameTranslations ?? payload?.name_translations;
+  if (!raw || typeof raw !== 'object') return null;
+  const cleaned: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof k === 'string' && typeof v === 'string' && v.trim() !== '') {
+      cleaned[k.toLowerCase()] = v;
+    }
+  }
+  return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null;
+}
+
 function applyCategory(entry: SyncLogEntry): boolean {
   const p = entry.payload;
   if (!entry.entity_id) return false;
@@ -585,8 +606,8 @@ function applyCategory(entry: SyncLogEntry): boolean {
   }
 
   database.run(
-    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.entity_id,
       p.name ?? '',
@@ -594,6 +615,7 @@ function applyCategory(entry: SyncLogEntry): boolean {
       p.color ?? null,
       p.sort_order ?? p.sortOrder ?? 0,
       p.updated_at ?? p.updatedAt ?? entry.created_at,
+      encodeNameTranslations(p),
     ],
   );
 

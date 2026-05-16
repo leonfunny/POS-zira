@@ -17,6 +17,9 @@ export interface ScCartItem {
   imageUrl?: string;
   /** True when added by the local bag-quantity control (UI shows it inline). */
   isBagFee?: boolean;
+  /** Display-only translations carried alongside canonical `name`.
+   *  Cart row renders via `resolveName`; receipts always use canonical `name`. */
+  name_translations?: string | null;
 }
 
 export interface ScCart {

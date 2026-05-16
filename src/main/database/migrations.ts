@@ -1056,4 +1056,12 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_status ON fiscal_attempts(status);
     `,
   },
+  {
+    version: 28,
+    name: 'catalog_name_translations',
+    up: `
+      ALTER TABLE categories ADD COLUMN name_translations TEXT;
+      ALTER TABLE product_variants ADD COLUMN name_translations TEXT;
+    `,
+  },
 ];

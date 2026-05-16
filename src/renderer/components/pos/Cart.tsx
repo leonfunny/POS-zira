@@ -11,9 +11,11 @@ interface CartProps {
   t: (key: string) => string;
   shiftOpen?: boolean;
   renderItemExtra?: (item: CartItem) => React.ReactNode;
+  /** Operator UI language — forwarded to CartItemRow for display-only name resolution. */
+  lang?: string;
 }
 
-export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, renderItemExtra }: CartProps) {
+export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, renderItemExtra, lang }: CartProps) {
   const currency = t('pos.currency');
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -119,6 +121,7 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
                 activeField={activeFieldFor(item.id)}
                 activeBuffer={controller.buffer}
                 t={t}
+                lang={lang}
               />
               {renderItemExtra?.(item)}
             </div>
@@ -164,28 +167,26 @@ export default function Cart({ cart, dispatch, onPay, t, shiftOpen = true, rende
         </div>
       )}
 
-      {cart.items.length > 0 && (
-        <div className="shrink-0">
-          <POSNumpad
-            mode={controller.mode}
-            buffer={controller.buffer}
-            label={numpadLabel}
-            currency={currency}
-            isPercent={controller.isPercent}
-            total={cart.total}
-            onKey={controller.pressDigit}
-            onBackspace={controller.pressBackspace}
-            onClear={controller.pressClear}
-            onDecimal={controller.pressDecimal}
-            onDoubleZero={controller.pressDoubleZero}
-            onTogglePercent={controller.pressTogglePercent}
-            onPreset={controller.pressPreset}
-            onExact={() => controller.pressExact(cart.total)}
-            onDone={controller.pressDone}
-            t={t}
-          />
-        </div>
-      )}
+      <div className="shrink-0">
+        <POSNumpad
+          mode={controller.mode}
+          buffer={controller.buffer}
+          label={numpadLabel}
+          currency={currency}
+          isPercent={controller.isPercent}
+          total={cart.total}
+          onKey={controller.pressDigit}
+          onBackspace={controller.pressBackspace}
+          onClear={controller.pressClear}
+          onDecimal={controller.pressDecimal}
+          onDoubleZero={controller.pressDoubleZero}
+          onTogglePercent={controller.pressTogglePercent}
+          onPreset={controller.pressPreset}
+          onExact={() => controller.pressExact(cart.total)}
+          onDone={controller.pressDone}
+          t={t}
+        />
+      </div>
 
       <div className="px-3 pb-3 shrink-0">
         {!shiftOpen && (

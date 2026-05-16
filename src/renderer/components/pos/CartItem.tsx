@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
+import { resolveName } from '../../../shared/catalog-names';
 
 interface CartItemProps {
   item: CartItemType;
@@ -10,6 +11,9 @@ interface CartItemProps {
   activeField?: 'qty' | 'price' | null;
   activeBuffer?: string;
   t?: (key: string) => string;
+  /** Operator UI language. Resolves item.name_translations for display only;
+   *  receipts/fiscal lines keep canonical item.name. */
+  lang?: string;
 }
 
 export default function CartItemRow({
@@ -21,6 +25,7 @@ export default function CartItemRow({
   activeField,
   activeBuffer,
   t,
+  lang,
 }: CartItemProps) {
   const currency = t?.('pos.currency') ?? 'PLN';
   const perUnit = t?.('pos.perUnit') ?? '/pc';
@@ -53,7 +58,7 @@ export default function CartItemRow({
     }`}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">{item.name}</p>
+          <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">{resolveName(item, lang)}</p>
           <button
             type="button"
             onClick={() => onSelectField?.(item.id, 'price')}
