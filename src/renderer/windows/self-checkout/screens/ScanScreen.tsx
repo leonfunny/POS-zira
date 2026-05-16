@@ -1,6 +1,10 @@
-// Scan + cart screen. Scanner remains the primary path; category
-// browsing is a fallback for products without a readable barcode.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+// Scan + cart screen. Scanner is the ONLY path to add a product on the
+// customer-facing kiosk — the category browser was intentionally dropped
+// for chesaigon MVP so the customer terminal has a single, unambiguous
+// affordance. "No-barcode" cases route through staff assistance instead
+// (see [[2026-05-12-zira-auth-login-and-self-checkout-closeout]] and
+// [[2026-05-15-zira-catalog-i18n-phase1-and-scan-only]]).
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
   Hand,
   Minus,
@@ -10,44 +14,19 @@ import {
   ShoppingBag,
   ShoppingCart,
   Trash2,
-  X,
 } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import { ScCartItem, formatPLN } from '../useScCart';
-
-interface ScCategory {
-  id: string;
-  name: string;
-  icon?: string | null;
-  color?: string | null;
-}
-
-interface BrowseProduct {
-  id: string;
-  template_id?: string | null;
-  name: string;
-  sku?: string | null;
-  barcode?: string | null;
-  retail_price?: number;
-  price?: number;
-  price_gross?: number;
-  vat_rate?: number;
-  image_url?: string | null;
-  thumbnail_url?: string | null;
-  in_stock?: number;
-  available_qty?: number;
-}
+import { resolveName } from '../../../../shared/catalog-names';
 
 interface ScanScreenProps {
   lang: ScLanguage;
   cartItems: ScCartItem[];
   totalGrosze: number;
-  categories: ScCategory[];
   onScan: (ean: string) => Promise<unknown> | unknown;
   scanQuantity: number;
   onScanQuantityChange: (quantity: number) => void;
-  onProductSelect: (product: BrowseProduct) => void;
   onIncrement: (variantId: string) => void;
   onDecrement: (variantId: string) => void;
   onRemove: (variantId: string) => void;
@@ -65,11 +44,9 @@ export default function ScanScreen({
   lang,
   cartItems,
   totalGrosze,
-  categories,
   onScan,
   scanQuantity,
   onScanQuantityChange,
-  onProductSelect,
   onIncrement,
   onDecrement,
   onRemove,
@@ -83,9 +60,6 @@ export default function ScanScreen({
   toast,
 }: ScanScreenProps) {
   const t = getScStrings(lang);
-  const [categoryOpen, setCategoryOpen] = useState<ScCategory | null>(null);
-  const [categoryProducts, setCategoryProducts] = useState<BrowseProduct[]>([]);
-  const [categoryLoading, setCategoryLoading] = useState(false);
   const scannerInputRef = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef<string>('');
   const scannerLastKey = useRef<number>(0);
@@ -98,7 +72,6 @@ export default function ScanScreen({
       const now = Date.now();
       if (lastScanRef.current?.code === code && now - lastScanRef.current.at < 600) return;
       lastScanRef.current = { code, at: now };
-      setCategoryOpen(null);
       void onScan(code);
     },
     [onScan],
@@ -160,20 +133,6 @@ export default function ScanScreen({
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [handleScannedCode]);
-
-  const openCategory = useCallback(async (category: ScCategory) => {
-    setCategoryOpen(category);
-    setCategoryProducts([]);
-    setCategoryLoading(true);
-    try {
-      const products = await window.electronAPI?.pos?.products?.getByCategory?.(category.id);
-      if (Array.isArray(products)) setCategoryProducts(products.slice(0, 30));
-    } catch {
-      setCategoryProducts([]);
-    } finally {
-      setCategoryLoading(false);
-    }
-  }, []);
 
   const productCount = cartItems.reduce((sum, item) => sum + (item.isBagFee ? 0 : item.quantity), 0);
 
@@ -284,35 +243,6 @@ export default function ScanScreen({
               </div>
             )}
           </div>
-
-          <div className="sc-surface-flat sc-category-panel p-4">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-black text-[var(--sc-ink)]">
-                {t.popularCategories}
-              </h2>
-              <span className="text-sm font-semibold text-[var(--sc-muted)]">
-                {t.scanAgain}
-              </span>
-            </div>
-            {categories.length > 0 ? (
-              <div className="grid grid-cols-4 gap-3">
-                {categories.slice(0, 8).map((category) => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() => openCategory(category)}
-                    className="sc-secondary-action sc-category-button sc-focusable flex min-h-[64px] items-center justify-center px-3 text-center text-base leading-tight"
-                  >
-                    {category.name}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-2xl bg-[var(--sc-surface-muted)] px-5 py-6 text-lg font-semibold text-[var(--sc-muted)]">
-                {t.noCategories}
-              </div>
-            )}
-          </div>
         </section>
 
         <aside className="sc-surface sc-cart-panel flex min-h-0 flex-col overflow-hidden">
@@ -348,7 +278,7 @@ export default function ScanScreen({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="text-lg font-black leading-snug text-[var(--sc-ink)]">
-                          {item.name}
+                          {resolveName(item, lang)}
                         </div>
                         <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
                           {formatPLN(item.price)}
@@ -452,102 +382,6 @@ export default function ScanScreen({
           </div>
         </aside>
       </main>
-
-      {categoryOpen && (
-        <CategoryBrowser
-          title={categoryOpen.name}
-          t={t}
-          products={categoryProducts}
-          loading={categoryLoading}
-          onClose={() => setCategoryOpen(null)}
-          onSelect={(product) => {
-            onProductSelect(product);
-            setCategoryOpen(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-interface CategoryBrowserProps {
-  title: string;
-  t: ReturnType<typeof getScStrings>;
-  products: BrowseProduct[];
-  loading: boolean;
-  onClose: () => void;
-  onSelect: (product: BrowseProduct) => void;
-}
-
-function CategoryBrowser({
-  title,
-  t,
-  products,
-  loading,
-  onClose,
-  onSelect,
-}: CategoryBrowserProps) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-8">
-      <section className="sc-surface flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-[var(--sc-border)] px-6 py-5">
-          <div>
-            <div className="text-sm font-bold uppercase tracking-[0.12em] text-[var(--sc-muted)]">
-              {t.productsInCategory}
-            </div>
-            <h2 className="mt-1 text-3xl font-black text-[var(--sc-ink)]">
-              {title}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="sc-focusable flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white hover:bg-[var(--sc-surface-muted)]"
-            aria-label={t.close}
-          >
-            <X size={26} />
-          </button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          {loading ? (
-            <div className="flex min-h-[320px] items-center justify-center text-2xl font-black text-[var(--sc-muted)]">
-              ...
-            </div>
-          ) : products.length === 0 ? (
-            <div className="flex min-h-[320px] items-center justify-center text-2xl font-black text-[var(--sc-muted)]">
-              {t.emptyCart}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4">
-              {products.map((product) => {
-                const price = product.retail_price ?? product.price ?? product.price_gross ?? 0;
-                return (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => onSelect(product)}
-                    className="sc-focusable min-h-[150px] rounded-2xl border border-[var(--sc-border)] bg-white p-4 text-left hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)]"
-                  >
-                    <div className="line-clamp-2 text-xl font-black leading-tight text-[var(--sc-ink)]">
-                      {product.name}
-                    </div>
-                    <div className="mt-3 text-sm font-semibold text-[var(--sc-muted)]">
-                      {product.sku || product.barcode || ''}
-                    </div>
-                    <div className="mt-5 flex items-end justify-between gap-3">
-                      <span className="sc-tabular text-2xl font-black text-[var(--sc-ink)]">
-                        {formatPLN(Math.round(Number(price) || 0))}
-                      </span>
-                      <span className="rounded-full bg-[var(--sc-primary)] px-4 py-2 text-sm font-black text-white">
-                        {t.addProduct}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

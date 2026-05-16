@@ -6,6 +6,7 @@
 // and order-sync IPC paths.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScLanguage, getScStrings } from './i18n';
+import { resolveName } from '../../../shared/catalog-names';
 import {
   SelfCheckoutMode,
   resolveSelfCheckoutRuntime,
@@ -35,14 +36,9 @@ interface ProductLookupResult {
   thumbnail_url?: string | null;
   in_stock?: number;
   available_qty?: number;
-}
-
-interface CategoryLookupResult {
-  id: string;
-  name: string;
-  icon?: string | null;
-  color?: string | null;
-  sort_order?: number;
+  /** JSON-encoded `{lang: name}` from the SQLite mirror. Display only;
+   *  receipt/fiscal payloads always use canonical `name`. */
+  name_translations?: string | null;
 }
 
 declare global {
@@ -156,7 +152,6 @@ export default function SelfCheckoutApp() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [kioskUserId, setKioskUserId] = useState<string | null>(null);
   const [fakePaymentEnabled, setFakePaymentEnabled] = useState(false);
-  const [categories, setCategories] = useState<CategoryLookupResult[]>([]);
   const [scanQuantity, setScanQuantity] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
@@ -241,23 +236,6 @@ export default function SelfCheckoutApp() {
       cancelled = true;
     };
   }, [goTo]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const list = await window.electronAPI?.pos?.categories?.getAll?.();
-        if (!cancelled && Array.isArray(list)) {
-          setCategories(list.slice(0, 8));
-        }
-      } catch {
-        /* Category fallback is optional; scanner remains primary. */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI?.pos?.payment?.onElavonStatus?.((data: any) => {
@@ -356,16 +334,20 @@ export default function SelfCheckoutApp() {
   const addProductToCart = useCallback(
     (product: ProductLookupResult, fallbackEan = '', requestedQuantity = scanQuantity): boolean => {
       const quantity = normalizeScanQuantity(requestedQuantity);
+      // Toasts and out-of-stock messages use the customer-facing display name;
+      // cart row stores canonical `name` + raw translations so receipts stay
+      // canonical and live language switches re-render the cart correctly.
+      const displayName = resolveName(product, lang);
       const stock = getProductStock(product);
       if (typeof stock === 'number' && stock <= 0) {
-        showToast('error', formatScMessage(t.productOutOfStock, { name: product.name }));
+        showToast('error', formatScMessage(t.productOutOfStock, { name: displayName }));
         return false;
       }
       if (typeof stock === 'number' && stock < quantity) {
         showToast(
           'error',
           formatScMessage(t.productInsufficientStock, {
-            name: product.name,
+            name: displayName,
             stock,
           }),
         );
@@ -374,7 +356,7 @@ export default function SelfCheckoutApp() {
 
       const price = getProductPriceGrosze(product);
       if (price <= 0) {
-        showToast('error', formatScMessage(t.productNoPrice, { name: product.name }));
+        showToast('error', formatScMessage(t.productNoPrice, { name: displayName }));
         return false;
       }
 
@@ -387,12 +369,13 @@ export default function SelfCheckoutApp() {
         price,
         vatRate: product.vat_rate,
         imageUrl: product.thumbnail_url || product.image_url || undefined,
+        name_translations: product.name_translations ?? null,
       }, quantity);
-      showToast('ok', quantity > 1 ? `+ ${quantity} x ${product.name}` : `+ ${product.name}`);
+      showToast('ok', quantity > 1 ? `+ ${quantity} x ${displayName}` : `+ ${displayName}`);
       if (quantity > 1) setScanQuantity(1);
       return true;
     },
-    [cart, scanQuantity, showToast, t],
+    [cart, lang, scanQuantity, showToast, t],
   );
 
   const handleScan = useCallback(
@@ -609,8 +592,6 @@ export default function SelfCheckoutApp() {
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}
           onLangChange={handleLangChange}
-          categories={categories}
-          onProductSelect={(product) => addProductToCart(product, '', scanQuantity)}
           toast={toast}
         />
         {abandonOpen && (
