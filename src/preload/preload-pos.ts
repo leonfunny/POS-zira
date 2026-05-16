@@ -84,6 +84,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('pos:order-sync-failed', listener);
         return () => ipcRenderer.removeListener('pos:order-sync-failed', listener);
       },
+      onDraftProductsSynced: (callback: () => void) => {
+        const listener = () => callback();
+        ipcRenderer.on('pos:draft-products-synced', listener);
+        return () => ipcRenderer.removeListener('pos:draft-products-synced', listener);
+      },
+    },
+    draftProducts: {
+      getAll: () => ipcRenderer.invoke('pos:draft-products:getAll'),
+      getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
+      getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
+      getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
     },
     // Mode-specific: Tables (Restaurant)
     tables: {

@@ -29,6 +29,8 @@ import {
 import { ShiftController } from '../pos/shift-controller';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
+import { draftProductRepo } from '../database/repos/draft-product-repo';
+import { draftProductSync } from '../sync/draft-product-sync';
 import { orderRepo } from '../database/repos/order-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
@@ -500,6 +502,12 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:searchByCode', (_e, query: string) => productRepo.searchByCode(query));
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
+
+    // Draft products (server-mirrored, see DraftProductSync)
+    ipcMain.handle('pos:draft-products:getAll', () => draftProductRepo.getAll());
+    ipcMain.handle('pos:draft-products:getByStatus', (_e, status: string) => draftProductRepo.getByStatus(status));
+    ipcMain.handle('pos:draft-products:getByBarcode', (_e, barcode: string) => draftProductRepo.getByBarcode(barcode));
+    ipcMain.handle('pos:draft-products:getById', (_e, id: string) => draftProductRepo.getById(id));
 
     // Orders
     ipcMain.handle('pos:orders:create', (_e, order, items) => {
@@ -1230,6 +1238,28 @@ export class PosModule extends BaseModule {
           type: 'display/setMode',
           payload: { ...currentDisplay, paymentStatus: data.status },
         });
+      }
+    });
+
+    socket.on('draft-products:updated', (data: { draft: any }) => {
+      if (!data?.draft) return;
+      try {
+        draftProductSync.applyUpdate(data.draft);
+        const posWindow = this.windowManager?.getWindow('pos');
+        if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:draft-products-synced');
+      } catch (err: any) {
+        logger.warn(`[PosModule] Failed to apply draft update: ${err?.message ?? err}`);
+      }
+    });
+
+    socket.on('draft-products:deleted', (data: { id: string }) => {
+      if (!data?.id) return;
+      try {
+        draftProductSync.applyDelete(data.id);
+        const posWindow = this.windowManager?.getWindow('pos');
+        if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:draft-products-synced');
+      } catch (err: any) {
+        logger.warn(`[PosModule] Failed to apply draft delete: ${err?.message ?? err}`);
       }
     });
   }

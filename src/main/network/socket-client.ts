@@ -461,6 +461,17 @@ export default class SocketClient extends EventEmitter {
       this.emit('stock:updated', data);
     });
 
+    // Master Catalog — draft products realtime mirror
+    this.socket.on('draft-products:updated', (data: { draft: any }) => {
+      logger.debug(`Draft product updated: ${data?.draft?.id ?? 'unknown'}`);
+      this.emit('draft-products:updated', data);
+    });
+
+    this.socket.on('draft-products:deleted', (data: { id: string }) => {
+      logger.debug(`Draft product deleted: ${data?.id ?? 'unknown'}`);
+      this.emit('draft-products:deleted', data);
+    });
+
     // ==========================================
     // Elavon Payment Terminal Events
     // ==========================================

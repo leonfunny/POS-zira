@@ -1578,6 +1578,56 @@ export class ApiClient {
 
     return response.json();
   }
+
+  /**
+   * Master Catalog — draft products mirror.
+   * GET /api/v1/master-catalog/draft-products[?since=ISO]
+   * Server-side spec: drafts updated since `since`, plus `deletedIds`,
+   * plus a `nextSince` cursor to persist as the next poll's `since`.
+   */
+  async getDraftProducts(
+    token: string,
+    since?: string,
+  ): Promise<{ drafts: any[]; deletedIds: string[]; nextSince?: string }> {
+    const params = new URLSearchParams({ limit: '500' });
+    if (since) params.set('since', since);
+
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+
+    let allDrafts: any[] = [];
+    let allDeletedIds: string[] = [];
+    let lastNextSince: string | undefined;
+    let page = 1;
+
+    while (true) {
+      params.set('page', String(page));
+      const url = `${this.baseUrl}/api/v1/master-catalog/draft-products?${params}`;
+      const response = await fetchWithTimeout(url, { headers });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${response.status}`);
+      }
+
+      const raw = await response.json();
+      const pageDrafts: any[] = raw.drafts ?? raw.items ?? [];
+      allDrafts = allDrafts.concat(pageDrafts);
+      if (Array.isArray(raw.deletedIds)) allDeletedIds = allDeletedIds.concat(raw.deletedIds);
+      if (raw.nextSince) lastNextSince = raw.nextSince;
+
+      if (pageDrafts.length < 500 || raw.hasMore === false) break;
+      page++;
+      if (page > 50) break;
+    }
+
+    logger.info(`[ApiClient] Fetched ${allDrafts.length} draft product(s) across ${page} page(s)`);
+    return { drafts: allDrafts, deletedIds: allDeletedIds, nextSince: lastNextSince };
+  }
 }
 
 export const printerMappingForTests = {

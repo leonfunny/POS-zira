@@ -1064,4 +1064,30 @@ export const migrations: Migration[] = [
       ALTER TABLE product_variants ADD COLUMN name_translations TEXT;
     `,
   },
+  {
+    version: 29,
+    name: 'draft_products',
+    up: `
+      CREATE TABLE IF NOT EXISTS draft_products (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sku TEXT,
+        barcode TEXT,
+        retail_price INTEGER NOT NULL DEFAULT 0,
+        category_id TEXT,
+        image_url TEXT,
+        in_stock INTEGER DEFAULT 0,
+        vat_rate INTEGER DEFAULT 23,
+        status TEXT NOT NULL DEFAULT 'DRAFT',
+        created_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_dp_barcode ON draft_products(barcode);
+      CREATE INDEX IF NOT EXISTS idx_dp_status ON draft_products(status);
+      CREATE INDEX IF NOT EXISTS idx_dp_category ON draft_products(category_id);
+      CREATE INDEX IF NOT EXISTS idx_dp_updated_at ON draft_products(updated_at);
+    `,
+  },
 ];

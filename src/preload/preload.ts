@@ -609,6 +609,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => ipcRenderer.removeListener('pos:sync-entry', listener);
       },
     },
+    draftProducts: {
+      getAll: () => ipcRenderer.invoke('pos:draft-products:getAll'),
+      getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
+      getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
+      getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
+    },
     tables: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ALL),
       getActive: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ACTIVE),

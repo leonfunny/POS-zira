@@ -612,11 +612,18 @@ interface ElectronAPI {
       onStockUpdated: (callback: (data: any) => void) => () => void;
       onOrderSynced: (callback: (data: { orderId: string; backendId: string }) => void) => () => void;
       onOrderSyncFailed: (callback: (data: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => () => void;
+      onDraftProductsSynced: (callback: () => void) => () => void;
       // Path B: Sync log conflicts
       getConflicts: () => Promise<any[]>;
       resolveConflict: (conflictId: number, resolution: string, adjustments?: any) => Promise<{ success: boolean; error?: string }>;
       getSyncMode: () => Promise<string>;
       onSyncEntry: (callback: (data: any) => void) => () => void;
+    };
+    draftProducts: {
+      getAll: () => Promise<any[]>;
+      getByStatus: (status: string) => Promise<any[]>;
+      getByBarcode: (barcode: string) => Promise<any | null>;
+      getById: (id: string) => Promise<any | null>;
     };
     tables: {
       getAll: () => Promise<PosTable[]>;

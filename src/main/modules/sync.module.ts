@@ -12,6 +12,7 @@ import type { EventBus } from '../core/event-bus';
 import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { ProductSync } from '../sync/product-sync';
+import { draftProductSync } from '../sync/draft-product-sync';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
 import { StaffSync } from '../sync/staff-sync';
@@ -410,6 +411,13 @@ export class SyncModule extends BaseModule {
         try { await this.staffSync?.pullStaff(); }
         catch (err) { logger.debug('[SyncModule] Staff pull failed:', err); }
 
+        // Master Catalog draft products mirror — deltaSync auto-falls-back
+        // to fullSync on first run (no cursor stored yet).
+        try {
+          await draftProductSync.deltaSync();
+          notifyPosRenderers(this.container, 'pos:draft-products-synced');
+        } catch (err: any) { logger.warn(`[SyncModule] Draft product sync failed: ${err?.message ?? err}`); }
+
         // ── Path B Pull: supplements ProductSync with real-time changes ──
         if (usePathBPull) {
           try {
@@ -459,6 +467,10 @@ export class SyncModule extends BaseModule {
         notifyPosRenderers(this.container, 'pos:products-synced');
         logger.info('[SyncModule] Post-login product sync completed');
       } catch (err) { logger.warn(`[SyncModule] Post-login product sync failed: ${err}`); }
+      try {
+        await draftProductSync.deltaSync();
+        notifyPosRenderers(this.container, 'pos:draft-products-synced');
+      } catch (err) { logger.warn(`[SyncModule] Post-login draft sync failed: ${err}`); }
     });
 
     bus.on('socket:disconnected', () => {
