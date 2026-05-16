@@ -9,6 +9,7 @@ import Chat from './components/Chat';
 import BooksySyncTab from './components/BooksySync';
 import AuthScreen from './components/AuthScreen';
 import InvoicingTab from './components/invoicing/InvoicingTab';
+import OrdersTab from './components/OrdersTab';
 import SecurityTab from './components/security/SecurityTab';
 import CheckinWizard from './components/checkin/CheckinWizard';
 import BookingsTodayScreen from './components/booking/BookingsTodayScreen';
@@ -30,6 +31,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   status: true,      // Always enabled
   booksy: true,
   invoicing: true,   // Free feature
+  orders: true,      // Order history — free
   settings: true,    // Always enabled
   debug: true,
   pos: true,         // Always show POS tab
@@ -53,6 +55,7 @@ const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   checkin: 'checkin',
   bookings: 'bookings',
   invoicing: 'invoicing',
+  orders: 'orders',
   security: 'security',
   settings: 'settings',
   debug: 'debug',
@@ -457,6 +460,9 @@ export default function App() {
               {activeTab === 'bookings' && isFeatureEnabled('bookings') && <BookingsTodayScreen />}
               {activeTab === 'invoicing' && isFeatureEnabled('invoicing') && (
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
+              )}
+              {activeTab === 'orders' && isFeatureEnabled('orders') && (
+                <OrdersTab language={(config?.language as Language) || 'en'} />
               )}
               {activeTab === 'security' && isFeatureEnabled('security') && (
                 <SecurityTab config={config} />

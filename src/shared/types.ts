@@ -2104,6 +2104,7 @@ export type FeatureKey =
   | 'invoicing'   // Invoicing tab
   | 'settings'    // Settings tab (thường luôn bật)
   | 'debug'       // Debug tab
+  | 'orders'      // Order history tab
   | 'pos'         // POS window
   | 'remote'      // Remote control
   | 'telegram'    // Telegram bot
@@ -2114,7 +2115,7 @@ export type FeatureKey =
   | 'selfCheckout'; // Self-checkout kiosk window
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -2146,6 +2147,7 @@ export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   invoicing: true,   // Free feature
   settings: true,    // Always enabled
   debug: false,
+  orders: true,      // Order history — free, tied to POS sales
   pos: false,
   selfCheckout: false,
   remote: false,
