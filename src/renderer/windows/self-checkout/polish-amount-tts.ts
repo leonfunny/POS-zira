@@ -1,7 +1,7 @@
 // Polish currency-amount text-to-speech for the self-checkout kiosk.
 //
 // Plays a sequence of pre-rendered MP3 clips (one per number 0-999 + 3 thousand
-// forms + 6 currency unit forms + 3 framing clips = 1012 clips total). When a
+// forms + 6 currency unit forms + 4 framing clips = 1013 clips total). When a
 // clip is missing or fails to load, falls back to the browser's Web Speech API
 // so dev environments without rendered clips still work.
 //
@@ -79,12 +79,9 @@ export function buildAnnouncementSequence({ method, totalGrosze }: AnnouncementO
   const gr = Math.floor(Math.max(0, totalGrosze)) % 100;
 
   const clips: string[] = [];
-  // BLIK has no dedicated clip in the Azure-rendered set; fall back to the
-  // CARD prefix so the announcement still plays the right cadence. The
-  // visible amount + phone number on screen carry the BLIK semantics.
   const prefix =
     method === 'CARD' ? 'prefix_card.mp3'
-    : method === 'BLIK' ? 'prefix_card.mp3'
+    : method === 'BLIK' ? 'prefix_blik.mp3'
     : 'prefix_cash.mp3';
   clips.push(prefix);
   clips.push('do_zaplaty.mp3');
@@ -264,6 +261,7 @@ export function warmUpClipCache(): void {
   if (typeof window === 'undefined') return;
   const eager = [
     'prefix_card.mp3',
+    'prefix_blik.mp3',
     'prefix_cash.mp3',
     'do_zaplaty.mp3',
     'zloty_1.mp3',

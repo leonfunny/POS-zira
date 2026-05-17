@@ -225,6 +225,9 @@ describe('Self-checkout kiosk smoke', () => {
     log('clip count', sequence.length);
     expect(sequence[0]).toMatch(/^prefix_/);
     expect(sequence[1]).toBe('do_zaplaty.mp3');
+    expect(buildAnnouncementSequence({
+      method: 'BLIK', totalGrosze: sale.order.total,
+    })[0]).toBe('prefix_blik.mp3');
     pass('TTS announcement clips would play in correct order');
 
     // ── 8. Fire pos:orders:create + verify stock decrements ─────────────
