@@ -167,6 +167,9 @@ async function freshModule() {
   // backoff tests doesn't trigger unexpected periodic ticks. Tests that
   // exercise the periodic loop start it back up explicitly.
   (m as any).stopPeriodicProductSync();
+  // init() now also starts the draft-product backstop timer. Stop that too
+  // so these product-sync unit tests do not inherit an unrelated 60s timer.
+  (m as any).stopPeriodicDraftProductSync();
   return m as any;
 }
 
