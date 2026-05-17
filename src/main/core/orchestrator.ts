@@ -90,6 +90,7 @@ export class AgentOrchestrator implements TrayManagerHost {
   private modules: AppModule[] = [];
 
   private mainWindow: BrowserWindow | null = null;
+  private mainWindowFullScreen = false;
   private tray: TrayManager | null = null;
   private socket: SocketClient | null = null;
   private isQuitting = false;
@@ -394,11 +395,22 @@ export class AgentOrchestrator implements TrayManagerHost {
       logger.info('[Window] Page loaded successfully');
     });
 
+    this.mainWindow.on('enter-full-screen', () => {
+      this.mainWindowFullScreen = true;
+    });
+
+    this.mainWindow.on('leave-full-screen', () => {
+      this.mainWindowFullScreen = false;
+    });
+
     this.mainWindow.webContents.on('before-input-event', (event, input) => {
       const win = this.mainWindow;
-      if (input.key === 'F11' && win && !win.isKiosk()) {
+      const isRepeatedKeyPress = input.modifiers?.includes('isautorepeat');
+      if (input.key === 'F11' && input.type === 'keyDown' && !isRepeatedKeyPress && win && !win.isKiosk()) {
         event.preventDefault();
-        win.setFullScreen(!win.isFullScreen());
+        const nextFullScreen = !this.mainWindowFullScreen;
+        this.mainWindowFullScreen = nextFullScreen;
+        win.setFullScreen(nextFullScreen);
         return;
       }
 
