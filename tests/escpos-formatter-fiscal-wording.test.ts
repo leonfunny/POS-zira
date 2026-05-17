@@ -64,26 +64,36 @@ function bufferToString(buf: Buffer): string {
 
 describe('EscPosFormatter — fiscal-wording compliance', () => {
   describe('G6 / fiscal-wording: non-fiscal thermal MUST not say FISKALNY', () => {
-    it('formatReceipt prints "PARAGON NIEFISKALNY", never "PARAGON FISKALNY"', () => {
+    // The thermal title is "ZAMOWIENIE" ("order" in Polish). Avoiding the
+    // word PARAGON entirely also avoids the FISKALNY/NIEFISKALNY framing
+    // — an order ticket is unambiguously not a fiscal receipt, so a ZUS/US
+    // auditor cannot confuse it with the fiscal printout from the POSNET.
+    // The compliance contract is: thermal output never contains the
+    // standalone token FISKALNY (NIEFISKALNY is fine as a suffix because
+    // the "NIE" negation is part of the same word).
+
+    function expectThermalFiscalSafe(text: string) {
+      // Negative lookbehind: FISKALNY must always be preceded by "NIE".
+      expect(text).not.toMatch(/(?<!NIE)FISKALNY/);
+    }
+
+    it('formatReceipt prints "ZAMOWIENIE" and never the bare token FISKALNY', () => {
       const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
       const buf = fmt.formatReceipt(buildReceiptData());
       const out = bufferToString(buf);
-      expect(out).toContain('PARAGON NIEFISKALNY');
-      // Standalone-word check: must not match "PARAGON FISKALNY" with
-      // a space between the two words. NIEFISKALNY is allowed because
-      // the test above asserts it explicitly.
-      expect(out).not.toMatch(/PARAGON FISKALNY/);
+      expect(out).toContain('ZAMOWIENIE');
+      expectThermalFiscalSafe(out);
     });
 
-    it('formatReceiptPlainLines emits "PARAGON NIEFISKALNY", never "PARAGON FISKALNY"', () => {
+    it('formatReceiptPlainLines emits "ZAMOWIENIE" and never the bare token FISKALNY', () => {
       const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
       const lines = fmt.formatReceiptPlainLines(buildReceiptData());
       const flat = lines.map((l) => l.text).join('\n');
-      expect(flat).toContain('PARAGON NIEFISKALNY');
-      expect(flat).not.toMatch(/PARAGON FISKALNY/);
+      expect(flat).toContain('ZAMOWIENIE');
+      expectThermalFiscalSafe(flat);
     });
 
-    it('refund receipt also stays NIEFISKALNY', () => {
+    it('refund receipt also stays fiscal-safe', () => {
       const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
       const buf = fmt.formatReceipt(
         buildReceiptData({
@@ -94,8 +104,8 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
         }),
       );
       const out = bufferToString(buf);
-      expect(out).toContain('PARAGON NIEFISKALNY');
-      expect(out).not.toMatch(/PARAGON FISKALNY/);
+      expect(out).toContain('ZAMOWIENIE');
+      expectThermalFiscalSafe(out);
     });
   });
 

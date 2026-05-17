@@ -166,7 +166,7 @@ export class EscPosFormatter {
     if (data.isRefund) {
       parts.push(ESCPOS.ALIGN_CENTER);
       parts.push(ESCPOS.BOLD_ON);
-      parts.push(this.text('*** ZWROT / REFUND ***'));
+      parts.push(this.text('*** ZWROT ***'));
       parts.push(ESCPOS.BOLD_OFF);
       if (data.originalOrderNumber) {
         parts.push(this.text(this.formatOriginalRef(data.originalOrderNumber, data.originalDate)));
@@ -179,24 +179,23 @@ export class EscPosFormatter {
     if (data.isReprint) {
       parts.push(ESCPOS.ALIGN_CENTER);
       parts.push(ESCPOS.BOLD_ON);
-      parts.push(this.text('*** KOPIA / REPRINT ***'));
+      parts.push(this.text('*** KOPIA ***'));
       parts.push(ESCPOS.BOLD_OFF);
       parts.push(this.text(''));
     }
 
-    // Seller header (centered)
+    // Seller header (centered) — only address + NIP. Shop name and the
+    // legal seller name were dropped per operator preference; the
+    // address + NIP are still useful when the printout reaches an auditor
+    // or a B2B customer requesting a follow-up invoice.
     parts.push(ESCPOS.ALIGN_CENTER);
-    parts.push(ESCPOS.DOUBLE_SIZE_ON);
-    parts.push(this.text(data.salonName || 'Zira AI POS'));
-    parts.push(ESCPOS.NORMAL_SIZE);
-    if (data.sellerName) parts.push(this.text(data.sellerName));
     if (data.sellerAddress) parts.push(this.text(data.sellerAddress));
     if (data.sellerNip) parts.push(this.text(`NIP: ${data.sellerNip}`));
-    parts.push(this.text(''));
+    if (data.sellerAddress || data.sellerNip) parts.push(this.text(''));
 
-    // Title (centered, bold)
+    // Title (centered, bold).
     parts.push(ESCPOS.BOLD_ON);
-    parts.push(this.text('PARAGON NIEFISKALNY'));
+    parts.push(this.text('ZAMOWIENIE'));
     parts.push(ESCPOS.BOLD_OFF);
     if (data.orderNumber) parts.push(this.text(`nr: ${data.orderNumber}`));
     const origDate = data.isReprint && data.originalDate
@@ -317,7 +316,7 @@ export class EscPosFormatter {
     const price = this.formatMoney(item.unitPrice);
     const total = this.formatMoney(item.totalPrice);
     const letter = this.ptuLetter(item.vatRate);
-    const detail = `  ${qty} x ${price} = ${total}`;
+    const detail = `  ${qty} * ${price} = ${total}`;
     const padding = this.charsPerLine - detail.length - letter.length;
     parts.push(this.text(detail + ' '.repeat(Math.max(1, padding)) + letter));
 
@@ -435,7 +434,7 @@ export class EscPosFormatter {
 
     // Refund banner
     if (data.isRefund) {
-      lines.push({ text: '*** ZWROT / REFUND ***', bold: true, center: true });
+      lines.push({ text: '*** ZWROT ***', bold: true, center: true });
       if (data.originalOrderNumber) {
         lines.push({
           text: this.formatOriginalRef(data.originalOrderNumber, data.originalDate),
@@ -447,19 +446,17 @@ export class EscPosFormatter {
     }
     // Reprint banner
     if (data.isReprint) {
-      lines.push({ text: '*** KOPIA / REPRINT ***', bold: true, center: true });
+      lines.push({ text: '*** KOPIA ***', bold: true, center: true });
       lines.push({ text: '' });
     }
 
-    // Seller header
-    lines.push({ text: data.salonName || 'Zira AI POS', big: true, center: true, textSize: 'double-size' });
-    if (data.sellerName) lines.push({ text: data.sellerName, center: true });
+    // Seller header — address + NIP only (shop name + seller name dropped).
     if (data.sellerAddress) lines.push({ text: data.sellerAddress, center: true });
     if (data.sellerNip) lines.push({ text: `NIP: ${data.sellerNip}`, center: true });
-    lines.push({ text: '' });
+    if (data.sellerAddress || data.sellerNip) lines.push({ text: '' });
 
     // Title
-    lines.push({ text: 'PARAGON NIEFISKALNY', bold: true, center: true });
+    lines.push({ text: 'ZAMOWIENIE', bold: true, center: true });
     if (data.orderNumber) lines.push({ text: `nr: ${data.orderNumber}`, center: true });
     const origDate = data.isReprint && data.originalDate
       ? new Date(data.originalDate.includes('T') ? data.originalDate : data.originalDate.replace(' ', 'T') + 'Z')
@@ -475,7 +472,7 @@ export class EscPosFormatter {
       lines.push({ text: name });
       const unit = item.unit || 'szt.';
       const qty = `${item.quantity} ${unit}`;
-      const detail = `  ${qty} x ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}`;
+      const detail = `  ${qty} * ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}`;
       lines.push(lr(detail, this.ptuLetter(item.vatRate)));
     }
     lines.push({ separator: true, separatorChar: '-', text: '' });

@@ -38,18 +38,21 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     (driver as any).renderTextToRaster = renderTextToRaster;
     (driver as any).printRaw = printRaw;
 
-    await driver.printReceipt(buildReceipt({ salonName: 'Chè Sài Gòn' }));
+    // Shop name and seller name were removed from the receipt template
+    // per operator preference. Address is still rendered, so we use it to
+    // smuggle the Unicode span the test needs to trigger the raster path.
+    await driver.printReceipt(buildReceipt({ sellerAddress: 'ul. Chè Sài Gòn 1' }));
 
     expect(renderTextToRaster).toHaveBeenCalledTimes(1);
     expect(renderTextToRaster).toHaveBeenCalledWith(
-      [expect.objectContaining({ text: 'Chè Sài Gòn', big: true, center: true })],
+      [expect.objectContaining({ text: 'ul. Chè Sài Gòn 1', center: true })],
       { includeInit: false, includeFeed: false, includeCut: false },
     );
 
     const printed = printRaw.mock.calls[0][0] as Buffer;
     expect(printed).not.toEqual(raster);
     expect(printed.includes(raster)).toBe(true);
-    expect(printed.toString('utf8')).toContain('PARAGON NIEFISKALNY');
+    expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
     expect(printed.toString('utf8')).toContain('SUMA PLN');
     expect(printed.toString('utf8')).toContain('Dziekujemy za zakupy!');
   });
@@ -70,7 +73,9 @@ describe('ThermalDriver receipt hybrid raster path', () => {
 
     expect(renderTextToRaster).not.toHaveBeenCalled();
     const printed = printRaw.mock.calls[0][0] as Buffer;
-    expect(printed.toString('utf8')).toContain('CHE SAI GON');
-    expect(printed.toString('utf8')).toContain('PARAGON NIEFISKALNY');
+    // Shop / seller name dropped from the template; address + NIP still
+    // print, and the title is what we care about for this happy-path test.
+    expect(printed.toString('utf8')).toContain('ul. Marszalkowska 1');
+    expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
   });
 });
