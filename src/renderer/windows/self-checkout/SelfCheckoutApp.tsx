@@ -1,9 +1,10 @@
 // Self-checkout terminal entry point. This owns the kiosk state machine:
 // unavailable -> welcome -> shopping -> receipt -> thank-you.
 // Payment selection is an overlay on shopping; the customer should not leave
-// the cart screen just to pick card/BLIK.
-// Production checkout reuses the existing POS order, card terminal, receipt,
-// and order-sync IPC paths.
+// the cart screen just to pick card/cash.
+// Payment is currently manual: the kiosk speaks a Polish announcement so
+// staff knows the amount + method, staff collects payment physically, then
+// taps "Money received" to save the order, sync, and print the receipt.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScLanguage, getScStrings } from './i18n';
 import { resolveName } from '../../../shared/catalog-names';
@@ -13,6 +14,7 @@ import {
 } from './self-checkout-model';
 import { useScreenState } from './screen-state';
 import { type ScCartItem, useScCart } from './useScCart';
+import { buildSelfCheckoutSale } from './build-sale';
 import WelcomeScreen from './screens/WelcomeScreen';
 import ScanScreen from './screens/ScanScreen';
 import PaymentScreen, { PaymentMethod } from './screens/PaymentScreen';
@@ -50,6 +52,9 @@ declare global {
 type ToastState = { kind: 'ok' | 'error'; text: string } | null;
 
 const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
+// Show a 15s "are you still there?" warning before hard reset, per kiosk
+// research (Kiosk Marketplace, Walmart UX research). Warn at total-15s.
+const IDLE_WARN_MS = 15_000;
 
 function getProductPriceGrosze(product: ProductLookupResult): number {
   const value = product.retail_price ?? product.price ?? product.price_gross;
@@ -72,72 +77,6 @@ function formatScMessage(
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
-function calculateIncludedTax(items: ScCartItem[]): number {
-  return items.reduce((sum, item) => {
-    const rate = item.vatRate ?? 0;
-    if (rate <= 0) return sum;
-    const lineGross = item.price * item.quantity;
-    return sum + Math.round(lineGross - lineGross * 100 / (100 + rate));
-  }, 0);
-}
-
-function buildSelfCheckoutSale(
-  items: ScCartItem[],
-  orderId: string,
-  method: PaymentMethod,
-  kioskUserId: string | null,
-) {
-  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const staffName = 'Self-checkout';
-  const order = {
-    id: orderId,
-    order_number: null as string | null,
-    status: 'COMPLETED',
-    subtotal: total,
-    discount: 0,
-    tax: calculateIncludedTax(items),
-    total,
-    payment_method: method,
-    payment_amount: total,
-    change_amount: 0,
-    staff_id: kioskUserId,
-    staff_name: staffName,
-    customer_id: null,
-    customer_name: null,
-    customer_nip: null,
-    shift_id: null,
-    source: 'SELF_CHECKOUT',
-    table_id: null,
-    covers: null,
-    order_type: 'standard',
-    tip: 0,
-    mode: 'retail',
-    synced: 0,
-    backend_id: null,
-    created_at: new Date().toISOString(),
-    synced_at: null,
-    payment_tenders: null,
-  };
-
-  const orderItems = items.map((item) => ({
-    id: crypto.randomUUID(),
-    order_id: orderId,
-    variant_id: item.isBagFee ? null : item.variantId,
-    name: item.name,
-    sku: item.sku || null,
-    price: item.price,
-    quantity: item.quantity,
-    total: item.price * item.quantity,
-    vat_rate: item.vatRate ?? 23,
-    staff_id: kioskUserId,
-    staff_name: staffName,
-    notes: item.isBagFee ? 'SELF_CHECKOUT_BAG_FEE' : null,
-    course: null,
-  }));
-
-  return { order, items: orderItems };
-}
-
 export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
@@ -151,11 +90,12 @@ export default function SelfCheckoutApp() {
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [kioskUserId, setKioskUserId] = useState<string | null>(null);
-  const [fakePaymentEnabled, setFakePaymentEnabled] = useState(false);
   const [scanQuantity, setScanQuantity] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
+  const [idleWarnOpen, setIdleWarnOpen] = useState(false);
+  const [fiscalPrinting, setFiscalPrinting] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
 
@@ -192,6 +132,8 @@ export default function SelfCheckoutApp() {
     setScanQuantity(1);
     setAbandonOpen(false);
     setToast(null);
+    setIdleWarnOpen(false);
+    setFiscalPrinting(false);
     reset();
   }, [cart, reset]);
 
@@ -227,7 +169,6 @@ export default function SelfCheckoutApp() {
 
         const configuredKioskUserId = String(config?.selfCheckoutKioskUserId || '').trim();
         setKioskUserId(configuredKioskUserId || null);
-        setFakePaymentEnabled(Boolean(config?.selfCheckoutFakePaymentEnabled));
       } catch {
         /* keep safe defaults */
       }
@@ -318,18 +259,28 @@ export default function SelfCheckoutApp() {
     };
   }, []);
 
+  // Idle handling: two-phase — warn 15s before reset so a customer who
+  // looked away can confirm they're still there. Skips screens that
+  // already auto-advance or that are passive (welcome/thankyou/unavailable).
   useEffect(() => {
     if (
       screen === 'welcome'
       || screen === 'thankyou'
       || screen === 'unavailable'
-      || screen === 'receipt'
       || help
-      || paymentOpen
+      || idleWarnOpen
     ) return;
-    const timer = setTimeout(resetSession, idleTimeoutMs);
-    return () => clearTimeout(timer);
-  }, [activityAt, help, idleTimeoutMs, paymentOpen, resetSession, screen]);
+    if (screen === 'receipt' && lastReceiptPrinted) return;
+    const warnDelay = Math.max(0, idleTimeoutMs - IDLE_WARN_MS);
+    const warn = setTimeout(() => setIdleWarnOpen(true), warnDelay);
+    return () => clearTimeout(warn);
+  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, lastReceiptPrinted, screen]);
+
+  useEffect(() => {
+    if (!idleWarnOpen) return;
+    const hardReset = setTimeout(resetSession, IDLE_WARN_MS);
+    return () => clearTimeout(hardReset);
+  }, [idleWarnOpen, resetSession]);
 
   const addProductToCart = useCallback(
     (product: ProductLookupResult, fallbackEan = '', requestedQuantity = scanQuantity): boolean => {
@@ -339,11 +290,15 @@ export default function SelfCheckoutApp() {
       // canonical and live language switches re-render the cart correctly.
       const displayName = resolveName(product, lang);
       const stock = getProductStock(product);
+      const existing = cart.cart.items.find(
+        (i) => i.variantId === product.id && !i.isBagFee,
+      );
+      const alreadyInCart = existing?.quantity ?? 0;
       if (typeof stock === 'number' && stock <= 0) {
         showToast('error', formatScMessage(t.productOutOfStock, { name: displayName }));
         return false;
       }
-      if (typeof stock === 'number' && stock < quantity) {
+      if (typeof stock === 'number' && alreadyInCart + quantity > stock) {
         showToast(
           'error',
           formatScMessage(t.productInsufficientStock, {
@@ -369,6 +324,7 @@ export default function SelfCheckoutApp() {
         price,
         vatRate: product.vat_rate,
         imageUrl: product.thumbnail_url || product.image_url || undefined,
+        stockAtAdd: stock,
         name_translations: product.name_translations ?? null,
       }, quantity);
       showToast('ok', quantity > 1 ? `+ ${quantity} x ${displayName}` : `+ ${displayName}`);
@@ -430,12 +386,12 @@ export default function SelfCheckoutApp() {
           setHelp({ id: res.id, reason, acknowledged: !!res.acknowledgedAt });
           return;
         }
-        showToast('error', 'Staff request failed');
+        showToast('error', t.staffRequestFailed);
       } catch {
-        showToast('error', 'Connection error - staff not notified');
+        showToast('error', t.staffConnectionError);
       }
     },
-    [cart.cart.totalGrosze, showToast],
+    [cart.cart.totalGrosze, showToast, t],
   );
 
   useEffect(() => {
@@ -452,7 +408,7 @@ export default function SelfCheckoutApp() {
         if (!status) return;
         if (status.resolvedAt) {
           setHelp(null);
-          showToast('ok', 'Unlocked by staff');
+          showToast('ok', t.staffUnlocked);
           return;
         }
         if (status.acknowledgedAt && !help.acknowledged) {
@@ -466,10 +422,10 @@ export default function SelfCheckoutApp() {
       if (helpPollTimer.current) clearInterval(helpPollTimer.current);
       helpPollTimer.current = null;
     };
-  }, [help, showToast]);
+  }, [help, showToast, t]);
 
   const handlePaymentSuccess = useCallback(
-    async (method: PaymentMethod) => {
+    async (method: PaymentMethod, customerNip: string | null) => {
       setCheckoutError(null);
       setPaymentStatus(null);
 
@@ -487,9 +443,6 @@ export default function SelfCheckoutApp() {
         throw new Error(message);
       };
 
-      if (method === 'BLIK') {
-        fail(t.blikProductionUnsupported);
-      }
       if (cart.cart.items.length === 0 || cart.cart.totalGrosze <= 0) {
         fail(t.emptyCart);
       }
@@ -498,25 +451,30 @@ export default function SelfCheckoutApp() {
       }
 
       const orderId = crypto.randomUUID();
-      if (fakePaymentEnabled) {
-        setPaymentStatus(t.fakePaymentActive);
-      } else {
-        const paymentResult = await window.electronAPI?.pos?.payment?.cardPayment?.({
-          amount: cart.cart.totalGrosze,
-          orderId,
-        });
-        if (!paymentResult?.success) {
-          fail(paymentResult?.error || 'Payment terminal failed');
-        }
-      }
 
-      const sale = buildSelfCheckoutSale(cart.cart.items, orderId, method, kioskUserId);
+      const sale = buildSelfCheckoutSale({
+        items: cart.cart.items,
+        orderId,
+        method,
+        kioskUserId,
+        customerNip,
+      });
       const orderResult = await window.electronAPI?.pos?.orders?.create?.(sale.order, sale.items);
       if (!orderResult?.success) {
         fail(orderResult?.error || 'Failed to save order');
       }
 
       window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
+
+      // Show "Drukowanie paragonu fiskalnego..." while the printer is
+      // working — Polish customers expect to see this state before walking
+      // away. The fiscal print is mandatory so we don't race to the receipt
+      // screen with a stale "done" flag.
+      setLastPaymentMethod(method);
+      setPaymentOpen(false);
+      setFiscalPrinting(true);
+      setLastReceiptPrinted(true);
+      goTo('receipt');
 
       const printResult = await window.electronAPI?.pos?.payment?.printReceipt?.(orderId).catch(
         () => ({ success: false, receiptPrinted: false }),
@@ -525,14 +483,22 @@ export default function SelfCheckoutApp() {
       if (!receiptPrinted) {
         showToast('error', t.receiptPrintFailed);
       }
-
       setLastReceiptPrinted(receiptPrinted);
-      setLastPaymentMethod(method);
-      setPaymentOpen(false);
-      goTo('receipt');
+      setFiscalPrinting(false);
     },
-    [cart.cart.items, cart.cart.totalGrosze, fakePaymentEnabled, goTo, kioskUserId, mode, showToast, t],
+    [cart.cart.items, cart.cart.totalGrosze, goTo, kioskUserId, mode, showToast, t],
   );
+
+  const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);
+  const cancelHelp = useCallback(async () => {
+    if (!help) return;
+    try {
+      await window.electronAPI?.selfCheckout?.cancelHelp?.(help.id);
+    } catch {
+      /* ignore — local cleanup proceeds */
+    }
+    setHelp(null);
+  }, [help]);
 
   if (help) {
     return (
@@ -541,6 +507,9 @@ export default function SelfCheckoutApp() {
         acknowledged={help.acknowledged}
         reason={help.reason}
         onLangChange={handleLangChange}
+        // Let the customer back out after staff has acknowledged — they may
+        // have realized they don't actually need help, e.g. accidental tap.
+        onCancel={help.acknowledged ? cancelHelp : undefined}
       />
     );
   }
@@ -551,6 +520,7 @@ export default function SelfCheckoutApp() {
         lang={lang}
         reasons={unavailableReasons}
         onLangChange={handleLangChange}
+        onCallStaff={callStaffOther}
       />
     );
   }
@@ -562,6 +532,7 @@ export default function SelfCheckoutApp() {
         onLangChange={handleLangChange}
         onStart={() => goTo('shopping')}
         onScanStart={handleWelcomeScan}
+        onCallStaff={callStaffOther}
       />
     );
   }
@@ -578,7 +549,22 @@ export default function SelfCheckoutApp() {
           onScanQuantityChange={(quantity) => setScanQuantity(normalizeScanQuantity(quantity))}
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
-            if (item) cart.setQuantity(id, item.quantity + 1);
+            if (!item) return;
+            if (
+              !item.isBagFee
+              && typeof item.stockAtAdd === 'number'
+              && item.quantity + 1 > item.stockAtAdd
+            ) {
+              showToast(
+                'error',
+                formatScMessage(t.productInsufficientStock, {
+                  name: resolveName(item, lang),
+                  stock: item.stockAtAdd,
+                }),
+              );
+              return;
+            }
+            cart.setQuantity(id, item.quantity + 1);
           }}
           onDecrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
@@ -599,6 +585,15 @@ export default function SelfCheckoutApp() {
             lang={lang}
             onCancel={() => setAbandonOpen(false)}
             onConfirm={handleAbandonConfirm}
+          />
+        )}
+        {idleWarnOpen && (
+          <IdleWarning
+            lang={lang}
+            onStay={() => {
+              setIdleWarnOpen(false);
+              setActivityAt(Date.now());
+            }}
           />
         )}
         {paymentOpen && (
@@ -628,8 +623,10 @@ export default function SelfCheckoutApp() {
         method={lastPaymentMethod}
         totalGrosze={cart.cart.totalGrosze}
         receiptPrinted={lastReceiptPrinted}
+        fiscalPrinting={fiscalPrinting}
         onComplete={() => goTo('thankyou')}
         onLangChange={handleLangChange}
+        onCallStaff={callStaffOther}
       />
     );
   }
@@ -641,6 +638,7 @@ export default function SelfCheckoutApp() {
         totalGrosze={cart.cart.totalGrosze}
         onReset={resetSession}
         onLangChange={handleLangChange}
+        onCallStaff={callStaffOther}
       />
     );
   }
@@ -679,6 +677,39 @@ function AbandonConfirm({ lang, onConfirm, onCancel }: AbandonConfirmProps) {
             {t.abandonConfirm}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface IdleWarningProps {
+  lang: ScLanguage;
+  onStay: () => void;
+}
+
+function IdleWarning({ lang, onStay }: IdleWarningProps) {
+  const t = getScStrings(lang);
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby="sc-idle-title"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-6"
+    >
+      <div className="sc-surface w-[560px] p-9 text-center">
+        <h3 id="sc-idle-title" className="text-5xl font-black text-[var(--sc-ink)]">
+          {t.idleWarningTitle}
+        </h3>
+        <p className="mt-4 text-xl leading-8 text-[var(--sc-muted)]">
+          {t.idleWarningBody}
+        </p>
+        <button
+          type="button"
+          onClick={onStay}
+          autoFocus
+          className="sc-action sc-action-success sc-focusable mt-8 w-full text-2xl"
+        >
+          {t.idleWarningStay}
+        </button>
       </div>
     </div>
   );

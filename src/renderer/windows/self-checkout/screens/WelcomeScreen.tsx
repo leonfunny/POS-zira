@@ -1,7 +1,7 @@
 // Idle / welcome screen. It must be scan-first: a barcode starts the
 // session just like the visible start button.
 import React, { useCallback, useEffect, useRef } from 'react';
-import { CreditCard, ScanBarcode, ShoppingBasket } from 'lucide-react';
+import { CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 
@@ -10,6 +10,7 @@ interface WelcomeScreenProps {
   onLangChange: (lang: ScLanguage) => void;
   onStart: () => void;
   onScanStart: (ean: string) => Promise<void> | void;
+  onCallStaff?: () => void;
 }
 
 export default function WelcomeScreen({
@@ -17,6 +18,7 @@ export default function WelcomeScreen({
   onLangChange,
   onStart,
   onScanStart,
+  onCallStaff,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
   const scannerInputRef = useRef<HTMLInputElement>(null);
@@ -148,7 +150,7 @@ export default function WelcomeScreen({
 
         <aside className="sc-surface flex flex-col justify-between p-7">
           <div>
-            <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]">
+            <div className="sc-attract-pulse flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]">
               <ScanBarcode size={42} />
             </div>
             <h2 className="mt-8 text-3xl font-black text-[var(--sc-ink)]">
@@ -165,9 +167,20 @@ export default function WelcomeScreen({
               {t.paymentNotice}
             </div>
             <p className="text-base leading-6 text-[var(--sc-muted)]">
-              BLIK / CARD
+              {`${t.cash} / ${t.card} / ${t.blik}`}
             </p>
           </div>
+
+          {onCallStaff && (
+            <button
+              type="button"
+              onClick={onCallStaff}
+              className="sc-help-action sc-focusable mt-5 flex items-center justify-center gap-2 px-5 text-base"
+            >
+              <Hand size={20} />
+              {t.callStaff}
+            </button>
+          )}
         </aside>
       </main>
     </div>

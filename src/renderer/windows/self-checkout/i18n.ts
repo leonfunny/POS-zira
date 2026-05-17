@@ -37,6 +37,9 @@ interface ScStrings {
   staffComingTitle: string;
   staffLockedBody: string;
   staffComingBody: string;
+  staffRequestFailed: string;
+  staffConnectionError: string;
+  staffUnlocked: string;
   helpReasonOther: string;
   abandon: string;
   abandonConfirmTitle: string;
@@ -51,22 +54,55 @@ interface ScStrings {
   receiptDemoBody: string;
   receiptProductionBlocked: string;
   receiptPrintFailed: string;
+  receiptContinue: string;
   // Payment
   paymentTitle: string;
-  blik: string;
+  cash: string;
   card: string;
+  blik: string;
   payWithCard: string;
+  payWithCash: string;
   payWithBlik: string;
   paymentTerminalHint: string;
   cardTerminalHint: string;
-  blikTerminalHint: string;
-  blikProductionUnsupported: string;
+  cashHint: string;
+  blikHint: string;
+  blikInstructionTitle: string;
+  blikInstructionBody: string;
+  blikPhoneLabel: string;
+  blikAmountLabel: string;
   terminalReadyTitle: string;
   terminalReadyBody: string;
   waitForTerminal: string;
   paymentProcessing: string;
   paymentSuccess: string;
   fakePaymentActive: string;
+  // Invoice (NIP / Faktura)
+  invoiceToggleLabel: string;
+  invoiceToggleHint: string;
+  invoiceNipPlaceholder: string;
+  invoiceNipInvalid: string;
+  // Idle warning
+  idleWarningTitle: string;
+  idleWarningBody: string;
+  idleWarningStay: string;
+  // Receipt extras
+  receiptFiscalPrinting: string;
+  receiptCountdown: string;
+  receiptCollectArrow: string;
+  // Help (extended)
+  helpCancel: string;
+  // Unavailable reasons (codes → text)
+  reasonOffline: string;
+  reasonPrinterOffline: string;
+  reasonTerminalOffline: string;
+  reasonShiftClosed: string;
+  reasonUnknown: string;
+  // Manual staff-collect flow
+  staffConfirmTitle: string;
+  staffConfirmBody: string;
+  staffConfirmButton: string;
+  replayVoice: string;
   popularCategories: string;
   productsInCategory: string;
   addProduct: string;
@@ -109,6 +145,9 @@ const PL: ScStrings = {
   staffComingTitle: 'Obsługa idzie',
   staffLockedBody: 'Kasa jest zablokowana. Poczekaj na pracownika.',
   staffComingBody: 'Pracownik jest w drodze do kasy.',
+  staffRequestFailed: 'Nie udało się wezwać obsługi. Spróbuj ponownie.',
+  staffConnectionError: 'Brak połączenia - obsługa nie została powiadomiona.',
+  staffUnlocked: 'Odblokowano przez obsługę',
   helpReasonOther: 'Pomoc pracownika',
   abandon: 'Porzuć',
   abandonConfirmTitle: 'Porzucić zakupy?',
@@ -121,21 +160,48 @@ const PL: ScStrings = {
   receiptDemoBody: 'Demo: płatność, zamówienie i wydruk fiskalny są pominięte.',
   receiptProductionBlocked: 'Sprzedaż produkcyjna wymaga realnej płatności, zamówienia i drukarki fiskalnej.',
   receiptPrintFailed: 'Płatność przyjęta, ale paragon nie został wydrukowany. Wezwij obsługę.',
+  receiptContinue: 'Kontynuuj',
   paymentTitle: 'Wybierz formę płatności',
-  blik: 'BLIK',
+  cash: 'Gotówka',
   card: 'Karta płatnicza',
+  blik: 'BLIK',
   payWithCard: 'Karta',
+  payWithCash: 'Gotówka',
   payWithBlik: 'BLIK',
-  paymentTerminalHint: 'Wybierz metodę, a następnie użyj terminala płatniczego.',
-  cardTerminalHint: 'Zapłać kartą lub telefonem na terminalu.',
-  blikTerminalHint: 'Kod BLIK wpisujesz na terminalu, nie na tym ekranie.',
-  blikProductionUnsupported: 'BLIK nie jest jeszcze podłączony do tego kiosku. Użyj karty.',
-  terminalReadyTitle: 'Terminal gotowy',
-  terminalReadyBody: 'Po wyborze metody postępuj zgodnie z instrukcją na terminalu.',
-  waitForTerminal: 'Postępuj zgodnie z instrukcją na terminalu.',
-  paymentProcessing: 'Oczekiwanie na terminal',
+  paymentTerminalHint: 'Wybierz metodę. Obsługa zostanie poinformowana głosowo o kwocie i odbierze płatność.',
+  cardTerminalHint: 'Zapłać kartą lub telefonem - obsługa obsłuży terminal.',
+  cashHint: 'Zapłać gotówką - obsługa odbierze pieniądze i wyda resztę.',
+  blikHint: 'Wyślij BLIK-iem na numer telefonu sklepu.',
+  blikInstructionTitle: 'Wyślij BLIK-iem',
+  blikInstructionBody: 'Otwórz aplikację bankową, wybierz BLIK → "Przelew na telefon" i wyślij kwotę na numer poniżej. Obsługa potwierdzi otrzymanie.',
+  blikPhoneLabel: 'Numer telefonu',
+  blikAmountLabel: 'Kwota',
+  terminalReadyTitle: 'Wybierz metodę',
+  terminalReadyBody: 'Po wyborze obsługa zostanie wezwana głosowo.',
+  waitForTerminal: 'Obsługa finalizuje sprzedaż.',
+  paymentProcessing: 'Zapisywanie zamówienia',
   paymentSuccess: 'Płatność potwierdzona',
   fakePaymentActive: 'Płatność testowa zatwierdzona',
+  staffConfirmTitle: 'Czekam na obsługę',
+  staffConfirmBody: 'Obsługa odbierze płatność i potwierdzi przyjęcie pieniędzy.',
+  staffConfirmButton: 'Pieniądze przyjęte',
+  replayVoice: 'Odtwórz komunikat',
+  invoiceToggleLabel: 'Faktura na firmę?',
+  invoiceToggleHint: 'Podaj NIP przed potwierdzeniem płatności.',
+  invoiceNipPlaceholder: 'NIP (10 cyfr)',
+  invoiceNipInvalid: 'NIP musi mieć 10 cyfr.',
+  idleWarningTitle: 'Czy jesteś tam?',
+  idleWarningBody: 'Sesja zostanie zakończona za 15 sekund.',
+  idleWarningStay: 'Tak, jestem',
+  receiptFiscalPrinting: 'Drukowanie paragonu fiskalnego...',
+  receiptCountdown: 'Powrót do startu za {seconds}s',
+  receiptCollectArrow: 'Odbierz paragon z drukarki',
+  helpCancel: 'Anuluj wezwanie',
+  reasonOffline: 'Kasa jest offline — brak połączenia z serwerem.',
+  reasonPrinterOffline: 'Drukarka fiskalna jest niedostępna.',
+  reasonTerminalOffline: 'Terminal płatniczy jest niedostępny.',
+  reasonShiftClosed: 'Zmiana nie została otwarta przez obsługę.',
+  reasonUnknown: 'Kasa chwilowo niedostępna.',
   popularCategories: 'Kategorie',
   productsInCategory: 'Produkty w kategorii',
   addProduct: 'Dodaj',
@@ -177,6 +243,9 @@ const EN: ScStrings = {
   staffComingTitle: 'Staff is coming',
   staffLockedBody: 'This checkout is locked. Please wait for staff.',
   staffComingBody: 'A staff member is on the way to this checkout.',
+  staffRequestFailed: 'Could not call staff. Please try again.',
+  staffConnectionError: 'Connection error - staff not notified.',
+  staffUnlocked: 'Unlocked by staff',
   helpReasonOther: 'Staff assistance',
   abandon: 'Abandon',
   abandonConfirmTitle: 'Abandon shopping?',
@@ -189,21 +258,48 @@ const EN: ScStrings = {
   receiptDemoBody: 'Demo: payment, order creation, and fiscal print are skipped.',
   receiptProductionBlocked: 'Production sale requires real payment, order creation, and fiscal printer integration.',
   receiptPrintFailed: 'Payment was accepted, but the receipt did not print. Please call staff.',
+  receiptContinue: 'Continue',
   paymentTitle: 'Choose payment method',
-  blik: 'BLIK',
+  cash: 'Cash',
   card: 'Card',
+  blik: 'BLIK',
   payWithCard: 'Card',
+  payWithCash: 'Cash',
   payWithBlik: 'BLIK',
-  paymentTerminalHint: 'Choose a method, then use the payment terminal.',
-  cardTerminalHint: 'Tap, insert, or use phone payment on the terminal.',
-  blikTerminalHint: 'Enter the BLIK code on the payment terminal, not here.',
-  blikProductionUnsupported: 'BLIK is not wired for this kiosk yet. Use card payment.',
-  terminalReadyTitle: 'Terminal ready',
-  terminalReadyBody: 'After choosing a method, follow the terminal instructions.',
-  waitForTerminal: 'Follow the instructions on the payment terminal.',
-  paymentProcessing: 'Waiting for terminal',
+  paymentTerminalHint: 'Choose a method. Staff will be alerted by voice and will collect payment.',
+  cardTerminalHint: 'Pay by card or phone - staff will operate the terminal.',
+  cashHint: 'Pay in cash - staff will collect the money and give change.',
+  blikHint: 'Send via BLIK to the shop phone number.',
+  blikInstructionTitle: 'Send via BLIK',
+  blikInstructionBody: 'Open your banking app, choose BLIK → "Transfer to phone" and send the amount to the number below. Staff will confirm receipt.',
+  blikPhoneLabel: 'Phone number',
+  blikAmountLabel: 'Amount',
+  terminalReadyTitle: 'Choose a method',
+  terminalReadyBody: 'Staff will be called by voice after you choose.',
+  waitForTerminal: 'Staff is finalizing the sale.',
+  paymentProcessing: 'Saving order',
   paymentSuccess: 'Payment confirmed',
   fakePaymentActive: 'Test payment approved',
+  staffConfirmTitle: 'Waiting for staff',
+  staffConfirmBody: 'Staff will collect payment and confirm money received.',
+  staffConfirmButton: 'Money received',
+  replayVoice: 'Replay announcement',
+  invoiceToggleLabel: 'Invoice for company?',
+  invoiceToggleHint: 'Enter NIP before confirming payment.',
+  invoiceNipPlaceholder: 'NIP (10 digits)',
+  invoiceNipInvalid: 'NIP must be 10 digits.',
+  idleWarningTitle: 'Are you still there?',
+  idleWarningBody: 'Session will end in 15 seconds.',
+  idleWarningStay: 'Yes, I am',
+  receiptFiscalPrinting: 'Printing fiscal receipt...',
+  receiptCountdown: 'Returning in {seconds}s',
+  receiptCollectArrow: 'Please take your receipt',
+  helpCancel: 'Cancel request',
+  reasonOffline: 'Checkout is offline — backend unreachable.',
+  reasonPrinterOffline: 'Fiscal printer is unavailable.',
+  reasonTerminalOffline: 'Payment terminal is unavailable.',
+  reasonShiftClosed: 'Staff has not opened the shift.',
+  reasonUnknown: 'Checkout temporarily unavailable.',
   popularCategories: 'Categories',
   productsInCategory: 'Products in category',
   addProduct: 'Add',
@@ -245,6 +341,9 @@ const VI: ScStrings = {
   staffComingTitle: 'Nhân viên đang tới',
   staffLockedBody: 'Quầy đang bị khóa. Vui lòng chờ nhân viên.',
   staffComingBody: 'Nhân viên đang tới quầy này.',
+  staffRequestFailed: 'Không gọi được nhân viên. Vui lòng thử lại.',
+  staffConnectionError: 'Mất kết nối - chưa báo được cho nhân viên.',
+  staffUnlocked: 'Đã được nhân viên mở khóa',
   helpReasonOther: 'Cần nhân viên hỗ trợ',
   abandon: 'Hủy giao dịch',
   abandonConfirmTitle: 'Hủy giao dịch?',
@@ -257,21 +356,48 @@ const VI: ScStrings = {
   receiptDemoBody: 'Demo: thanh toán, tạo đơn và in fiskal được bỏ qua.',
   receiptProductionBlocked: 'Giao dịch thật cần tích hợp thanh toán, tạo đơn và máy in fiskal.',
   receiptPrintFailed: 'Đã nhận thanh toán, nhưng chưa in được hóa đơn. Vui lòng gọi nhân viên.',
+  receiptContinue: 'Tiếp tục',
   paymentTitle: 'Chọn phương thức thanh toán',
-  blik: 'BLIK',
+  cash: 'Tiền mặt',
   card: 'Thẻ',
+  blik: 'BLIK',
   payWithCard: 'Thẻ',
+  payWithCash: 'Tiền mặt',
   payWithBlik: 'BLIK',
-  paymentTerminalHint: 'Chọn phương thức rồi dùng máy thanh toán.',
-  cardTerminalHint: 'Chạm thẻ, cắm thẻ hoặc dùng điện thoại trên máy POS.',
-  blikTerminalHint: 'Nhập mã BLIK trên máy POS, không nhập trên màn hình này.',
-  blikProductionUnsupported: 'BLIK chưa được nối cho kiosk này. Hãy dùng thẻ.',
-  terminalReadyTitle: 'Máy POS sẵn sàng',
-  terminalReadyBody: 'Sau khi chọn phương thức, làm theo hướng dẫn trên máy POS.',
-  waitForTerminal: 'Làm theo hướng dẫn trên máy POS.',
-  paymentProcessing: 'Đang chờ máy POS',
+  paymentTerminalHint: 'Chọn phương thức. Nhân viên sẽ được báo bằng giọng nói và thu tiền.',
+  cardTerminalHint: 'Trả bằng thẻ hoặc điện thoại - nhân viên sẽ vận hành máy POS.',
+  cashHint: 'Trả tiền mặt - nhân viên sẽ thu tiền và trả lại.',
+  blikHint: 'Chuyển BLIK đến số điện thoại của cửa hàng.',
+  blikInstructionTitle: 'Chuyển bằng BLIK',
+  blikInstructionBody: 'Mở app ngân hàng, chọn BLIK → "Chuyển đến số điện thoại" và gửi số tiền đến số dưới đây. Nhân viên sẽ xác nhận khi nhận được.',
+  blikPhoneLabel: 'Số điện thoại',
+  blikAmountLabel: 'Số tiền',
+  terminalReadyTitle: 'Chọn phương thức',
+  terminalReadyBody: 'Sau khi chọn, nhân viên sẽ được gọi bằng giọng nói.',
+  waitForTerminal: 'Nhân viên đang hoàn tất giao dịch.',
+  paymentProcessing: 'Đang lưu đơn',
   paymentSuccess: 'Thanh toán thành công',
   fakePaymentActive: 'Đã duyệt thanh toán test',
+  staffConfirmTitle: 'Chờ nhân viên',
+  staffConfirmBody: 'Nhân viên sẽ thu tiền và xác nhận đã nhận.',
+  staffConfirmButton: 'Đã thu tiền',
+  replayVoice: 'Phát lại',
+  invoiceToggleLabel: 'Hóa đơn cho công ty?',
+  invoiceToggleHint: 'Nhập mã NIP trước khi xác nhận thanh toán.',
+  invoiceNipPlaceholder: 'NIP (10 chữ số)',
+  invoiceNipInvalid: 'NIP phải có 10 chữ số.',
+  idleWarningTitle: 'Bạn còn ở đây không?',
+  idleWarningBody: 'Phiên sẽ kết thúc sau 15 giây.',
+  idleWarningStay: 'Có, tôi vẫn ở đây',
+  receiptFiscalPrinting: 'Đang in hóa đơn fiskal...',
+  receiptCountdown: 'Quay về sau {seconds}s',
+  receiptCollectArrow: 'Vui lòng nhận hóa đơn',
+  helpCancel: 'Hủy yêu cầu',
+  reasonOffline: 'Quầy đang offline — mất kết nối server.',
+  reasonPrinterOffline: 'Máy in hóa đơn không khả dụng.',
+  reasonTerminalOffline: 'Máy POS không khả dụng.',
+  reasonShiftClosed: 'Nhân viên chưa mở ca.',
+  reasonUnknown: 'Quầy tạm thời không khả dụng.',
   popularCategories: 'Danh mục',
   productsInCategory: 'Sản phẩm trong danh mục',
   addProduct: 'Thêm',

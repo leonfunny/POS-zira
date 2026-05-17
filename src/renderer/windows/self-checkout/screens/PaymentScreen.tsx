@@ -1,13 +1,28 @@
-// Payment overlay. The kiosk app chooses the tender type; the physical
-// payment terminal owns card tap/insert and BLIK code entry.
+// Payment overlay. The kiosk has no automated terminal integration yet, so
+// after the customer picks CARD or CASH we (1) play a pre-rendered Polish
+// announcement over the kiosk speakers so staff knows the amount + method,
+// then (2) wait for staff to physically collect payment and tap
+// "Money received" before saving the order and printing the receipt.
+//
+// The announcement is assembled from clips in `public/tts-pl/` rendered by
+// `scripts/generate-tts-clips.mjs`. See `polish-amount-tts.ts` for the
+// sequence-building logic and Web Speech API fallback.
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, CreditCard, Loader2, Smartphone, X } from 'lucide-react';
+import { AlertTriangle, Banknote, CheckCircle2, CreditCard, Loader2, RotateCcw, Smartphone, X } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import type { SelfCheckoutMode } from '../self-checkout-model';
 import { formatPLN } from '../useScCart';
+import { cancelAnnouncement, playAnnouncement, warmUpClipCache } from '../polish-amount-tts';
 
-export type PaymentMethod = 'BLIK' | 'CARD';
+export type PaymentMethod = 'CASH' | 'CARD' | 'BLIK';
+
+type Phase = 'idle' | 'awaitStaff' | 'processing';
+
+// Shop's BLIK phone number — customers send manual peer-to-peer BLIK
+// transfer (banking app → "Przelew na telefon"). Staff sees the transfer
+// land in their phone and taps "Money received".
+const BLIK_PHONE_DISPLAY = '729 448 788';
 
 interface PaymentScreenProps {
   lang: ScLanguage;
@@ -15,7 +30,7 @@ interface PaymentScreenProps {
   totalGrosze: number;
   terminalStatus?: string | null;
   errorText?: string | null;
-  onSuccess: (method: PaymentMethod) => void | Promise<void>;
+  onSuccess: (method: PaymentMethod, customerNip: string | null) => void | Promise<void>;
   onCancel: () => void;
   onLangChange: (lang: ScLanguage) => void;
 }
@@ -32,31 +47,70 @@ export default function PaymentScreen({
 }: PaymentScreenProps) {
   const t = getScStrings(lang);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
-  const [processing, setProcessing] = useState(false);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [nipDigits, setNipDigits] = useState('');
 
   useEffect(() => {
-    if (mode !== 'demo' || !method || !processing) return;
-    const id = window.setTimeout(() => {
-      void onSuccess(method);
-    }, 1500);
-    return () => window.clearTimeout(id);
-  }, [method, mode, onSuccess, processing]);
+    warmUpClipCache();
+    return () => {
+      cancelAnnouncement();
+    };
+  }, []);
 
-  const chooseMethod = async (next: PaymentMethod) => {
-    if (processing) return;
-    if (mode === 'production' && next === 'BLIK') return;
+  const chooseMethod = (next: PaymentMethod) => {
+    if (phase !== 'idle') return;
     setMethod(next);
-    setProcessing(true);
-    if (mode === 'demo') return;
+    setPhase('awaitStaff');
+    void playAnnouncement(next, totalGrosze);
+  };
+
+  const replayAnnouncement = () => {
+    if (!method || phase === 'processing') return;
+    void playAnnouncement(method, totalGrosze);
+  };
+
+  const nipValid = nipDigits.length === 10;
+  const invoiceBlocked = invoiceOpen && !nipValid;
+
+  const confirmReceived = async () => {
+    if (phase !== 'awaitStaff' || !method) return;
+    if (invoiceBlocked) return;
+    setPhase('processing');
     try {
-      await onSuccess(next);
+      await onSuccess(method, invoiceOpen ? nipDigits : null);
     } catch {
-      setProcessing(false);
-      setMethod(null);
+      setPhase('awaitStaff');
     }
   };
 
-  const selectedLabel = method === 'BLIK' ? t.blik : method === 'CARD' ? t.card : null;
+  const handleCancel = () => {
+    if (phase === 'processing') return;
+    cancelAnnouncement();
+    setMethod(null);
+    setPhase('idle');
+    setInvoiceOpen(false);
+    setNipDigits('');
+    onCancel();
+  };
+
+  const selectedLabel =
+    method === 'CASH' ? t.cash : method === 'CARD' ? t.card : method === 'BLIK' ? t.blik : null;
+  const sideIcon =
+    method === 'CASH' ? <Banknote size={44} />
+    : method === 'BLIK' ? <Smartphone size={44} />
+    : <CreditCard size={44} />;
+  const processing = phase === 'processing';
+  const awaitingStaff = phase === 'awaitStaff';
+  const sideTitle =
+    awaitingStaff || processing
+      ? t.staffConfirmTitle
+      : selectedLabel || t.terminalReadyTitle;
+  const sideBody = processing
+    ? terminalStatus || t.waitForTerminal
+    : awaitingStaff
+      ? t.staffConfirmBody
+      : t.terminalReadyBody;
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 p-6 select-none">
@@ -69,7 +123,7 @@ export default function PaymentScreen({
         <header className="flex items-center justify-between border-b border-[var(--sc-border)] px-6 py-5">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={handleCancel}
             disabled={processing}
             className="sc-secondary-action sc-focusable flex items-center gap-3 px-5 text-lg disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -96,36 +150,142 @@ export default function PaymentScreen({
                 {t.paymentTerminalHint}
               </p>
 
-              <div className="mt-8 grid grid-cols-2 gap-5">
+              <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                <PaymentMethodButton
+                  active={method === 'BLIK'}
+                  disabled={phase !== 'idle'}
+                  icon={<Smartphone size={48} />}
+                  title={t.payWithBlik}
+                  body={t.blikHint}
+                  onClick={() => chooseMethod('BLIK')}
+                />
                 <PaymentMethodButton
                   active={method === 'CARD'}
-                  disabled={processing}
-                  icon={<CreditCard size={54} />}
+                  disabled={phase !== 'idle'}
+                  icon={<CreditCard size={48} />}
                   title={t.payWithCard}
                   body={t.cardTerminalHint}
                   onClick={() => chooseMethod('CARD')}
                 />
                 <PaymentMethodButton
-                  active={method === 'BLIK'}
-                  disabled={processing || mode === 'production'}
-                  icon={<Smartphone size={54} />}
-                  title={t.payWithBlik}
-                  body={mode === 'production' ? t.blikProductionUnsupported : t.blikTerminalHint}
-                  onClick={() => chooseMethod('BLIK')}
+                  active={method === 'CASH'}
+                  disabled={phase !== 'idle'}
+                  icon={<Banknote size={48} />}
+                  title={t.payWithCash}
+                  body={t.cashHint}
+                  onClick={() => chooseMethod('CASH')}
                 />
+              </div>
+
+              {/* NIP / Faktura toggle. Must be set BEFORE the fiscal print:
+                  Polish law forbids retrofitting NIP onto a printed paragon. */}
+              <div className="mt-5 rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={invoiceOpen}
+                    disabled={phase !== 'idle'}
+                    onChange={(e) => {
+                      setInvoiceOpen(e.target.checked);
+                      if (!e.target.checked) setNipDigits('');
+                    }}
+                    className="mt-1 h-6 w-6 accent-[var(--sc-primary)]"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-lg font-black text-[var(--sc-ink)]">{t.invoiceToggleLabel}</div>
+                    <div className="text-sm font-semibold text-[var(--sc-muted)]">{t.invoiceToggleHint}</div>
+                  </div>
+                </label>
+                {invoiceOpen && (
+                  <div className="mt-3">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={10}
+                      value={nipDigits}
+                      disabled={phase === 'processing'}
+                      onChange={(e) => setNipDigits(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      placeholder={t.invoiceNipPlaceholder}
+                      className="sc-tabular w-full rounded-xl border-2 border-[var(--sc-border)] bg-white px-4 py-3 text-2xl font-black tracking-widest focus:border-[var(--sc-primary)] focus:outline-none"
+                      aria-invalid={!nipValid}
+                    />
+                    {!nipValid && nipDigits.length > 0 && (
+                      <div className="mt-2 text-sm font-bold text-[var(--sc-danger)]">
+                        {t.invoiceNipInvalid}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </main>
 
             <aside className="rounded-3xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-6">
               <div className="flex h-20 w-20 items-center justify-center rounded-[24px] bg-white text-[var(--sc-info)]">
-                {method === 'BLIK' ? <Smartphone size={44} /> : <CreditCard size={44} />}
+                {sideIcon}
               </div>
               <h2 className="mt-6 text-3xl font-black text-[var(--sc-ink)]">
-                {selectedLabel || t.terminalReadyTitle}
+                {sideTitle}
               </h2>
               <p className="mt-4 text-xl font-semibold leading-8 text-[var(--sc-muted)]">
-                {processing ? (terminalStatus || t.waitForTerminal) : t.terminalReadyBody}
+                {sideBody}
               </p>
+
+              {awaitingStaff && method === 'BLIK' && (
+                <div className="mt-6 rounded-2xl border-2 border-[var(--sc-info)] bg-blue-50 p-5">
+                  <div className="text-base font-black uppercase tracking-wide text-[var(--sc-info)]">
+                    {t.blikInstructionTitle}
+                  </div>
+                  <p className="mt-2 text-base font-semibold leading-6 text-[var(--sc-ink)]">
+                    {t.blikInstructionBody}
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-white p-3 text-center">
+                      <div className="text-xs font-black uppercase tracking-wide text-[var(--sc-muted)]">
+                        {t.blikPhoneLabel}
+                      </div>
+                      <div className="sc-tabular mt-1 text-2xl font-black text-[var(--sc-ink)]">
+                        {BLIK_PHONE_DISPLAY}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-white p-3 text-center">
+                      <div className="text-xs font-black uppercase tracking-wide text-[var(--sc-muted)]">
+                        {t.blikAmountLabel}
+                      </div>
+                      <div className="sc-tabular mt-1 text-2xl font-black text-[var(--sc-ink)]">
+                        {formatPLN(totalGrosze)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {awaitingStaff && (
+                <div className="mt-6 flex flex-col gap-3">
+                  <button
+                    type="button"
+                    onClick={confirmReceived}
+                    disabled={invoiceBlocked}
+                    className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-emerald-600 bg-emerald-600 px-6 py-5 text-2xl font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300"
+                  >
+                    <CheckCircle2 size={28} />
+                    {t.staffConfirmButton}
+                  </button>
+                  {invoiceBlocked && (
+                    <div role="alert" className="text-center text-sm font-bold text-[var(--sc-danger)]">
+                      {t.invoiceNipInvalid}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={replayAnnouncement}
+                    className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-[var(--sc-border)] bg-white px-6 py-4 text-xl font-bold text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)]"
+                  >
+                    <RotateCcw size={24} />
+                    {t.replayVoice}
+                  </button>
+                </div>
+              )}
+
               {processing && (
                 <div
                   role="status"

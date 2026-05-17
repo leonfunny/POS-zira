@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { CheckCircle2, FileText, Loader2, Printer } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowDown, CheckCircle2, FileText, Hand, Printer } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import type { SelfCheckoutMode } from '../self-checkout-model';
@@ -12,8 +12,17 @@ interface ReceiptScreenProps {
   method: PaymentMethod;
   totalGrosze: number;
   receiptPrinted?: boolean;
+  /** Server is still printing the fiscal receipt; show a printing state. */
+  fiscalPrinting?: boolean;
   onComplete: () => void;
   onLangChange: (lang: ScLanguage) => void;
+  onCallStaff?: () => void;
+}
+
+const AUTO_ADVANCE_MS = 4000;
+
+function formatMessage(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
 export default function ReceiptScreen({
@@ -22,16 +31,29 @@ export default function ReceiptScreen({
   method,
   totalGrosze,
   receiptPrinted = true,
+  fiscalPrinting = false,
   onComplete,
   onLangChange,
+  onCallStaff,
 }: ReceiptScreenProps) {
   const t = getScStrings(lang);
+  // Visible countdown so the customer knows the screen will auto-advance.
+  const [remainingMs, setRemainingMs] = useState(AUTO_ADVANCE_MS);
 
   useEffect(() => {
-    if (!receiptPrinted) return;
-    const id = window.setTimeout(onComplete, 1800);
-    return () => window.clearTimeout(id);
-  }, [onComplete, receiptPrinted]);
+    if (!receiptPrinted || fiscalPrinting) return;
+    setRemainingMs(AUTO_ADVANCE_MS);
+    const tick = window.setInterval(() => {
+      setRemainingMs((ms) => Math.max(0, ms - 250));
+    }, 250);
+    const done = window.setTimeout(onComplete, AUTO_ADVANCE_MS);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(done);
+    };
+  }, [onComplete, receiptPrinted, fiscalPrinting]);
+
+  const secondsLeft = Math.ceil(remainingMs / 1000);
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col text-[var(--sc-ink)] select-none">
@@ -49,13 +71,25 @@ export default function ReceiptScreen({
           <h1 className="mt-5 text-5xl font-black">
             {t.receiptTitle}
           </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-xl leading-8 text-[var(--sc-muted)]">
-            {mode === 'demo'
-              ? t.receiptDemoBody
-              : receiptPrinted
-                ? t.thankYouSub
-                : t.receiptPrintFailed}
-          </p>
+
+          {/* Fiscal-printing state: Polish customers expect to see this and
+              wait for the printer before walking away. */}
+          {fiscalPrinting ? (
+            <p className="mx-auto mt-4 flex items-center justify-center gap-3 text-xl font-bold text-[var(--sc-primary-deep)]">
+              <span>{t.receiptFiscalPrinting}</span>
+              <span className="sc-dot-loader" aria-hidden="true">
+                <span /><span /><span />
+              </span>
+            </p>
+          ) : (
+            <p className="mx-auto mt-4 max-w-2xl text-xl leading-8 text-[var(--sc-muted)]">
+              {mode === 'demo'
+                ? t.receiptDemoBody
+                : receiptPrinted
+                  ? t.thankYouSub
+                  : t.receiptPrintFailed}
+            </p>
+          )}
 
           <div className="mt-6 space-y-2 text-left">
             <ReceiptStep icon={<CheckCircle2 size={24} />} label={t.paymentSuccess} done />
@@ -65,9 +99,9 @@ export default function ReceiptScreen({
               done={mode === 'demo' || receiptPrinted}
             />
             <ReceiptStep
-              icon={<Loader2 size={24} className={receiptPrinted ? 'animate-spin' : ''} />}
+              icon={<CheckCircle2 size={24} />}
               label={receiptPrinted ? t.thankYouSub : t.callStaff}
-              done={false}
+              done={receiptPrinted}
             />
           </div>
 
@@ -84,6 +118,44 @@ export default function ReceiptScreen({
               {formatPLN(totalGrosze)}
             </div>
           </div>
+
+          {/* Physical arrow pointing toward the printer slot. Research from
+              kiosk vendors: a visible "take your receipt" arrow significantly
+              improves receipt pickup, esp. for first-time customers. */}
+          {receiptPrinted && !fiscalPrinting && (
+            <div className="mt-6 flex items-center justify-center gap-2 text-sm font-bold text-[var(--sc-muted)]">
+              <ArrowDown size={18} className="animate-bounce" />
+              <span>{t.receiptCollectArrow}</span>
+            </div>
+          )}
+
+          {/* Visible countdown so the customer knows the kiosk will reset. */}
+          {receiptPrinted && !fiscalPrinting && secondsLeft > 0 && (
+            <div className="mt-3 text-xs font-bold uppercase tracking-wide text-[var(--sc-muted)]">
+              {formatMessage(t.receiptCountdown, { seconds: secondsLeft })}
+            </div>
+          )}
+
+          {!receiptPrinted && !fiscalPrinting && (
+            <button
+              type="button"
+              onClick={onComplete}
+              className="sc-focusable mt-6 w-full rounded-[24px] border-2 border-emerald-600 bg-emerald-600 px-6 py-5 text-2xl font-black text-white transition-colors hover:bg-emerald-700"
+            >
+              {t.receiptContinue}
+            </button>
+          )}
+
+          {onCallStaff && (
+            <button
+              type="button"
+              onClick={onCallStaff}
+              className="sc-help-action sc-focusable mx-auto mt-5 flex items-center gap-2 px-5 text-base"
+            >
+              <Hand size={20} />
+              {t.callStaff}
+            </button>
+          )}
         </section>
       </main>
     </div>

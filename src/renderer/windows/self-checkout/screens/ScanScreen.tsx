@@ -4,9 +4,10 @@
 // affordance. "No-barcode" cases route through staff assistance instead
 // (see [[2026-05-12-zira-auth-login-and-self-checkout-closeout]] and
 // [[2026-05-15-zira-catalog-i18n-phase1-and-scan-only]]).
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Hand,
+  Image as ImageIcon,
   Minus,
   PackageSearch,
   Plus,
@@ -17,8 +18,34 @@ import {
 } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
-import { ScCartItem, formatPLN } from '../useScCart';
+import { MAX_BAG_QUANTITY, ScCartItem, formatPLN } from '../useScCart';
 import { resolveName } from '../../../../shared/catalog-names';
+
+// Short WebAudio confirmation beep on scan success (~80ms square wave @ 1kHz).
+// Distinct from the scanner-hardware beep — gives reassurance for HID readers
+// that don't beep themselves and for kiosk operators muting the hardware tone.
+let cachedAudioCtx: AudioContext | null = null;
+function playScanBeep(kind: 'ok' | 'fail'): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    if (!cachedAudioCtx) cachedAudioCtx = new Ctx();
+    const ctx = cachedAudioCtx!;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = kind === 'ok' ? 1320 : 220;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+  } catch {
+    /* ignore — autoplay block, missing AudioContext, etc. */
+  }
+}
 
 interface ScanScreenProps {
   lang: ScLanguage;
@@ -64,6 +91,49 @@ export default function ScanScreen({
   const scannerBuffer = useRef<string>('');
   const scannerLastKey = useRef<number>(0);
   const lastScanRef = useRef<{ code: string; at: number } | null>(null);
+
+  // ── visual feedback state ─────────────────────────────────────────────
+  // Drives the full-screen green flash + last-item highlight after the
+  // cart total changes upward. Research: scan feedback must arrive <150ms
+  // and use multiple modalities (flash + animation + optional beep).
+  const [scanFlashKey, setScanFlashKey] = useState(0);
+  const [freshVariantId, setFreshVariantId] = useState<string | null>(null);
+  const [totalTickKey, setTotalTickKey] = useState(0);
+  const prevTotalRef = useRef(totalGrosze);
+  const prevCartLenRef = useRef(cartItems.length);
+  const prevQtyByVariantRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const prevTotal = prevTotalRef.current;
+    const prevLen = prevCartLenRef.current;
+    const prevQty = prevQtyByVariantRef.current;
+    if (totalGrosze > prevTotal) {
+      setScanFlashKey((k) => k + 1);
+      setTotalTickKey((k) => k + 1);
+      // Find the cart line whose quantity grew (or that just appeared).
+      let fresh: string | null = null;
+      for (const item of cartItems) {
+        const before = prevQty[item.variantId] ?? 0;
+        if (item.quantity > before) { fresh = item.variantId; break; }
+      }
+      if (!fresh && cartItems.length > prevLen) {
+        fresh = cartItems[cartItems.length - 1]?.variantId ?? null;
+      }
+      setFreshVariantId(fresh);
+      const id = window.setTimeout(() => setFreshVariantId(null), 320);
+      // No cleanup needed — short-lived timeout, will fire before unmount.
+      void id;
+      // Best-effort WebAudio beep on scan success — distinct from the
+      // scanner-hardware beep, gives reassurance even with USB-HID readers
+      // that don't beep themselves.
+      playScanBeep('ok');
+    }
+    prevTotalRef.current = totalGrosze;
+    prevCartLenRef.current = cartItems.length;
+    const nextQty: Record<string, number> = {};
+    for (const item of cartItems) nextQty[item.variantId] = item.quantity;
+    prevQtyByVariantRef.current = nextQty;
+  }, [cartItems, totalGrosze]);
 
   const handleScannedCode = useCallback(
     (rawCode: string) => {
@@ -138,6 +208,9 @@ export default function ScanScreen({
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
+      {scanFlashKey > 0 && (
+        <div key={scanFlashKey} className="sc-scan-flash" aria-hidden="true" />
+      )}
       <input
         ref={scannerInputRef}
         onKeyDown={handleScannerInputKeyDown}
@@ -190,7 +263,7 @@ export default function ScanScreen({
                 <ScanBarcode className="h-16 w-16 xl:h-20 xl:w-20" />
               </div>
               <div className="min-w-0 w-full xl:w-auto">
-                <h1 className="sc-scan-title text-5xl font-black text-[var(--sc-ink)] xl:text-6xl">
+                <h1 className="sc-scan-title text-4xl font-black text-[var(--sc-ink)] xl:text-5xl">
                   {t.scanPrompt}
                 </h1>
                 <p className="sc-scan-hint mt-3 text-xl font-semibold leading-8 text-[var(--sc-muted)] xl:text-2xl xl:leading-9">
@@ -270,56 +343,82 @@ export default function ScanScreen({
               </div>
             ) : (
               <ul className="divide-y divide-[var(--sc-border)]">
-                {cartItems.map((item) => (
-                  <li
-                    key={item.variantId + (item.isBagFee ? '-bag' : '')}
-                    className="sc-cart-item px-4 py-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-lg font-black leading-snug text-[var(--sc-ink)]">
-                          {resolveName(item, lang)}
+                {cartItems.map((item) => {
+                  const isFresh = freshVariantId === item.variantId;
+                  const isLastOne = item.quantity === 1;
+                  return (
+                    <li
+                      key={item.variantId + (item.isBagFee ? '-bag' : '')}
+                      className={`sc-cart-item px-4 py-3 ${isFresh ? 'sc-cart-item-fresh bg-emerald-50/60' : ''}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        {item.isBagFee ? (
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[var(--sc-surface-muted)] text-[var(--sc-primary-deep)]">
+                            <ShoppingBag size={26} />
+                          </div>
+                        ) : item.imageUrl ? (
+                          <img
+                            src={item.imageUrl}
+                            alt=""
+                            className="h-14 w-14 shrink-0 rounded-xl object-cover"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        ) : (
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]">
+                            <ImageIcon size={24} />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-lg font-black leading-snug text-[var(--sc-ink)]">
+                            {resolveName(item, lang)}
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
+                            {formatPLN(item.price)}
+                            {item.sku ? ` · ${item.sku}` : ''}
+                          </div>
                         </div>
-                        <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
-                          {formatPLN(item.price)}
-                          {item.sku ? ` · ${item.sku}` : ''}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onRemove(item.variantId)}
+                          className="sc-focusable flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
+                          aria-label={t.remove}
+                        >
+                          <Trash2 size={22} />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onRemove(item.variantId)}
-                        className="sc-focusable flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
-                        aria-label={t.remove}
-                      >
-                        <Trash2 size={22} />
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => onDecrement(item.variantId)}
-                        className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
-                        aria-label="-"
-                      >
-                        <Minus size={22} />
-                      </button>
-                      <span className="sc-tabular min-w-[3ch] text-center text-2xl font-black">
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onIncrement(item.variantId)}
-                        className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
-                        aria-label="+"
-                      >
-                        <Plus size={22} />
-                      </button>
-                      <span className="sc-tabular ml-auto text-lg font-black text-[var(--sc-ink)]">
-                        {formatPLN(item.price * item.quantity)}
-                      </span>
-                    </div>
-                  </li>
-                ))}
+                      <div className="mt-2 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => onDecrement(item.variantId)}
+                          className={`sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 font-black ${
+                            isLastOne
+                              ? 'border-red-200 bg-red-50 text-[var(--sc-danger)] hover:bg-red-100'
+                              : 'border-[var(--sc-border)] bg-white hover:bg-[var(--sc-surface-muted)]'
+                          }`}
+                          aria-label={isLastOne ? t.remove : '-'}
+                        >
+                          {/* At qty=1, the minus removes the row — show a trash icon
+                              so the customer sees what the tap will do. */}
+                          {isLastOne ? <Trash2 size={20} /> : <Minus size={22} />}
+                        </button>
+                        <span className="sc-tabular min-w-[3ch] text-center text-2xl font-black">
+                          {item.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onIncrement(item.variantId)}
+                          className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
+                          aria-label="+"
+                        >
+                          <Plus size={22} />
+                        </button>
+                        <span className="sc-tabular ml-auto text-lg font-black text-[var(--sc-ink)]">
+                          {formatPLN(item.price * item.quantity)}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -355,7 +454,7 @@ export default function ScanScreen({
                 <button
                   type="button"
                   onClick={() => onBagQuantityChange(bagQuantity + 1)}
-                  disabled={bagQuantity >= 9}
+                  disabled={bagQuantity >= MAX_BAG_QUANTITY}
                   className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label="+"
                 >
@@ -364,10 +463,16 @@ export default function ScanScreen({
               </div>
             </div>
             <div className="mb-3 flex items-end justify-between gap-4">
-              <span className="text-lg font-black text-[var(--sc-muted)]">
+              <span className="text-lg font-black uppercase tracking-wide text-[var(--sc-muted)]">
                 {t.total}
               </span>
-              <span className="sc-tabular text-4xl font-black text-[var(--sc-ink)]">
+              {/* TOTAL is the largest type on this screen — research from
+                  Tesco/Walmart/IKEA shows customers read the running total
+                  from a step back, so it should dominate. */}
+              <span
+                key={totalTickKey}
+                className="sc-tabular sc-total-tick text-6xl font-black text-[var(--sc-ink)] xl:text-7xl"
+              >
                 {formatPLN(totalGrosze)}
               </span>
             </div>

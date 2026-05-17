@@ -34,26 +34,38 @@ describe('self-checkout runtime model', () => {
     expect(appSource).not.toContain("goTo('payment')");
   });
 
-  it('keeps BLIK input on the physical terminal instead of an app keypad', () => {
+  it('offers BLIK as a manual phone-transfer method, not an in-app keypad', () => {
+    // The kiosk supports BLIK by displaying the shop's phone number and asking
+    // the customer to send a peer-to-peer BLIK transfer from their banking
+    // app. No in-app BLIK code entry — that would require a terminal we don't
+    // have. The negative assertions guard against a future regression that
+    // adds an in-kiosk BlikPad/blikCode flow.
     const paymentSource = readSource('src/renderer/windows/self-checkout/screens/PaymentScreen.tsx');
 
     expect(paymentSource).not.toContain('BlikPad');
     expect(paymentSource).not.toContain('blikCode');
+    expect(paymentSource).toContain("'CASH' | 'CARD' | 'BLIK'");
+    expect(paymentSource).toContain('blikInstructionTitle');
+    expect(paymentSource).toContain('BLIK_PHONE_DISPLAY');
     expect(paymentSource).toContain('paymentTerminalHint');
-    expect(paymentSource).toContain('blikProductionUnsupported');
     expect(paymentSource).toContain('onLangChange');
   });
 
   it('connects production self-checkout to POS order, payment, print, and sync IPC', () => {
+    // Manual-workflow rewrite collects payment off-device, so SelfCheckoutApp
+    // no longer calls a card-terminal IPC — it just saves the order, syncs,
+    // and prints. The order-payload shape lives in build-sale.ts (extracted
+    // so smoke tests can exercise it without React); the IPC plumbing stays
+    // in SelfCheckoutApp.tsx.
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const buildSaleSource = readSource('src/renderer/windows/self-checkout/build-sale.ts');
     const preloadSource = readSource('src/preload/preload-display.ts');
 
-    expect(appSource).toContain("source: 'SELF_CHECKOUT'");
-    expect(appSource).toContain('pos?.payment?.cardPayment');
+    expect(buildSaleSource).toContain("source: 'SELF_CHECKOUT'");
+    expect(appSource).toContain('buildSelfCheckoutSale');
     expect(appSource).toContain('pos?.orders?.create');
     expect(appSource).toContain('pos?.payment?.printReceipt');
     expect(appSource).toContain('pos?.sync?.orders');
-    expect(appSource).toContain('selfCheckoutFakePaymentEnabled');
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:payment:card', data)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:print-receipt', orderId)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");

@@ -43,7 +43,7 @@ export default function HelpLockedOverlay({
           onClick={onCancel}
           className="sc-secondary-action sc-focusable mt-10 px-8 text-lg"
         >
-          {t.cancel}
+          {acknowledged ? t.helpCancel : t.cancel}
         </button>
       )}
     </div>

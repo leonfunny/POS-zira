@@ -17,6 +17,10 @@ export interface ScCartItem {
   imageUrl?: string;
   /** True when added by the local bag-quantity control (UI shows it inline). */
   isBagFee?: boolean;
+  /** Stock snapshot at add time. Used to block the +/scan path from over-ordering
+   *  beyond what the catalog reported. `undefined` means stock is not tracked
+   *  for this variant (e.g. bag fee) and quantity is unconstrained. */
+  stockAtAdd?: number;
   /** Display-only translations carried alongside canonical `name`.
    *  Cart row renders via `resolveName`; receipts always use canonical `name`. */
   name_translations?: string | null;
@@ -29,7 +33,7 @@ export interface ScCart {
 
 const EMPTY: ScCart = { items: [], totalGrosze: 0 };
 const STORAGE_KEY = 'self-checkout:cart';
-const MAX_BAG_QUANTITY = 9;
+export const MAX_BAG_QUANTITY = 9;
 
 function recalc(items: ScCartItem[]): ScCart {
   const totalGrosze = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
@@ -74,7 +78,11 @@ export function useScCart() {
       if (idx >= 0) {
         items[idx] = item.isBagFee
           ? { ...items[idx], ...item, quantity: Math.min(MAX_BAG_QUANTITY, safeQuantity) }
-          : { ...items[idx], quantity: items[idx].quantity + safeQuantity };
+          : {
+              ...items[idx],
+              quantity: items[idx].quantity + safeQuantity,
+              stockAtAdd: item.stockAtAdd ?? items[idx].stockAtAdd,
+            };
       } else {
         items.push({
           ...item,

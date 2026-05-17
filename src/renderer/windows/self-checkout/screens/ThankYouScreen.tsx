@@ -1,6 +1,6 @@
 // Thank-you screen. Auto-returns to welcome after 8 seconds.
 import React, { useEffect } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Hand } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import { formatPLN } from '../useScCart';
@@ -10,6 +10,7 @@ interface ThankYouScreenProps {
   totalGrosze: number;
   onReset: () => void;
   onLangChange: (lang: ScLanguage) => void;
+  onCallStaff?: () => void;
 }
 
 export default function ThankYouScreen({
@@ -17,6 +18,7 @@ export default function ThankYouScreen({
   totalGrosze,
   onReset,
   onLangChange,
+  onCallStaff,
 }: ThankYouScreenProps) {
   const t = getScStrings(lang);
   useEffect(() => {
@@ -31,7 +33,7 @@ export default function ThankYouScreen({
       </header>
       <main className="flex min-h-0 flex-1 items-center justify-center px-8 pb-8 text-center">
         <section className="sc-surface w-full max-w-3xl p-12">
-          <div className="mx-auto flex h-36 w-36 items-center justify-center rounded-[40px] bg-emerald-50 text-[var(--sc-success)]">
+          <div className="sc-checkmark-pop mx-auto flex h-36 w-36 items-center justify-center rounded-[40px] bg-emerald-50 text-[var(--sc-success)]">
             <CheckCircle2 size={92} />
           </div>
           <h1 className="mt-9 text-7xl font-black text-emerald-800">
@@ -43,13 +45,25 @@ export default function ThankYouScreen({
           <div className="sc-tabular mt-9 text-5xl font-black text-[var(--sc-ink)]">
             {formatPLN(totalGrosze)}
           </div>
-          <button
-            type="button"
-            onClick={onReset}
-            className="sc-secondary-action sc-focusable mt-10 px-8 text-lg text-emerald-800"
-          >
-            {t.startButton}
-          </button>
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={onReset}
+              className="sc-secondary-action sc-focusable px-8 text-lg text-emerald-800"
+            >
+              {t.startButton}
+            </button>
+            {onCallStaff && (
+              <button
+                type="button"
+                onClick={onCallStaff}
+                className="sc-help-action sc-focusable flex items-center gap-2 px-5 text-base"
+              >
+                <Hand size={20} />
+                {t.callStaff}
+              </button>
+            )}
+          </div>
         </section>
       </main>
     </div>

@@ -283,6 +283,99 @@ body.self-checkout-root {
   font-variant-numeric: tabular-nums;
 }
 
+/* Help button: research says use info-blue, not amber/red. */
+.sc-help-action {
+  min-height: 56px;
+  border: 2px solid #bfdbfe;
+  border-radius: 16px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-weight: 800;
+  transition: background-color 160ms ease, border-color 160ms ease;
+  touch-action: manipulation;
+}
+
+.sc-help-action:hover {
+  border-color: var(--sc-info);
+  background: #dbeafe;
+}
+
+/* Cart item slide-in when freshly added. */
+@keyframes sc-cart-item-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sc-cart-item-fresh {
+  animation: sc-cart-item-in 280ms ease-out;
+}
+
+/* Full-screen scan-success flash overlay. */
+@keyframes sc-scan-flash {
+  0%   { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
+.sc-scan-flash {
+  position: fixed;
+  inset: 0;
+  background: var(--sc-success);
+  pointer-events: none;
+  z-index: 60;
+  animation: sc-scan-flash 320ms ease-out forwards;
+}
+
+/* Total ticker pulse when cart total changes. */
+@keyframes sc-total-tick {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.06); color: var(--sc-success); }
+  100% { transform: scale(1); }
+}
+
+.sc-total-tick {
+  animation: sc-total-tick 320ms ease-out;
+  display: inline-block;
+}
+
+/* Welcome attract pulse on scan icon. */
+@keyframes sc-attract-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(218, 119, 86, 0.45); }
+  50%      { transform: scale(1.04); box-shadow: 0 0 0 24px rgba(218, 119, 86, 0); }
+}
+
+.sc-attract-pulse {
+  animation: sc-attract-pulse 2.4s ease-in-out infinite;
+}
+
+/* Thank-you checkmark celebration. */
+@keyframes sc-checkmark-pop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.sc-checkmark-pop {
+  animation: sc-checkmark-pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Fiscal-printing dot loader. */
+@keyframes sc-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%           { transform: translateY(-6px); opacity: 1; }
+}
+
+.sc-dot-loader span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  border-radius: 9999px;
+  background: var(--sc-primary-deep);
+  animation: sc-dot-bounce 1.2s infinite ease-in-out;
+}
+.sc-dot-loader span:nth-child(2) { animation-delay: 0.16s; }
+.sc-dot-loader span:nth-child(3) { animation-delay: 0.32s; }
+
 @media (prefers-reduced-motion: reduce) {
   .sc-action,
   .sc-secondary-action {
@@ -291,6 +384,15 @@ body.self-checkout-root {
 
   .sc-action:active {
     transform: none;
+  }
+
+  .sc-cart-item-fresh,
+  .sc-scan-flash,
+  .sc-total-tick,
+  .sc-attract-pulse,
+  .sc-checkmark-pop,
+  .sc-dot-loader span {
+    animation: none !important;
   }
 }
 
@@ -366,9 +468,13 @@ body.self-checkout-root {
   }
 }
 
-/* Hide scrollbar for category tabs */
+/* Hide scrollbar for category tabs / carousels (cross-browser) */
+.scrollbar-hide {
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE / legacy Edge */
+}
 .scrollbar-hide::-webkit-scrollbar {
-  display: none;
+  display: none;               /* Chromium / Safari */
 }
 
 /* Line clamp utility */
