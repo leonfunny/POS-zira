@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
 import rlog from '../../../../utils/logger';
@@ -11,21 +11,38 @@ import PaymentModal from '../../PaymentModal';
 import OrderHistoryModal from '../../OrderHistoryModal';
 import QuickActions from './QuickActions';
 
+// Category cards render an icon glyph in the colored avatar. Prefer the
+// server-provided `icon` field when it's a short pictogram/emoji (≤ 2
+// code points), otherwise fall back to initials derived from the display
+// name so every card always has something legible.
+function categoryGlyph(cat: Category, displayName: string): string {
+  const icon = (cat.icon || '').trim();
+  if (icon && [...icon].length <= 2) return icon;
+  const trimmed = (displayName || cat.name || '?').trim();
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  }
+  return trimmed.slice(0, 2).toUpperCase();
+}
+
 interface RetailTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
   session: PosState['session'];
+  onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
+  onQuickAddCamera?: () => void;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera }: RetailTemplateProps) {
+  const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
-  const [showHistory, setShowHistory] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -267,8 +284,12 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     const product = await window.electronAPI.pos.products.getByBarcode(barcode);
     if (product) {
       handleAddProduct(product);
+      return;
     }
-  }, [handleAddProduct]);
+    if (onUnknownBarcodeScanned) {
+      await onUnknownBarcodeScanned(barcode);
+    }
+  }, [handleAddProduct, onUnknownBarcodeScanned]);
 
   const handleHoldCart = useCallback(() => {
     if (cart.items.length === 0) return;
@@ -341,14 +362,66 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
     setPaymentPrefillCashGrosze(undefined);
   }, []);
 
+  // Category strip is a touch carousel: native horizontal scroll + chevron
+  // affordances. Chevrons only appear when there's overflow that direction so
+  // they don't crowd the toolbar on small catalogs.
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateCategoryScrollHints = useCallback(() => {
+    const el = categoryScrollRef.current;
+    if (!el) return;
+    // 1px buffer absorbs sub-pixel rounding so chevrons don't flicker at the edge.
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    updateCategoryScrollHints();
+    const el = categoryScrollRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', updateCategoryScrollHints, { passive: true });
+    const ro = new ResizeObserver(updateCategoryScrollHints);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', updateCategoryScrollHints);
+      ro.disconnect();
+    };
+  }, [updateCategoryScrollHints, categories.length]);
+
+  const scrollCategories = useCallback((direction: 'left' | 'right') => {
+    const el = categoryScrollRef.current;
+    if (!el) return;
+    const delta = el.clientWidth * 0.8;
+    el.scrollBy({ left: direction === 'left' ? -delta : delta, behavior: 'smooth' });
+  }, []);
+
+  // Default landing view is the category gallery — clicking "All" or
+  // returning from a category resets to it. Search and a picked category
+  // still drive the regular ProductGrid so the cashier can browse by
+  // either entry point.
+  const showCategoryGallery = !searchQuery && activeCategoryId === null;
+
+  const productCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const product of allProducts) {
+      if (!product.category_id) continue;
+      map.set(product.category_id, (map.get(product.category_id) ?? 0) + 1);
+    }
+    return map;
+  }, [allProducts]);
+
   return (
     <>
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden bg-slate-100">
         {/* Left: Products */}
         <div className="flex-1 min-w-0 flex flex-col p-3 gap-3 overflow-hidden">
-          {/* Toolbar: search + category pills */}
-          <div className="shrink-0 bg-white border border-slate-200 rounded-lg shadow-sm p-2.5">
+          {/* Toolbar: search + category pills.
+              Borderless / no surface — elements float directly on the page bg
+              so the eye sees content first, not chrome. */}
+          <div className="shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-[min(360px,42%)] min-w-[280px] shrink-0">
               <SearchBar
@@ -359,82 +432,173 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
               />
               </div>
 
-              <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto no-scrollbar">
-              <button
-                type="button"
-                onClick={handleManualSync}
-                disabled={isSyncing}
-                title={tOr('pos.syncProducts', 'Sync products from server')}
-                aria-label={tOr('pos.syncProducts', 'Sync products from server')}
-                className={`shrink-0 min-h-11 w-11 rounded-lg border flex items-center justify-center transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
-                  isSyncing
-                    ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-wait'
-                    : syncError
-                    ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
-                    : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
-                }`}
-              >
-                <svg
-                  className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114-3m2 5a8 8 0 01-14 3"
-                  />
-                </svg>
-              </button>
-              {syncError && (
-                <span
-                  role="status"
-                  className="shrink-0 text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded-md"
-                >
-                  {syncError}
-                </span>
-              )}
-              <button
-                onClick={() => setActiveCategoryId(null)}
-                className={`min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus:ring-2 focus:ring-brand-200 ${
-                  activeCategoryId === null
-                    ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
-                    : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
-                }`}
-              >
-                {t('pos.allCategories') || 'All'}
-              </button>
-              {categories.map((cat) => (
+              <div className="flex-1 min-w-0 relative">
                 <button
-                  key={cat.id}
-                  onClick={() => setActiveCategoryId(activeCategoryId === cat.id ? null : cat.id)}
-                  className={`min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-brand-200 ${
-                    activeCategoryId === cat.id
-                      ? 'bg-brand-50 text-brand-800 border-brand-500 shadow-sm'
-                      : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                  type="button"
+                  onClick={() => scrollCategories('left')}
+                  aria-label={tOr('pos.scrollCategoriesLeft', 'Scroll categories left')}
+                  tabIndex={canScrollLeft ? 0 : -1}
+                  className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                    canScrollLeft ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
                   }`}
                 >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: cat.color || '#da7756' }}
-                    aria-hidden="true"
-                  />
-                  {resolveName(cat, lang)}
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                  </svg>
                 </button>
-              ))}
+                <div
+                  ref={categoryScrollRef}
+                  className="flex items-center gap-2 overflow-x-auto scrollbar-hide scroll-smooth"
+                >
+                  <button
+                    type="button"
+                    onClick={handleManualSync}
+                    disabled={isSyncing}
+                    title={tOr('pos.syncProducts', 'Sync products from server')}
+                    aria-label={tOr('pos.syncProducts', 'Sync products from server')}
+                    className={`shrink-0 min-h-11 w-11 rounded-lg border flex items-center justify-center transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                      isSyncing
+                        ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-wait'
+                        : syncError
+                        ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+                        : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                    }`}
+                  >
+                    <svg
+                      className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114-3m2 5a8 8 0 01-14 3"
+                      />
+                    </svg>
+                  </button>
+                  {syncError && (
+                    <span
+                      role="status"
+                      className="shrink-0 text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded-md"
+                    >
+                      {syncError}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => setActiveCategoryId(null)}
+                    className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                      activeCategoryId === null
+                        ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                    }`}
+                  >
+                    {t('pos.allCategories') || 'All'}
+                  </button>
+                  {categories.map((cat) => {
+                    const isActive = activeCategoryId === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => setActiveCategoryId(isActive ? null : cat.id)}
+                        className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                          isActive
+                            ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
+                            : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                        }`}
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: isActive ? '#ffffff' : (cat.color || '#da7756') }}
+                          aria-hidden="true"
+                        />
+                        {resolveName(cat, lang)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => scrollCategories('right')}
+                  aria-label={tOr('pos.scrollCategoriesRight', 'Scroll categories right')}
+                  tabIndex={canScrollRight ? 0 : -1}
+                  className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                    canScrollRight ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
-          <ProductGrid
-            products={products}
-            onAddProduct={handleAddProduct}
-            t={t}
-            resetScrollKey={activeCategoryId ?? 'all'}
-            lang={lang}
-          />
+          {showCategoryGallery ? (
+            <div className="flex-1 min-h-0 overflow-y-auto bg-white rounded-lg">
+              <div className="flex items-baseline justify-between gap-3 px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-[1]">
+                <h2 className="text-base font-extrabold text-slate-950">
+                  {tOr('pos.categories.title', 'Categories')}
+                </h2>
+                <span className="text-xs font-bold text-slate-500 tabular-nums">
+                  {categories.length} {tOr('pos.categories.count', 'categories')}
+                </span>
+              </div>
+              {categories.length === 0 ? (
+                <div className="flex items-center justify-center text-slate-500 py-16">
+                  <div className="text-center px-6">
+                    <svg className="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+                    </svg>
+                    <p className="text-sm font-medium text-slate-500">
+                      {tOr('pos.categories.title', 'Categories')}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-4 gap-3 p-4">
+                  {categories.map((cat) => {
+                    const displayName = resolveName(cat, lang);
+                    const count = productCountByCategory.get(cat.id) ?? 0;
+                    const bg = cat.color || '#da7756';
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setActiveCategoryId(cat.id)}
+                        className="group flex items-center gap-4 p-4 rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 hover:bg-brand-50/40 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 min-h-[96px]"
+                      >
+                        <div
+                          className="shrink-0 w-14 h-14 rounded-xl flex items-center justify-center text-xl font-extrabold"
+                          style={{ backgroundColor: `${bg}2E`, color: bg }}
+                          aria-hidden="true"
+                        >
+                          {categoryGlyph(cat, displayName)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-base font-bold text-slate-900 line-clamp-1 leading-tight">
+                            {displayName}
+                          </p>
+                          <p className="text-xs font-medium text-slate-500 mt-1 tabular-nums">
+                            {count} {tOr('pos.categories.productCount', 'products')}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <ProductGrid
+              products={products}
+              onAddProduct={handleAddProduct}
+              t={t}
+              resetScrollKey={activeCategoryId ?? 'all'}
+              lang={lang}
+            />
+          )}
           <div className="-mx-3 -mb-3 shrink-0">
             <QuickActions
               dispatch={dispatch}
@@ -449,6 +613,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
               onRecall={handleRecallCart}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
+              onQuickAddCamera={onQuickAddCamera}
             />
           </div>
         </div>
@@ -468,6 +633,8 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
             t={t}
             shiftOpen={session.isOpen}
             lang={lang}
+            heldCartsCount={heldCarts.length}
+            onHold={cart.items.length > 0 ? handleHoldCart : undefined}
           />
         </div>
       </div>
@@ -494,6 +661,7 @@ export default function RetailTemplate({ state, dispatch, t, session }: RetailTe
           initialCashAmountGrosze={paymentPrefillCashGrosze}
         />
       )}
+
 
       {/* Order history modal */}
       {showHistory && (

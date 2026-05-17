@@ -64,6 +64,14 @@ export class SyncModule extends BaseModule {
   private _productBackoffStep = 0;
   private _productSkipUntil = 0;
 
+  // ── Periodic draft-product sync ─────────────────────────────────
+  // Drafts change less often than priced products (admin reviews them
+  // out of band) so 60s is plenty. The deltaSync auto-falls-back to
+  // fullSync when no cursor is stored, so the timer is safe to call
+  // before any other sync has run.
+  private _draftPollTimer: ReturnType<typeof setInterval> | null = null;
+  private _draftSyncInFlight: Promise<void> | null = null;
+
   constructor(private container: ServiceContainer) {
     super();
   }
@@ -89,6 +97,10 @@ export class SyncModule extends BaseModule {
     // realtime channel and may be down for long stretches without
     // affecting product polling.
     this.startPeriodicProductSync();
+    // Drafts poll on a longer 60s cadence — admin edits them out of band,
+    // socket events handle real-time updates, this is the backstop so a
+    // long-running kiosk doesn't drift from the master catalog.
+    this.startPeriodicDraftProductSync();
 
     this.setState(ModuleState.READY);
   }
@@ -629,6 +641,47 @@ export class SyncModule extends BaseModule {
     }
   }
 
+  /**
+   * Run a single draft-product delta sync, coalescing concurrent calls into
+   * one in-flight promise so the timer + a manual trigger can't double-pull.
+   * Notifies POS renderers on success so any open Draft tab can refresh.
+   */
+  async runDraftSync(): Promise<void> {
+    if (this._draftSyncInFlight) return this._draftSyncInFlight;
+    this._draftSyncInFlight = (async () => {
+      try {
+        await draftProductSync.deltaSync();
+        notifyPosRenderers(this.container, 'pos:draft-products-synced');
+      } catch (err: any) {
+        logger.debug(`[SyncModule] Periodic draft sync failed: ${err?.message ?? err}`);
+      } finally {
+        this._draftSyncInFlight = null;
+      }
+    })();
+    return this._draftSyncInFlight;
+  }
+
+  /**
+   * Start the periodic draft-product polling. Idempotent. Defaults to 60s;
+   * tests pass a shorter interval to exercise the timing.
+   */
+  startPeriodicDraftProductSync(intervalMs = 60_000): void {
+    if (this._draftPollTimer) return;
+    this._draftPollTimer = setInterval(() => {
+      this.runDraftSync().catch((err) => {
+        logger.debug(`[SyncModule] Periodic draft sync threw: ${err?.message ?? err}`);
+      });
+    }, intervalMs);
+    logger.info(`[SyncModule] Started periodic draft product sync (${intervalMs / 1000}s interval)`);
+  }
+
+  stopPeriodicDraftProductSync(): void {
+    if (this._draftPollTimer) {
+      clearInterval(this._draftPollTimer);
+      this._draftPollTimer = null;
+    }
+  }
+
   async start(): Promise<void> { this.setState(ModuleState.RUNNING); }
 
   async stop(): Promise<void> {
@@ -636,6 +689,7 @@ export class SyncModule extends BaseModule {
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.stopPeriodicProductSync();
+    this.stopPeriodicDraftProductSync();
     this.setState(ModuleState.STOPPED);
   }
 
@@ -644,6 +698,7 @@ export class SyncModule extends BaseModule {
     this.syncLogService?.stop();
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.stopPeriodicProductSync();
+    this.stopPeriodicDraftProductSync();
     this.setState(ModuleState.STOPPED);
   }
 }

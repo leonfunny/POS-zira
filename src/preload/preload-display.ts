@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('barcode-scanned', listener);
     return () => ipcRenderer.removeListener('barcode-scanned', listener);
   },
+  sendKeyboardInput: (char: string) => {
+    ipcRenderer.send('keyboard-input', char);
+  },
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('set-config', config),
   display: {

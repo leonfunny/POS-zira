@@ -27,6 +27,7 @@ import {
   type RefundIpcPayload,
 } from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
+import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
@@ -501,6 +502,7 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:search', (_e, query: string) => productRepo.search(query));
     ipcMain.handle('pos:products:searchByCode', (_e, query: string) => productRepo.searchByCode(query));
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
+    ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
 
     // Draft products (server-mirrored, see DraftProductSync)
@@ -508,6 +510,133 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:draft-products:getByStatus', (_e, status: string) => draftProductRepo.getByStatus(status));
     ipcMain.handle('pos:draft-products:getByBarcode', (_e, barcode: string) => draftProductRepo.getByBarcode(barcode));
     ipcMain.handle('pos:draft-products:getById', (_e, id: string) => draftProductRepo.getById(id));
+
+    // Master catalog one-shot API (lookup + scan-create)
+    ipcMain.handle('pos:master-catalog:lookup-by-ean', async (_e, ean: string) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, error: 'no-auth', draft: null };
+      try {
+        const draft = await apiClient.lookupByEan(token, ean);
+        return { ok: true, draft };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? 'lookup-failed', draft: null };
+      }
+    });
+    ipcMain.handle(
+      'pos:master-catalog:scan-create',
+      async (_e, payload: { ean: string; quantity?: number; idempotencyKey?: string }) => {
+        const token = getSecureAuthToken();
+        if (!token) return { ok: false, error: 'no-auth' };
+        try {
+          const result = await apiClient.scanCreate(token, payload);
+          // Pull fresh products + drafts so renderer can see the new variant.
+          try {
+            const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+            await syncMod?.deltaSync?.();
+          } catch (syncErr: any) {
+            logger.debug(`[PosModule] post-scan-create product sync skipped: ${syncErr?.message ?? syncErr}`);
+          }
+          try { await draftProductSync.deltaSync(); }
+          catch (syncErr: any) { logger.debug(`[PosModule] post-scan-create draft sync skipped: ${syncErr?.message ?? syncErr}`); }
+          return { ok: true, ...result };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'scan-create-failed' };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      'pos:quick-add:prepare',
+      async (_e, payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) => {
+        try {
+          if (!Array.isArray(payload.images) || payload.images.length < 2 || payload.images.length > 3) {
+            return { ok: false, error: 'Capture 2 or 3 images before sending' };
+          }
+
+          const uploadedImages = await Promise.all(
+            payload.images.map((image, index) =>
+              apiClient.quickAddUploadImage({
+                dataUrl: image.dataUrl,
+                mimeType: image.mimeType || 'image/jpeg',
+                filename: `quick-add-${Date.now()}-${index + 1}.jpg`,
+              }),
+            ),
+          );
+          const images = uploadedImages.map((image, index) => ({
+            url: image.url,
+            mimeType: payload.images[index]?.mimeType || 'image/jpeg',
+          }));
+          const analysis = await apiClient.quickAddAnalyzeMultiple(images, payload.language || 'pl');
+          if (!analysis?.name) return { ok: false, error: 'AI analysis returned no product name' };
+
+          const createPayload: Record<string, unknown> = {
+            name: analysis.name,
+            imageUrl: images[0]?.url,
+          };
+          if (analysis.ean) createPayload.ean = analysis.ean;
+          if (analysis.weight != null) createPayload.weight = analysis.weight;
+          if (analysis.weightUnit) createPayload.weightUnit = analysis.weightUnit;
+
+          const created = await apiClient.quickAddCreate(createPayload, payload.idempotencyKey);
+          return {
+            ok: true,
+            images,
+            analysis,
+            product: created.product ?? null,
+            variant: created.variant ?? null,
+          };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'quick-add-prepare-failed' };
+        }
+      },
+    );
+
+    ipcMain.handle(
+      'pos:quick-add:finalize',
+      async (_e, payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => {
+        try {
+          if (!payload.productId || !payload.variantId) return { ok: false, error: 'Missing product or variant id' };
+          if (!(payload.retailPrice > 0)) return { ok: false, error: 'Retail price must be greater than zero' };
+          if (!(payload.quantity > 0)) return { ok: false, error: 'Quantity must be greater than zero' };
+
+          const result = await apiClient.quickAddCreate({
+            productId: payload.productId,
+            variantId: payload.variantId,
+            retailPrice: payload.retailPrice,
+            quantity: payload.quantity,
+          }, payload.idempotencyKey);
+
+          const localVariant = toQuickAddVariantRow(result.product, result.variant, {
+            retailPriceGrosze: Math.round(payload.retailPrice * 100),
+            quantity: payload.quantity,
+          });
+          if (localVariant) {
+            productRepo.upsertMany([localVariant]);
+            database.save();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+
+          let syncPending = false;
+          try {
+            const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+            await syncMod?.deltaSync?.();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          } catch (syncErr: any) {
+            syncPending = true;
+            logger.debug(`[PosModule] post-quick-add product sync skipped: ${syncErr?.message ?? syncErr}`);
+          }
+
+          return {
+            ok: true,
+            product: result.product ?? null,
+            variant: localVariant ?? result.variant ?? null,
+            syncPending,
+          };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'quick-add-finalize-failed' };
+        }
+      },
+    );
 
     // Orders
     ipcMain.handle('pos:orders:create', (_e, order, items) => {

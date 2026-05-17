@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePosStore } from '../../hooks/usePosStore';
 import { useConfig } from '../../hooks/useConfig';
+import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName } from '../../../shared/catalog-names';
 import rlog from '../../utils/logger';
@@ -11,6 +12,12 @@ import SalonTemplate from './templates/salon/SalonTemplate';
 import B2BTemplate from './templates/b2b/B2BTemplate';
 import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
 import SyncConflictBanner from './SyncConflictBanner';
+import ScanImportModal, { ScanImportDraftPreview } from './ScanImportModal';
+import QuickAddCameraModal, {
+  QuickAddCapturedImage,
+  QuickAddFinalizeInput,
+  QuickAddPreparedResult,
+} from './QuickAddCameraModal';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -37,6 +44,7 @@ interface POSLayoutProps {
 }
 
 export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
+  useBarcodeForwarder();
   const { state, dispatch } = usePosStore();
   const { config, saveConfig } = useConfig();
   const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
@@ -46,6 +54,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
+  const [scanImport, setScanImport] = useState<{
+    open: boolean;
+    ean: string;
+    preview: ScanImportDraftPreview | null;
+    loading: boolean;
+    error: string | null;
+  }>({ open: false, ean: '', preview: null, loading: false, error: null });
+  const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -123,6 +139,171 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // "Sold out" toast string for scanned items.
   const t = getTranslation(language);
 
+  /**
+   * Open the scan-import modal for an EAN that's not in the local catalog.
+   * Tries the local draft mirror first (fast, offline-safe), falls back to
+   * the network lookup-by-ean only if nothing local matches.
+   */
+  const openScanImport = useCallback(async (ean: string) => {
+    const code = ean.trim();
+    if (!code) return;
+    setScanImport({ open: true, ean: code, preview: null, loading: true, error: null });
+    try {
+      const local = await window.electronAPI.pos.draftProducts.getByBarcode(code);
+      let preview: ScanImportDraftPreview | null = local
+        ? {
+            id: local.id,
+            name: local.name,
+            barcode: local.barcode,
+            retail_price: local.retail_price,
+            vat_rate: local.vat_rate,
+            image_url: local.image_url,
+            status: local.status,
+          }
+        : null;
+
+      if (!preview) {
+        const remote = await window.electronAPI.pos.masterCatalog.lookupByEan(code);
+        if (remote?.ok && remote.draft) {
+          const d = remote.draft;
+          preview = {
+            id: d.id,
+            name: d.name ?? d.title ?? code,
+            barcode: d.barcode ?? code,
+            retail_price: Number(d.retail_price ?? d.retailPrice ?? d.purchasePrice ?? 0) || 0,
+            vat_rate: Number(d.vat_rate ?? d.vatRate ?? 23) || 23,
+            image_url: d.image_url ?? d.imageUrl ?? null,
+            status: d.status,
+          };
+        }
+      }
+
+      if (!preview) {
+        setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
+        showScanToast(`Barcode not found: ${code}`, 'err');
+        return;
+      }
+
+      setScanImport({ open: true, ean: code, preview, loading: false, error: null });
+    } catch (err: any) {
+      rlog.warn('[POSLayout] scan-import lookup failed', err?.message);
+      setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
+      showScanToast(`Barcode not found: ${code}`, 'err');
+    }
+  }, [showScanToast]);
+
+  const closeScanImport = useCallback(() => {
+    setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
+  }, []);
+
+  const prepareQuickAdd = useCallback(async (
+    images: QuickAddCapturedImage[],
+    idempotencyKey: string,
+  ): Promise<QuickAddPreparedResult> => {
+    // Product `name` is the canonical catalog/receipt name. Keep AI analysis
+    // in Polish regardless of the operator UI language; display localization
+    // is a separate layer in this app.
+    const result = await window.electronAPI.pos.quickAdd.prepare({ images, language: 'pl', idempotencyKey });
+    if (!result?.ok) throw new Error(result?.error || 'Quick add prepare failed');
+    if (!result.product?.id || !result.variant?.id) throw new Error('Quick add create returned no product ids');
+    return {
+      analysis: result.analysis ?? {},
+      product: result.product,
+      variant: result.variant,
+    };
+  }, []);
+
+  const finalizeQuickAdd = useCallback(async (input: QuickAddFinalizeInput) => {
+    const result = await window.electronAPI.pos.quickAdd.finalize({
+      productId: input.productId,
+      variantId: input.variantId,
+      retailPrice: input.retailPriceGrosze / 100,
+      quantity: input.quantity,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Quick add finalize failed');
+
+    const variant =
+      result.variant
+      ?? await window.electronAPI.pos.products.getById(input.variantId)
+      ?? (input.ean ? await window.electronAPI.pos.products.getByBarcode(input.ean) : null);
+    if (!variant || !dispatch) {
+      // The backend mutation already succeeded. Do not surface this as a
+      // retryable failure just because the local mirror has not caught up.
+      showScanToast('Product saved; catalog refresh pending', 'ok');
+      setShowQuickAddCamera(false);
+      return;
+    }
+
+    const displayName = resolveName(variant, language);
+    dispatch({
+      type: 'cart/addItem',
+      payload: {
+        id: crypto.randomUUID(),
+        variantId: variant.id,
+        name: variant.name,
+        sku: variant.sku || '',
+        price: variant.retail_price,
+        quantity: 1,
+        total: variant.retail_price,
+        imageUrl: variant.image_url || undefined,
+        vatRate: variant.vat_rate,
+        name_translations: variant.name_translations ?? null,
+      },
+    });
+    showScanToast(`+ ${displayName}`, 'ok');
+    setShowQuickAddCamera(false);
+  }, [dispatch, language, showScanToast]);
+
+  const confirmScanImport = useCallback(async () => {
+    const ean = scanImport.ean;
+    if (!ean) return;
+    setScanImport((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const result = await window.electronAPI.pos.masterCatalog.scanCreate({
+        ean,
+        idempotencyKey: `scan-${ean}-${Date.now()}`,
+      });
+      if (!result?.ok) {
+        setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
+        return;
+      }
+      // After scanCreate, main triggers a deltaSync so the variant should be
+      // in product_variants now. Look it up and add to cart.
+      const variant = await window.electronAPI.pos.products.getByBarcode(ean);
+      if (variant && dispatch) {
+        const displayName = resolveName(variant, language);
+        dispatch({
+          type: 'cart/addItem',
+          payload: {
+            id: crypto.randomUUID(),
+            variantId: variant.id,
+            name: variant.name,
+            sku: variant.sku || '',
+            price: variant.retail_price,
+            quantity: 1,
+            total: variant.retail_price,
+            imageUrl: variant.image_url || undefined,
+            vatRate: variant.vat_rate,
+            name_translations: variant.name_translations ?? null,
+          },
+        });
+        showScanToast(`+ ${displayName}`, 'ok');
+      } else {
+        showScanToast(
+          result.outcome === 'IMPORT_DRAFT'
+            ? `Imported draft: ${ean}`
+            : `Imported: ${ean}`,
+          'ok',
+        );
+      }
+      closeScanImport();
+    } catch (err: any) {
+      rlog.error('[POSLayout] scan-import confirm failed', err?.message);
+      setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
+    }
+  }, [scanImport.ean, dispatch, language, showScanToast, closeScanImport]);
+
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -157,7 +338,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               showScanToast(`+ ${displayName}`, 'ok');
             }
           } else {
-            showScanToast(`Barcode not found: ${code}`, 'err');
+            // Unknown EAN — try the master catalog. openScanImport opens the
+            // preview modal if a draft exists locally or remotely; otherwise
+            // it falls back to the "Barcode not found" toast.
+            await openScanImport(code);
           }
         } catch (err) {
           rlog.error('[POSLayout] Barcode lookup failed:', err);
@@ -165,7 +349,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, dispatch, showScanToast, language, t]);
+  }, [barcodeBuffer, dispatch, showScanToast, language, t, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {
@@ -271,6 +455,24 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           {scanToast.text}
         </div>
       )}
+      {/* Scan import preview modal */}
+      <ScanImportModal
+        open={scanImport.open}
+        preview={scanImport.preview}
+        ean={scanImport.ean}
+        onConfirm={confirmScanImport}
+        onCancel={closeScanImport}
+        loading={scanImport.loading}
+        error={scanImport.error}
+        t={t}
+      />
+      <QuickAddCameraModal
+        open={showQuickAddCamera}
+        onClose={() => setShowQuickAddCamera(false)}
+        onPrepare={prepareQuickAdd}
+        onFinalize={finalizeQuickAdd}
+        t={t}
+      />
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {/* Header - shared across all modes */}
@@ -368,7 +570,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
       {/* Mode-specific layout */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {posMode === 'retail' && <RetailTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'retail' && (
+          <RetailTemplate
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            session={session}
+            onUnknownBarcodeScanned={openScanImport}
+            onQuickAddCamera={() => setShowQuickAddCamera(true)}
+          />
+        )}
         {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
         {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} session={session} />}
         {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} session={session} />}

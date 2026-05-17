@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       search: (query: string) => ipcRenderer.invoke('pos:products:search', query),
       searchByCode: (query: string) => ipcRenderer.invoke('pos:products:searchByCode', query),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:products:getByBarcode', barcode),
+      getById: (id: string) => ipcRenderer.invoke('pos:products:getById', id),
     },
     categories: {
       getAll: () => ipcRenderer.invoke('pos:categories:getAll'),
@@ -95,6 +96,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
+    },
+    masterCatalog: {
+      lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
+      scanCreate: (payload: { ean: string; quantity?: number; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
+    },
+    quickAdd: {
+      prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:quick-add:prepare', payload),
+      finalize: (payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:quick-add:finalize', payload),
     },
     // Mode-specific: Tables (Restaurant)
     tables: {
@@ -182,6 +194,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_e: any, barcode: string) => callback(barcode);
     ipcRenderer.on('barcode-scanned', listener);
     return () => ipcRenderer.removeListener('barcode-scanned', listener);
+  },
+  sendKeyboardInput: (char: string) => {
+    ipcRenderer.send('keyboard-input', char);
   },
 
   // === Auth ===

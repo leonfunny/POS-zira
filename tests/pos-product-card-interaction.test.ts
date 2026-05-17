@@ -42,8 +42,13 @@ describe('POS product card interaction', () => {
     expect(cardSource).toContain('grayscale');
   });
 
-  it('exports isProductSoldOut guard for use by templates', () => {
+  it('computes the sold-out guard inline (no named export needed by templates yet)', () => {
+    // Earlier draft expected an exported `isProductSoldOut(product)` helper for
+    // templates to reuse. The current shape inlines the rule as a local const
+    // — templates that need the same check should import the rule from here
+    // once a real call site appears. Pin the inline shape so it doesn't drift.
     const cardSource = productCardSource();
-    expect(cardSource).toContain('export function isProductSoldOut');
+    expect(cardSource).toContain('const soldOut = !isService && stockQty <= 0');
+    expect(cardSource).not.toContain('export function isProductSoldOut');
   });
 });

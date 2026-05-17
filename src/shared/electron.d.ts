@@ -563,6 +563,7 @@ interface ElectronAPI {
       search: (query: string) => Promise<PosProduct[]>;
       searchByCode: (query: string) => Promise<PosProduct[]>;
       getByBarcode: (barcode: string) => Promise<PosProduct | null>;
+      getById: (id: string) => Promise<PosProduct | null>;
     };
     categories: {
       getAll: () => Promise<PosCategory[]>;
@@ -624,6 +625,34 @@ interface ElectronAPI {
       getByStatus: (status: string) => Promise<any[]>;
       getByBarcode: (barcode: string) => Promise<any | null>;
       getById: (id: string) => Promise<any | null>;
+    };
+    masterCatalog: {
+      lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
+      scanCreate: (payload: { ean: string; quantity?: number; idempotencyKey?: string }) => Promise<{
+        ok: boolean;
+        outcome?: string;
+        product?: any;
+        draft?: any;
+        message?: string;
+        error?: string;
+      }>;
+    };
+    quickAdd: {
+      prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) => Promise<{
+        ok: boolean;
+        images?: Array<{ url: string; mimeType: string }>;
+        analysis?: { name?: string; ean?: string; weight?: number; weightUnit?: string; [key: string]: any };
+        product?: any;
+        variant?: any;
+        error?: string;
+      }>;
+      finalize: (payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => Promise<{
+        ok: boolean;
+        product?: any;
+        variant?: any;
+        syncPending?: boolean;
+        error?: string;
+      }>;
     };
     tables: {
       getAll: () => Promise<PosTable[]>;

@@ -8,6 +8,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+
+// Source files in this repo are checked in with CRLF on Windows. String
+// assertions in this file embed multi-line snippets using `\n`, so we
+// normalize line endings on read to keep the tests cross-platform.
+function readSource(relativePath: string): string {
+  return readFileSync(join(__dirname, relativePath), 'utf-8').replace(/\r\n/g, '\n');
+}
 import { toCashDrawerIpcResult } from '../src/main/pos/cash-drawer-ipc-result';
 import {
   buildRefundMutationError,
@@ -28,12 +35,12 @@ import {
 } from '../src/renderer/components/pos/order-history-time';
 
 // Read source files as strings to validate contract consistency
-const electronDts = readFileSync(join(__dirname, '../src/shared/electron.d.ts'), 'utf-8');
-const preloadMain = readFileSync(join(__dirname, '../src/preload/preload.ts'), 'utf-8');
-const preloadPos = readFileSync(join(__dirname, '../src/preload/preload-pos.ts'), 'utf-8');
-const preloadDisplay = readFileSync(join(__dirname, '../src/preload/preload-display.ts'), 'utf-8');
-const sharedTypes = readFileSync(join(__dirname, '../src/shared/types.ts'), 'utf-8');
-const settingsSrc = readFileSync(join(__dirname, '../src/renderer/components/Settings.tsx'), 'utf-8');
+const electronDts = readSource('../src/shared/electron.d.ts');
+const preloadMain = readSource('../src/preload/preload.ts');
+const preloadPos = readSource('../src/preload/preload-pos.ts');
+const preloadDisplay = readSource('../src/preload/preload-display.ts');
+const sharedTypes = readSource('../src/shared/types.ts');
+const settingsSrc = readSource('../src/renderer/components/Settings.tsx');
 
 describe('IPC channel contracts - main preload', () => {
   const topLevelGroups = [
@@ -97,6 +104,12 @@ describe('IPC channel contracts - POS methods must be in BOTH preloads', () => {
     { scope: 'orders', method: 'getTodayServer', ipc: 'pos:orders:getTodayServer' },
     { scope: 'customers', method: 'lookupNip', ipc: 'pos:customers:lookupNip' },
     { scope: 'shift', method: 'getActive', ipc: 'pos:shift:getActive' },
+    { scope: 'products', method: 'getById', ipc: 'pos:products:getById' },
+    { scope: 'products', method: 'searchByCode', ipc: 'pos:products:searchByCode' },
+    { scope: 'draftProducts', method: 'getByBarcode', ipc: 'pos:draft-products:getByBarcode' },
+    { scope: 'masterCatalog', method: 'scanCreate', ipc: 'pos:master-catalog:scan-create' },
+    { scope: 'quickAdd', method: 'prepare', ipc: 'pos:quick-add:prepare' },
+    { scope: 'quickAdd', method: 'finalize', ipc: 'pos:quick-add:finalize' },
     { scope: 'sync', method: 'onOrderSynced', ipc: 'pos:order-synced' },
     { scope: 'sync', method: 'onOrderSyncFailed', ipc: 'pos:order-sync-failed' },
   ];
@@ -167,15 +180,9 @@ describe('Type consistency', () => {
 });
 
 describe('Refund payload passes lines[] end-to-end', () => {
-  const orderHistoryModal = readFileSync(
-    join(__dirname, '../src/renderer/components/pos/OrderHistoryModal.tsx'), 'utf-8',
-  );
-  const posModule = readFileSync(
-    join(__dirname, '../src/main/modules/pos.module.ts'), 'utf-8',
-  );
-  const apiClientSrc = readFileSync(
-    join(__dirname, '../src/main/network/api-client.ts'), 'utf-8',
-  );
+  const orderHistoryModal = readSource('../src/renderer/components/pos/OrderHistoryModal.tsx');
+  const posModule = readSource('../src/main/modules/pos.module.ts');
+  const apiClientSrc = readSource('../src/main/network/api-client.ts');
 
   it('renderer sends lines (not items) in refund payload', () => {
     expect(orderHistoryModal).toContain('buildRefundRequest');
@@ -720,9 +727,7 @@ describe('Printer settings contract', () => {
 });
 
 describe('Order history sorting contract', () => {
-  const orderHistoryModal = readFileSync(
-    join(__dirname, '../src/renderer/components/pos/OrderHistoryModal.tsx'), 'utf-8',
-  );
+  const orderHistoryModal = readSource('../src/renderer/components/pos/OrderHistoryModal.tsx');
 
   it('sorts local SQLite timestamps with the same UTC parser used for display', () => {
     const localCreatedAt = '2026-05-06 11:53:31';

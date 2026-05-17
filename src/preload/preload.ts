@@ -527,7 +527,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_ALL),
       getByCategory: (catId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_CATEGORY, catId),
       search: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_SEARCH, query),
+      searchByCode: (query: string) => ipcRenderer.invoke('pos:products:searchByCode', query),
       getByBarcode: (barcode: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_BARCODE, barcode),
+      getById: (id: string) => ipcRenderer.invoke('pos:products:getById', id),
     },
     categories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
@@ -614,6 +616,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
+    },
+    masterCatalog: {
+      lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
+      scanCreate: (payload: { ean: string; quantity?: number; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
+    },
+    quickAdd: {
+      prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:quick-add:prepare', payload),
+      finalize: (payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
+        ipcRenderer.invoke('pos:quick-add:finalize', payload),
     },
     tables: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ALL),

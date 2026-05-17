@@ -21,6 +21,7 @@ interface QuickActionsProps {
   onRecall?: (id: string) => void;
   onDiscardHeld?: (id: string) => void;
   onHistory?: () => void;
+  onQuickAddCamera?: () => void;
 }
 
 interface ActionButtonProps {
@@ -69,12 +70,13 @@ const icons = {
   history: <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v5l3 2m6-3a9 9 0 11-2.64-6.36M21 3v6h-6" /></svg>,
   display: <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v10H4V5zm5 14h6m-3-4v4" /></svg>,
   promo: <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 12h10M5 16h6M17 16l2 2 3-4" /></svg>,
+  camera: <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h3l2-3h6l2 3h3a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2v-8a2 2 0 012-2zm8 9a4 4 0 100-8 4 4 0 000 8z" /></svg>,
 };
 
 export default function QuickActions({
   dispatch, hasItems, onOpenCustomerDisplay, onCloseCustomerDisplay,
   isCustomerDisplayOpen, displayMode, t,
-  heldCarts = [], onHold, onRecall, onDiscardHeld, onHistory,
+  heldCarts = [], onHold, onRecall, onDiscardHeld, onHistory, onQuickAddCamera,
 }: QuickActionsProps) {
   const [showDiscount, setShowDiscount] = useState(false);
   const [discountValue, setDiscountValue] = useState('');
@@ -174,6 +176,13 @@ export default function QuickActions({
               icon={icons.history}
               label={tOr('pos.history', 'History')}
               onClick={onHistory}
+            />
+          )}
+          {onQuickAddCamera && (
+            <ActionButton
+              icon={icons.camera}
+              label={tOr('pos.quickAdd.camera', 'Camera')}
+              onClick={onQuickAddCamera}
             />
           )}
         </div>

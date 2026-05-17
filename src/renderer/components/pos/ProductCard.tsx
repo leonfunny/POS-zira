@@ -27,12 +27,6 @@ function placeholderColor(name: string): string {
   return PLACEHOLDER_COLORS[Math.abs(hash) % PLACEHOLDER_COLORS.length];
 }
 
-export function isProductSoldOut(product: Product): boolean {
-  if (product.category_id === 'cat-5') return false;
-  const qty = product.available_qty ?? product.in_stock;
-  return qty <= 0;
-}
-
 function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const isService = product.category_id === 'cat-5';
@@ -63,13 +57,13 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
       onKeyDown={handleKeyDown}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
-      className={`group bg-white rounded-lg border shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-100 transition-colors duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
+      className={`group bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
         soldOut
-          ? 'border-slate-200 opacity-60 cursor-not-allowed'
-          : 'border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer touch-manipulation'
+          ? 'opacity-60 cursor-not-allowed'
+          : 'hover:shadow-md cursor-pointer touch-manipulation'
       }`}
     >
-      <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full border border-slate-100">
+      <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
         {showImage ? (
           <img
             src={imgSrc!}
@@ -105,11 +99,8 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
         )}
       </div>
 
-      <div className="flex-1 pt-1.5 pb-1 flex flex-col min-h-[54px]">
+      <div className="flex-1 pt-1.5 pb-1 flex flex-col">
         <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
-        {product.sku && (
-          <p className="text-[10px] text-slate-500 mt-1 truncate tracking-wide">{product.sku}</p>
-        )}
       </div>
 
       <div className="flex items-end justify-between gap-2 shrink-0">

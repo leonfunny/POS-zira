@@ -1580,6 +1580,180 @@ export class ApiClient {
   }
 
   /**
+   * Master Catalog — lookup a single EAN.
+   * POST /api/v1/master-catalog/lookup-by-ean
+   * Returns a draft preview when the EAN exists in the master catalog,
+   * otherwise null/empty. Read-only — safe to call as many times as needed.
+   */
+  async lookupByEan(token: string, ean: string): Promise<any | null> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+
+    const url = `${this.baseUrl}/api/v1/master-catalog/lookup-by-ean`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ean }),
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    // Backends sometimes wrap the payload — accept several shapes.
+    return data.draft ?? data.product ?? data.result ?? data ?? null;
+  }
+
+  /**
+   * Master Catalog — one-shot scan + create/restock.
+   * POST /api/v1/master-catalog/scan-create
+   * Server figures out RESTOCK vs IMPORT_DRAFT based on whether the EAN
+   * is already in the salon's catalog. Idempotency-Key prevents duplicate
+   * creation on retry.
+   */
+  async scanCreate(
+    token: string,
+    payload: { ean: string; quantity?: number; idempotencyKey?: string },
+  ): Promise<{ outcome: string; product?: any; draft?: any; message?: string }> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': payload.idempotencyKey || `scan-${payload.ean}-${Date.now()}`,
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+
+    const url = `${this.baseUrl}/api/v1/master-catalog/scan-create`;
+    const body: Record<string, unknown> = { ean: payload.ean };
+    if (typeof payload.quantity === 'number') body.quantity = payload.quantity;
+
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      outcome: String(data.outcome ?? data.status ?? 'UNKNOWN'),
+      product: data.product ?? data.variant ?? null,
+      draft: data.draft ?? null,
+      message: data.message,
+    };
+  }
+
+  /**
+   * Warehouse quick-add — upload one captured product image.
+   * POST /api/v1/warehouse/quick-add/upload-image
+   */
+  async quickAddUploadImage(payload: {
+    dataUrl: string;
+    mimeType?: string;
+    filename?: string;
+  }): Promise<{ url: string }> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const headers: Record<string, string> = {};
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+
+    const comma = payload.dataUrl.indexOf(',');
+    const encoded = comma >= 0 ? payload.dataUrl.slice(comma + 1) : payload.dataUrl;
+    const mimeType = payload.mimeType || 'image/jpeg';
+    const buffer = Buffer.from(encoded, 'base64');
+    const form = new FormData();
+    form.append('image', new Blob([buffer], { type: mimeType }), payload.filename || `quick-add-${Date.now()}.jpg`);
+
+    const url = `${this.baseUrl}/api/v1/warehouse/quick-add/upload-image`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data?.url) throw new Error('Quick-add upload returned no URL');
+    return { url: String(data.url) };
+  }
+
+  /**
+   * Warehouse quick-add — analyze multiple uploaded images with AI.
+   * POST /api/v1/warehouse/quick-add/analyze-multiple
+   */
+  async quickAddAnalyzeMultiple(
+    images: Array<{ url: string; mimeType: string }>,
+    language: string,
+  ): Promise<any> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+
+    const url = `${this.baseUrl}/api/v1/warehouse/quick-add/analyze-multiple`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ images, language }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Warehouse quick-add — create the draft product, then finalize it with
+   * retail price + stock quantity when productId/variantId are supplied.
+   * POST /api/v1/warehouse/quick-add/create
+   */
+  async quickAddCreate(
+    payload: Record<string, unknown>,
+    idempotencyKey?: string,
+  ): Promise<{ product?: any; variant?: any; [key: string]: any }> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+
+    const url = `${this.baseUrl}/api/v1/warehouse/quick-add/create`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Master Catalog — draft products mirror.
    * GET /api/v1/master-catalog/draft-products[?since=ISO]
    * Server-side spec: drafts updated since `since`, plus `deletedIds`,
