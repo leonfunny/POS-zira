@@ -11,6 +11,7 @@ const mock = vi.hoisted(() => ({
   currentConfig: {} as Partial<AgentConfig>,
   setConfig: vi.fn(),
   getEnabled: vi.fn(),
+  getAll: vi.fn(() => []),
   getById: vi.fn(),
   markOnline: vi.fn(),
   markUsed: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('../src/main/config/store', () => ({
 vi.mock('../src/main/database/repos/local-printer-repo', () => ({
   localPrinterRepo: {
     getEnabled: mock.getEnabled,
+    getAll: mock.getAll,
     getById: mock.getById,
     markOnline: mock.markOnline,
     markUsed: mock.markUsed,
@@ -131,6 +133,7 @@ describe('ELZAB fiscal protocol routing', () => {
     vi.clearAllMocks();
     mock.currentConfig = {};
     mock.getEnabled.mockReturnValue([]);
+    mock.getAll.mockReturnValue([]);
     mock.getById.mockReturnValue(null);
     mock.rowToPrinterConfig.mockReset();
     mock.elzabInstances.length = 0;

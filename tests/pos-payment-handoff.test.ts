@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { formatInitialCashAmount } from '../src/renderer/components/pos/PaymentModal';
+import { formatInitialCashAmount } from '../src/renderer/components/pos/format-cash-amount';
 
 const ROOT = path.resolve(__dirname, '..');
 const CART = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/Cart.tsx'), 'utf8');

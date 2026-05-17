@@ -49,6 +49,7 @@ vi.mock('../src/main/config/store', () => ({
 vi.mock('../src/main/database/repos/local-printer-repo', () => ({
   localPrinterRepo: {
     getEnabled: vi.fn(() => []),
+    getAll: vi.fn(() => []),
     markOnline: vi.fn(),
     markUsed: vi.fn(),
     getById: vi.fn(),

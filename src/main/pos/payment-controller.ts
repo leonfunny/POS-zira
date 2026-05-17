@@ -73,8 +73,12 @@ export class PaymentController {
     successMessage: string,
     failureMessage: string,
     missingPrinterMessage: string,
+    printerType: PrinterType = PrinterType.RECEIPT,
   ): Promise<boolean> {
-    if (this.sharedReceiptPrinter) {
+    // Shared (network) printer route is only valid for the RECEIPT/order copy.
+    // FISCAL printing must always be local — fiscal idempotency, legal liability
+    // and the elzabdr/POSNET drivers live on the POS that owns the device.
+    if (printerType === PrinterType.RECEIPT && this.sharedReceiptPrinter) {
       try {
         const shared = await this.sharedReceiptPrinter(receiptData, meta);
         if (shared.handled) {
@@ -90,7 +94,7 @@ export class PaymentController {
       }
     }
 
-    const printer = this.getPrinter(PrinterType.RECEIPT);
+    const printer = this.getPrinter(printerType);
     if (!printer || !printer.isConnected()) {
       logger.warn(missingPrinterMessage);
       return false;
@@ -106,39 +110,17 @@ export class PaymentController {
     }
   }
 
-  /**
-   * Validate payment amount before processing
-   */
-  private validatePayment(orderId: string, amount?: number): { order: ReturnType<typeof orderRepo.getById>; error?: string } {
-    const order = orderRepo.getById(orderId);
-    if (!order) {
-      return { order: null, error: `Order ${orderId} not found` };
-    }
-
-    if (order.total <= 0) {
-      return { order, error: `Order total must be positive (got ${order.total})` };
-    }
-
-    if (amount !== undefined && amount <= 0) {
-      return { order, error: `Payment amount must be positive (got ${amount})` };
-    }
-
-    return { order };
+  hasFiscalPrinter(): { configured: boolean; connected: boolean } {
+    const printer = this.getPrinter(PrinterType.FISCAL);
+    if (!printer) return { configured: false, connected: false };
+    return { configured: true, connected: !!printer.isConnected?.() };
   }
 
-  /**
-   * Print a receipt for a completed order.
-   * Returns whether the receipt was actually printed.
-   */
-  async printReceipt(orderId: string): Promise<boolean> {
+  private buildSaleReceiptData(orderId: string): ReceiptData | null {
     const order = orderRepo.getById(orderId);
-    if (!order) {
-      logger.warn(`[Payment] Cannot print receipt: order ${orderId} not found`);
-      return false;
-    }
-
+    if (!order) return null;
     const items = orderRepo.getItemsByOrderId(orderId);
-    const receiptData: ReceiptData = {
+    return {
       orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
       salonName: this.getSalonName?.(),
@@ -146,7 +128,6 @@ export class PaymentController {
       sellerAddress: this.getSellerAddress?.(),
       sellerNip: this.getSellerNip?.(),
       items: items.map((i) => {
-        // Look up sale_unit from product catalog
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
         return {
           name: this.getReceiptItemName(i),
@@ -170,13 +151,69 @@ export class PaymentController {
       customerNip: order.customer_nip || undefined,
       tenders: this.parseTenders(order),
     };
+  }
 
+  /**
+   * Validate payment amount before processing
+   */
+  private validatePayment(orderId: string, amount?: number): { order: ReturnType<typeof orderRepo.getById>; error?: string } {
+    const order = orderRepo.getById(orderId);
+    if (!order) {
+      return { order: null, error: `Order ${orderId} not found` };
+    }
+
+    if (order.total <= 0) {
+      return { order, error: `Order total must be positive (got ${order.total})` };
+    }
+
+    if (amount !== undefined && amount <= 0) {
+      return { order, error: `Payment amount must be positive (got ${amount})` };
+    }
+
+    return { order };
+  }
+
+  /**
+   * Print an order (non-fiscal customer copy) for a completed order on the
+   * RECEIPT/thermal printer.
+   */
+  async printReceipt(orderId: string): Promise<boolean> {
+    const receiptData = this.buildSaleReceiptData(orderId);
+    if (!receiptData) {
+      logger.warn(`[Payment] Cannot print receipt: order ${orderId} not found`);
+      return false;
+    }
+    const orderNumberLabel = receiptData.orderNumber;
     return this.printReceiptData(
       receiptData,
       { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos' },
-      `[Payment] Receipt printed for order ${order.order_number}`,
+      `[Payment] Receipt printed for order ${orderNumberLabel}`,
       '[Payment] Receipt print failed',
       '[Payment] No receipt printer connected, skipping print',
+      PrinterType.RECEIPT,
+    );
+  }
+
+  /**
+   * Print the fiscal receipt for a completed order on the FISCAL printer
+   * (POSNET or ELZAB). Always local — never routed through the shared
+   * network receipt printer. Caller is expected to have asked the cashier
+   * (CASH flow) or fired it automatically (CARD/BLIK/TRANSFER flow).
+   */
+  async printFiscalReceipt(orderId: string): Promise<boolean> {
+    const receiptData = this.buildSaleReceiptData(orderId);
+    if (!receiptData) {
+      logger.warn(`[Payment] Cannot print fiscal receipt: order ${orderId} not found`);
+      return false;
+    }
+    const orderNumberLabel = receiptData.orderNumber;
+    return this.printReceiptData(
+      receiptData,
+      { referenceType: 'POS_FISCAL_RECEIPT', referenceId: orderId, source: 'pos' },
+      `[Payment] Fiscal receipt printed for order ${orderNumberLabel}`,
+      '[Payment] Fiscal receipt print failed',
+      '[Payment] No fiscal printer connected, skipping fiscal print',
+      PrinterType.FISCAL,
     );
   }
 
@@ -286,7 +323,7 @@ export class PaymentController {
   }
 
   /**
-   * Print a refund receipt — shows "ZWROT / REFUND" banner.
+   * Print a refund receipt — shows "ZWROT" banner.
    * Uses stored refund_lines for accurate per-item data; falls back to all items for older orders.
    */
   async printRefundReceipt(orderId: string, refundOverride?: RefundReceiptOverride): Promise<boolean> {

@@ -6,6 +6,7 @@ import {
   decideCloseAction,
   type PrintReceiptResponse,
 } from './receipt-outcome';
+import { formatInitialCashAmount } from './format-cash-amount';
 
 interface PaymentModalProps {
   cart: CartState;
@@ -27,7 +28,11 @@ interface Tender {
   amount: number; // grosze
 }
 
-const QUICK_AMOUNTS = [1000, 2000, 5000, 10000, 20000]; // grosze
+// Polish cash denominations (grosze) — surface every one so the cashier can
+// compose received cash by tapping each bill they were handed, including
+// denominations smaller than the order total (e.g. customer pays 200 zł
+// for a 350 zł order with 2× 200 zł notes).
+const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000];
 
 const KEYPAD_KEYS = [
   ['7', '8', '9', 'backspace'],
@@ -43,10 +48,6 @@ const PM_ICONS: Record<string, React.ReactNode> = {
   INVOICE: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
 };
 
-export function formatInitialCashAmount(grosze?: number): string {
-  return grosze && grosze > 0 ? (grosze / 100).toFixed(2) : '';
-}
-
 export default function PaymentModal({
   cart,
   dispatch,
@@ -61,16 +62,36 @@ export default function PaymentModal({
 }: PaymentModalProps) {
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
+  // Per-denomination bill counts (grosze → count). The cashier taps a
+  // denomination to record one bill received; the total auto-syncs to
+  // cashAmount. Any manual edit (numpad / input field) clears these so
+  // they don't drift out of sync with the canonical cashAmount string.
+  const [denomCounts, setDenomCounts] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [printWarning, setPrintWarning] = useState<string | null>(null);
-  const [cardStatus, setCardStatus] = useState<string | null>(null);
   const [splitMode, setSplitMode] = useState(false);
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [splitAmount, setSplitAmount] = useState('');
   const [splitMethod, setSplitMethod] = useState<PaymentMethod>('CASH');
+  const [hasFiscalPrinter, setHasFiscalPrinter] = useState(false);
+  const [fiscalPrompt, setFiscalPrompt] = useState<{ orderId: string } | null>(null);
+  const [fiscalBusy, setFiscalBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI.pos.payment.hasFiscalPrinter()
+      .then((result: { configured?: boolean }) => {
+        if (!cancelled) setHasFiscalPrinter(!!result?.configured);
+      })
+      .catch((err: unknown) => {
+        rlog.warn('[PaymentModal] hasFiscalPrinter probe failed:', err);
+        if (!cancelled) setHasFiscalPrinter(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const tip = extraOrderFields?.tip ?? 0;
   const grandTotal = cart.total + tip;
@@ -91,7 +112,10 @@ export default function PaymentModal({
   const remaining = grandTotal - tendersTotal;
   const splitComplete = tendersTotal >= grandTotal;
 
-  const availableMethods: PaymentMethod[] = ['CASH', 'CARD', 'BLIK', 'TRANSFER',
+  // Temporarily keep BLIK out of new POS sales until the shop has a signed
+  // BLIK contract. Leave the wider payment model intact so historical BLIK
+  // orders/reports still render correctly if they exist.
+  const availableMethods: PaymentMethod[] = ['CASH', 'CARD', 'TRANSFER',
     ...(isB2B && hasCustomer ? ['INVOICE' as PaymentMethod] : [])];
 
   useEffect(() => {
@@ -108,11 +132,32 @@ export default function PaymentModal({
     return () => window.removeEventListener('keydown', handler);
   }, [onClose, saving]);
 
-  useEffect(() => {
-    if (method !== 'CARD') return;
-    const unsub = window.electronAPI.pos.payment.onElavonStatus((data: any) => setCardStatus(data.status));
-    return unsub;
-  }, [method]);
+  // ─── Denomination counters ────────────────────────────────
+
+  const totalFromDenoms = Object.entries(denomCounts).reduce(
+    (sum, [denom, count]) => sum + Number(denom) * count,
+    0,
+  );
+
+  const updateDenom = (denom: number, delta: number) => {
+    setDenomCounts((prev) => {
+      const next = { ...prev };
+      const nextCount = Math.max(0, (next[denom] ?? 0) + delta);
+      if (nextCount === 0) delete next[denom];
+      else next[denom] = nextCount;
+      const sum = Object.entries(next).reduce(
+        (s, [d, c]) => s + Number(d) * c,
+        0,
+      );
+      setCashAmount(sum > 0 ? (sum / 100).toFixed(2) : '');
+      return next;
+    });
+  };
+
+  const resetDenoms = () => {
+    setDenomCounts({});
+    setCashAmount('');
+  };
 
   // ─── Add split tender ─────────────────────────────────────
 
@@ -138,6 +183,10 @@ export default function PaymentModal({
 
   const handleKeypadPress = (key: string) => {
     const setter = splitMode ? setSplitAmount : setCashAmount;
+    // Any cash-side keypad press is a "manual override" — drop the
+    // denomination counters so the displayed cash and the counter row
+    // can't disagree.
+    if (!splitMode) setDenomCounts({});
 
     if (key === 'backspace') {
       setter(prev => prev.slice(0, -1));
@@ -234,29 +283,63 @@ export default function PaymentModal({
       catch (err) { rlog.warn('[PaymentModal] Failed to increase customer debt:', err); }
     }
 
-    // Print receipt + open drawer (parallel, awaited — optimized to ~3-5s).
-    // The IPC layer returns { success, receiptPrinted, drawerOpened } —
-    // we surface a non-blocking inline warning so the cashier sees the
-    // failure before the modal closes (sale itself already completed
-    // on the IPC above; reprint lives in Order History).
+    // ─── Payment-method-aware print routing ──────────────────────────
+    // CASH (or split with any cash tender): print the order copy on the
+    //   thermal RECEIPT printer + open drawer, then ASK the cashier
+    //   whether to also print the fiscal receipt.
+    // CARD/BLIK/TRANSFER: skip the order copy, fire the fiscal receipt
+    //   directly. No drawer.
+    // INVOICE: skip both prints (debt already increased above).
+    const printOrderCopy = hasCash;
+    const autoPrintFiscal = !hasCash && method !== 'INVOICE';
+    const offerFiscalPrompt = hasCash && hasFiscalPrinter;
+
     setSavingLabel(t('test.printing') || 'Printing...');
     let printResult: PrintReceiptResponse | undefined;
     try {
-      const [pr] = await Promise.all([
-        window.electronAPI.pos.payment.printReceipt(orderId).catch(
-          (err: unknown) => {
-            rlog.warn('[PaymentModal] Receipt print failed:', err);
-            return { success: false, receiptPrinted: false } as PrintReceiptResponse;
-          },
-        ),
-        hasCash
-          ? window.electronAPI.pos.payment.openCashDrawer().catch(
-              (err: unknown) => rlog.warn('[PaymentModal] Cash drawer failed:', err),
-            )
-          : Promise.resolve(),
-      ]);
-      printResult = pr as PrintReceiptResponse;
+      const tasks: Array<Promise<unknown>> = [];
+      if (printOrderCopy) {
+        tasks.push(
+          window.electronAPI.pos.payment.printReceipt(orderId).catch(
+            (err: unknown) => {
+              rlog.warn('[PaymentModal] Receipt print failed:', err);
+              return { success: false, receiptPrinted: false } as PrintReceiptResponse;
+            },
+          ),
+        );
+        tasks.push(
+          window.electronAPI.pos.payment.openCashDrawer().catch(
+            (err: unknown) => rlog.warn('[PaymentModal] Cash drawer failed:', err),
+          ),
+        );
+      }
+      const results = await Promise.all(tasks);
+      if (printOrderCopy) {
+        printResult = results[0] as PrintReceiptResponse;
+      } else {
+        // Synthesize a "skipped" outcome so deriveReceiptOutcome does not
+        // emit a "receipt not printed" warning for non-cash flows.
+        printResult = { success: true, receiptPrinted: true };
+      }
     } catch { /* errors already logged inside each call */ }
+
+    let fiscalWarning: string | null = null;
+    if (autoPrintFiscal) {
+      if (!hasFiscalPrinter) {
+        rlog.warn('[PaymentModal] No fiscal printer configured; skipping fiscal receipt for non-cash payment');
+      } else {
+        setSavingLabel(t('pos.payment.fiscalPrinting') || 'Printing fiscal receipt...');
+        try {
+          const fiscalResult = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
+          if (!fiscalResult?.fiscalPrinted) {
+            fiscalWarning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+          }
+        } catch (err) {
+          rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
+          fiscalWarning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+        }
+      }
+    }
 
     const outcome = deriveReceiptOutcome(printResult, t);
     const closeAction = decideCloseAction(outcome);
@@ -264,12 +347,71 @@ export default function PaymentModal({
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
 
+    if (offerFiscalPrompt) {
+      // Pause here — order is saved + thermal copy printed. The fiscal
+      // prompt overlay will close the modal when the cashier picks an
+      // option (print fiscal or skip).
+      setSavingLabel('');
+      if (closeAction.type === 'show-warning-then-close') {
+        setPrintWarning(closeAction.warning);
+      }
+      setFiscalPrompt({ orderId });
+      return;
+    }
+
+    if (fiscalWarning) {
+      setPrintWarning(fiscalWarning);
+      setSavingLabel('');
+      setTimeout(() => {
+        if (onComplete) { onComplete(); } else { onClose(); }
+      }, 4000);
+      return;
+    }
+
     if (closeAction.type === 'show-warning-then-close') {
       setPrintWarning(closeAction.warning);
       setSavingLabel('');
       setTimeout(() => {
         if (onComplete) { onComplete(); } else { onClose(); }
       }, closeAction.delayMs);
+      return;
+    }
+
+    if (onComplete) { onComplete(); } else { onClose(); }
+  };
+
+  const handleFiscalPromptChoice = async (printFiscal: boolean) => {
+    if (fiscalBusy) return;
+    const orderId = fiscalPrompt?.orderId;
+    if (!orderId) return;
+
+    if (!printFiscal) {
+      setFiscalPrompt(null);
+      if (onComplete) { onComplete(); } else { onClose(); }
+      return;
+    }
+
+    setFiscalBusy(true);
+    setSavingLabel(t('pos.payment.fiscalPrinting') || 'Printing fiscal receipt...');
+    let warning: string | null = null;
+    try {
+      const result = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
+      if (!result?.fiscalPrinted) {
+        warning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+      }
+    } catch (err) {
+      rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
+      warning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+    }
+    setFiscalBusy(false);
+    setSavingLabel('');
+    setFiscalPrompt(null);
+
+    if (warning) {
+      setPrintWarning(warning);
+      setTimeout(() => {
+        if (onComplete) { onComplete(); } else { onClose(); }
+      }, 4000);
       return;
     }
 
@@ -287,12 +429,6 @@ export default function PaymentModal({
       if (splitMode) {
         if (!splitComplete) { setError(t('pos.split.incomplete') || 'Split payment incomplete'); setSaving(false); return; }
         await saveOrderAndFinish(orderId, tendersTotal);
-      } else if (method === 'CARD') {
-        setCardStatus(t('pos.payment.cardWaiting'));
-        const result = await window.electronAPI.pos.payment.cardPayment({ amount: grandTotal, orderId });
-        if (!result.success) { setError(result.error || t('pos.payment.cardFailed')); setSaving(false); setCardStatus(null); return; }
-        setCardStatus(t('pos.payment.cardSuccess'));
-        await saveOrderAndFinish(orderId, grandTotal);
       } else {
         const paymentAmount = method === 'CASH' ? cashAmountGrosze : grandTotal;
         await saveOrderAndFinish(orderId, paymentAmount);
@@ -302,7 +438,6 @@ export default function PaymentModal({
       setError(t('pos.payment.error'));
     } finally {
       setSaving(false);
-      setCardStatus(null);
     }
   };
 
@@ -319,6 +454,9 @@ export default function PaymentModal({
   const money = (amount: number) => `${(amount / 100).toFixed(2)} ${currency}`;
   const methodLabel = (pm: PaymentMethod) => t(`pos.payment.${pm.toLowerCase()}`) || pm;
   const activeMethodLabel = splitMode ? tOr('pos.split.toggle', 'Split') : methodLabel(method);
+  const completeButtonLabel = method === 'CARD' && !splitMode
+    ? tOr('pos.payment.cardReceived', 'Card payment received')
+    : t('pos.payment.complete');
   const splitProgress = grandTotal > 0
     ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
     : 0;
@@ -375,11 +513,55 @@ export default function PaymentModal({
     );
   };
 
+  const fiscalPromptOverlay = fiscalPrompt && (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fiscal-prompt-title"
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="border-b border-slate-200 px-6 py-4">
+          <h3 id="fiscal-prompt-title" className="text-lg font-semibold text-slate-950">
+            {tOr('pos.payment.fiscalPromptTitle', 'In hóa đơn tài chính?')}
+          </h3>
+          <p className="mt-1 text-sm text-slate-600">
+            {tOr('pos.payment.fiscalPromptHint', 'Order đã in xong. Bạn có muốn in tiếp hóa đơn tài chính cho khách không?')}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 bg-slate-50 px-6 py-4">
+          <button
+            type="button"
+            onClick={() => handleFiscalPromptChoice(false)}
+            disabled={fiscalBusy}
+            className="min-h-[52px] rounded-md border border-slate-300 bg-white px-4 text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {tOr('pos.payment.fiscalSkip', 'Bỏ qua')}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFiscalPromptChoice(true)}
+            disabled={fiscalBusy}
+            className="min-h-[52px] rounded-md border border-emerald-600 bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {fiscalBusy
+              ? tOr('pos.payment.fiscalPrinting', 'Đang in...')
+              : tOr('pos.payment.fiscalConfirm', 'In hóa đơn tài chính')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-4"
-      onClick={saving ? undefined : onClose}
+      onClick={(saving || fiscalPrompt) ? undefined : onClose}
     >
+      {fiscalPromptOverlay}
       <div
         role="dialog"
         aria-modal="true"
@@ -630,7 +812,11 @@ export default function PaymentModal({
                   inputMode="decimal"
                   data-keyboard="false"
                   value={cashAmount}
-                  onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
+                  onChange={(e) => {
+                    if (!/^\d*\.?\d*$/.test(e.target.value)) return;
+                    setCashAmount(e.target.value);
+                    setDenomCounts({});
+                  }}
                   placeholder={totalZl.toFixed(2)}
                   className="h-16 w-full rounded-md border border-slate-300 bg-white px-4 text-right text-3xl font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
@@ -638,20 +824,61 @@ export default function PaymentModal({
 
               {renderNumericKeypad('exact')}
 
-              {QUICK_AMOUNTS.filter(a => a >= grandTotal).length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {QUICK_AMOUNTS.filter(a => a >= grandTotal).slice(0, 4).map(amount => (
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-bold text-slate-600">
+                    {tOr('pos.payment.bills', 'Bills received')}
+                  </p>
+                  {totalFromDenoms > 0 && (
                     <button
-                      key={amount}
                       type="button"
-                      onClick={() => setCashAmount((amount / 100).toFixed(2))}
-                      className="min-h-[44px] flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-brand-400 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                      onClick={resetDenoms}
+                      className="text-[11px] font-bold text-slate-500 hover:text-red-700 transition-colors cursor-pointer touch-manipulation"
                     >
-                      {money(amount)}
+                      {tOr('pos.payment.resetBills', 'Reset')}
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
+                <div className="grid grid-cols-5 gap-2">
+                  {DENOMINATIONS.map((denom) => {
+                    const count = denomCounts[denom] ?? 0;
+                    const active = count > 0;
+                    return (
+                      <div key={denom} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => updateDenom(denom, +1)}
+                          aria-label={`Add ${denom / 100} ${currency} bill`}
+                          className={`w-full min-h-[64px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-300 ${
+                            active
+                              ? 'border-brand-500 bg-brand-50 text-brand-900'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
+                          }`}
+                        >
+                          <span className="text-sm font-extrabold leading-none tabular-nums">
+                            {denom / 100} {currency}
+                          </span>
+                          {active && (
+                            <span className="mt-1 text-[11px] font-bold leading-none tabular-nums">
+                              × {count} = {((denom * count) / 100).toFixed(2)}
+                            </span>
+                          )}
+                        </button>
+                        {active && (
+                          <button
+                            type="button"
+                            onClick={() => updateDenom(denom, -1)}
+                            aria-label={`Remove one ${denom / 100} ${currency} bill`}
+                            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-slate-800 text-white text-sm font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-slate-300"
+                          >
+                            −
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div aria-live="polite" className={`rounded-lg border p-4 ${
                 cashShortfall > 0
@@ -686,24 +913,39 @@ export default function PaymentModal({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
-                <div className="flex items-start gap-4">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700">{PM_ICONS[method]}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-lg font-semibold text-slate-950">{methodLabel(method)}</p>
-                    <p className="mt-1 text-sm text-slate-600">{t('pos.cart.total')}: {money(grandTotal)}</p>
-                  </div>
-                </div>
-              </div>
-
               {method === 'CARD' && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-                  <div className="flex items-center gap-3">
-                    <svg className={`h-5 w-5 text-blue-700 ${cardStatus ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <p className="text-sm font-semibold text-blue-900">{cardStatus || tOr('pos.payment.cardWaiting', 'Ready for terminal')}</p>
+                <>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-5 text-white shadow-sm">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-slate-300">{t('pos.payment.card')}</p>
+                        <p className="mt-2 text-5xl font-semibold leading-none">{money(grandTotal)}</p>
+                      </div>
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-slate-100">
+                        {PM_ICONS.CARD}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <p className="text-sm font-semibold text-blue-900">
+                      {tOr(
+                        'pos.payment.cardManualHint',
+                        'Enter this amount on the card terminal. After approval, press the button below.',
+                      )}
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {method !== 'CARD' && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex items-start gap-4">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700">{PM_ICONS[method]}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-lg font-semibold text-slate-950">{methodLabel(method)}</p>
+                      <p className="mt-1 text-sm text-slate-600">{t('pos.cart.total')}: {money(grandTotal)}</p>
+                    </div>
                   </div>
                 </div>
               )}
@@ -755,7 +997,7 @@ export default function PaymentModal({
               disabled={!canComplete}
               className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
             >
-              {saving ? (savingLabel || t('pos.payment.saving')) : `${t('pos.payment.complete')} ${money(grandTotal)}`}
+              {saving ? (savingLabel || t('pos.payment.saving')) : `${completeButtonLabel} ${money(grandTotal)}`}
             </button>
           </div>
         </div>

@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-receipt', orderId),
+      printFiscalReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-fiscal-receipt', orderId),
+      hasFiscalPrinter: () => ipcRenderer.invoke('pos:has-fiscal-printer'),
       openCashDrawer: () => ipcRenderer.invoke('pos:open-cash-drawer'),
       cardPayment: (data: { amount: number; orderId: string }) => ipcRenderer.invoke('pos:payment:card', data),
       onElavonStatus: (callback: (data: any) => void) => {
