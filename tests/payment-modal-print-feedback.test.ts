@@ -213,10 +213,6 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
     expect(source).toMatch(/import\s*\{[^}]*deriveReceiptOutcome[^}]*\}\s*from\s*['"]\.\/receipt-outcome['"]/);
   });
 
-  it('imports decideCloseAction from receipt-outcome', () => {
-    expect(source).toMatch(/import\s*\{[^}]*decideCloseAction[^}]*\}\s*from\s*['"]\.\/receipt-outcome['"]/);
-  });
-
   it('does NOT use the broken `t(key) || fallback` pattern for the receipt warning', () => {
     // The runtime bug we are guarding against:
     //   t('pos.payment.receiptNotPrinted') || 'Receipt not printed...'
@@ -228,11 +224,9 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
     );
   });
 
-  it('schedules a setTimeout following the warning state setter (modal stays open then closes)', () => {
-    const idx = source.indexOf('setPrintWarning(');
-    expect(idx, 'setPrintWarning() call not found').toBeGreaterThan(-1);
-    const block = source.slice(idx, idx + 500);
-    expect(block).toMatch(/setTimeout/);
-    expect(block).toMatch(/onComplete|onClose/);
+  it('keeps the modal in explicit recovery state after receipt print failure', () => {
+    expect(source).toContain('setReceiptRecovery({');
+    expect(source).toContain('handleRetryReceipt');
+    expect(source).toContain('handleContinueWithoutReceipt');
   });
 });

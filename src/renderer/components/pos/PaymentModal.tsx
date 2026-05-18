@@ -3,7 +3,6 @@ import type { CartState, PosAction } from '../../hooks/usePosStore';
 import rlog from '../../utils/logger';
 import {
   deriveReceiptOutcome,
-  decideCloseAction,
   type PrintReceiptResponse,
 } from './receipt-outcome';
 import { formatInitialCashAmount } from './format-cash-amount';
@@ -27,6 +26,11 @@ interface Tender {
   method: PaymentMethod;
   amount: number; // grosze
 }
+
+type ReceiptRecovery = {
+  orderId: string;
+  nextAction: 'close' | 'fiscalPrompt';
+};
 
 // Polish cash denominations (grosze) — surface every one so the cashier can
 // compose received cash by tapping each bill they were handed, including
@@ -78,6 +82,8 @@ export default function PaymentModal({
   const [hasFiscalPrinter, setHasFiscalPrinter] = useState(false);
   const [fiscalPrompt, setFiscalPrompt] = useState<{ orderId: string } | null>(null);
   const [fiscalBusy, setFiscalBusy] = useState(false);
+  const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
+  const [receiptRetrying, setReceiptRetrying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -332,29 +338,34 @@ export default function PaymentModal({
         try {
           const fiscalResult = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
           if (!fiscalResult?.fiscalPrinted) {
-            fiscalWarning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+            fiscalWarning = fiscalResult?.error || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
           }
         } catch (err) {
           rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
-          fiscalWarning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+          fiscalWarning = (err as Error)?.message || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
         }
       }
     }
 
     const outcome = deriveReceiptOutcome(printResult, t);
-    const closeAction = decideCloseAction(outcome);
-
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
+
+    if (printOrderCopy && !outcome.receiptPrinted) {
+      setSavingLabel('');
+      setPrintWarning(outcome.warning);
+      setReceiptRecovery({
+        orderId,
+        nextAction: offerFiscalPrompt ? 'fiscalPrompt' : 'close',
+      });
+      return;
+    }
 
     if (offerFiscalPrompt) {
       // Pause here — order is saved + thermal copy printed. The fiscal
       // prompt overlay will close the modal when the cashier picks an
       // option (print fiscal or skip).
       setSavingLabel('');
-      if (closeAction.type === 'show-warning-then-close') {
-        setPrintWarning(closeAction.warning);
-      }
       setFiscalPrompt({ orderId });
       return;
     }
@@ -365,15 +376,6 @@ export default function PaymentModal({
       setTimeout(() => {
         if (onComplete) { onComplete(); } else { onClose(); }
       }, 4000);
-      return;
-    }
-
-    if (closeAction.type === 'show-warning-then-close') {
-      setPrintWarning(closeAction.warning);
-      setSavingLabel('');
-      setTimeout(() => {
-        if (onComplete) { onComplete(); } else { onClose(); }
-      }, closeAction.delayMs);
       return;
     }
 
@@ -397,11 +399,11 @@ export default function PaymentModal({
     try {
       const result = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
       if (!result?.fiscalPrinted) {
-        warning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+        warning = result?.error || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
       }
     } catch (err) {
       rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
-      warning = t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
+      warning = (err as Error)?.message || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
     }
     setFiscalBusy(false);
     setSavingLabel('');
@@ -418,10 +420,54 @@ export default function PaymentModal({
     if (onComplete) { onComplete(); } else { onClose(); }
   };
 
+  const finishReceiptRecovery = (recovery: ReceiptRecovery) => {
+    setReceiptRecovery(null);
+    setPrintWarning(null);
+    if (recovery.nextAction === 'fiscalPrompt') {
+      setFiscalPrompt({ orderId: recovery.orderId });
+      return;
+    }
+    if (onComplete) { onComplete(); } else { onClose(); }
+  };
+
+  const handleRetryReceipt = async () => {
+    const recovery = receiptRecovery;
+    if (!recovery || receiptRetrying) return;
+
+    setReceiptRetrying(true);
+    setSavingLabel(t('test.printing') || 'Printing...');
+    setPrintWarning(null);
+
+    try {
+      const result = await window.electronAPI.pos.payment.printReceipt(recovery.orderId);
+      const outcome = deriveReceiptOutcome(result, t);
+      if (outcome.receiptPrinted) {
+        setSavingLabel('');
+        finishReceiptRecovery(recovery);
+        return;
+      }
+      setPrintWarning(outcome.warning);
+    } catch (err) {
+      rlog.warn('[PaymentModal] Receipt retry failed:', err);
+      const outcome = deriveReceiptOutcome({ success: false, receiptPrinted: false }, t);
+      setPrintWarning(outcome.warning);
+    } finally {
+      setReceiptRetrying(false);
+      setSavingLabel('');
+    }
+  };
+
+  const handleContinueWithoutReceipt = () => {
+    if (!receiptRecovery || receiptRetrying) return;
+    finishReceiptRecovery(receiptRecovery);
+  };
+
   const handleComplete = async () => {
     if (saving) return;
     setSaving(true);
     setError(null);
+    setPrintWarning(null);
+    setReceiptRecovery(null);
 
     try {
       const orderId = crypto.randomUUID();
@@ -441,7 +487,7 @@ export default function PaymentModal({
     }
   };
 
-  const canComplete = !saving && (
+  const canComplete = !receiptRecovery && !saving && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );
@@ -559,7 +605,7 @@ export default function PaymentModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-4"
-      onClick={(saving || fiscalPrompt) ? undefined : onClose}
+      onClick={(saving || fiscalPrompt || receiptRecovery) ? undefined : onClose}
     >
       {fiscalPromptOverlay}
       <div
@@ -578,7 +624,7 @@ export default function PaymentModal({
             <button
               type="button"
               onClick={() => { setSplitMode(!splitMode); setTenders([]); setSplitAmount(''); }}
-              disabled={saving}
+              disabled={saving || !!receiptRecovery}
               aria-pressed={splitMode}
               className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
@@ -591,7 +637,7 @@ export default function PaymentModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={saving}
+              disabled={saving || !!receiptRecovery}
               aria-label="Close"
               className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -984,21 +1030,44 @@ export default function PaymentModal({
             <div className="min-w-0 text-sm text-slate-600">
               <p className="font-semibold text-slate-950">{activeMethodLabel}</p>
               <p className="truncate">
-                {splitMode
+                {receiptRecovery
+                  ? tOr('pos.payment.orderSavedPrintPending', 'Order saved - receipt still needs printing')
+                  : splitMode
                   ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
                   : method === 'CASH'
                     ? `${t('pos.payment.change')}: ${money(changeGrosze)}`
                     : `${t('pos.cart.total')}: ${money(grandTotal)}`}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleComplete}
-              disabled={!canComplete}
-              className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
-            >
-              {saving ? (savingLabel || t('pos.payment.saving')) : `${completeButtonLabel} ${money(grandTotal)}`}
-            </button>
+            {receiptRecovery ? (
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[360px] sm:flex-row">
+                <button
+                  type="button"
+                  onClick={handleRetryReceipt}
+                  disabled={receiptRetrying}
+                  className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
+                >
+                  {receiptRetrying ? (savingLabel || tOr('test.printing', 'Printing...')) : tOr('pos.payment.retryReceipt', 'Retry order print')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleContinueWithoutReceipt}
+                  disabled={receiptRetrying}
+                  className="min-h-[56px] flex-1 rounded-md border border-amber-300 bg-amber-50 px-5 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {tOr('pos.payment.continueWithoutReceipt', 'Continue without print')}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleComplete}
+                disabled={!canComplete}
+                className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
+              >
+                {saving ? (savingLabel || t('pos.payment.saving')) : `${completeButtonLabel} ${money(grandTotal)}`}
+              </button>
+            )}
           </div>
         </div>
       </div>
