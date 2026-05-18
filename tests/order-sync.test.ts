@@ -24,6 +24,14 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
   },
 }));
 
+vi.mock('../src/main/database/repos/local-variant-imports-repo', () => ({
+  localVariantImportsRepo: {
+    isUnresolvedVariant: vi.fn(() => false),
+    getByVariantId: vi.fn(),
+    getServerVariantId: vi.fn(() => null),
+  },
+}));
+
 vi.mock('../src/main/database/database', () => ({
   database: {
     run: vi.fn(),

@@ -14,6 +14,14 @@ const quickActions = fs.readFileSync(
   path.resolve(__dirname, '../src/renderer/components/pos/templates/retail/QuickActions.tsx'),
   'utf8',
 );
+const posModule = fs.readFileSync(
+  path.resolve(__dirname, '../src/main/modules/pos.module.ts'),
+  'utf8',
+);
+const apiClient = fs.readFileSync(
+  path.resolve(__dirname, '../src/main/network/api-client.ts'),
+  'utf8',
+);
 
 describe('POS quick-add camera flow', () => {
   it('opens from retail quick actions and captures 2-3 camera photos before send', () => {
@@ -26,10 +34,24 @@ describe('POS quick-add camera flow', () => {
   it('prepares, finalizes, and auto-adds the created variant to cart', () => {
     expect(posLayout).toContain('window.electronAPI.pos.quickAdd.prepare');
     expect(posLayout).toContain('window.electronAPI.pos.quickAdd.finalize');
+    expect(posLayout).toContain('name: input.name');
     expect(posLayout).toContain('idempotencyKey: input.idempotencyKey');
     expect(posLayout).toContain('result.variant');
     expect(posLayout).toContain('window.electronAPI.pos.products.getById');
     expect(posLayout).toContain("type: 'cart/addItem'");
+  });
+
+  it('lets the cashier review or enter a product name before saving', () => {
+    expect(modal).toContain('const [productName, setProductName]');
+    expect(modal).toContain("tOr('pos.quickAdd.productName', 'Product name')");
+    expect(modal).toContain("tOr('pos.quickAdd.missingName', 'Enter a product name')");
+    expect(modal).toContain('name,');
+    expect(posModule).not.toContain('AI analysis returned no product name');
+    expect(posModule).toContain('normalizeQuickAddAnalysis');
+    expect(posModule).toContain('fallbackQuickAddName');
+    expect(posModule).toContain('nameNeedsReview');
+    expect(posModule).toContain('const finalName = payload.name.trim();');
+    expect(posModule).toContain('const variantForLocal = result.variant');
   });
 
   it('keeps retries idempotent and avoids navigating back after server-side creation', () => {
@@ -37,5 +59,13 @@ describe('POS quick-add camera flow', () => {
     expect(modal).toContain('finalizeIdempotencyKeyRef');
     expect(modal).toContain('pos.quickAdd.confirmAbandon');
     expect(modal).not.toContain('onClick={() => setPrepared(null)}');
+  });
+
+  it('authenticates quick-add server calls', () => {
+    expect(posModule).toContain('const token = getSecureAuthToken();');
+    expect(posModule).toContain('apiClient.quickAddUploadImage(token,');
+    expect(posModule).toContain('apiClient.quickAddAnalyzeMultiple(token,');
+    expect(posModule).toContain('apiClient.quickAddCreate(token,');
+    expect(apiClient).toContain('Authorization: `Bearer ${token}`');
   });
 });

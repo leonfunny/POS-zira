@@ -57,6 +57,27 @@ export interface OrderItemRow {
   course: number | null;
 }
 
+export interface OrderMutationItemInput {
+  id: string;
+  variant_id?: string | null;
+  name: string;
+  sku?: string | null;
+  price: number;
+  quantity: number;
+  vat_rate: number;
+  staff_id?: string | null;
+  staff_name?: string | null;
+  notes?: string | null;
+  course?: number | null;
+}
+
+export interface OrderMutationInput {
+  paymentMethod?: string | null;
+  paymentAmount?: number;
+  changeAmount?: number;
+  items?: OrderMutationItemInput[];
+}
+
 export interface DailyStats {
   order_count: number;
   total_sales: number;
@@ -124,9 +145,203 @@ export const orderRepo = {
     return database.all<OrderItemRow>('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
   },
 
+  deleteLocalUnsynced(id: string): { deleted: boolean; restocked: number } {
+    const order = orderRepo.getById(id);
+    if (!order) return { deleted: false, restocked: 0 };
+    if (order.backend_id || order.synced === 1) {
+      throw new Error('Synced orders cannot be deleted locally. Cancel or refund the order instead.');
+    }
+    if (order.synced === 2) {
+      throw new Error('Order sync is in progress. Wait for sync to finish before deleting.');
+    }
+
+    const items = orderRepo.getItemsByOrderId(id);
+    let restocked = 0;
+
+    database.transaction(() => {
+      for (const item of items) {
+        if (item.variant_id && item.quantity > 0) {
+          database.run(
+            'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+            [item.quantity, item.quantity, item.variant_id],
+          );
+          restocked += item.quantity;
+        }
+      }
+
+      database.run(
+        `DELETE FROM sync_conflicts
+         WHERE log_entry_id IN (
+           SELECT id FROM local_sync_log
+           WHERE entity_type = 'order' AND entity_id = ? AND status IN ('pending', 'rejected')
+         )`,
+        [id],
+      );
+      database.run(
+        "DELETE FROM local_sync_log WHERE entity_type = 'order' AND entity_id = ? AND status IN ('pending', 'rejected')",
+        [id],
+      );
+      database.run('DELETE FROM order_items WHERE order_id = ?', [id]);
+      database.run('DELETE FROM orders WHERE id = ?', [id]);
+    });
+
+    database.save();
+    logger.info(`[OrderRepo] Deleted local unsynced order ${order.order_number || id} (${id}); restocked ${restocked} unit(s)`);
+    return { deleted: true, restocked };
+  },
+
+  updateLocalUnsynced(id: string, input: OrderMutationInput): { updated: boolean; stockChanged: boolean } {
+    const order = orderRepo.getById(id);
+    if (!order) return { updated: false, stockChanged: false };
+    if (order.backend_id || order.synced === 1) {
+      throw new Error('Synced orders must be changed on the server.');
+    }
+    if (order.synced === 2) {
+      throw new Error('Order sync is in progress. Wait for sync to finish before editing.');
+    }
+    if (order.status === 'REFUNDED' || order.status === 'PARTIAL_REFUND' || order.status === 'CANCELLED') {
+      throw new Error('Refunded or cancelled orders cannot be edited locally.');
+    }
+
+    const currentItems = orderRepo.getItemsByOrderId(id);
+    const nextItems = input.items?.map((item) => {
+      const quantity = Math.max(0, Math.round(Number(item.quantity) || 0));
+      const price = Math.max(0, Math.round(Number(item.price) || 0));
+      return {
+        id: item.id,
+        order_id: id,
+        variant_id: item.variant_id ?? null,
+        name: item.name,
+        sku: item.sku ?? null,
+        price,
+        quantity,
+        total: price * quantity,
+        vat_rate: Number.isFinite(Number(item.vat_rate)) ? Number(item.vat_rate) : 23,
+        staff_id: item.staff_id ?? null,
+        staff_name: item.staff_name ?? null,
+        notes: item.notes ?? null,
+        course: item.course ?? 1,
+      };
+    }).filter((item) => item.quantity > 0 && item.name.trim().length > 0);
+
+    if (input.items && (!nextItems || nextItems.length === 0)) {
+      throw new Error('Order must contain at least one item.');
+    }
+
+    const subtotal = nextItems
+      ? nextItems.reduce((sum, item) => sum + item.total, 0)
+      : order.subtotal;
+    const discount = Math.min(order.discount ?? 0, subtotal);
+    const tax = nextItems
+      ? nextItems.reduce((sum, item) => {
+          const rate = item.vat_rate ?? 0;
+          if (rate <= 0) return sum;
+          return sum + Math.round(item.total - item.total * 100 / (100 + rate));
+        }, 0)
+      : order.tax;
+    const total = Math.max(0, subtotal - discount);
+    const paymentMethod = input.paymentMethod ?? order.payment_method;
+    const paymentAmount = input.paymentAmount ?? (nextItems ? total : order.payment_amount);
+    const changeAmount = input.changeAmount ?? (paymentMethod === 'CASH' ? Math.max(0, paymentAmount - total) : 0);
+    const paymentTenders = paymentMethod
+      ? JSON.stringify([{ method: paymentMethod, amount: paymentAmount }])
+      : null;
+    let stockChanged = false;
+
+    database.transaction(() => {
+      if (nextItems) {
+        for (const item of currentItems) {
+          if (item.variant_id && item.quantity > 0) {
+            database.run(
+              'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+              [item.quantity, item.quantity, item.variant_id],
+            );
+            stockChanged = true;
+          }
+        }
+
+        database.run('DELETE FROM order_items WHERE order_id = ?', [id]);
+        for (const item of nextItems) {
+          if (item.variant_id && item.quantity > 0) {
+            database.run(
+              'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?',
+              [item.quantity, item.quantity, item.variant_id],
+            );
+            stockChanged = true;
+          }
+          database.run(
+            `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.id, id, item.variant_id, item.name, item.sku, item.price, item.quantity,
+              item.total, item.vat_rate, item.staff_id, item.staff_name, item.notes, item.course,
+            ],
+          );
+        }
+      }
+
+      database.run(
+        `UPDATE orders
+         SET subtotal = ?, discount = ?, tax = ?, total = ?, payment_method = ?, payment_amount = ?, change_amount = ?, payment_tenders = ?
+         WHERE id = ?`,
+        [subtotal, discount, tax, total, paymentMethod, paymentAmount, changeAmount, paymentTenders, id],
+      );
+
+      const syncPayload = {
+        id,
+        priceType: 'brutto',
+        requiresInvoice: !!order.customer_nip,
+        items: (nextItems ?? currentItems).filter((i: any) => i.variant_id || i.id).map((i: any) => ({
+          productId: i.variant_id || i.id,
+          variantId: i.variant_id || i.id,
+          ...(i.sku ? { variantSku: i.sku } : {}),
+          packQuantity: Math.max(1, Math.round(i.quantity || 1)),
+          ...(typeof i.price === 'number' && Number.isFinite(i.price) ? { customPrice: i.price / 100 } : {}),
+        })),
+        paymentMethod: paymentMethod === 'TRANSFER' || paymentMethod === 'INVOICE' ? 'BANK_TRANSFER' : (paymentMethod || 'CASH'),
+        tenders: paymentMethod ? [{ method: paymentMethod === 'TRANSFER' || paymentMethod === 'INVOICE' ? 'BANK_TRANSFER' : paymentMethod, amount: paymentAmount / 100 }] : undefined,
+        staffId: order.staff_id ?? undefined,
+        staffName: order.staff_name ?? undefined,
+        shiftId: order.shift_id ?? undefined,
+        customerId: order.customer_id ?? undefined,
+        customerNip: order.customer_nip ?? undefined,
+        customerName: order.customer_name ?? undefined,
+        source: order.source ?? 'POS',
+        orderType: order.order_type ?? 'standard',
+        mode: order.mode ?? 'retail',
+        discountAmount: discount > 0 ? discount / 100 : undefined,
+        paymentAmount: paymentAmount / 100,
+        changeAmount: changeAmount / 100,
+        tip: order.tip && order.tip > 0 ? order.tip / 100 : undefined,
+      };
+      database.run(
+        `UPDATE local_sync_log
+         SET payload = ?, status = 'pending', rejection_code = NULL, rejection_detail = NULL
+         WHERE entity_type = 'order' AND entity_id = ? AND event = 'created' AND status IN ('pending', 'rejected')`,
+        [JSON.stringify(syncPayload), id],
+      );
+    });
+
+    database.save();
+    logger.info(`[OrderRepo] Updated local unsynced order ${order.order_number || id} (${id})`);
+    return { updated: true, stockChanged };
+  },
+
   getUnsynced(): OrderRow[] {
     // Only get orders that are pending (0), not currently in-flight (2)
     return database.all<OrderRow>('SELECT * FROM orders WHERE synced = 0');
+  },
+
+  hasUnsyncedOrdersForVariant(variantId: string): boolean {
+    const row = database.get<{ cnt: number }>(
+      `SELECT COUNT(DISTINCT o.id) AS cnt
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE oi.variant_id = ?
+         AND o.synced != 1`,
+      [variantId],
+    );
+    return (row?.cnt ?? 0) > 0;
   },
 
   markSyncing(id: string): void {

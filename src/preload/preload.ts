@@ -539,6 +539,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
+      deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
+      mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),
       refund: (orderId: string, data: any) =>
         ipcRenderer.invoke('pos:orders:refund', orderId, data),
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') =>
@@ -618,16 +620,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
+      searchByCode: (query: string) => ipcRenderer.invoke('pos:draft-products:searchByCode', query),
     },
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
-      scanCreate: (payload: { ean: string; quantity?: number; idempotencyKey?: string }) =>
+      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
+      importDraft: (payload: { ean: string }) =>
+        ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
     },
     quickAdd: {
       prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:quick-add:prepare', payload),
-      finalize: (payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
+      finalize: (payload: { productId: string; variantId: string; name?: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:quick-add:finalize', payload),
     },
     tables: {

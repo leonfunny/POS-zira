@@ -57,11 +57,45 @@ export function useKeyboardManager(): KeyboardManager {
       }, 150);
     };
 
+    // Manual toggle from a UI button. Bypasses the data-keyboard="false"
+    // opt-out so inputs that suppress auto-show (e.g. the POS search bar)
+    // can still summon the keyboard on demand. Toggles when re-fired for
+    // the same element.
+    const handleManualToggle = (e: Event) => {
+      const ev = e as CustomEvent<{ el: HTMLInputElement | HTMLTextAreaElement }>;
+      const el = ev.detail?.el;
+      if (!el) return;
+
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+
+      const type = (el as HTMLInputElement).type || 'text';
+      const inputMode = el.getAttribute('inputmode');
+      const nextMode: KeyboardMode =
+        type === 'number' || inputMode === 'numeric' || inputMode === 'decimal'
+          ? 'numeric'
+          : 'full';
+
+      setVisible((prev) => {
+        if (prev && activeElRef.current === el) {
+          activeElRef.current = null;
+          return false;
+        }
+        activeElRef.current = el;
+        setMode(nextMode);
+        return true;
+      });
+    };
+
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
+    document.addEventListener('pos:keyboard:request-toggle', handleManualToggle);
     return () => {
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
+      document.removeEventListener('pos:keyboard:request-toggle', handleManualToggle);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, []);

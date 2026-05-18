@@ -25,6 +25,11 @@ export interface Product {
   // Orders/fiscal payloads use canonical `name`; paper receipts localize
   // separately at print time.
   name_translations?: string | null;
+  // Renderer-only marker: this row came from `draft_products`, not
+  // `product_variants`. Clicking it must route to the scan-import flow
+  // (creates a real variant on the server first) instead of adding to
+  // the cart directly. Never persisted, never sent over IPC.
+  _isDraft?: boolean;
 }
 
 export interface Category {

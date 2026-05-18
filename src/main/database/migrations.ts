@@ -1090,4 +1090,24 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_dp_updated_at ON draft_products(updated_at);
     `,
   },
+  {
+    version: 30,
+    name: 'local_variant_imports',
+    up: `
+      CREATE TABLE IF NOT EXISTS local_variant_imports (
+        variant_id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL,
+        ean TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        synced_at TEXT,
+        server_variant_id TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_lvi_status ON local_variant_imports(status);
+      CREATE INDEX IF NOT EXISTS idx_lvi_ean ON local_variant_imports(ean);
+      CREATE INDEX IF NOT EXISTS idx_lvi_draft_id ON local_variant_imports(draft_id);
+    `,
+  },
 ];

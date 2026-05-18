@@ -353,4 +353,55 @@ describe('SyncLogService.pushToServer — order/created accept marks local order
     expect(result.rejected).toBe(1);
     expect(result.accepted).toBe(0);
   });
+
+  it('defers order push while a local draft-import variant is still pending', async () => {
+    vi.mocked(syncLogRepo.getPending)
+      .mockReset()
+      .mockReturnValueOnce([
+        makePendingOrderEntry({
+          payload: JSON.stringify({
+            id: 'order-1',
+            items: [{ productId: 'local-variant-1', variantId: 'local-variant-1' }],
+          }),
+        }),
+      ])
+      .mockReturnValue([]);
+    vi.mocked(database.get).mockReturnValue({ c: 1 } as any);
+
+    const service = new SyncLogService();
+    const result = await service.pushToServer();
+
+    expect(result).toEqual({ accepted: 0, rejected: 0 });
+    expect(apiClient.syncPush).not.toHaveBeenCalled();
+    expect(syncLogRepo.markPushing).not.toHaveBeenCalled();
+  });
+
+  it('maps synced local draft-import variant ids before pushing order payload', async () => {
+    vi.mocked(syncLogRepo.getPending)
+      .mockReset()
+      .mockReturnValueOnce([
+        makePendingOrderEntry({
+          payload: JSON.stringify({
+            id: 'order-1',
+            items: [{ productId: 'local-variant-1', variantId: 'local-variant-1' }],
+          }),
+        }),
+      ])
+      .mockReturnValue([]);
+    vi.mocked(database.get)
+      .mockReturnValueOnce({ c: 0 } as any)
+      .mockReturnValueOnce({ server_variant_id: 'server-variant-9' } as any);
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [{ source_tx: 'tx-uuid-1', accepted: true, seq: 8 }],
+    } as any);
+
+    const service = new SyncLogService();
+    await service.pushToServer();
+
+    const pushed = vi.mocked(apiClient.syncPush).mock.calls[0]?.[1] as any[];
+    expect(pushed[0].payload.items[0]).toMatchObject({
+      productId: 'server-variant-9',
+      variantId: 'server-variant-9',
+    });
+  });
 });

@@ -573,6 +573,8 @@ interface ElectronAPI {
       getDailyStats: (date: string) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
+      deleteLocal: (orderId: string) => Promise<{ success: boolean; restocked?: number; error?: string }>;
+      mutate: (orderId: string, data: any) => Promise<{ success: boolean; localOnly?: boolean; order?: any; mutation?: any; restocked?: number; error?: string }>;
       refund: (orderId: string, data: {
         type: 'FULL' | 'PARTIAL';
         refundRequestId?: string;
@@ -627,15 +629,32 @@ interface ElectronAPI {
       getByStatus: (status: string) => Promise<any[]>;
       getByBarcode: (barcode: string) => Promise<any | null>;
       getById: (id: string) => Promise<any | null>;
+      searchByCode: (query: string) => Promise<any[]>;
     };
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
-      scanCreate: (payload: { ean: string; quantity?: number; idempotencyKey?: string }) => Promise<{
+      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
+        mode?: string;
+        productId?: string;
+        variantId?: string;
+        productName?: string;
+        ean?: string;
+        retailPrice?: number;
+        newOnHand?: number;
+        imageUrl?: string | null;
         product?: any;
+        variant?: any;
         draft?: any;
         message?: string;
+        error?: string;
+      }>;
+      importDraft: (payload: { ean: string }) => Promise<{
+        ok: boolean;
+        outcome?: string;
+        variant?: any;
+        syncPending?: boolean;
         error?: string;
       }>;
     };
@@ -648,7 +667,7 @@ interface ElectronAPI {
         variant?: any;
         error?: string;
       }>;
-      finalize: (payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => Promise<{
+      finalize: (payload: { productId: string; variantId: string; name?: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         product?: any;
         variant?: any;

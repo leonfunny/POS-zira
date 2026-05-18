@@ -34,7 +34,7 @@ describe('POS product card interaction', () => {
   it('sold-out products are disabled and show overlay', () => {
     const cardSource = productCardSource();
 
-    expect(cardSource).toContain('const soldOut = !isService && stockQty <= 0');
+    expect(cardSource).toContain('const soldOut = !isDraft && !isService && stockQty <= 0');
     expect(cardSource).toContain('aria-disabled={soldOut || undefined}');
     expect(cardSource).toContain("tabIndex={soldOut ? -1 : 0}");
     expect(cardSource).toContain("cursor-not-allowed");
@@ -48,7 +48,7 @@ describe('POS product card interaction', () => {
     // — templates that need the same check should import the rule from here
     // once a real call site appears. Pin the inline shape so it doesn't drift.
     const cardSource = productCardSource();
-    expect(cardSource).toContain('const soldOut = !isService && stockQty <= 0');
+    expect(cardSource).toContain('const soldOut = !isDraft && !isService && stockQty <= 0');
     expect(cardSource).not.toContain('export function isProductSoldOut');
   });
 });

@@ -108,6 +108,54 @@ function normalizeServerPrinters(printers?: ConnectResponse['printers']): Printe
   return Object.keys(mapped).length > 0 ? mapped : null;
 }
 
+function hasPhysicalPrinterTarget(config?: PrinterConfig): boolean {
+  return !!(
+    config?.windowsPrinter?.trim() ||
+    config?.port?.trim() ||
+    config?.address?.trim()
+  );
+}
+
+function mergeServerPrintersWithLocal(
+  serverPrinters: PrintersConfig,
+  localPrinters?: PrintersConfig,
+): PrintersConfig {
+  const merged: PrintersConfig = { ...(localPrinters || {}) };
+
+  for (const [type, serverConfig] of Object.entries(serverPrinters) as Array<[PrinterType, PrinterConfig]>) {
+    const localConfig = localPrinters?.[type];
+    const serverHasTarget = hasPhysicalPrinterTarget(serverConfig);
+    const localHasTarget = hasPhysicalPrinterTarget(localConfig);
+
+    if (!serverHasTarget && localHasTarget && localConfig) {
+      merged[type] = {
+        ...serverConfig,
+        enabled: localConfig.enabled ?? serverConfig.enabled,
+        displayName: type === PrinterType.RECEIPT ? 'Order' : (localConfig.displayName || serverConfig.displayName),
+        protocol: localConfig.protocol || serverConfig.protocol,
+        windowsPrinter: localConfig.windowsPrinter,
+        port: localConfig.port,
+        address: localConfig.address,
+        baudRate: localConfig.baudRate ?? serverConfig.baudRate,
+        charset: localConfig.charset ?? serverConfig.charset,
+        cutMode: localConfig.cutMode ?? serverConfig.cutMode,
+        labelWidth: localConfig.labelWidth ?? serverConfig.labelWidth,
+        labelHeight: localConfig.labelHeight ?? serverConfig.labelHeight,
+      };
+      logger.info(`[ApiClient] Preserved local ${type} printer target while applying server mapping without a physical target`);
+      continue;
+    }
+
+    merged[type] = {
+      ...serverConfig,
+      charset: localConfig?.charset ?? serverConfig.charset,
+      cutMode: localConfig?.cutMode ?? serverConfig.cutMode,
+    };
+  }
+
+  return merged;
+}
+
 type AgentPrinterApiPayload = Record<string, string | number | boolean | null>;
 
 function addDefinedPayloadValue(
@@ -536,9 +584,10 @@ export class ApiClient {
     };
 
     if (serverPrinters) {
-      nextConfig.printers = serverPrinters;
+      const mergedPrinters = mergeServerPrintersWithLocal(serverPrinters, getConfig().printers);
+      nextConfig.printers = mergedPrinters;
       nextConfig.multiPrinterMode = true;
-      logger.info(`[ApiClient] Applied ${Object.keys(serverPrinters).length} server printer mapping(s)`);
+      logger.info(`[ApiClient] Applied ${Object.keys(serverPrinters).length} server printer mapping(s) with local target preservation`);
     }
 
     setConfig(nextConfig);
@@ -1257,6 +1306,63 @@ export class ApiClient {
   }
 
   /**
+   * Update POS order payment fields.
+   * PATCH /api/v1/b2b/pos/orders/:id/payment
+   */
+  async updateOrderPayment(token: string, backendOrderId: string, data: any): Promise<any | null> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/payment`;
+    const response = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Update POS order lines/totals.
+   * PATCH /api/v1/b2b/pos/orders/:id
+   */
+  async updateOrder(token: string, backendOrderId: string, data: any): Promise<any | null> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Void a synced POS order.
+   * PATCH /api/v1/b2b/pos/orders/:id/void
+   */
+  async voidOrder(token: string, backendOrderId: string, data: any): Promise<any | null> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/void`;
+    const response = await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
    * Get or create print-agent API key for the authenticated user's salon
    * GET /api/v1/print-agent/my-key
    */
@@ -1585,13 +1691,13 @@ export class ApiClient {
    * Returns a draft preview when the EAN exists in the master catalog,
    * otherwise null/empty. Read-only — safe to call as many times as needed.
    */
-  async lookupByEan(token: string, ean: string): Promise<any | null> {
+  async lookupByEan(token: string | null, ean: string): Promise<any | null> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
     if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
 
     const url = `${this.baseUrl}/api/v1/master-catalog/lookup-by-ean`;
     const response = await fetchWithTimeout(url, {
@@ -1606,9 +1712,7 @@ export class ApiClient {
       throw new Error(err.message || `HTTP ${response.status}`);
     }
 
-    const data = await response.json();
-    // Backends sometimes wrap the payload — accept several shapes.
-    return data.draft ?? data.product ?? data.result ?? data ?? null;
+    return response.json();
   }
 
   /**
@@ -1619,20 +1723,48 @@ export class ApiClient {
    * creation on retry.
    */
   async scanCreate(
-    token: string,
-    payload: { ean: string; quantity?: number; idempotencyKey?: string },
-  ): Promise<{ outcome: string; product?: any; draft?: any; message?: string }> {
+    token: string | null,
+    payload: {
+      ean: string;
+      purchasePrice?: number;
+      retailPrice?: number;
+      stockQty?: number;
+      taxRate?: number;
+      warehouseId?: string;
+      idempotencyKey?: string;
+    },
+  ): Promise<{
+    outcome: string;
+    mode?: string;
+    productId?: string;
+    variantId?: string;
+    productName?: string;
+    ean?: string;
+    retailPrice?: number;
+    newOnHand?: number;
+    imageUrl?: string | null;
+    product?: any;
+    variant?: any;
+    draft?: any;
+    message?: string;
+  }> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
       'Idempotency-Key': payload.idempotencyKey || `scan-${payload.ean}-${Date.now()}`,
     };
+    if (token) headers.Authorization = `Bearer ${token}`;
     if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
 
     const url = `${this.baseUrl}/api/v1/master-catalog/scan-create`;
     const body: Record<string, unknown> = { ean: payload.ean };
-    if (typeof payload.quantity === 'number') body.quantity = payload.quantity;
+    if (typeof payload.purchasePrice === 'number') body.purchasePrice = payload.purchasePrice;
+    if (typeof payload.retailPrice === 'number') body.retailPrice = payload.retailPrice;
+    if (typeof payload.stockQty === 'number') body.stockQty = payload.stockQty;
+    if (typeof payload.taxRate === 'number') body.taxRate = payload.taxRate;
+    if (payload.warehouseId) body.warehouseId = payload.warehouseId;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',
@@ -1641,14 +1773,30 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${response.status}`);
+      const raw = await response.text().catch(() => '');
+      let parsed: any = null;
+      try { parsed = raw ? JSON.parse(raw) : null; } catch { /* leave parsed null */ }
+      const message = parsed?.message || parsed?.error || raw || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { serverBody?: any; status?: number; requestBody?: any };
+      error.status = response.status;
+      error.serverBody = parsed ?? raw;
+      error.requestBody = body;
+      throw error;
     }
 
     const data = await response.json();
     return {
-      outcome: String(data.outcome ?? data.status ?? 'UNKNOWN'),
-      product: data.product ?? data.variant ?? null,
+      outcome: String(data.outcome ?? data.mode ?? data.status ?? 'UNKNOWN'),
+      mode: data.mode,
+      productId: data.productId ?? data.product_id,
+      variantId: data.variantId ?? data.variant_id,
+      productName: data.productName ?? data.product_name,
+      ean: data.ean,
+      retailPrice: data.retailPrice ?? data.retail_price,
+      newOnHand: data.newOnHand ?? data.new_on_hand,
+      imageUrl: data.imageUrl ?? data.image_url ?? null,
+      product: data.product ?? null,
+      variant: data.variant ?? data.product?.variant ?? null,
       draft: data.draft ?? null,
       message: data.message,
     };
@@ -1658,13 +1806,15 @@ export class ApiClient {
    * Warehouse quick-add — upload one captured product image.
    * POST /api/v1/warehouse/quick-add/upload-image
    */
-  async quickAddUploadImage(payload: {
+  async quickAddUploadImage(token: string, payload: {
     dataUrl: string;
     mimeType?: string;
     filename?: string;
   }): Promise<{ url: string }> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+    };
     if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
 
     const comma = payload.dataUrl.indexOf(',');
@@ -1696,11 +1846,13 @@ export class ApiClient {
    * POST /api/v1/warehouse/quick-add/analyze-multiple
    */
   async quickAddAnalyzeMultiple(
+    token: string,
     images: Array<{ url: string; mimeType: string }>,
     language: string,
   ): Promise<any> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
     const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     };
     if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
@@ -1726,12 +1878,14 @@ export class ApiClient {
    * POST /api/v1/warehouse/quick-add/create
    */
   async quickAddCreate(
+    token: string,
     payload: Record<string, unknown>,
     idempotencyKey?: string,
   ): Promise<{ product?: any; variant?: any; [key: string]: any }> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
     const salonCode = getConfigValue('salonCode') as string | undefined;
     const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     };
     if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
@@ -1807,6 +1961,7 @@ export class ApiClient {
 export const printerMappingForTests = {
   normalizeProtocol,
   mapServerPrinter,
+  mergeServerPrintersWithLocal,
   normalizeAgentPrinterCreatePayload,
   normalizeAgentPrinterUpdatePayload,
   normalizeServerPrinters,

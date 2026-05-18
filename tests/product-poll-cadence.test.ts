@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deltaSyncMock = vi.fn();
 const fullSyncMock = vi.fn();
+const reconcileLocalVariantImportsMock = vi.fn();
 const getSecureAuthTokenMock = vi.fn(() => 'test-token' as string | null);
 const posWindowSendMock = vi.fn();
 const isDestroyedMock = vi.fn(() => false);
@@ -49,6 +50,7 @@ vi.mock('../src/main/sync/product-sync', () => {
   class ProductSync {
     deltaSync = deltaSyncMock;
     fullSync = fullSyncMock;
+    reconcileLocalVariantImports = reconcileLocalVariantImportsMock;
   }
   return { ProductSync };
 });
@@ -179,6 +181,8 @@ describe('SyncModule.runProductSync', () => {
     vi.clearAllMocks();
     deltaSyncMock.mockReset();
     fullSyncMock.mockReset();
+    reconcileLocalVariantImportsMock.mockReset();
+    reconcileLocalVariantImportsMock.mockResolvedValue(0);
     getSecureAuthTokenMock.mockReset();
     getSecureAuthTokenMock.mockReturnValue('test-token');
     posWindowSendMock.mockReset();
@@ -203,7 +207,17 @@ describe('SyncModule.runProductSync', () => {
     const m = await freshModule();
     const result = await m.runProductSync();
     expect(deltaSyncMock).toHaveBeenCalledTimes(1);
+    expect(reconcileLocalVariantImportsMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ success: true, productsCount: 7 });
+  });
+
+  it('runs a second deltaSync after local draft imports are reconciled', async () => {
+    deltaSyncMock.mockResolvedValueOnce(7).mockResolvedValueOnce(2);
+    reconcileLocalVariantImportsMock.mockResolvedValueOnce(1);
+    const m = await freshModule();
+    const result = await m.runProductSync();
+    expect(deltaSyncMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ success: true, productsCount: 9 });
   });
 
   it('sends pos:products-synced to the POS window after a successful sync', async () => {

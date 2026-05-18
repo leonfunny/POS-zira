@@ -166,10 +166,42 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     if (searchQuery) {
       // Retail till searches by EAN/SKU only — the cashier is keying or
       // scanning a code off the packaging, not browsing by product name.
-      const result = await window.electronAPI.pos.products.searchByCode(searchQuery);
-      return activeCategoryId
-        ? result.filter((p: any) => p.category_id === activeCategoryId)
-        : result;
+      const variantsRaw = await window.electronAPI.pos.products.searchByCode(searchQuery);
+      const variants: Product[] = activeCategoryId
+        ? variantsRaw.filter((p: any) => p.category_id === activeCategoryId)
+        : variantsRaw;
+
+      // Also surface master-catalog drafts that match the same code so an
+      // unimported item can be added to the cart in one tap. Clicking a
+      // draft routes through the scan-import flow (creates the variant on
+      // the server, then adds to cart). Drafts are appended after real
+      // variants so the cashier sees stocked items first.
+      const drafts: any[] = await window.electronAPI.pos.draftProducts
+        .searchByCode(searchQuery)
+        .catch(() => []);
+      const variantBarcodes = new Set(
+        variants.map((v) => v.barcode).filter((b): b is string => !!b),
+      );
+      const draftItems: Product[] = drafts
+        .filter((d) => !d.barcode || !variantBarcodes.has(d.barcode))
+        .map((d) => ({
+          id: `draft:${d.id}`,
+          template_id: null,
+          name: d.name,
+          sku: d.sku ?? null,
+          barcode: d.barcode ?? null,
+          retail_price: Number(d.retail_price) || 0,
+          category_id: d.category_id ?? null,
+          image_url: d.image_url ?? null,
+          in_stock: Number(d.in_stock) || 0,
+          vat_rate: Number(d.vat_rate) || 23,
+          is_active: 1,
+          updated_at: d.updated_at ?? null,
+          available_qty: Number(d.in_stock) || 0,
+          _isDraft: true,
+        }));
+
+      return [...variants, ...draftItems];
     }
     if (activeCategoryId) {
       return window.electronAPI.pos.products.getByCategory(activeCategoryId);
@@ -261,7 +293,25 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     };
   }, []);
 
+  // After every cart mutation (add, remove, qty change) return focus to the
+  // search bar so the cashier can immediately scan/key the next item without
+  // tapping back. SearchBar itself listens for `pos:focus-search`.
+  useEffect(() => {
+    document.dispatchEvent(new CustomEvent('pos:focus-search'));
+  }, [cart.items]);
+
   const handleAddProduct = useCallback((product: Product) => {
+    // Drafts haven't been imported into product_variants yet — route through
+    // the scan-import modal so the server materializes a real variant before
+    // we add anything to the cart. The modal's confirm path adds to cart on
+    // success.
+    if (product._isDraft) {
+      if (product.barcode && onUnknownBarcodeScanned) {
+        void onUnknownBarcodeScanned(product.barcode);
+      }
+      return;
+    }
+    if ((Number(product.retail_price) || 0) <= 0) return;
     if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
     dispatch({
       type: 'cart/addItem',
@@ -278,7 +328,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
         name_translations: product.name_translations ?? null,
       },
     });
-  }, [dispatch]);
+  }, [dispatch, onUnknownBarcodeScanned]);
 
   const handleBarcodeScanned = useCallback(async (barcode: string) => {
     const product = await window.electronAPI.pos.products.getByBarcode(barcode);
@@ -423,7 +473,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               so the eye sees content first, not chrome. */}
           <div className="shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-[min(360px,42%)] min-w-[280px] shrink-0">
+              <div className="w-[min(380px,44%)] min-w-[310px] shrink-0">
               <SearchBar
                 value={searchQuery}
                 onChange={setSearchQuery}

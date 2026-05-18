@@ -229,6 +229,13 @@ export const productRepo = {
     );
   },
 
+  incrementStock(variantId: string, quantity: number): void {
+    database.run(
+      'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+      [quantity, quantity, variantId],
+    );
+  },
+
   deactivateByIds(ids: string[]): void {
     for (const id of ids) {
       database.run('UPDATE product_variants SET is_active = 0 WHERE id = ?', [id]);

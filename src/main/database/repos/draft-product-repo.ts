@@ -42,6 +42,22 @@ export const draftProductRepo = {
     );
   },
 
+  // Code-only search for the retail till — mirrors productRepo.searchByCode
+  // but against the draft mirror so cashiers can find unimported items by
+  // typing the EAN/SKU printed on the package. Cap at 50 since drafts can
+  // run into thousands and the grid only renders a handful.
+  searchByCode(query: string): DraftProductRow[] {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const like = `%${trimmed}%`;
+    return database.all<DraftProductRow>(
+      `SELECT * FROM draft_products
+         WHERE deleted_at IS NULL AND (barcode LIKE ? OR sku LIKE ?)
+         ORDER BY name LIMIT 50`,
+      [like, like],
+    );
+  },
+
   upsertMany(drafts: DraftProductRow[]): void {
     if (drafts.length === 0) return;
     for (const d of drafts) {

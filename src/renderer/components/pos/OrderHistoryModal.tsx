@@ -145,6 +145,15 @@ function formatMoney(amount: number, currency: string): string {
   return `${(amount / 100).toFixed(2)} ${currency}`;
 }
 
+function formatMoneyInput(amount: number): string {
+  return (amount / 100).toFixed(2);
+}
+
+function parseMoneyInput(value: string): number {
+  const n = parseFloat(value.replace(',', '.'));
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
+}
+
 function toGrosze(value: unknown, fallback = 0): number {
   const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
   return Number.isFinite(n) ? Math.round(n * 100) : fallback;
@@ -904,6 +913,238 @@ function ServerActionsPanel({
   );
 }
 
+function OrderMutationPanel({
+  order,
+  items,
+  currency,
+  t,
+  onUpdated,
+  ensureMirrored,
+  isMirroring,
+}: {
+  order: OrderRow;
+  items: OrderItemRow[];
+  currency: string;
+  t: (key: string) => string;
+  onUpdated: (closed?: boolean) => void;
+  ensureMirrored: () => Promise<boolean>;
+  isMirroring: boolean;
+}) {
+  const [paymentMethod, setPaymentMethod] = useState(order.payment_method || 'CASH');
+  const [paidText, setPaidText] = useState(formatMoneyInput(order.payment_amount || order.total));
+  const [changeText, setChangeText] = useState(formatMoneyInput(order.change_amount || 0));
+  const [reason, setReason] = useState('');
+  const [draftItems, setDraftItems] = useState(() => items.map((item) => ({
+    ...item,
+    priceText: formatMoneyInput(item.price),
+    quantityText: String(item.quantity),
+  })));
+  const [busy, setBusy] = useState<string | null>(null);
+  const [status, setStatus] = useState<ReprintStatus>(null);
+
+  useEffect(() => {
+    setPaymentMethod(order.payment_method || 'CASH');
+    setPaidText(formatMoneyInput(order.payment_amount || order.total));
+    setChangeText(formatMoneyInput(order.change_amount || 0));
+    setDraftItems(items.map((item) => ({
+      ...item,
+      priceText: formatMoneyInput(item.price),
+      quantityText: String(item.quantity),
+    })));
+    setReason('');
+    setStatus(null);
+  }, [order.id, order.payment_method, order.payment_amount, order.change_amount, order.total, items]);
+
+  const isSynced = Boolean(order.backend_id);
+  const isFinal = order.status === 'REFUNDED' || order.status === 'PARTIAL_REFUND' || order.status === 'CANCELLED';
+  const reasonRequired = isSynced;
+  const canSubmit = !isFinal && !isMirroring && (!reasonRequired || reason.trim().length >= 3);
+
+  const runMutation = async (key: string, payload: any) => {
+    if (busy || !canSubmit) return;
+    if (!(await ensureMirrored())) return;
+    setBusy(key);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.mutate(order.id, {
+        ...payload,
+        reason: reason.trim() || undefined,
+      });
+      if (!result?.success) {
+        setStatus({ type: 'error', message: result?.error || 'Order update failed' });
+        return;
+      }
+      setStatus({ type: 'ok', message: result.localOnly ? 'Local order updated' : 'Server order updated' });
+      onUpdated(payload.type === 'void');
+    } catch (err: any) {
+      setStatus({ type: 'error', message: err?.message || 'Order update failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const savePayment = () => runMutation('payment', {
+    type: 'payment',
+    paymentMethod,
+    paymentAmount: parseMoneyInput(paidText),
+    changeAmount: parseMoneyInput(changeText),
+  });
+
+  const saveItems = () => runMutation('items', {
+    type: 'items',
+    paymentMethod,
+    paymentAmount: parseMoneyInput(paidText),
+    changeAmount: parseMoneyInput(changeText),
+    items: draftItems.map((item) => ({
+      id: item.id,
+      variant_id: item.variant_id,
+      name: item.name,
+      sku: item.sku,
+      price: parseMoneyInput(item.priceText),
+      quantity: Math.max(0, Math.round(parseFloat(item.quantityText.replace(',', '.')) || 0)),
+      vat_rate: item.vat_rate,
+    })).filter((item) => item.quantity > 0),
+  });
+
+  const voidOrder = async () => {
+    const label = isSynced ? 'Void this synced order on server?' : 'Delete this local unsynced order?';
+    if (!confirm(label)) return;
+    await runMutation('void', { type: 'void', restock: true });
+  };
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h3 className="text-sm font-extrabold text-slate-900">Edit order</h3>
+      <p className="mt-1 text-xs font-medium text-slate-500">
+        {isSynced ? 'Synced orders are updated through the server.' : 'Unsynced local orders are updated in local database.'}
+      </p>
+
+      {isFinal && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+          Refunded or cancelled orders are read-only.
+        </div>
+      )}
+
+      <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-slate-500">
+        Reason {reasonRequired ? '' : '(optional)'}
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder={isSynced ? 'Required for server audit' : 'Reason'}
+          disabled={isFinal || busy !== null}
+          className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+        />
+      </label>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
+          Method
+          <select
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value)}
+            disabled={isFinal || busy !== null}
+            className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-bold text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          >
+            {PAYMENT_METHODS.filter((method) => method.value !== 'SPLIT').map((method) => (
+              <option key={method.value} value={method.value}>{method.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
+          Paid
+          <input
+            value={paidText}
+            onChange={(e) => setPaidText(e.target.value)}
+            inputMode="decimal"
+            disabled={isFinal || busy !== null}
+            className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          />
+        </label>
+      </div>
+      <label className="mt-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+        Change
+        <input
+          value={changeText}
+          onChange={(e) => setChangeText(e.target.value)}
+          inputMode="decimal"
+          disabled={isFinal || busy !== null}
+          className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+        />
+      </label>
+      <button
+        onClick={savePayment}
+        disabled={!canSubmit || busy !== null}
+        className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-extrabold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+      >
+        {busy === 'payment' ? 'Saving...' : 'Save payment'}
+      </button>
+
+      <div className="mt-4 border-t border-slate-200 pt-3">
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Items</div>
+        <div className="mt-2 space-y-2">
+          {draftItems.map((item, index) => (
+            <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="truncate text-xs font-bold text-slate-900">{item.name}</div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  Qty
+                  <input
+                    value={item.quantityText}
+                    onChange={(e) => setDraftItems((prev) => prev.map((row, i) => i === index ? { ...row, quantityText: e.target.value } : row))}
+                    inputMode="numeric"
+                    disabled={isFinal || busy !== null}
+                    className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100"
+                  />
+                </label>
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  Price
+                  <input
+                    value={item.priceText}
+                    onChange={(e) => setDraftItems((prev) => prev.map((row, i) => i === index ? { ...row, priceText: e.target.value } : row))}
+                    inputMode="decimal"
+                    disabled={isFinal || busy !== null}
+                    className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100"
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 text-right text-xs font-bold text-slate-500">
+          Draft total: {formatMoney(draftItems.reduce((sum, item) => sum + parseMoneyInput(item.priceText) * (parseFloat(item.quantityText.replace(',', '.')) || 0), 0), currency)}
+        </div>
+        <button
+          onClick={saveItems}
+          disabled={!canSubmit || busy !== null}
+          className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+        >
+          {busy === 'items' ? 'Saving...' : 'Save items'}
+        </button>
+      </div>
+
+      <button
+        onClick={voidOrder}
+        disabled={!canSubmit || busy !== null}
+        className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy === 'void' ? 'Processing...' : isSynced ? 'Void order' : 'Delete local order'}
+      </button>
+
+      {status && (
+        <div
+          className={`mt-3 rounded-lg border px-3 py-2 text-xs font-bold ${
+            status.type === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-red-200 bg-red-50 text-red-800'
+          }`}
+        >
+          {status.message}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
@@ -917,8 +1158,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
   const [reprinting, setReprinting] = useState(false);
+  const [printingFiscal, setPrintingFiscal] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteStatus, setDeleteStatus] = useState<ReprintStatus>(null);
   const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [mirroringId, setMirroringId] = useState<string | null>(null);
@@ -1031,6 +1275,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const handleSelectOrder = async (orderId: string) => {
     setDetailLoadingId(orderId);
     setReprintStatus(null);
+    setDeleteStatus(null);
     try {
       if (serverItemsMap[orderId] && serverItemsMap[orderId].length > 0) {
         const order = orders.find((o) => o.id === orderId);
@@ -1087,6 +1332,68 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setReprinting(false);
+    }
+  };
+
+  const handlePrintFiscal = async (orderId: string) => {
+    if (printingFiscal) return;
+    setPrintingFiscal(true);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
+      if (result?.success && result.fiscalPrinted !== false) {
+        setReprintStatus({ type: 'ok', message: 'Fiscal receipt sent to printer' });
+      } else {
+        setReprintStatus({
+          type: 'error',
+          message: result?.error || 'Fiscal printer not connected',
+        });
+      }
+    } catch (e: any) {
+      setReprintStatus({
+        type: 'error',
+        message: e?.message || 'Fiscal printer not connected',
+      });
+    } finally {
+      setPrintingFiscal(false);
+    }
+  };
+
+  const handleDeleteLocalOrder = async (order: OrderRow) => {
+    if (deleting) return;
+    const label = getOrderLabel(order);
+    const confirmed = confirm(
+      tOr(
+        t,
+        'pos.history.deleteConfirm',
+        `Delete ${label}? This removes the local order and restores its stock. Synced orders must be cancelled or refunded instead.`,
+      ),
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setDeleteStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.deleteLocal(order.id);
+      if (!result?.success) {
+        setDeleteStatus({
+          type: 'error',
+          message: result?.error || tOr(t, 'pos.history.deleteFailed', 'Delete failed'),
+        });
+        return;
+      }
+      setDetail(null);
+      setShowRefund(false);
+      setReprintStatus(null);
+      setDeleteStatus(null);
+      await loadOrders();
+    } catch (err: any) {
+      setDeleteStatus({
+        type: 'error',
+        message: err?.message || tOr(t, 'pos.history.deleteFailed', 'Delete failed'),
+      });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1157,13 +1464,14 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       && hasRefundableItem;
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
+    const canDeleteLocal = order._origin !== 'server' && !order.backend_id && order.synced !== 1 && order.synced !== 2;
 
     return (
       <DialogShell onClose={onClose}>
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); }}
+              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); }}
               className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -1406,18 +1714,34 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               )}
 
               <section className="rounded-lg border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-extrabold text-slate-900">Receipt</h3>
-                <p className="mt-1 text-xs font-medium text-slate-500">Send this order receipt to the configured printer.</p>
+                <h3 className="text-sm font-extrabold text-slate-900">Printing</h3>
+                <p className="mt-1 text-xs font-medium text-slate-500">Print the fiscal receipt and the order copy separately.</p>
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
-                  disabled={reprinting || isMirroring}
+                  disabled={reprinting || printingFiscal || isMirroring}
                   className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 >
                   {(reprinting || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
                   )}
-                  {reprinting ? 'Sending...' : tOr(t, 'pos.history.reprint', 'Reprint Receipt')}
+                  {reprinting ? 'Sending...' : 'Print order'}
                 </button>
+
+                <button
+                  onClick={async () => { if (await ensureMirrored(order)) handlePrintFiscal(order.id); }}
+                  disabled={printingFiscal || reprinting || isMirroring || refundStatus !== 'none'}
+                  className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  {(printingFiscal || isMirroring) && (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-800" aria-hidden="true" />
+                  )}
+                  {printingFiscal ? 'Sending...' : 'Print fiscal receipt'}
+                </button>
+                {refundStatus !== 'none' && (
+                  <div className="mt-2 text-xs font-bold text-slate-500">
+                    Fiscal sale receipt is disabled for refunded orders.
+                  </div>
+                )}
 
                 {reprintStatus && (
                   <div
@@ -1464,6 +1788,26 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 </button>
               )}
 
+              {!showRefund && (
+                <OrderMutationPanel
+                  order={order}
+                  items={items}
+                  currency={currency}
+                  t={t}
+                  onUpdated={(closed) => {
+                    if (closed) {
+                      loadOrders();
+                      setDetail(null);
+                      return;
+                    }
+                    refreshLocalOrderDetail(order.id);
+                    loadOrders();
+                  }}
+                  ensureMirrored={() => ensureMirrored(order)}
+                  isMirroring={isMirroring}
+                />
+              )}
+
               {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
                 <button
                   disabled={cancelling || isMirroring}
@@ -1482,6 +1826,27 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 >
                   {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
                 </button>
+              )}
+
+              {canDeleteLocal && !showRefund && (
+                <section className="rounded-lg border border-red-200 bg-red-50 p-4">
+                  <h3 className="text-sm font-extrabold text-red-900">{tOr(t, 'pos.history.deleteLocalTitle', 'Delete local order')}</h3>
+                  <p className="mt-1 text-xs font-bold text-red-700">
+                    {tOr(t, 'pos.history.deleteLocalHint', 'Only unsynced local orders can be deleted. Stock will be restored.')}
+                  </p>
+                  <button
+                    onClick={() => handleDeleteLocalOrder(order)}
+                    disabled={deleting || isMirroring}
+                    className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-red-300 bg-white px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
+                  >
+                    {deleting ? tOr(t, 'pos.history.deleting', 'Deleting...') : tOr(t, 'pos.history.deleteOrder', 'Delete Order')}
+                  </button>
+                  {deleteStatus && (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-bold text-red-800">
+                      {deleteStatus.message}
+                    </div>
+                  )}
+                </section>
               )}
 
               {notSynced && (

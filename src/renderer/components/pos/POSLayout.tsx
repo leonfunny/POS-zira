@@ -39,6 +39,52 @@ const MODE_LABELS: Record<PosMode, string> = {
   restaurant: 'pos.mode.restaurant',
 };
 
+function moneyToGrosze(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Number.isInteger(n) && Math.abs(n) >= 100 ? n : Math.round(n * 100);
+}
+
+function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
+  return {
+    id: draft.id,
+    name: draft.name,
+    barcode: draft.barcode,
+    retail_price: Number(draft.retail_price) || 0,
+    stock_qty: Number(draft.in_stock) || 0,
+    vat_rate: Number(draft.vat_rate) || 23,
+    image_url: draft.image_url,
+    status: draft.status,
+  };
+}
+
+function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportDraftPreview | null {
+  const draft = response?.draft ?? response?.product ?? response?.result ?? null;
+  const existing = response?.existingProduct ?? response?.existing_product ?? null;
+  const source = draft ?? existing;
+  if (!source) return null;
+  const image = Array.isArray(source.images) ? source.images[0] : source.imageUrl ?? source.image_url;
+  return {
+    id: source.draftId ?? source.draft_id ?? source.id ?? source.variantId ?? source.variant_id,
+    name: source.namePreferred ?? source.name ?? source.productName ?? source.product_name ?? source.title ?? fallbackEan,
+    barcode: source.ean ?? source.barcode ?? fallbackEan,
+    retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price),
+    purchase_price: moneyToGrosze(source.suggestedPurchasePrice ?? source.purchasePrice ?? source.purchase_price),
+    stock_qty: Number(source.stockQty ?? source.stock_qty ?? source.currentStock ?? 0) || 0,
+    vat_rate: Number(source.taxRate ?? source.vat_rate ?? source.vatRate ?? 23) || 23,
+    image_url: image ?? null,
+    status: response?.mode ?? source.status,
+  };
+}
+
+function canSellImportedVariant(variant: any): string | null {
+  const price = Number(variant?.retail_price) || 0;
+  const stock = Number(variant?.available_qty ?? variant?.in_stock) || 0;
+  if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
+  if (variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
+  return null;
+}
+
 interface POSLayoutProps {
   onFullscreen?: () => void;
 }
@@ -76,22 +122,40 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const lastTextInputActivityRef = useRef(0);
 
   const focusBarcode = useCallback(() => {
-    const el = barcodeRef.current;
-    if (!el) return;
-    const active = document.activeElement;
-    // Back off entirely if a visible text input had keyboard activity in the
-    // last 5 seconds. HID barcode scanners inject the whole code in <100ms
-    // and trigger Enter, so they don't need the hidden input to be focused
-    // ahead of time.
-    if (Date.now() - lastTextInputActivityRef.current < 5000) return;
-    if (active && active !== el) {
-      const tag = active.tagName;
-      if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && active !== el) {
-        const type = (active as HTMLInputElement).type;
-        if (type !== 'hidden' && (active as HTMLElement).offsetParent !== null) return;
-      }
+    // Back off entirely while any modal-style overlay is on screen. The
+    // app's modals all share the `.fixed.inset-0.z-50` backdrop pattern
+    // (Payment, History, ScanImport, Shift, QuickAdd, etc.). Keeping the
+    // search input focused behind a modal would double-process scanner
+    // wedge keystrokes — once through the focused input, once through the
+    // IPC `barcode-scanned` listener that SearchBar still subscribes to.
+    if (document.querySelector('.fixed.inset-0.z-50')) return;
+
+    const active = document.activeElement as HTMLElement | null;
+
+    // Never steal focus from a real, visible text input. Covers the search
+    // bar itself, modal fields, customer name, etc. Selects are excluded
+    // because they don't take typed text anyway.
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      const inputEl = active as HTMLInputElement;
+      if (inputEl.type !== 'hidden' && inputEl.offsetParent !== null) return;
     }
-    el.focus();
+
+    // Prefer the visible POS search input when mounted (retail mode). No
+    // back-off here: the cashier expects the next scan to flow into the
+    // search/import path the moment they tap away from a button, so we
+    // return focus immediately.
+    const search = document.getElementById('pos-product-search') as HTMLInputElement | null;
+    if (search && search.offsetParent !== null) {
+      search.focus();
+      return;
+    }
+
+    // Fall back to the hidden capture input (non-retail modes). Keep the
+    // 5s back-off on this path so it doesn't yank focus from a visible
+    // text input mid-type.
+    if (Date.now() - lastTextInputActivityRef.current < 5000) return;
+    const el = barcodeRef.current;
+    if (el) el.focus();
   }, []);
 
   // Track input/keyup activity on real text inputs so focusBarcode can back off.
@@ -119,11 +183,13 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     };
   }, []);
 
-  // Re-focus hidden input only after clicks (not on a polling interval) and
-  // only when no text input has had recent activity. Polling every second
-  // races with TouchKeyboard taps and steals focus from SearchBar mid-type.
+  // Re-focus after every click so the next scan always reaches the search
+  // bar — even when the cashier just tapped a button, the empty grid area,
+  // a product image, etc. focusBarcode handles its own back-off when the
+  // click landed in a real text input or while a modal is on screen, so
+  // mid-type interactions and modal flows aren't disturbed.
   useEffect(() => {
-    const handler = () => setTimeout(focusBarcode, 300);
+    const handler = () => setTimeout(focusBarcode, 0);
     document.addEventListener('click', handler);
     return () => { document.removeEventListener('click', handler); };
   }, [focusBarcode]);
@@ -150,32 +216,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     setScanImport({ open: true, ean: code, preview: null, loading: true, error: null });
     try {
       const local = await window.electronAPI.pos.draftProducts.getByBarcode(code);
-      let preview: ScanImportDraftPreview | null = local
-        ? {
-            id: local.id,
-            name: local.name,
-            barcode: local.barcode,
-            retail_price: local.retail_price,
-            vat_rate: local.vat_rate,
-            image_url: local.image_url,
-            status: local.status,
-          }
-        : null;
+      let preview: ScanImportDraftPreview | null = local ? draftPreviewFromLocal(local) : null;
 
       if (!preview) {
         const remote = await window.electronAPI.pos.masterCatalog.lookupByEan(code);
-        if (remote?.ok && remote.draft) {
-          const d = remote.draft;
-          preview = {
-            id: d.id,
-            name: d.name ?? d.title ?? code,
-            barcode: d.barcode ?? code,
-            retail_price: Number(d.retail_price ?? d.retailPrice ?? d.purchasePrice ?? 0) || 0,
-            vat_rate: Number(d.vat_rate ?? d.vatRate ?? 23) || 23,
-            image_url: d.image_url ?? d.imageUrl ?? null,
-            status: d.status,
-          };
-        }
+        if (remote?.ok) preview = draftPreviewFromLookup(remote.draft, code);
       }
 
       if (!preview) {
@@ -194,6 +239,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   const closeScanImport = useCallback(() => {
     setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
+    // Return focus to the search bar so the cashier can scan the next item
+    // immediately. Without this, focus stays on the modal backdrop and the
+    // next scanner wedge input gets eaten by document.body.
+    document.dispatchEvent(new CustomEvent('pos:focus-search'));
   }, []);
 
   const prepareQuickAdd = useCallback(async (
@@ -217,6 +266,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const result = await window.electronAPI.pos.quickAdd.finalize({
       productId: input.productId,
       variantId: input.variantId,
+      name: input.name,
       retailPrice: input.retailPriceGrosze / 100,
       quantity: input.quantity,
       idempotencyKey: input.idempotencyKey,
@@ -260,18 +310,23 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
-      const result = await window.electronAPI.pos.masterCatalog.scanCreate({
-        ean,
-        idempotencyKey: `scan-${ean}-${Date.now()}`,
-      });
+      // Local-first import: copy the draft into product_variants right here
+      // so the cashier can ring it up without waiting on the master-catalog
+      // server. A background worker (and any natural delta sync that brings
+      // the same product down later) reconciles the row with the server.
+      const result = await window.electronAPI.pos.masterCatalog.importDraft({ ean });
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
       }
-      // After scanCreate, main triggers a deltaSync so the variant should be
-      // in product_variants now. Look it up and add to cart.
-      const variant = await window.electronAPI.pos.products.getByBarcode(ean);
+      const variant = result.variant
+        ?? (await window.electronAPI.pos.products.getByBarcode(ean));
       if (variant && dispatch) {
+        const sellError = canSellImportedVariant(variant);
+        if (sellError) {
+          setScanImport((s) => ({ ...s, loading: false, error: sellError }));
+          return;
+        }
         const displayName = resolveName(variant, language);
         dispatch({
           type: 'cart/addItem',
@@ -290,12 +345,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         });
         showScanToast(`+ ${displayName}`, 'ok');
       } else {
-        showScanToast(
-          result.outcome === 'IMPORT_DRAFT'
-            ? `Imported draft: ${ean}`
-            : `Imported: ${ean}`,
-          'ok',
-        );
+        showScanToast(`Imported: ${ean}`, 'ok');
       }
       closeScanImport();
     } catch (err: any) {
@@ -317,6 +367,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             // canonical `name` + raw `name_translations` so it re-resolves on
             // language change and receipts keep canonical text.
             const displayName = resolveName(product, language);
+            const sellError = canSellImportedVariant(product);
+            if (sellError) {
+              showScanToast(`${displayName} - ${sellError}`, 'err');
+              return;
+            }
             if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
               showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
             } else {

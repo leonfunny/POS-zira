@@ -7,6 +7,7 @@
 import { ipcMain, dialog, shell, BrowserWindow, app } from 'electron';
 import * as path from 'path';
 import { promises as fs } from 'fs';
+import { randomUUID } from 'crypto';
 import { BaseModule, ModuleState } from '../core/module';
 import type { ServiceContainer } from '../core/container';
 import type { EventBus } from '../core/event-bus';
@@ -32,6 +33,7 @@ import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
@@ -510,11 +512,108 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:draft-products:getByStatus', (_e, status: string) => draftProductRepo.getByStatus(status));
     ipcMain.handle('pos:draft-products:getByBarcode', (_e, barcode: string) => draftProductRepo.getByBarcode(barcode));
     ipcMain.handle('pos:draft-products:getById', (_e, id: string) => draftProductRepo.getById(id));
+    ipcMain.handle('pos:draft-products:searchByCode', (_e, query: string) => draftProductRepo.searchByCode(query));
+
+    // Local-first import: materialize a draft into product_variants without
+    // a server roundtrip so the cashier can sell immediately even when the
+    // master-catalog endpoint is down. A `local_variant_imports` marker
+    // tracks the row so ProductSync.deactivateExcept keeps it alive and
+    // OrderSync defers pushing orders that depend on it.
+    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string }) => {
+      const ean = String(payload?.ean ?? '').trim();
+      if (!ean) return { ok: false, error: 'missing-ean' };
+
+      const existing = productRepo.getByBarcode(ean);
+      if (existing) {
+        return { ok: true, outcome: 'EXISTING_VARIANT', variant: existing };
+      }
+
+      let draft = draftProductRepo.getByBarcode(ean);
+      if (!draft) {
+        try {
+          const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+          await syncMod?.deltaSync?.();
+          const syncedExisting = productRepo.getByBarcode(ean);
+          if (syncedExisting) {
+            return { ok: true, outcome: 'EXISTING_VARIANT', variant: syncedExisting };
+          }
+        } catch (syncErr: any) {
+          logger.debug(`[PosModule] product sync before draft import skipped: ${syncErr?.message ?? syncErr}`);
+        }
+        try {
+          await draftProductSync.deltaSync();
+          draft = draftProductRepo.getByBarcode(ean);
+        } catch (syncErr: any) {
+          logger.debug(`[PosModule] draft sync before import skipped: ${syncErr?.message ?? syncErr}`);
+        }
+      }
+      if (!draft) return { ok: false, error: 'draft-not-found' };
+      if (!(draft.retail_price >= 1)) {
+        return { ok: false, error: 'draft-missing-price' };
+      }
+      if (!(draft.in_stock >= 1)) {
+        return { ok: false, error: 'draft-missing-stock' };
+      }
+
+      try {
+        // Reuse the draft's UUID as the variant id. Clean lineage — when
+        // the server eventually creates its own variant for this draft we
+        // can match on id (or treat it as an upsert via delta sync).
+        const variantId = draft.id;
+        const now = new Date().toISOString();
+
+        database.transaction(() => {
+          productRepo.upsertMany([{
+            id: variantId,
+            template_id: null,
+            name: draft.name,
+            sku: draft.sku,
+            barcode: draft.barcode,
+            retail_price: draft.retail_price,
+            category_id: draft.category_id,
+            image_url: draft.image_url,
+            in_stock: draft.in_stock,
+            vat_rate: draft.vat_rate,
+            is_active: 1,
+            updated_at: now,
+            available_qty: draft.in_stock,
+            price_gross: draft.retail_price,
+            price_net: Math.round(draft.retail_price * 100 / (100 + (draft.vat_rate || 0))),
+            vat_amount: draft.retail_price - Math.round(draft.retail_price * 100 / (100 + (draft.vat_rate || 0))),
+            is_on_sale: 0,
+            thumbnail_url: draft.image_url,
+            sale_unit: null,
+            name_translations: null,
+          }]);
+          localVariantImportsRepo.create(variantId, draft.id, ean);
+        });
+        database.save();
+
+        logger.info(`[PosModule] Local import: draft ${draft.id} → variant ${variantId} (ean=${ean})`);
+        notifyPosRenderers(this.container, 'pos:products-synced');
+        const variant = productRepo.getById(variantId);
+        let syncPending = true;
+        try {
+          const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+          const reconciled = await syncMod?.reconcileLocalVariantImports?.(1);
+          if (reconciled > 0) {
+            syncPending = false;
+            await syncMod?.deltaSync?.();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+        } catch (syncErr: any) {
+          logger.debug(`[PosModule] immediate online draft import skipped: ${syncErr?.message ?? syncErr}`);
+        }
+        return { ok: true, outcome: 'LOCAL_IMPORT', variant, syncPending };
+      } catch (err: any) {
+        logger.error(`[PosModule] Local draft import failed for ean=${ean}: ${err?.message ?? err}`);
+        return { ok: false, error: err?.message ?? 'local-import-failed' };
+      }
+    });
 
     // Master catalog one-shot API (lookup + scan-create)
     ipcMain.handle('pos:master-catalog:lookup-by-ean', async (_e, ean: string) => {
       const token = getSecureAuthToken();
-      if (!token) return { ok: false, error: 'no-auth', draft: null };
       try {
         const draft = await apiClient.lookupByEan(token, ean);
         return { ok: true, draft };
@@ -524,11 +623,20 @@ export class PosModule extends BaseModule {
     });
     ipcMain.handle(
       'pos:master-catalog:scan-create',
-      async (_e, payload: { ean: string; quantity?: number; idempotencyKey?: string }) => {
+      async (_e, payload: {
+        ean: string;
+        purchasePrice?: number;
+        retailPrice?: number;
+        stockQty?: number;
+        taxRate?: number;
+        warehouseId?: string;
+        idempotencyKey?: string;
+      }) => {
         const token = getSecureAuthToken();
-        if (!token) return { ok: false, error: 'no-auth' };
+        logger.info(`[PosModule] scan-create requested ean=${payload?.ean} stockQty=${payload?.stockQty ?? 'n/a'} idk=${payload?.idempotencyKey ?? 'n/a'}`);
         try {
           const result = await apiClient.scanCreate(token, payload);
+          logger.info(`[PosModule] scan-create OK outcome=${result?.outcome} productId=${result?.productId ?? result?.product?.id ?? 'n/a'} variantId=${result?.variantId ?? result?.variant?.id ?? 'n/a'}`);
           // Pull fresh products + drafts so renderer can see the new variant.
           try {
             const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
@@ -540,6 +648,10 @@ export class PosModule extends BaseModule {
           catch (syncErr: any) { logger.debug(`[PosModule] post-scan-create draft sync skipped: ${syncErr?.message ?? syncErr}`); }
           return { ok: true, ...result };
         } catch (err: any) {
+          logger.error(`[PosModule] scan-create FAILED ean=${payload?.ean}: ${err?.message ?? err}`);
+          if (err?.serverBody) {
+            logger.error(`[PosModule] scan-create server body: ${JSON.stringify(err.serverBody).slice(0, 800)}`);
+          }
           return { ok: false, error: err?.message ?? 'scan-create-failed' };
         }
       },
@@ -552,10 +664,12 @@ export class PosModule extends BaseModule {
           if (!Array.isArray(payload.images) || payload.images.length < 2 || payload.images.length > 3) {
             return { ok: false, error: 'Capture 2 or 3 images before sending' };
           }
+          const token = getSecureAuthToken();
+          if (!token) return { ok: false, error: 'no-auth' };
 
           const uploadedImages = await Promise.all(
             payload.images.map((image, index) =>
-              apiClient.quickAddUploadImage({
+              apiClient.quickAddUploadImage(token, {
                 dataUrl: image.dataUrl,
                 mimeType: image.mimeType || 'image/jpeg',
                 filename: `quick-add-${Date.now()}-${index + 1}.jpg`,
@@ -566,8 +680,12 @@ export class PosModule extends BaseModule {
             url: image.url,
             mimeType: payload.images[index]?.mimeType || 'image/jpeg',
           }));
-          const analysis = await apiClient.quickAddAnalyzeMultiple(images, payload.language || 'pl');
-          if (!analysis?.name) return { ok: false, error: 'AI analysis returned no product name' };
+          const rawAnalysis = await apiClient.quickAddAnalyzeMultiple(token, images, payload.language || 'pl');
+          const analysis = normalizeQuickAddAnalysis(rawAnalysis);
+          if (!analysis.name) {
+            analysis.name = fallbackQuickAddName(analysis);
+            analysis.nameNeedsReview = true;
+          }
 
           const createPayload: Record<string, unknown> = {
             name: analysis.name,
@@ -577,7 +695,7 @@ export class PosModule extends BaseModule {
           if (analysis.weight != null) createPayload.weight = analysis.weight;
           if (analysis.weightUnit) createPayload.weightUnit = analysis.weightUnit;
 
-          const created = await apiClient.quickAddCreate(createPayload, payload.idempotencyKey);
+          const created = await apiClient.quickAddCreate(token, createPayload, payload.idempotencyKey);
           return {
             ok: true,
             images,
@@ -593,20 +711,33 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle(
       'pos:quick-add:finalize',
-      async (_e, payload: { productId: string; variantId: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => {
+      async (_e, payload: { productId: string; variantId: string; name?: string; retailPrice: number; quantity: number; idempotencyKey?: string }) => {
         try {
           if (!payload.productId || !payload.variantId) return { ok: false, error: 'Missing product or variant id' };
+          if (!payload.name?.trim()) return { ok: false, error: 'Product name is required' };
           if (!(payload.retailPrice > 0)) return { ok: false, error: 'Retail price must be greater than zero' };
           if (!(payload.quantity > 0)) return { ok: false, error: 'Quantity must be greater than zero' };
+          const token = getSecureAuthToken();
+          if (!token) return { ok: false, error: 'no-auth' };
 
-          const result = await apiClient.quickAddCreate({
+          const finalName = payload.name.trim();
+          const result = await apiClient.quickAddCreate(token, {
             productId: payload.productId,
             variantId: payload.variantId,
+            name: finalName,
             retailPrice: payload.retailPrice,
             quantity: payload.quantity,
           }, payload.idempotencyKey);
 
-          const localVariant = toQuickAddVariantRow(result.product, result.variant, {
+          const productForLocal = {
+            ...(result.product ?? {}),
+            id: result.product?.id ?? payload.productId,
+            name: finalName,
+          };
+          const variantForLocal = result.variant
+            ? { ...result.variant, name: finalName }
+            : result.variant;
+          const localVariant = toQuickAddVariantRow(productForLocal, variantForLocal, {
             retailPriceGrosze: Math.round(payload.retailPrice * 100),
             quantity: payload.quantity,
           });
@@ -728,6 +859,116 @@ export class PosModule extends BaseModule {
       if (!order) return null;
       const items = orderRepo.getItemsByOrderId(orderId);
       return { order, items };
+    });
+
+    ipcMain.handle('pos:orders:deleteLocal', (_e, orderId: string) => {
+      try {
+        const result = orderRepo.deleteLocalUnsynced(orderId);
+        if (!result.deleted) return { success: false, error: 'Order not found' };
+        if (result.restocked > 0) {
+          notifyPosRenderers(this.container, 'pos:products-synced');
+        }
+        return { success: true, restocked: result.restocked };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('pos:orders:mutate', async (_e, orderId: string, data: any) => {
+      try {
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        const mutationId = data?.mutationId || randomUUID();
+
+        if (!order.backend_id && order.synced !== 1) {
+          if (data?.type === 'void') {
+            const result = orderRepo.deleteLocalUnsynced(orderId);
+            if (result.restocked > 0) notifyPosRenderers(this.container, 'pos:products-synced');
+            return { success: result.deleted, restocked: result.restocked };
+          }
+          const result = orderRepo.updateLocalUnsynced(orderId, {
+            paymentMethod: data?.paymentMethod,
+            paymentAmount: data?.paymentAmount,
+            changeAmount: data?.changeAmount,
+            items: data?.items,
+          });
+          if (result.stockChanged) notifyPosRenderers(this.container, 'pos:products-synced');
+          return { success: result.updated, localOnly: true };
+        }
+
+        if (!order.backend_id) return { success: false, error: 'Synced order is missing backend_id' };
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const basePayload = {
+          mutationId,
+          expectedVersion: data?.expectedVersion,
+          reason: data?.reason,
+          terminalId: getConfigValue('agentId') || 'pos-device',
+          clientTimestamp: new Date().toISOString(),
+        };
+        let response: any | null = null;
+
+        if (data?.type === 'payment') {
+          response = await apiClient.updateOrderPayment(token, order.backend_id, {
+            ...basePayload,
+            paymentMethod: data.paymentMethod,
+            paidAmount: (Number(data.paymentAmount) || 0) / 100,
+            changeAmount: (Number(data.changeAmount) || 0) / 100,
+            tenders: [{ method: data.paymentMethod, amount: (Number(data.paymentAmount) || 0) / 100 }],
+          });
+        } else if (data?.type === 'items') {
+          response = await apiClient.updateOrder(token, order.backend_id, {
+            ...basePayload,
+            items: (data.items || []).map((item: any) => ({
+              orderItemId: item.id,
+              variantId: item.variant_id,
+              sku: item.sku,
+              quantity: item.quantity,
+              unitPrice: (Number(item.price) || 0) / 100,
+              taxRate: item.vat_rate,
+            })),
+            paymentMethod: data.paymentMethod ?? order.payment_method,
+            paidAmount: (Number(data.paymentAmount ?? order.payment_amount) || 0) / 100,
+            changeAmount: (Number(data.changeAmount ?? order.change_amount) || 0) / 100,
+          });
+        } else if (data?.type === 'void') {
+          response = await apiClient.voidOrder(token, order.backend_id, {
+            ...basePayload,
+            restock: data?.restock !== false,
+          });
+        } else {
+          return { success: false, error: 'Unknown order mutation type' };
+        }
+
+        if (response === null) {
+          return {
+            success: false,
+            error: 'Backend does not support this order history mutation yet. Server endpoints from the SCR must be deployed first.',
+          };
+        }
+
+        const canonical = response.order ?? response;
+        if (data?.type === 'payment') {
+          database.run(
+            'UPDATE orders SET payment_method = ?, payment_amount = ?, change_amount = ?, payment_tenders = ? WHERE id = ?',
+            [
+              canonical.paymentMethod ?? data.paymentMethod,
+              Math.round(Number(canonical.paidAmount ?? data.paymentAmount / 100) * 100),
+              Math.round(Number(canonical.changeAmount ?? data.changeAmount / 100) * 100),
+              JSON.stringify([{ method: canonical.paymentMethod ?? data.paymentMethod, amount: Math.round(Number(canonical.paidAmount ?? data.paymentAmount / 100) * 100) }]),
+              orderId,
+            ],
+          );
+        } else if (data?.type === 'void') {
+          database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [orderId]);
+        }
+        database.save();
+        return { success: true, order: canonical, mutation: response.mutation ?? null };
+      } catch (e: any) {
+        logger.error(`[PosModule] Order mutation failed for ${orderId}: ${e.message}`);
+        return { success: false, error: e.message };
+      }
     });
 
     // Tables (restaurant mode)
@@ -1470,6 +1711,71 @@ function deriveLegacyServiceName(services?: SelectedService[]): string | undefin
     .filter((name): name is string => !!name);
 
   return names.length > 0 ? names.join(', ') : undefined;
+}
+
+function normalizeQuickAddAnalysis(raw: any): Record<string, any> {
+  const candidates = [
+    raw?.analysis,
+    raw?.data?.analysis,
+    raw?.result?.analysis,
+    raw?.data,
+    raw?.result,
+    raw,
+  ].filter((candidate) => candidate && typeof candidate === 'object');
+
+  const source = candidates.find((candidate) =>
+    candidate.name ||
+    candidate.productName ||
+    candidate.product_name ||
+    candidate.namePreferred ||
+    candidate.name_preferred ||
+    candidate.title ||
+    candidate.label,
+  ) ?? candidates[0] ?? {};
+
+  const name = firstString(
+    source.name,
+    source.productName,
+    source.product_name,
+    source.namePreferred,
+    source.name_preferred,
+    source.title,
+    source.label,
+  );
+
+  return {
+    ...source,
+    name,
+    ean: firstCandidateString(candidates, ['ean', 'barcode', 'detectedEan', 'detected_ean']),
+    weight: firstCandidateValue(candidates, ['weight', 'weightGrams', 'weight_grams']),
+    weightUnit: firstCandidateValue(candidates, ['weightUnit', 'weight_unit']),
+  };
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function firstCandidateString(candidates: Record<string, any>[], keys: string[]): string | undefined {
+  return firstString(...candidates.flatMap((candidate) => keys.map((key) => candidate[key])));
+}
+
+function firstCandidateValue(candidates: Record<string, any>[], keys: string[]): any {
+  for (const candidate of candidates) {
+    for (const key of keys) {
+      if (candidate[key] != null && candidate[key] !== '') return candidate[key];
+    }
+  }
+  return undefined;
+}
+
+function fallbackQuickAddName(analysis: Record<string, any>): string {
+  const ean = firstString(analysis.ean, analysis.barcode);
+  if (ean) return `New product ${ean}`;
+  return `New product ${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
 }
 
 function lockRefundMutationLocally(

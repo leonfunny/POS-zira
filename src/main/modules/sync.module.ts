@@ -114,6 +114,13 @@ export class SyncModule extends BaseModule {
 
     ipcMain.handle('pos:sync:orders', async () => {
       try {
+        if (this.productSync) {
+          const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
+          if (reconciledLocalImports > 0) {
+            await this.productSync.deltaSync();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+        }
         const summary = await this.orderSync?.syncPendingOrders();
         return { success: true, summary };
       } catch (e: any) { return { success: false, error: e.message }; }
@@ -416,6 +423,10 @@ export class SyncModule extends BaseModule {
             } else {
               await this.productSync.deltaSync();
             }
+            const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
+            if (reconciledLocalImports > 0) {
+              await this.productSync.deltaSync();
+            }
             notifyPosRenderers(this.container, 'pos:products-synced');
           } catch (err) { logger.warn(`[SyncModule] Product sync failed: ${err}`); }
         }
@@ -476,6 +487,10 @@ export class SyncModule extends BaseModule {
       if (!this.productSync) return;
       try {
         await this.productSync.deltaSync();
+        const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
+        if (reconciledLocalImports > 0) {
+          await this.productSync.deltaSync();
+        }
         notifyPosRenderers(this.container, 'pos:products-synced');
         logger.info('[SyncModule] Post-login product sync completed');
       } catch (err) { logger.warn(`[SyncModule] Post-login product sync failed: ${err}`); }
@@ -595,7 +610,11 @@ export class SyncModule extends BaseModule {
   private async _doProductSync(): Promise<ProductSyncResult> {
     if (!this.productSync) return { success: false, error: 'no-product-sync' };
     try {
-      const productsCount = await this.productSync.deltaSync();
+      let productsCount = await this.productSync.deltaSync();
+      const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
+      if (reconciledLocalImports > 0) {
+        productsCount += await this.productSync.deltaSync();
+      }
       // Reset backoff state on the first success.
       this._productBackoffStep = 0;
       this._productSkipUntil = 0;

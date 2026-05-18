@@ -14,6 +14,7 @@
 import { randomUUID } from 'crypto';
 import { apiClient } from '../network/api-client';
 import { database } from '../database/database';
+import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { getSecureAuthToken, getConfigValue } from '../config/store';
 import { syncLogRepo, type LocalSyncLogRow, type SyncConflictRow } from './sync-log-repo';
 import { applyEntry, type SyncLogEntry } from './entity-applicators';
@@ -29,6 +30,14 @@ export const SYNC_MODES = {
 } as const;
 
 export type SyncMode = typeof SYNC_MODES[keyof typeof SYNC_MODES];
+
+type PushEntry = {
+  source_tx: string;
+  entity_type: string;
+  entity_id: string;
+  event: string;
+  payload: any;
+};
 
 // Mode ordering for comparisons
 const MODE_ORDER: Record<string, number> = {
@@ -263,21 +272,30 @@ export class SyncLogService {
 
     // Loop until all pending entries are pushed
     while (true) {
-      const pending = syncLogRepo.getPending(50);
+      // Read past the push batch size so entries waiting on draft-product
+      // reconciliation do not starve later independent entries.
+      const pending = syncLogRepo.getPending(200);
       if (pending.length === 0) break;
 
-      const ids = pending.map(e => e.id);
-      syncLogRepo.markPushing(ids);
-      database.save();
-
       try {
-        const pushEntries = pending.map(e => ({
-          source_tx: e.source_tx,
-          entity_type: e.entity_type,
-          entity_id: e.entity_id,
-          event: e.event,
-          payload: JSON.parse(e.payload),
-        }));
+        const prepared = pending
+          .map(e => ({ entry: e, pushEntry: this.preparePushEntry(e) }))
+        const ready = prepared
+          .filter((x): x is { entry: LocalSyncLogRow; pushEntry: PushEntry } => x.pushEntry !== null)
+          .slice(0, 50);
+
+        if (ready.length === 0) {
+          syncLogRepo.revertPushingToPending();
+          database.save();
+          logger.debug('[SyncLog] Pending entries are waiting for local variant reconciliation');
+          break;
+        }
+
+        const ids = ready.map(e => e.entry.id);
+        syncLogRepo.markPushing(ids);
+        database.save();
+
+        const pushEntries = ready.map(x => x.pushEntry);
 
         const result = await apiClient.syncPush(token, pushEntries);
 
@@ -292,7 +310,7 @@ export class SyncLogService {
         // Process results
         database.transaction(() => {
           for (const r of result.results) {
-            const entry = pending.find(e => e.source_tx === r.source_tx);
+            const entry = ready.find(e => e.entry.source_tx === r.source_tx)?.entry;
             if (!entry) continue;
 
             const isOrderCreated =
@@ -364,6 +382,11 @@ export class SyncLogService {
         });
         database.save();
 
+        if (ready.length < pending.length) {
+          logger.debug(`[SyncLog] Deferred ${pending.length - ready.length} entries waiting for local variant reconciliation`);
+          break;
+        }
+
       } catch (err: any) {
         // Network error — revert to pending for retry
         syncLogRepo.revertPushingToPending();
@@ -381,6 +404,51 @@ export class SyncLogService {
   }
 
   // ─── Real-time entry processing ──────────────────────────
+
+  private preparePushEntry(entry: LocalSyncLogRow): PushEntry | null {
+    const payload = JSON.parse(entry.payload);
+
+    if (entry.entity_type !== 'order' || entry.event !== 'created') {
+      return {
+        source_tx: entry.source_tx,
+        entity_type: entry.entity_type,
+        entity_id: entry.entity_id,
+        event: entry.event,
+        payload,
+      };
+    }
+
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    let mapped = false;
+    for (const item of items) {
+      const rawVariantId = item?.variantId ?? item?.variant_id ?? item?.productId ?? item?.product_id;
+      if (!rawVariantId) continue;
+      const variantId = String(rawVariantId);
+      if (localVariantImportsRepo.isUnresolvedVariant(variantId)) {
+        return null;
+      }
+      const serverVariantId = localVariantImportsRepo.getServerVariantId(variantId);
+      if (serverVariantId) {
+        if (item.variantId === rawVariantId || item.variantId == null) item.variantId = serverVariantId;
+        if (item.productId === rawVariantId || item.productId == null) item.productId = serverVariantId;
+        if (item.variant_id === rawVariantId) item.variant_id = serverVariantId;
+        if (item.product_id === rawVariantId) item.product_id = serverVariantId;
+        mapped = true;
+      }
+    }
+
+    if (mapped) {
+      logger.debug(`[SyncLog] Mapped local imported variants before pushing order ${entry.entity_id}`);
+    }
+
+    return {
+      source_tx: entry.source_tx,
+      entity_type: entry.entity_type,
+      entity_id: entry.entity_id,
+      event: entry.event,
+      payload,
+    };
+  }
 
   /**
    * Process a single real-time sync:entry from socket.

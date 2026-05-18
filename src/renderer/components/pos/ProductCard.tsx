@@ -30,9 +30,12 @@ function placeholderColor(name: string): string {
 function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const isService = product.category_id === 'cat-5';
+  const isDraft = product._isDraft === true;
   const stockQty = product.available_qty ?? product.in_stock;
-  const soldOut = !isService && stockQty <= 0;
-  const lowStock = !isService && stockQty > 0 && stockQty <= 5;
+  // Drafts are click-to-import — stock is informational at best, so don't
+  // gate the click or surface "Sold out" / "Low stock" chrome on them.
+  const soldOut = !isDraft && !isService && stockQty <= 0;
+  const lowStock = !isDraft && !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';
   // Placeholder color hashes canonical `name` so the same product keeps the
@@ -92,9 +95,14 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
             {stockQty} {pieces}
           </span>
         )}
-        {product.is_on_sale === 1 && !soldOut && (
+        {product.is_on_sale === 1 && !soldOut && !isDraft && (
           <span className="absolute top-2 right-2 text-[10px] text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             SALE
+          </span>
+        )}
+        {isDraft && (
+          <span className="absolute top-2 right-2 text-[10px] text-purple-700 bg-purple-50 border border-purple-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+            DRAFT
           </span>
         )}
       </div>

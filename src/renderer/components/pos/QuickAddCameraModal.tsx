@@ -20,6 +20,7 @@ export interface QuickAddPreparedResult {
 export interface QuickAddFinalizeInput {
   productId: string;
   variantId: string;
+  name?: string;
   ean?: string | null;
   retailPriceGrosze: number;
   quantity: number;
@@ -48,6 +49,7 @@ export default function QuickAddCameraModal({
   const finalizeIdempotencyKeyRef = useRef<string | null>(null);
   const [images, setImages] = useState<QuickAddCapturedImage[]>([]);
   const [prepared, setPrepared] = useState<QuickAddPreparedResult | null>(null);
+  const [productName, setProductName] = useState('');
   const [price, setPrice] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [busy, setBusy] = useState(false);
@@ -59,11 +61,19 @@ export default function QuickAddCameraModal({
     return v && v !== key ? v : fallback;
   };
 
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraReady(false);
+  };
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setImages([]);
     setPrepared(null);
+    setProductName('');
     setPrice('');
     setQuantity('1');
     setBusy(false);
@@ -91,8 +101,7 @@ export default function QuickAddCameraModal({
 
     return () => {
       cancelled = true;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      stopCamera();
     };
   }, [open]);
 
@@ -109,7 +118,8 @@ export default function QuickAddCameraModal({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, width, height);
-    setImages((prev) => [...prev, { dataUrl: canvas.toDataURL('image/jpeg', 0.92), mimeType: 'image/jpeg' }]);
+    const nextImage = { dataUrl: canvas.toDataURL('image/jpeg', 0.92), mimeType: 'image/jpeg' };
+    setImages((prev) => (prev.length >= 3 ? prev : [...prev, nextImage]));
   };
 
   const handleAnalyze = async () => {
@@ -119,6 +129,8 @@ export default function QuickAddCameraModal({
     try {
       const result = await onPrepare(images, prepareIdempotencyKeyRef.current ?? crypto.randomUUID());
       setPrepared(result);
+      setProductName(result.analysis?.name ?? '');
+      stopCamera();
     } catch (err: any) {
       setError(err?.message || tOr('pos.quickAdd.analyzeFailed', 'Analyze failed'));
     } finally {
@@ -133,6 +145,11 @@ export default function QuickAddCameraModal({
     }
     const priceGrosze = Math.round(Number(price || 0) * 100);
     const qty = Math.floor(Number(quantity || 0));
+    const name = productName.trim();
+    if (!name) {
+      setError(tOr('pos.quickAdd.missingName', 'Enter a product name'));
+      return;
+    }
     if (!(priceGrosze > 0) || !(qty > 0)) {
       setError(tOr('pos.quickAdd.invalidPriceQty', 'Enter a valid price and quantity'));
       return;
@@ -143,6 +160,7 @@ export default function QuickAddCameraModal({
       await onFinalize({
         productId: prepared.product.id,
         variantId: prepared.variant.id,
+        name,
         ean: prepared.analysis.ean ?? prepared.variant.barcode ?? null,
         retailPriceGrosze: priceGrosze,
         quantity: qty,
@@ -268,8 +286,20 @@ export default function QuickAddCameraModal({
 
             <div className="space-y-4">
               <div>
-                <div className="text-2xl font-bold">{prepared.analysis.name || '—'}</div>
-                <div className="mt-1 text-sm text-slate-400">
+                <label className="block">
+                  <span className="text-xs font-medium text-slate-400">{tOr('pos.quickAdd.productName', 'Product name')}</span>
+                  <input
+                    value={productName}
+                    onChange={(e) => setProductName(e.target.value)}
+                    className="mt-1 h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-lg font-bold text-white outline-none focus:border-emerald-500"
+                  />
+                </label>
+                {prepared.analysis.nameNeedsReview ? (
+                  <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-900/30 px-3 py-2 text-xs text-amber-100">
+                    {tOr('pos.quickAdd.nameNeedsReview', 'AI could not read a reliable name. Check the name before saving.')}
+                  </div>
+                ) : null}
+                <div className="mt-3 text-sm text-slate-400">
                   EAN: {prepared.analysis.ean || '—'}
                   {prepared.analysis.weight != null ? ` · ${prepared.analysis.weight} ${prepared.analysis.weightUnit || ''}` : ''}
                 </div>

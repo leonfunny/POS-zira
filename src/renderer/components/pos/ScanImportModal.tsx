@@ -5,6 +5,8 @@ export interface ScanImportDraftPreview {
   name: string;
   barcode: string | null;
   retail_price: number;
+  purchase_price?: number;
+  stock_qty?: number;
   vat_rate: number;
   image_url: string | null;
   status?: string;

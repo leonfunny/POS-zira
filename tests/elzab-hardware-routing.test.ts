@@ -227,6 +227,62 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(rows[0]).toMatchObject({ paperWidth: 100, paperHeight: 150, isOnline: true });
   });
 
+  it('preserves a local printer target when server mapping has no physical target', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+
+    const server = printerMappingForTests.normalizeServerPrinters([{
+      id: 'receipt-1',
+      printerType: 'RECEIPT',
+      protocol: 'WINDOWS',
+      windowsPrinterName: null,
+      address: null,
+      isEnabled: true,
+    }]);
+    expect(server).toBeTruthy();
+
+    const merged = printerMappingForTests.mergeServerPrintersWithLocal(server!, {
+      [PrinterType.RECEIPT]: {
+        enabled: true,
+        protocol: 'THERMAL',
+        windowsPrinter: 'Xprinter XP-80T',
+        paperWidth: 80,
+        charsPerLine: 48,
+      },
+    });
+
+    expect(merged[PrinterType.RECEIPT]).toMatchObject({
+      serverPrinterId: 'receipt-1',
+      enabled: true,
+      displayName: 'Order',
+      protocol: 'THERMAL',
+      windowsPrinter: 'Xprinter XP-80T',
+    });
+  });
+
+  it('lets server printer targets win when they include a real physical target', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+
+    const merged = printerMappingForTests.mergeServerPrintersWithLocal({
+      [PrinterType.RECEIPT]: {
+        enabled: true,
+        protocol: 'WINDOWS',
+        serverPrinterId: 'receipt-1',
+        windowsPrinter: 'Server Receipt Printer',
+      },
+    }, {
+      [PrinterType.RECEIPT]: {
+        enabled: true,
+        protocol: 'THERMAL',
+        windowsPrinter: 'Xprinter XP-80T',
+      },
+    });
+
+    expect(merged[PrinterType.RECEIPT]).toMatchObject({
+      protocol: 'WINDOWS',
+      windowsPrinter: 'Server Receipt Printer',
+    });
+  });
+
   it('routes print jobs by ELZAB server printerId through ElzabDriver', async () => {
     const row = {
       id: 'elzab-1',

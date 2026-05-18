@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { apiClient } from '../network/api-client';
 import { orderRepo } from '../database/repos/order-repo';
+import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
@@ -85,6 +86,31 @@ export class OrderSync {
       }
 
       try {
+        const items = orderRepo.getItemsByOrderId(order.id);
+
+        // Defer pushing orders that reference a locally-imported variant
+        // (created from a draft without a server roundtrip). The server
+        // doesn't know the variant id yet and would reject the order as
+        // "invalid product", shelving it. Don't increment attempts — wait
+        // for the local-import reconciler to materialize the variant first.
+        const unresolved = items.find((it): it is typeof it & { variant_id: string } =>
+          !!it.variant_id && localVariantImportsRepo.isUnresolvedVariant(it.variant_id),
+        );
+        if (unresolved) {
+          const unresolvedVariantId = unresolved.variant_id as string;
+          const importRow = localVariantImportsRepo.getByVariantId(unresolvedVariantId);
+          const reason = importRow?.status === 'FAILED'
+            ? `variant-import-failed:${unresolvedVariantId}:${importRow.last_error ?? 'unknown'}`
+            : `waiting-for-variant:${unresolvedVariantId}`;
+          database.run(
+            'UPDATE orders SET sync_error = ? WHERE id = ?',
+            [reason, order.id],
+          );
+          database.save();
+          logger.debug(`[OrderSync] Order ${order.id} deferred — variant ${unresolved.variant_id} not yet on server`);
+          continue;
+        }
+
         // Mark as syncing (2) to prevent re-send by concurrent sync cycles
         orderRepo.markSyncing(order.id);
         database.run(
@@ -92,8 +118,6 @@ export class OrderSync {
           [order.id],
         );
         database.save();
-
-        const items = orderRepo.getItemsByOrderId(order.id);
 
         // Skip orders with no items (can't sync empty orders)
         if (items.length === 0) {
@@ -110,13 +134,17 @@ export class OrderSync {
           requiresInvoice: !!order.customer_nip,
           items: items
             .filter((item) => item.variant_id || item.id) // skip items with no product ID
-            .map((item) => ({
-              productId: item.variant_id || item.id,
-              variantId: item.variant_id || item.id,
-              ...(item.sku ? { variantSku: item.sku } : {}),
-              packQuantity: Math.max(1, Math.round(item.quantity || 1)),
-              ...(typeof item.price === 'number' && Number.isFinite(item.price) ? { customPrice: item.price / 100 } : {}),
-            })),
+            .map((item) => {
+              const localId = item.variant_id || item.id;
+              const serverVariantId = localVariantImportsRepo.getServerVariantId(localId) ?? localId;
+              return {
+                productId: serverVariantId,
+                variantId: serverVariantId,
+                ...(item.sku ? { variantSku: item.sku } : {}),
+                packQuantity: Math.max(1, Math.round(item.quantity || 1)),
+                ...(typeof item.price === 'number' && Number.isFinite(item.price) ? { customPrice: item.price / 100 } : {}),
+              };
+            }),
         };
 
         // Skip if all items were filtered out
