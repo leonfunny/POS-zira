@@ -113,14 +113,14 @@ export default function PaymentScreen({
       : t.terminalReadyBody;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 p-6 select-none">
+    <div className="sc-payment-overlay fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 select-none">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="self-checkout-payment-title"
-        className="sc-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden"
+        className="sc-surface sc-payment-dialog flex w-full max-w-5xl flex-col overflow-hidden"
       >
-        <header className="flex items-center justify-between border-b border-[var(--sc-border)] px-6 py-5">
+        <header className="sc-payment-header flex items-center justify-between border-b border-[var(--sc-border)]">
           <button
             type="button"
             onClick={handleCancel}
@@ -138,19 +138,19 @@ export default function PaymentScreen({
           </div>
         </header>
 
-        <div className="grid min-h-0 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <main className="min-w-0">
-              <h1 id="self-checkout-payment-title" className="text-5xl font-black text-[var(--sc-ink)]">
+        <div className="sc-payment-body">
+            <main className="sc-payment-main min-w-0">
+              <h1 id="self-checkout-payment-title" className="sc-payment-title font-black text-[var(--sc-ink)]">
                 {t.paymentTitle}
               </h1>
-              <div className="sc-tabular mt-5 text-7xl font-black text-[var(--sc-ink)]">
+              <div className="sc-payment-total sc-tabular font-black text-[var(--sc-ink)]">
                 {formatPLN(totalGrosze)}
               </div>
-              <p className="mt-5 max-w-2xl text-2xl font-semibold leading-9 text-[var(--sc-muted)]">
+              <p className="sc-payment-hint max-w-2xl font-semibold text-[var(--sc-muted)]">
                 {t.paymentTerminalHint}
               </p>
 
-              <div className="mt-6 grid gap-4 sm:grid-cols-3">
+              <div className="sc-payment-method-grid">
                 <PaymentMethodButton
                   active={method === 'BLIK'}
                   disabled={phase !== 'idle'}
@@ -179,7 +179,7 @@ export default function PaymentScreen({
 
               {/* NIP / Faktura toggle. Must be set BEFORE the fiscal print:
                   Polish law forbids retrofitting NIP onto a printed paragon. */}
-              <div className="mt-5 rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4">
+              <div className="sc-payment-invoice rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input
                     type="checkbox"
@@ -219,7 +219,7 @@ export default function PaymentScreen({
               </div>
             </main>
 
-            <aside className="rounded-3xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-6">
+            <aside className="sc-payment-aside rounded-3xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]">
               <div className="flex h-20 w-20 items-center justify-center rounded-[24px] bg-white text-[var(--sc-info)]">
                 {sideIcon}
               </div>
@@ -331,15 +331,15 @@ function PaymentMethodButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`sc-focusable min-h-[190px] rounded-[24px] border-2 p-6 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+      className={`sc-payment-method-button sc-focusable border-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
         active
           ? 'border-[var(--sc-success)] bg-emerald-50 text-emerald-800'
           : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)] hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)]'
       }`}
     >
       <div className="text-[var(--sc-primary-deep)]">{icon}</div>
-      <div className="mt-8 text-4xl font-black leading-tight">{title}</div>
-      <div className="mt-3 text-lg font-bold leading-7 text-[var(--sc-muted)]">
+      <div className="sc-payment-method-title font-black">{title}</div>
+      <div className="sc-payment-method-body font-bold text-[var(--sc-muted)]">
         {body}
       </div>
     </button>

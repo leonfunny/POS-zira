@@ -4,7 +4,7 @@
  * Source requirements: docs/SELF_CHECKOUT_DESIGN_BRIEF.md.
  * This checks the customer flow, not implementation internals:
  * welcome -> scanner-start shopping -> cart/bag quantity -> payment modal
- * -> terminal-driven BLIK/card -> receipt -> thank-you/reset, plus abandon,
+ * -> assisted BLIK/card -> receipt -> thank-you/reset, plus abandon,
  * staff lock, empty-cart pay disabled, and production welcome language switching.
  */
 import { existsSync } from 'node:fs';
@@ -89,8 +89,11 @@ async function createPage(browser, options = {}) {
       pos: {
         categories: { getAll: async () => [] },
         products: {
+          getAll: async () => Object.values(productsByBarcode),
           getByBarcode: async (barcode) => productsByBarcode[barcode] || null,
           getByCategory: async () => [],
+          searchByCode: async () => [],
+          search: async () => [],
         },
       },
       selfCheckout: {
@@ -118,6 +121,7 @@ async function languageButtonCount(page, selector = 'body') {
 
 async function visibleInputCount(page, selector = 'body') {
   return page.locator(`${selector} input`).evaluateAll((inputs) => inputs.filter((input) => {
+    if (input.type === 'checkbox') return false;
     const rect = input.getBoundingClientRect();
     const style = window.getComputedStyle(input);
     return rect.width > 1 && rect.height > 1 && style.opacity !== '0' && style.visibility !== 'hidden';
@@ -137,6 +141,62 @@ async function assertNoOverflow(page, label) {
   }));
   assert(metrics.scrollWidth <= metrics.clientWidth, `${label}: horizontal overflow`);
   assert(metrics.scrollHeight <= metrics.clientHeight, `${label}: vertical overflow`);
+}
+
+async function assertPaymentDialogViewportSafe(page, label) {
+  const metrics = await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    const body = dialog?.querySelector('.sc-payment-body');
+    if (!dialog) return { exists: false };
+
+    const dialogRect = dialog.getBoundingClientRect();
+    const dialogStyle = window.getComputedStyle(dialog);
+    const bodyStyle = body ? window.getComputedStyle(body) : null;
+    const clippedButtons = Array.from(dialog.querySelectorAll('button'))
+      .map((button) => {
+        const rect = button.getBoundingClientRect();
+        return {
+          text: (button.textContent || '').trim().replace(/\s+/g, ' '),
+          bottom: rect.bottom,
+          right: rect.right,
+          visible: rect.width > 0
+            && rect.height > 0
+            && window.getComputedStyle(button).visibility !== 'hidden'
+            && window.getComputedStyle(button).display !== 'none',
+        };
+      })
+      .filter((button) => button.visible)
+      .filter((button) => (
+        button.bottom > dialogRect.bottom + 1
+        || button.right > dialogRect.right + 1
+      ));
+
+    const bodyScrollable = Boolean(body)
+      && ['auto', 'scroll'].includes(bodyStyle?.overflowY || '')
+      && body.scrollHeight >= body.clientHeight;
+
+    return {
+      exists: true,
+      dialogClientHeight: dialog.clientHeight,
+      dialogScrollHeight: dialog.scrollHeight,
+      dialogOverflowY: dialogStyle.overflowY,
+      bodyClientHeight: body?.clientHeight ?? 0,
+      bodyScrollHeight: body?.scrollHeight ?? 0,
+      bodyOverflowY: bodyStyle?.overflowY ?? '',
+      bodyScrollable,
+      clippedButtons,
+    };
+  });
+
+  assert(metrics.exists, `${label}: payment dialog is missing`);
+  assert(
+    metrics.dialogScrollHeight <= metrics.dialogClientHeight + 1 || metrics.bodyScrollable,
+    `${label}: dialog content is hard-clipped (dialog ${metrics.dialogScrollHeight}/${metrics.dialogClientHeight}, body ${metrics.bodyScrollHeight}/${metrics.bodyClientHeight}, overflow=${metrics.bodyOverflowY})`,
+  );
+  assert(
+    metrics.clippedButtons.length === 0,
+    `${label}: visible payment controls are clipped: ${metrics.clippedButtons.map((button) => button.text).join(', ')}`,
+  );
 }
 
 async function assertCartRowsVisible(page, minRows, label) {
@@ -187,7 +247,7 @@ async function runEmptyCartAndProductionChecks(browser) {
   {
     const { context, page } = await createPage(browser);
     assert(await languageButtonCount(page) === 3, 'welcome exposes PL/EN/VI');
-    await page.getByRole('button', { name: /start shopping/i }).click();
+    await page.getByRole('button', { name: /^grocery$/i }).click();
     await page.waitForSelector('text=Scan a product');
     assert(await languageButtonCount(page) === 3, 'shopping exposes PL/EN/VI');
     const payDisabled = await page.getByRole('button', { name: /^pay$/i }).isDisabled();
@@ -199,7 +259,7 @@ async function runEmptyCartAndProductionChecks(browser) {
   {
     const { context, page } = await createPage(browser, { mode: 'production' });
     assert(await languageButtonCount(page) === 3, 'production welcome exposes PL/EN/VI');
-    assert(await page.getByRole('button', { name: /start shopping/i }).count() > 0, 'production welcome has shopping CTA');
+    assert(await page.getByRole('button', { name: /^grocery$/i }).count() > 0, 'production welcome has shopping CTA');
     await assertNoOverflow(page, 'production welcome');
     await context.close();
   }
@@ -221,11 +281,12 @@ async function runPrimaryBLIKFlow(browser) {
 
   await page.getByRole('button', { name: /^pay$/i }).click();
   await page.waitForSelector('[role="dialog"]');
+  await assertPaymentDialogViewportSafe(page, 'payment modal');
   assert(await languageButtonCount(page, '[role="dialog"]') === 3, 'payment modal exposes PL/EN/VI');
   assert(await visibleInputCount(page, '[role="dialog"]') === 0, 'payment modal has no visible payment inputs');
   const paymentText = await page.locator('[role="dialog"]').innerText();
   assert(paymentText.includes('Choose payment method'), 'payment modal shows payment choice');
-  assert(paymentText.includes('Enter the BLIK code on the payment terminal, not here.'), 'BLIK is terminal-driven');
+  assert(paymentText.includes('Send via BLIK to the shop phone number.'), 'BLIK is assisted phone-transfer driven');
   assert(!paymentText.includes('______'), 'BLIK keypad placeholder is absent');
 
   await page.getByRole('button', { name: /^cancel$/i }).click();
@@ -235,10 +296,11 @@ async function runPrimaryBLIKFlow(browser) {
   await page.getByRole('button', { name: /^pay$/i }).click();
   await page.waitForSelector('[role="dialog"]');
   await page.getByRole('button', { name: /^BLIK/ }).click();
-  await page.waitForSelector('text=Waiting for terminal');
+  await page.waitForSelector('text=Money received');
+  await page.getByRole('button', { name: /^Money received$/i }).click();
   await page.waitForSelector('text=Finalizing sale', { timeout: 5000 });
   assert(await languageButtonCount(page) === 3, 'receipt exposes PL/EN/VI');
-  await page.waitForSelector('text=Thank you!', { timeout: 5000 });
+  await page.waitForSelector('text=Thank you!', { timeout: 8000 });
   assert(await languageButtonCount(page) === 3, 'thank-you exposes PL/EN/VI');
   await page.getByRole('button', { name: /start shopping/i }).click();
   await page.waitForSelector('text=Start shopping');
@@ -249,14 +311,15 @@ async function runPrimaryBLIKFlow(browser) {
 async function runCardTerminalFlow(browser) {
   const { context, page } = await createPage(browser);
 
-  await page.getByRole('button', { name: /start shopping/i }).click();
+  await page.getByRole('button', { name: /^grocery$/i }).click();
   await page.waitForSelector('text=Scan a product');
   await emitBarcode(page);
   await page.waitForSelector(`text=${PRODUCT.name}`);
   await page.getByRole('button', { name: /^pay$/i }).click();
   await page.waitForSelector('[role="dialog"]');
   await page.getByRole('button', { name: /^Card/ }).click();
-  await page.waitForSelector('text=Waiting for terminal');
+  await page.waitForSelector('text=Money received');
+  await page.getByRole('button', { name: /^Money received$/i }).click();
   await page.waitForSelector('text=Finalizing sale', { timeout: 5000 });
 
   await context.close();
@@ -277,7 +340,10 @@ async function runCompactViewportChecks(browser) {
   await page.getByRole('button', { name: /^pay$/i }).click();
   await page.waitForSelector('[role="dialog"]');
   await assertNoOverflow(page, 'compact payment modal');
+  await assertPaymentDialogViewportSafe(page, 'compact payment modal');
   await page.getByRole('button', { name: /^Card/ }).click();
+  await page.waitForSelector('text=Money received');
+  await page.getByRole('button', { name: /^Money received$/i }).click();
   await page.waitForSelector('text=Finalizing sale', { timeout: 5000 });
   await assertNoOverflow(page, 'compact receipt');
   await assertReceiptTotalVisible(page, 'compact receipt');
@@ -288,7 +354,7 @@ async function runCompactViewportChecks(browser) {
 async function runAbandonAndStaffChecks(browser) {
   {
     const { context, page } = await createPage(browser);
-    await page.getByRole('button', { name: /start shopping/i }).click();
+    await page.getByRole('button', { name: /^grocery$/i }).click();
     await page.waitForSelector('text=Scan a product');
     await emitBarcode(page);
     await page.waitForSelector(`text=${PRODUCT.name}`);
@@ -302,7 +368,7 @@ async function runAbandonAndStaffChecks(browser) {
 
   {
     const { context, page } = await createPage(browser);
-    await page.getByRole('button', { name: /start shopping/i }).click();
+    await page.getByRole('button', { name: /^grocery$/i }).click();
     await page.waitForSelector('text=Scan a product');
     await page.getByRole('button', { name: /call staff/i }).click();
     await page.waitForSelector('text=Staff called');
@@ -337,7 +403,7 @@ async function main() {
       'bag quantity changes total',
       'payment modal has no visible BLIK/card input',
       'cancel payment returns to cart',
-      'BLIK and card terminal-driven demo paths reach receipt',
+      'BLIK and card assisted-payment demo paths reach receipt',
       'receipt and thank-you language availability',
       'compact viewport shows three cart rows and unclipped receipt total',
       'abandon clears cart',
