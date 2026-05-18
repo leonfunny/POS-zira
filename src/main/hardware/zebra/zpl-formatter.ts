@@ -184,10 +184,10 @@ export class ZplFormatter {
     // Adaptive vertical budget based on configured label height (mm).
     const H = this.labelHeight;
     const topMarginMm = Math.max(2, H * 0.07);
-    const barcodeHeightMm = Math.max(8, H * 0.40);
-    const text2FontMm = Math.max(2.2, H * 0.10);
-    const text2GapMm = text2FontMm + 0.2;
-    const text3FontMm = Math.max(1.8, H * 0.075);
+    const baseBarcodeHeightMm = Math.max(8, Math.min(12, H * 0.34));
+    const text2FontMm = Math.max(3.6, Math.min(5.2, H * 0.135));
+    const text2GapMm = text2FontMm + 0.1;
+    const text3FontMm = Math.max(1.8, Math.min(3, H * 0.072));
 
     // Helper: returns true if a text field at yDots with given font height would still fit
     const labelHeightDots = this.mmToDots(this.labelHeight);
@@ -220,11 +220,14 @@ export class ZplFormatter {
     } else {
       // Product title first: the old order wasted the whole upper half of
       // 50x30mm product labels by placing every text line below the barcode.
-      const titleCharsPerLine = Math.max(18, Math.floor((this.labelWidth - 10) / 1.5));
-      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
-      const text1FontMm = text1Lines.length > 1
-        ? Math.max(2.2, H * 0.085)
-        : Math.max(2.6, H * 0.10);
+      const titleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
+      const titleMaxLines = H >= 30 ? 3 : 2;
+      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine, titleMaxLines) : [];
+      const text1FontMm = text1Lines.length >= 3
+        ? Math.max(1.9, H * 0.072)
+        : text1Lines.length > 1
+          ? Math.max(2.1, H * 0.08)
+          : Math.max(2.6, H * 0.10);
       const text1GapMm = text1FontMm + 0.25;
 
       for (const textLine of text1Lines) {
@@ -239,7 +242,15 @@ export class ZplFormatter {
         currentY += this.mmToDots(0.4);
       }
 
-      // Linear barcode (CODE128 or EAN13) - preserve the existing bar height.
+      // Linear barcode (CODE128 or EAN13). Let long product names and the
+      // enlarged price line claim vertical space first, while preserving a
+      // scannable minimum bar height on 50x30mm labels.
+      const currentYMm = currentY / this.dotsPerMm;
+      const footerBudgetMm =
+        (data.text2 ? text2GapMm : 0)
+        + (data.text3 ? text3FontMm + 0.7 : 0)
+        + 0.8;
+      const barcodeHeightMm = Math.max(7.5, Math.min(baseBarcodeHeightMm, H - currentYMm - footerBudgetMm));
       lines.push(`^FO${barcodeX},${currentY}^BY2`);  // Barcode defaults, module width 2
       const barcodeCmd = BARCODE_COMMANDS[resolvedBarcodeType];
       lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},Y,N,N`);  // Adaptive height, interpretation line

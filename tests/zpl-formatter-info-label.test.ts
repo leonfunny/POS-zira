@@ -155,4 +155,34 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).not.toContain("Pra\u017cone wodorostyYangban");
     expect(zpl).toContain("^BE,");
   });
+
+  it("keeps medium product names on two larger title lines and enlarges the price", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({
+      barcode: "5901234123457",
+      barcodeType: "EAN13",
+      text1: "Mieszanka do sma\u017cenia banan\u00f3w Lobo Banana Fritter Batter Mix 85g",
+      text2: "6.00 PLN",
+      text3: "#LOBO-86G SKU mieszanka-do-smaz",
+      quantity: 1,
+    });
+    const lines = zpl.split("\n");
+    const priceIndex = lines.indexOf("^FD6.00 PLN^FS");
+    const priceFont = lines[priceIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
+    const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+    const titleLines = lines
+      .slice(0, barcodeIndex)
+      .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
+    const titleFont = lines[lines.indexOf("^FDMieszanka do sma\u017cenia banan\u00f3w Lobo^FS") - 1]?.match(/\^A0,(\d+),(\d+)/);
+
+    expect(titleLines).toEqual([
+      "^FDMieszanka do sma\u017cenia banan\u00f3w Lobo^FS",
+      "^FDBanana Fritter Batter Mix 85g^FS",
+    ]);
+    expect(zpl).not.toContain("\u2026");
+    expect(priceIndex).toBeGreaterThan(0);
+    expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(19);
+    expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(32);
+    expect(zpl).toContain("#LOBO-86G SKU mieszanka-do-smaz");
+  });
 });
