@@ -43,6 +43,15 @@ interface ProductLookupResult {
   name_translations?: string | null;
 }
 
+interface CategoryLookupResult {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  sort_order?: number;
+  name_translations?: string | null;
+}
+
 declare global {
   interface Window {
     electronAPI: any;
@@ -50,6 +59,7 @@ declare global {
 }
 
 type ToastState = { kind: 'ok' | 'error'; text: string } | null;
+type CatalogDepartment = 'grocery' | 'kitchen';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
 // Show a 15s "are you still there?" warning before hard reset, per kiosk
@@ -91,6 +101,10 @@ export default function SelfCheckoutApp() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [kioskUserId, setKioskUserId] = useState<string | null>(null);
   const [scanQuantity, setScanQuantity] = useState(1);
+  const [initialDepartment, setInitialDepartment] = useState<CatalogDepartment>('grocery');
+  const [catalogCategories, setCatalogCategories] = useState<CategoryLookupResult[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<ProductLookupResult[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
@@ -122,6 +136,20 @@ export default function SelfCheckoutApp() {
     toastTimer.current = setTimeout(() => setToast(null), 2500);
   }, []);
 
+  const refreshCatalog = useCallback(async () => {
+    setCatalogLoading(true);
+    try {
+      const [categories, products] = await Promise.all([
+        window.electronAPI?.pos?.categories?.getAll?.().catch(() => []),
+        window.electronAPI?.pos?.products?.getAll?.().catch(() => []),
+      ]);
+      setCatalogCategories((categories || []) as CategoryLookupResult[]);
+      setCatalogProducts((products || []) as ProductLookupResult[]);
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, []);
+
   const resetSession = useCallback(() => {
     cart.clear();
     setLastPaymentMethod(null);
@@ -136,6 +164,16 @@ export default function SelfCheckoutApp() {
     setFiscalPrinting(false);
     reset();
   }, [cart, reset]);
+
+  useEffect(() => {
+    void refreshCatalog();
+    const unsubscribe = window.electronAPI?.pos?.sync?.onProductsSynced?.(() => {
+      void refreshCatalog();
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [refreshCatalog]);
 
   // Boot: load session defaults + runtime readiness.
   useEffect(() => {
@@ -359,8 +397,47 @@ export default function SelfCheckoutApp() {
     [addProductToCart, paymentOpen, screen, showToast, t],
   );
 
+  const handleSearchProducts = useCallback(
+    async (rawQuery: string): Promise<ProductLookupResult[]> => {
+      const query = rawQuery.trim();
+      if (!query) return [];
+
+      const byId = new Map<string, ProductLookupResult>();
+      const addResult = (product: ProductLookupResult | null | undefined) => {
+        if (product?.id && !byId.has(product.id)) byId.set(product.id, product);
+      };
+      const addResults = (products: ProductLookupResult[] | null | undefined) => {
+        for (const product of products || []) addResult(product);
+      };
+
+      try {
+        if (query.length >= 4) {
+          addResult(await window.electronAPI?.pos?.products?.getByBarcode?.(query));
+        }
+
+        const [codeResults, smartResults] = await Promise.allSettled([
+          window.electronAPI?.pos?.products?.searchByCode?.(query),
+          window.electronAPI?.pos?.products?.search?.(query),
+        ]);
+
+        if (codeResults.status === 'fulfilled') {
+          addResults(codeResults.value as ProductLookupResult[]);
+        }
+        if (smartResults.status === 'fulfilled') {
+          addResults(smartResults.value as ProductLookupResult[]);
+        }
+
+        return Array.from(byId.values()).slice(0, 12);
+      } catch {
+        return [];
+      }
+    },
+    [],
+  );
+
   const handleWelcomeScan = useCallback(
     async (ean: string) => {
+      setInitialDepartment('grocery');
       goTo('shopping');
       await handleScan(ean);
     },
@@ -530,7 +607,10 @@ export default function SelfCheckoutApp() {
       <WelcomeScreen
         lang={lang}
         onLangChange={handleLangChange}
-        onStart={() => goTo('shopping')}
+        onStart={(department = 'grocery') => {
+          setInitialDepartment(department);
+          goTo('shopping');
+        }}
         onScanStart={handleWelcomeScan}
         onCallStaff={callStaffOther}
       />
@@ -545,6 +625,13 @@ export default function SelfCheckoutApp() {
           cartItems={cart.cart.items}
           totalGrosze={cart.cart.totalGrosze}
           onScan={handleScan}
+          onSearchProducts={handleSearchProducts}
+          onAddSearchProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
+          categories={catalogCategories}
+          products={catalogProducts}
+          catalogLoading={catalogLoading}
+          onAddCatalogProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
+          initialDepartment={initialDepartment}
           scanQuantity={scanQuantity}
           onScanQuantityChange={(quantity) => setScanQuantity(normalizeScanQuantity(quantity))}
           onIncrement={(id) => {

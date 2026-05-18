@@ -4,17 +4,22 @@
 // affordance. "No-barcode" cases route through staff assistance instead
 // (see [[2026-05-12-zira-auth-login-and-self-checkout-closeout]] and
 // [[2026-05-15-zira-catalog-i18n-phase1-and-scan-only]]).
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChefHat,
   Hand,
   Image as ImageIcon,
+  Loader2,
   Minus,
   PackageSearch,
   Plus,
   ScanBarcode,
+  Search,
   ShoppingBag,
+  ShoppingBasket,
   ShoppingCart,
   Trash2,
+  X,
 } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
@@ -52,6 +57,13 @@ interface ScanScreenProps {
   cartItems: ScCartItem[];
   totalGrosze: number;
   onScan: (ean: string) => Promise<unknown> | unknown;
+  onSearchProducts: (query: string) => Promise<SearchProduct[]>;
+  onAddSearchProduct: (product: SearchProduct) => Promise<unknown> | unknown;
+  categories: CatalogCategory[];
+  products: SearchProduct[];
+  catalogLoading?: boolean;
+  onAddCatalogProduct: (product: SearchProduct) => Promise<unknown> | unknown;
+  initialDepartment?: CatalogDepartment;
   scanQuantity: number;
   onScanQuantityChange: (quantity: number) => void;
   onIncrement: (variantId: string) => void;
@@ -67,11 +79,123 @@ interface ScanScreenProps {
   toast?: { kind: 'ok' | 'error'; text: string } | null;
 }
 
+interface SearchProduct {
+  id: string;
+  template_id?: string | null;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  category_id?: string | null;
+  retail_price?: number;
+  price?: number;
+  price_gross?: number;
+  vat_rate?: number;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
+  in_stock?: number;
+  available_qty?: number;
+  name_translations?: string | null;
+}
+
+interface CatalogCategory {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  sort_order?: number;
+  name_translations?: string | null;
+}
+
+type CatalogDepartment = 'grocery' | 'kitchen';
+
+function getProductPriceGrosze(product: SearchProduct): number {
+  const value = product.retail_price ?? product.price ?? product.price_gross;
+  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : 0;
+}
+
+function getProductStock(product: SearchProduct): number | undefined {
+  const value = product.in_stock ?? product.available_qty;
+  return Number.isFinite(Number(value)) ? Number(value) : undefined;
+}
+
+function isKitchenCategory(category: CatalogCategory | undefined): boolean {
+  const text = `${category?.name || ''} ${category?.name_translations || ''}`.toLowerCase();
+  return /\b(kitchen|kuchnia|restaurant|restauracja|menu|food|meal|dish|drink|bar|cafe|coffee|bep|nhà bếp|nha bep|do an|đồ ăn)\b/.test(text);
+}
+
+function normalizeCatalogText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function getCategorySearchText(category: CatalogCategory | undefined): string {
+  if (!category) return '';
+  return normalizeCatalogText(`${category.id || ''} ${category.name || ''} ${category.name_translations || ''}`);
+}
+
+function getCategoryDepartment(category: CatalogCategory | undefined): CatalogDepartment {
+  const text = getCategorySearchText(category);
+  const kitchenKeywords = [
+    'kitchen',
+    'kuchnia',
+    'restaurant',
+    'restauracja',
+    'menu',
+    'food',
+    'foods',
+    'meal',
+    'meals',
+    'dish',
+    'dishes',
+    'drink',
+    'drinks',
+    'beverage',
+    'bar',
+    'cafe',
+    'coffee',
+    'tea',
+    'dessert',
+    'combo',
+    'dania',
+    'zupy',
+    'zupa',
+    'makaron',
+    'ryz',
+    'rice',
+    'pho',
+    'burger',
+    'pizza',
+    'napoje',
+    'napoj',
+    'kawa',
+    'herbata',
+    'ciasto',
+    'deser',
+    'bep',
+    'nha bep',
+    'do an',
+    'mon an',
+    'nuoc',
+    'tra',
+    'ca phe',
+  ];
+  return kitchenKeywords.some((keyword) => text.includes(keyword)) ? 'kitchen' : 'grocery';
+}
+
 export default function ScanScreen({
   lang,
   cartItems,
   totalGrosze,
   onScan,
+  onSearchProducts,
+  onAddSearchProduct,
+  categories,
+  products,
+  catalogLoading = false,
+  onAddCatalogProduct,
+  initialDepartment = 'grocery',
   scanQuantity,
   onScanQuantityChange,
   onIncrement,
@@ -87,10 +211,25 @@ export default function ScanScreen({
   toast,
 }: ScanScreenProps) {
   const t = getScStrings(lang);
+  const catalogLoadingText =
+    lang === 'pl' ? 'Ładowanie produktów...' :
+    lang === 'vi' ? 'Đang tải sản phẩm...' :
+    'Loading products...';
   const scannerInputRef = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef<string>('');
   const scannerLastKey = useRef<number>(0);
   const lastScanRef = useRef<{ code: string; at: number } | null>(null);
+  const searchOpenRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchRequestSeq = useRef(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchProduct[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchTouched, setSearchTouched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [activeDepartment, setActiveDepartment] = useState<CatalogDepartment>(initialDepartment);
+  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
 
   // ── visual feedback state ─────────────────────────────────────────────
   // Drives the full-screen green flash + last-item highlight after the
@@ -148,7 +287,18 @@ export default function ScanScreen({
   );
 
   const focusScannerInput = useCallback(() => {
+    if (searchOpenRef.current) return;
     scannerInputRef.current?.focus();
+  }, []);
+
+  const openSearch = useCallback(() => {
+    searchOpenRef.current = true;
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    searchOpenRef.current = false;
+    setSearchOpen(false);
   }, []);
 
   const handleScannerInputKeyDown = useCallback(
@@ -175,7 +325,15 @@ export default function ScanScreen({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (searchOpenRef.current) return;
       if ((e.target as HTMLElement | null)?.dataset?.scannerCapture === 'true') return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === 'INPUT'
+        || target?.tagName === 'TEXTAREA'
+        || target?.tagName === 'SELECT'
+        || target?.isContentEditable
+      ) return;
       const now = Date.now();
       if (now - scannerLastKey.current > 150) {
         scannerBuffer.current = '';
@@ -194,6 +352,126 @@ export default function ScanScreen({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [handleScannedCode]);
+
+  useEffect(() => {
+    searchOpenRef.current = searchOpen;
+    if (!searchOpen) {
+      setSearchQuery('');
+      setSearchResults([]);
+      setSearchTouched(false);
+      setSearchError(null);
+      return;
+    }
+    const id = window.setTimeout(() => searchInputRef.current?.focus(), 50);
+    return () => window.clearTimeout(id);
+  }, [searchOpen]);
+
+  const runSearch = useCallback(
+    async (query = searchQuery) => {
+      const trimmed = query.trim();
+      const requestId = ++searchRequestSeq.current;
+      setSearchTouched(true);
+      setSearchError(null);
+      if (!trimmed) {
+        setSearchResults([]);
+        return;
+      }
+      setSearching(true);
+      try {
+        const results = await onSearchProducts(trimmed);
+        if (searchRequestSeq.current === requestId) {
+          setSearchResults(results);
+        }
+      } catch {
+        if (searchRequestSeq.current === requestId) {
+          setSearchResults([]);
+          setSearchError(t.searchError);
+        }
+      } finally {
+        if (searchRequestSeq.current === requestId) {
+          setSearching(false);
+        }
+      }
+    },
+    [onSearchProducts, searchQuery, t.searchError],
+  );
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      searchRequestSeq.current += 1;
+      setSearchTouched(false);
+      setSearchResults([]);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+    const id = window.setTimeout(() => void runSearch(trimmed), 250);
+    return () => window.clearTimeout(id);
+  }, [runSearch, searchOpen, searchQuery]);
+
+  const handleAddSearchProduct = useCallback(
+    async (product: SearchProduct) => {
+      const added = await onAddSearchProduct(product);
+      if (added !== false) closeSearch();
+    },
+    [closeSearch, onAddSearchProduct],
+  );
+
+  const categoryById = useMemo(() => {
+    const map = new Map<string, CatalogCategory>();
+    for (const category of categories) map.set(category.id, category);
+    return map;
+  }, [categories]);
+
+  const visibleCategories = useMemo(() => {
+    const ids = new Set(
+      products
+        .filter((product) => {
+          const category = product.category_id ? categoryById.get(product.category_id) : undefined;
+          return getCategoryDepartment(category) === activeDepartment;
+        })
+        .map((product) => product.category_id)
+        .filter((id): id is string => !!id),
+    );
+    return categories.filter((category) => ids.has(category.id));
+  }, [activeDepartment, categories, categoryById, products]);
+
+  const visibleProducts = useMemo(() => {
+    return products
+      .filter((product) => {
+        const category = product.category_id ? categoryById.get(product.category_id) : undefined;
+        if (getCategoryDepartment(category) !== activeDepartment) return false;
+        if (activeCategoryId && product.category_id !== activeCategoryId) return false;
+        return true;
+      })
+      .slice(0, 48);
+  }, [activeCategoryId, activeDepartment, categoryById, products]);
+
+  useEffect(() => {
+    if (!activeCategoryId) return;
+    if (!visibleCategories.some((category) => category.id === activeCategoryId)) {
+      setActiveCategoryId(null);
+    }
+  }, [activeCategoryId, visibleCategories]);
+
+  const handleDepartmentChange = useCallback((department: CatalogDepartment) => {
+    setActiveDepartment(department);
+    setActiveCategoryId(null);
+  }, []);
+
+  useEffect(() => {
+    setActiveDepartment(initialDepartment);
+    setActiveCategoryId(null);
+  }, [initialDepartment]);
+
+  const handleAddCatalogProduct = useCallback(
+    async (product: SearchProduct) => {
+      await onAddCatalogProduct(product);
+    },
+    [onAddCatalogProduct],
+  );
 
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onBarcodeScanned?.((barcode: string) => {
@@ -257,7 +535,7 @@ export default function ScanScreen({
 
       <main className="sc-shopping-main grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(380px,430px)] gap-4 p-4">
         <section className="flex min-h-0 flex-col gap-4">
-          <div className="sc-surface sc-scan-panel flex min-h-[280px] flex-1 flex-col justify-center p-5 xl:p-6">
+          <div className="sc-surface sc-scan-panel flex min-h-[250px] flex-col justify-center p-5 xl:p-6">
             <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:gap-8">
               <div className="sc-scan-icon flex h-24 w-24 shrink-0 items-center justify-center rounded-[24px] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)] xl:h-28 xl:w-28 xl:rounded-[30px]">
                 <ScanBarcode className="h-16 w-16 xl:h-20 xl:w-20" />
@@ -300,6 +578,14 @@ export default function ScanScreen({
                     <Plus size={28} />
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={openSearch}
+                  className="sc-secondary-action sc-focusable mt-4 flex w-full max-w-[560px] items-center justify-center gap-3 px-5 py-4 text-xl font-black xl:w-auto"
+                >
+                  <Search size={26} />
+                  {t.manualSearch}
+                </button>
               </div>
             </div>
 
@@ -315,6 +601,118 @@ export default function ScanScreen({
                 {toast.text}
               </div>
             )}
+          </div>
+          <div className="sc-surface flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => handleDepartmentChange('grocery')}
+                className={`sc-focusable flex min-h-[82px] items-center justify-center gap-3 rounded-2xl border-2 px-4 text-2xl font-black ${
+                  activeDepartment === 'grocery'
+                    ? 'border-[var(--sc-primary)] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]'
+                    : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
+                }`}
+              >
+                <ShoppingBasket size={32} />
+                {t.grocery}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDepartmentChange('kitchen')}
+                className={`sc-focusable flex min-h-[82px] items-center justify-center gap-3 rounded-2xl border-2 px-4 text-2xl font-black ${
+                  activeDepartment === 'kitchen'
+                    ? 'border-[var(--sc-primary)] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]'
+                    : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
+                }`}
+              >
+                <ChefHat size={32} />
+                {t.kitchen}
+              </button>
+            </div>
+
+            <div className="mt-3 flex shrink-0 gap-2 overflow-x-auto pb-1">
+              <button
+                type="button"
+                onClick={() => setActiveCategoryId(null)}
+                className={`sc-focusable shrink-0 rounded-2xl border-2 px-5 py-3 text-lg font-black ${
+                  activeCategoryId === null
+                    ? 'border-[var(--sc-primary)] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]'
+                    : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
+                }`}
+              >
+                {t.allCategories}
+              </button>
+              {visibleCategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => setActiveCategoryId(category.id)}
+                  className={`sc-focusable shrink-0 rounded-2xl border-2 px-5 py-3 text-lg font-black ${
+                    activeCategoryId === category.id
+                      ? 'border-[var(--sc-primary)] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]'
+                      : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
+                  }`}
+                >
+                  {resolveName(category, lang)}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+              {catalogLoading ? (
+                <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-8 text-center">
+                  <Loader2 size={58} className="mb-4 animate-spin text-[var(--sc-primary-deep)]" />
+                  <div className="text-xl font-black text-[var(--sc-ink)]">
+                    {catalogLoadingText}
+                  </div>
+                </div>
+              ) : visibleProducts.length === 0 ? (
+                <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-8 text-center">
+                  <PackageSearch size={58} className="mb-4 text-[var(--sc-border)]" />
+                  <div className="text-xl font-black text-[var(--sc-ink)]">
+                    {t.noCategories}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+                  {visibleProducts.map((product) => {
+                    const stock = getProductStock(product);
+                    const price = getProductPriceGrosze(product);
+                    const disabled = price <= 0 || (typeof stock === 'number' && stock <= 0);
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => void handleAddCatalogProduct(product)}
+                        disabled={disabled}
+                        className="sc-focusable flex min-h-[168px] flex-col overflow-hidden rounded-2xl border border-[var(--sc-border)] bg-white text-left disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        {product.thumbnail_url || product.image_url ? (
+                          <img
+                            src={product.thumbnail_url || product.image_url || ''}
+                            alt=""
+                            className="h-20 w-full object-cover"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        ) : (
+                          <div className="flex h-20 w-full items-center justify-center bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]">
+                            <ImageIcon size={30} />
+                          </div>
+                        )}
+                        <div className="flex min-h-0 flex-1 flex-col p-3">
+                          <div className="line-clamp-2 text-base font-black leading-snug text-[var(--sc-ink)]">
+                            {resolveName(product, lang)}
+                          </div>
+                          <div className="sc-tabular mt-auto pt-2 text-lg font-black text-[var(--sc-primary-deep)]">
+                            {formatPLN(price)}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -487,6 +885,119 @@ export default function ScanScreen({
           </div>
         </aside>
       </main>
+      {searchOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={t.searchProducts}
+            className="sc-surface flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden bg-white"
+          >
+            <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5 py-4">
+              <div className="flex items-center gap-3">
+                <Search size={28} className="text-[var(--sc-primary-deep)]" />
+                <h2 className="text-2xl font-black text-[var(--sc-ink)]">
+                  {t.searchProducts}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeSearch}
+                className="sc-focusable flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)]"
+                aria-label={t.close}
+              >
+                <X size={26} />
+              </button>
+            </div>
+
+            <form
+              className="border-b border-[var(--sc-border)] p-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runSearch();
+              }}
+            >
+              <div className="grid grid-cols-[minmax(0,1fr)_150px] gap-3">
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={t.searchPlaceholder}
+                  className="sc-focusable h-16 min-w-0 rounded-2xl border-2 border-[var(--sc-border)] bg-white px-5 text-2xl font-bold text-[var(--sc-ink)] outline-none"
+                  autoComplete="off"
+                  inputMode="search"
+                />
+                <button
+                  type="submit"
+                  disabled={searching || !searchQuery.trim()}
+                  className="sc-action sc-focusable flex h-16 items-center justify-center gap-2 px-5 text-xl disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {searching ? <Loader2 className="animate-spin" size={24} /> : <Search size={24} />}
+                  {t.manualSearch}
+                </button>
+              </div>
+            </form>
+
+            <div className="min-h-[260px] flex-1 overflow-y-auto p-5">
+              <div className="mb-3 text-base font-black uppercase tracking-wide text-[var(--sc-muted)]">
+                {t.searchResults}
+              </div>
+              {searchError ? (
+                <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-5 text-xl font-black text-[var(--sc-danger)]">
+                  {searchError}
+                </div>
+              ) : searchTouched && !searching && searchResults.length === 0 ? (
+                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-8 text-center">
+                  <PackageSearch size={54} className="mb-4 text-[var(--sc-border)]" />
+                  <div className="text-xl font-black text-[var(--sc-ink)]">
+                    {t.searchNoResults}
+                  </div>
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {searchResults.map((product) => (
+                    <li
+                      key={product.id}
+                      className="grid grid-cols-[72px_minmax(0,1fr)_128px] items-center gap-4 rounded-2xl border border-[var(--sc-border)] bg-white p-3"
+                    >
+                      {product.thumbnail_url || product.image_url ? (
+                        <img
+                          src={product.thumbnail_url || product.image_url || ''}
+                          alt=""
+                          className="h-[72px] w-[72px] rounded-xl object-cover"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="flex h-[72px] w-[72px] items-center justify-center rounded-xl bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]">
+                          <ImageIcon size={28} />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate text-xl font-black text-[var(--sc-ink)]">
+                          {resolveName(product, lang)}
+                        </div>
+                        <div className="mt-1 truncate text-sm font-bold text-[var(--sc-muted)]">
+                          {[product.barcode, product.sku].filter(Boolean).join(' · ')}
+                        </div>
+                        <div className="mt-2 sc-tabular text-lg font-black text-[var(--sc-primary-deep)]">
+                          {formatPLN(getProductPriceGrosze(product))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleAddSearchProduct(product)}
+                        className="sc-action sc-action-success sc-focusable h-14 px-4 text-lg"
+                      >
+                        {t.addProduct}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

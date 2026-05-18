@@ -1,14 +1,16 @@
 // Idle / welcome screen. It must be scan-first: a barcode starts the
 // session just like the visible start button.
 import React, { useCallback, useEffect, useRef } from 'react';
-import { CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
+import { ChefHat, CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
+
+type CatalogDepartment = 'grocery' | 'kitchen';
 
 interface WelcomeScreenProps {
   lang: ScLanguage;
   onLangChange: (lang: ScLanguage) => void;
-  onStart: () => void;
+  onStart: (department?: CatalogDepartment) => void;
   onScanStart: (ean: string) => Promise<void> | void;
   onCallStaff?: () => void;
 }
@@ -137,14 +139,24 @@ export default function WelcomeScreen({
             <p className="mt-6 max-w-2xl text-3xl font-semibold leading-snug text-[var(--sc-muted)]">
               {t.welcomeSubtitle}
             </p>
-            <button
-              type="button"
-              onClick={onStart}
-              className="sc-action sc-focusable mt-12 flex min-w-[520px] items-center justify-center gap-5 px-16 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.26)]"
-            >
-              <ScanBarcode size={44} />
-              {t.startButton}
-            </button>
+            <div className="mt-12 grid max-w-3xl grid-cols-2 gap-5">
+              <button
+                type="button"
+                onClick={() => onStart('grocery')}
+                className="sc-action sc-focusable flex min-h-[150px] flex-col items-center justify-center gap-4 px-10 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.22)]"
+              >
+                <ShoppingBasket size={52} />
+                {t.grocery}
+              </button>
+              <button
+                type="button"
+                onClick={() => onStart('kitchen')}
+                className="sc-secondary-action sc-focusable flex min-h-[150px] flex-col items-center justify-center gap-4 px-10 text-4xl font-black"
+              >
+                <ChefHat size={52} />
+                {t.kitchen}
+              </button>
+            </div>
           </div>
         </section>
 

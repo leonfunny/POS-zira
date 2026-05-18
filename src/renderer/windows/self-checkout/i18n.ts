@@ -21,6 +21,15 @@ interface ScStrings {
   scanPrompt: string;
   scanHint: string;
   manualEntry: string;
+  manualSearch: string;
+  grocery: string;
+  kitchen: string;
+  allCategories: string;
+  searchProducts: string;
+  searchPlaceholder: string;
+  searchResults: string;
+  searchNoResults: string;
+  searchError: string;
   scanQuantity: string;
   scanQuantityHint: string;
   noCategories: string;
@@ -130,6 +139,15 @@ const PL: ScStrings = {
   scanPrompt: 'Zeskanuj produkt',
   scanHint: 'Skaner doda produkt do koszyka automatycznie',
   manualEntry: 'Wprowadź kod',
+  manualSearch: 'Szukaj',
+  grocery: 'Grocery',
+  kitchen: 'Kuchnia',
+  allCategories: 'Wszystkie',
+  searchProducts: 'Szukaj produktu',
+  searchPlaceholder: 'Wpisz EAN, SKU albo nazwę produktu',
+  searchResults: 'Wyniki',
+  searchNoResults: 'Nie znaleziono produktu. Spróbuj wpisać EAN albo wezwij obsługę.',
+  searchError: 'Nie udało się wyszukać produktu. Spróbuj ponownie.',
   scanQuantity: 'Ilość',
   scanQuantityHint: 'Wybierz ilość przed skanowaniem',
   noCategories: 'Kategorie nie są jeszcze dostępne. Skanuj produkty kodem kreskowym.',
@@ -228,6 +246,15 @@ const EN: ScStrings = {
   scanPrompt: 'Scan a product',
   scanHint: 'The scanner adds the product automatically',
   manualEntry: 'Enter code',
+  manualSearch: 'Search',
+  grocery: 'Grocery',
+  kitchen: 'Kitchen',
+  allCategories: 'All',
+  searchProducts: 'Search product',
+  searchPlaceholder: 'Enter EAN, SKU, or product name',
+  searchResults: 'Results',
+  searchNoResults: 'No product found. Try entering the EAN or call staff.',
+  searchError: 'Could not search products. Please try again.',
   scanQuantity: 'Quantity',
   scanQuantityHint: 'Choose quantity before scanning',
   noCategories: 'Categories are not available yet. Scan products by barcode.',
@@ -326,6 +353,15 @@ const VI: ScStrings = {
   scanPrompt: 'Quét sản phẩm',
   scanHint: 'Máy quét sẽ tự thêm sản phẩm vào giỏ',
   manualEntry: 'Nhập mã',
+  manualSearch: 'Tìm',
+  grocery: 'Grocery',
+  kitchen: 'Nhà bếp',
+  allCategories: 'Tất cả',
+  searchProducts: 'Tìm sản phẩm',
+  searchPlaceholder: 'Nhập EAN, SKU hoặc tên sản phẩm',
+  searchResults: 'Kết quả',
+  searchNoResults: 'Không tìm thấy sản phẩm. Thử nhập EAN hoặc gọi nhân viên.',
+  searchError: 'Không thể tìm sản phẩm. Vui lòng thử lại.',
   scanQuantity: 'Số lượng',
   scanQuantityHint: 'Chọn số lượng trước khi quét',
   noCategories: 'Danh mục chưa sẵn sàng. Hãy quét sản phẩm bằng mã vạch.',

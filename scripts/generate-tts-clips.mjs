@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Renders 1012 Polish TTS clips for the self-checkout kiosk amount announcer.
+// Renders 1013 Polish TTS clips for the self-checkout kiosk amount announcer.
 // Output: src/renderer/public/tts-pl/*.mp3 (copied to dist/renderer/tts-pl/ on build).
 //
 // Run:
@@ -7,8 +7,9 @@
 //   $env:AZURE_SPEECH_REGION = "westeurope"
 //   node scripts/generate-tts-clips.mjs
 //
-// Idempotent: skips files that already exist. Delete a file and re-run to
-// re-render just that clip (useful for tweaking specific phrases).
+// Idempotent by default: skips files that already exist. Set FORCE=1 to
+// re-render every clip after changing voice/rate/text.
+// Set ONLY=prefix_card.mp3,prefix_blik.mp3 to re-render selected clips.
 //
 // Voice: pl-PL-ZofiaNeural (female, native Polish, neutral newscaster tone —
 // best fit for a kiosk announcement). Swap via VOICE env var. Alternatives:
@@ -27,6 +28,13 @@ const VOICE = process.env.VOICE || 'pl-PL-ZofiaNeural';
 const OUT_DIR = path.resolve(__dirname, '../src/renderer/public/tts-pl');
 const RATE = process.env.RATE || '-2%'; // slightly slow for clarity at the kiosk
 const PITCH = process.env.PITCH || '+0%';
+const FORCE = process.env.FORCE === '1' || process.env.FORCE === 'true';
+const ONLY = new Set(
+  (process.env.ONLY || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 
 // Azure Speech API rate limits: free tier ~20 RPS, standard ~200 RPS.
 // We sleep 80ms between requests = ~12 RPS, well below the free-tier ceiling.
@@ -84,6 +92,7 @@ function buildManifest() {
   clips.push({ filename: 'grosz_many.mp3', text: 'groszy' });
   clips.push({ filename: 'prefix_card.mp3', text: 'Płatność kartą.' });
   clips.push({ filename: 'prefix_cash.mp3', text: 'Płatność gotówką.' });
+  clips.push({ filename: 'prefix_blik.mp3', text: 'Płatność BLIK-iem.' });
   clips.push({ filename: 'do_zaplaty.mp3', text: 'Do zapłaty' });
   return clips;
 }
@@ -143,11 +152,12 @@ async function fileExists(p) {
 
 async function main() {
   await fs.mkdir(OUT_DIR, { recursive: true });
-  const manifest = buildManifest();
+  const manifest = buildManifest().filter((clip) => ONLY.size === 0 || ONLY.has(clip.filename));
   const totalChars = manifest.reduce((s, c) => s + c.text.length, 0);
 
   console.log(`Output: ${OUT_DIR}`);
   console.log(`Voice : ${VOICE} @ ${AZURE_REGION}`);
+  if (ONLY.size > 0) console.log(`Only  : ${Array.from(ONLY).join(', ')}`);
   console.log(`Clips : ${manifest.length} (~${totalChars} chars, fits free F0 tier)`);
   console.log('');
 
@@ -159,7 +169,7 @@ async function main() {
     const clip = manifest[i];
     const outPath = path.join(OUT_DIR, clip.filename);
     const idx = `[${String(i + 1).padStart(4)}/${manifest.length}]`;
-    if (await fileExists(outPath)) {
+    if (!FORCE && await fileExists(outPath)) {
       skipped++;
       continue;
     }

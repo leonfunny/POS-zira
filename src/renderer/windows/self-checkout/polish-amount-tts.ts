@@ -13,6 +13,10 @@ export type Method = 'CARD' | 'CASH' | 'BLIK';
 
 const CLIP_DIR = 'tts-pl';
 const CLIP_TIMEOUT_MS = 4000;
+// Slightly faster than the rendered source clips so staff hears the amount
+// promptly, while keeping Polish number endings understandable.
+const ANNOUNCEMENT_PLAYBACK_RATE = 1.12;
+const WEB_SPEECH_RATE = 1.08;
 
 // Polish noun declension: 1 → singular, last digit 2-4 (but not lastTwo 12-14) → few,
 // everything else → genitive plural ("many").
@@ -139,6 +143,8 @@ class ClipPlayer {
     return new Promise((resolve) => {
       const audio = new Audio(clipUrl(filename));
       audio.preload = 'auto';
+      audio.playbackRate = ANNOUNCEMENT_PLAYBACK_RATE;
+      audio.preservesPitch = true;
       this.current = audio;
       let settled = false;
       const finish = (success: boolean) => {
@@ -234,7 +240,7 @@ async function speakViaWebSpeech(method: Method, totalGrosze: number): Promise<v
         : `${zl} ${zlUnit} ${gr} ${grUnit}`;
   const utter = new SpeechSynthesisUtterance(`Płatność ${methodWord}. Do zapłaty ${amount}.`);
   utter.lang = 'pl-PL';
-  utter.rate = 0.95;
+  utter.rate = WEB_SPEECH_RATE;
   utter.volume = 1;
   const polish = await ensurePolishVoice();
   if (polish) utter.voice = polish;
