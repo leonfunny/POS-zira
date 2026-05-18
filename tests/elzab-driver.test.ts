@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElzabDriver } from '../src/main/hardware/elzab/elzab-driver';
 import { MissingElzabBridge, type ElzabBridge } from '../src/main/hardware/elzab/elzab-bridge';
 import type { FiscalAttemptJournal, FiscalAttemptRow } from '../src/main/database/repos/fiscal-attempt-repo';
@@ -12,6 +12,17 @@ const receipt: ReceiptData = {
   subtotal: 0,
   total: 0,
 };
+
+const savedIgnoreConfigAllowReal = process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL;
+
+beforeEach(() => {
+  process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL = 'true';
+});
+
+afterEach(() => {
+  if (savedIgnoreConfigAllowReal === undefined) delete process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL;
+  else process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL = savedIgnoreConfigAllowReal;
+});
 
 function makeAttempt(overrides: Partial<FiscalAttemptRow> = {}): FiscalAttemptRow {
   return {
@@ -266,6 +277,42 @@ describe('ElzabDriver fail-closed behavior', () => {
       expect(attempts[0]).toMatchObject({
         status: 'UNKNOWN_NEEDS_RECONCILIATION',
         error_code: 'ELZAB_COMMAND_FAILED',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
+  it('marks local menu at ReceiptBegin as failed, not unknown', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const { journal, attempts } = createJournal();
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt: async () => ({
+        ok: false,
+        code: 'ELZAB_LOCAL_MENU_MODE',
+        detail: 'ReceiptBegin failed: TRYB MENU LOKALNEGO',
+      }),
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printReceipt(receipt)).rejects.toThrow(/ELZAB_LOCAL_MENU_MODE/);
+      expect(attempts[0]).toMatchObject({
+        status: 'FAILED_CONFIRMED',
+        error_code: 'ELZAB_LOCAL_MENU_MODE',
+      });
+      await expect(driver.getStatus()).resolves.toMatchObject({
+        connected: true,
+        diagnostic: {
+          code: 'ELZAB_LOCAL_MENU_MODE',
+        },
       });
     } finally {
       if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;

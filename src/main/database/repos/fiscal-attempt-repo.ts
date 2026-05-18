@@ -87,6 +87,13 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
        WHERE order_id = ?
          AND ${payment.sql}
          AND status IN (${placeholders})
+         AND NOT (
+           status = 'UNKNOWN_NEEDS_RECONCILIATION'
+           AND (
+             result_json LIKE '%ReceiptBegin failed:%'
+             OR result_json LIKE '%ReceiptConditions failed:%'
+           )
+         )
        ORDER BY attempt_no DESC
        LIMIT 1`,
       [orderId, ...payment.params, ...BLOCKING_STATUSES],

@@ -189,6 +189,7 @@ const store = new Store<AgentConfig>({
     receiptSellerName: { type: 'string' },
     receiptSellerAddress: { type: 'string' },
     receiptSellerNip: { type: 'string' },
+    allowRealFiscalPrint: { type: 'boolean', default: false },
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },

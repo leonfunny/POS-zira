@@ -42,8 +42,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'No Windows printers detected.',
 
     // Printer types
-    'printer.RECEIPT': 'Orders',
-    'printer.RECEIPT.desc': 'Sales orders and receipts',
+    'printer.RECEIPT': 'Order',
+    'printer.RECEIPT.desc': 'Order printer and sales receipt copies',
     'printer.FISCAL': 'Fiscal',
     'printer.FISCAL.desc': 'Posnet / ELZAB fiscal printer',
     'printer.LABEL': 'Labels',
@@ -1196,8 +1196,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.noPrintersDetected': 'Không phát hiện máy in Windows.',
 
     // Printer types
-    'printer.RECEIPT': 'Đơn đặt hàng',
-    'printer.RECEIPT.desc': 'Đơn đặt hàng và phiếu thu',
+    'printer.RECEIPT': 'Order',
+    'printer.RECEIPT.desc': 'Máy in order và bản in bán hàng',
     'printer.FISCAL': 'Tài chính',
     'printer.FISCAL.desc': 'Máy in hóa đơn Posnet / ELZAB',
     'printer.LABEL': 'Nhãn',

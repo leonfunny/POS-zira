@@ -363,10 +363,13 @@ foreach ($vid in $vids) {
         // Network printer — trust the spooler (can't probe without sending data)
         backendPresent = true;
         reason = `network port ${portUpper}, trusting spooler`;
-      } else if (bp) {
+      } else if (bp && bp.vids.length > 0) {
         // USB / DOT4 / custom port name with KNOWN brand → require VID present
         backendPresent = bp.vids.some(v => presentVidsLower.has(v.toLowerCase()));
         reason = `brand=${bp.brand} VIDs=[${bp.vids.join(',')}] ${backendPresent ? 'matched present PnP' : 'NOT matched (ghost)'}`;
+      } else if (bp) {
+        backendPresent = true;
+        reason = `brand=${bp.brand} has no VID table on ${portUpper}, trusting spooler`;
       } else {
         // Unknown brand on non-network port — fall back optimistic but log loud
         backendPresent = true;
@@ -700,6 +703,7 @@ const LABEL_PATTERNS = [
   'label', 'zd', 'zt', 'zq', 'gk4', 'gx4', 'gc4', 'tlp', 'lp2', // Zebra models
   'ql-', 'td-', 'pt-', // Brother label
   'labelwriter', // DYMO
+  'xp-423', 'xp423', // Xprinter 4-inch label printers
 ];
 
 /**
@@ -741,6 +745,15 @@ export function classifyPrinterCategory(device: DetectedDevice): {
   }
 
   // Brother — check if label or regular
+  // Xprinter sells both receipt printers (XP-80T/XP-58) and label printers
+  // (XP-423B). Distinguish the label family before falling back to receipt.
+  if (brand === 'XPRINTER' || combined.includes('xprinter')) {
+    if (LABEL_PATTERNS.some(p => combined.includes(p))) {
+      return { targetType: 'LABEL', protocol: 'WINDOWS' };
+    }
+    return { targetType: 'RECEIPT', protocol: 'THERMAL' };
+  }
+
   if (brand === 'BROTHER') {
     if (LABEL_PATTERNS.some(p => combined.includes(p))) {
       return { targetType: 'LABEL', protocol: 'WINDOWS' };

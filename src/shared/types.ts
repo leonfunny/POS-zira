@@ -424,6 +424,7 @@ export interface AgentConfig {
   receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
+  allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display

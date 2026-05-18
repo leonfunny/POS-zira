@@ -72,15 +72,21 @@ describe('DevMockElzabBridge', () => {
 describe('createDefaultElzabBridge() routing', () => {
   const savedMock = process.env.ZIRA_ELZAB_MOCK;
   const savedPath = process.env.ZIRA_ELZAB_BRIDGE_PATH;
+  const savedDisableAuto = process.env.ZIRA_ELZAB_DISABLE_AUTO_SIDECAR;
 
   beforeEach(() => {
     delete process.env.ZIRA_ELZAB_MOCK;
     delete process.env.ZIRA_ELZAB_BRIDGE_PATH;
+    process.env.ZIRA_ELZAB_DISABLE_AUTO_SIDECAR = 'true';
   });
 
   afterEach(() => {
-    process.env.ZIRA_ELZAB_MOCK = savedMock;
-    process.env.ZIRA_ELZAB_BRIDGE_PATH = savedPath;
+    if (savedMock === undefined) delete process.env.ZIRA_ELZAB_MOCK;
+    else process.env.ZIRA_ELZAB_MOCK = savedMock;
+    if (savedPath === undefined) delete process.env.ZIRA_ELZAB_BRIDGE_PATH;
+    else process.env.ZIRA_ELZAB_BRIDGE_PATH = savedPath;
+    if (savedDisableAuto === undefined) delete process.env.ZIRA_ELZAB_DISABLE_AUTO_SIDECAR;
+    else process.env.ZIRA_ELZAB_DISABLE_AUTO_SIDECAR = savedDisableAuto;
   });
 
   it('returns MissingElzabBridge when no env vars set', () => {

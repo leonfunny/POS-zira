@@ -131,6 +131,16 @@ export const BRAND_PATTERNS: BrandPattern[] = [
     defaultType: 'LABEL',
   },
   {
+    brand: 'Xprinter',
+    namePatterns: ['xprinter', 'xp-80', 'xp80', 'xp-58', 'xp58', 'xp-423', 'xp423'],
+    // Many XP-80T/POS-80 installs enumerate through a generic USB printing
+    // support bridge with VID_1FC9. Keep this in the known list so receipt
+    // printer presence checks do not reject a real USB002 printer as a ghost.
+    vids: ['1FC9'],
+    defaultProtocol: 'THERMAL',
+    defaultType: 'RECEIPT',
+  },
+  {
     brand: 'Epson',
     namePatterns: ['epson', 'tm-t', 'tm-m', 'tm-u', 'tm-p'],
     vids: ['04B8'],

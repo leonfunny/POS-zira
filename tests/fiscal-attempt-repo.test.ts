@@ -38,4 +38,16 @@ describe('fiscalAttemptRepo', () => {
     expect(database.run).not.toHaveBeenCalled();
     expect(database.save).not.toHaveBeenCalled();
   });
+
+  it('does not treat pre-open ReceiptBegin failures as blocking unknown attempts', () => {
+    vi.mocked(database.get).mockReturnValueOnce(null);
+
+    const row = fiscalAttemptRepo.findBlockingAttempt('order-1');
+
+    expect(row).toBeNull();
+    const [sql, params] = vi.mocked(database.get).mock.calls[0];
+    expect(sql).toContain("result_json LIKE '%ReceiptBegin failed:%'");
+    expect(sql).toContain("result_json LIKE '%ReceiptConditions failed:%'");
+    expect(params).toEqual(['order-1', 'SUCCESS_CONFIRMED', 'UNKNOWN_NEEDS_RECONCILIATION']);
+  });
 });

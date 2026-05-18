@@ -29,6 +29,10 @@ type SharedReceiptPrinter = (
   meta: { referenceType?: string; referenceId?: string; source?: string },
 ) => Promise<{ handled: boolean; printed: boolean; printerId?: string; error?: string }>;
 
+type PrintReceiptOptions = {
+  throwOnFailure?: boolean;
+};
+
 export class PaymentController {
   constructor(
     private getPrinter: GetPrinter,
@@ -67,6 +71,17 @@ export class PaymentController {
     return resolveName(product, 'pl') || item.name;
   }
 
+  private describePrintFailure(err: unknown, fallback: string): string {
+    const raw = err instanceof Error ? err.message : String(err || '');
+    if (/TRYB MENU LOKALNEGO/i.test(raw)) {
+      return 'ELZAB is in local menu mode (TRYB MENU LOKALNEGO). Exit the menu on the fiscal printer, wait for the ready screen, then retry fiscal print from Order History.';
+    }
+    if (/REAL_FISCAL_PRINT_DISABLED/i.test(raw)) {
+      return 'Real ELZAB fiscal printing is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
+    }
+    return raw ? `${fallback}: ${raw}` : fallback;
+  }
+
   private async printReceiptData(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string },
@@ -74,6 +89,7 @@ export class PaymentController {
     failureMessage: string,
     missingPrinterMessage: string,
     printerType: PrinterType = PrinterType.RECEIPT,
+    options: PrintReceiptOptions = {},
   ): Promise<boolean> {
     // Shared (network) printer route is only valid for the RECEIPT/order copy.
     // FISCAL printing must always be local — fiscal idempotency, legal liability
@@ -97,6 +113,7 @@ export class PaymentController {
     const printer = this.getPrinter(printerType);
     if (!printer || !printer.isConnected()) {
       logger.warn(missingPrinterMessage);
+      if (options.throwOnFailure) throw new Error(missingPrinterMessage);
       return false;
     }
 
@@ -106,6 +123,7 @@ export class PaymentController {
       return true;
     } catch (err) {
       logger.error(`${failureMessage}: ${err}`);
+      if (options.throwOnFailure) throw new Error(this.describePrintFailure(err, failureMessage));
       return false;
     }
   }
@@ -214,6 +232,7 @@ export class PaymentController {
       '[Payment] Fiscal receipt print failed',
       '[Payment] No fiscal printer connected, skipping fiscal print',
       PrinterType.FISCAL,
+      { throwOnFailure: true },
     );
   }
 

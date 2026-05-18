@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import type { DailyReportData, ReceiptData } from '../../../shared/types';
 
@@ -12,6 +13,7 @@ export type ElzabDiagnosticCode =
   | 'ELZAB_TARGET_MISSING'
   | 'ELZAB_HARDWARE_NOT_FOUND'
   | 'ELZAB_PROTOCOL_NOT_READY'
+  | 'ELZAB_LOCAL_MENU_MODE'
   | 'ELZAB_UNSUPPORTED_OPERATION'
   | 'ELZAB_COMMAND_FAILED'
   | 'REAL_FISCAL_PRINT_DISABLED'
@@ -39,6 +41,13 @@ export interface ElzabBridge {
   printTest(config: ElzabConnectionConfig): Promise<ElzabOperationResult>;
   printReceipt(config: ElzabConnectionConfig, data: ReceiptData): Promise<ElzabOperationResult>;
   printReport?(config: ElzabConnectionConfig, kind: 'DAILY' | 'X' | 'Z', data: DailyReportData): Promise<ElzabOperationResult>;
+}
+
+export interface ElzabSidecarCommand {
+  executablePath: string;
+  args?: string[];
+  cwd?: string;
+  displayPath?: string;
 }
 
 export class MissingElzabBridge implements ElzabBridge {
@@ -154,17 +163,27 @@ export class DevMockElzabBridge implements ElzabBridge {
  * integration mockable and avoids coupling Electron to vendor-native ABI.
  */
 export class ElzabSidecarBridge implements ElzabBridge {
+  private readonly command: Required<Omit<ElzabSidecarCommand, 'displayPath'>> & { displayPath: string };
+
   constructor(
-    private readonly executablePath: string,
-    private readonly timeoutMs = 15_000,
-  ) {}
+    executable: string | ElzabSidecarCommand,
+    private readonly timeoutMs = 30_000,
+  ) {
+    const command = typeof executable === 'string' ? { executablePath: executable } : executable;
+    this.command = {
+      executablePath: command.executablePath,
+      args: command.args || [],
+      cwd: command.cwd || path.dirname(command.executablePath),
+      displayPath: command.displayPath || command.executablePath,
+    };
+  }
 
   async checkAvailability(): Promise<ElzabOperationResult> {
-    if (!existsSync(this.executablePath)) {
+    if (!existsSync(this.command.executablePath)) {
       return {
         ok: false,
         code: 'ELZAB_BRIDGE_NOT_FOUND',
-        detail: `ELZAB sidecar not found at ${this.executablePath}`,
+        detail: `ELZAB sidecar not found at ${this.command.displayPath}`,
       };
     }
     return this.invoke('check', {});
@@ -196,8 +215,15 @@ export class ElzabSidecarBridge implements ElzabBridge {
         ? { command, ...(payload as Record<string, unknown>) }
         : { command, payload };
       const encoded = Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
-      const { stdout } = await execFileAsync(this.executablePath, [command, encoded], {
-        timeout: this.timeoutMs,
+      const timeout = command === 'receipt' || command === 'report'
+        ? Math.max(this.timeoutMs, 120_000)
+        : command === 'test'
+          ? Math.max(this.timeoutMs, 45_000)
+          : this.timeoutMs;
+      const { stdout } = await execFileAsync(this.command.executablePath, [...this.command.args, command, encoded], {
+        cwd: this.command.cwd,
+        env: buildSidecarEnv(),
+        timeout,
         windowsHide: true,
         maxBuffer: 1024 * 1024,
       });
@@ -299,6 +325,82 @@ export function createDefaultElzabBridge(): ElzabBridge {
   }
 
   const executablePath = process.env.ZIRA_ELZAB_BRIDGE_PATH?.trim();
-  if (!executablePath) return new MissingElzabBridge();
+  if (!executablePath) {
+    const bundledSidecar = resolveBundledPowerShellSidecar();
+    if (bundledSidecar) return new ElzabSidecarBridge(bundledSidecar);
+    return new MissingElzabBridge();
+  }
   return new ElzabSidecarBridge(executablePath);
+}
+
+export function isRealFiscalPrintEnabled(): boolean {
+  if (process.env.ALLOW_REAL_FISCAL_PRINT === 'true') return true;
+  if (process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL === 'true') return false;
+  try {
+    const cfgPath = resolveConfigPath();
+    if (!cfgPath || !existsSync(cfgPath)) return false;
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, ''));
+    return cfg?.allowRealFiscalPrint === true;
+  } catch {
+    return false;
+  }
+}
+
+function buildSidecarEnv(): NodeJS.ProcessEnv {
+  if (!isRealFiscalPrintEnabled()) return process.env;
+  return { ...process.env, ALLOW_REAL_FISCAL_PRINT: 'true' };
+}
+
+function findPowerShellExe(): string | undefined {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const candidates = [
+    path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    path.join(systemRoot, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function getElectronUserDataPath(): string | undefined {
+  try {
+    const electron = require('electron');
+    return electron?.app?.getPath?.('userData');
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveConfigPath(): string | undefined {
+  const userData = getElectronUserDataPath();
+  if (userData) return path.join(userData, 'config.json');
+  if (process.env.APPDATA) return path.join(process.env.APPDATA, 'zira-ai', 'config.json');
+  return undefined;
+}
+
+function resolveBundledPowerShellSidecar(): ElzabSidecarCommand | undefined {
+  if (process.env.ZIRA_ELZAB_DISABLE_AUTO_SIDECAR === 'true') return undefined;
+
+  const powerShell = findPowerShellExe();
+  if (!powerShell) return undefined;
+
+  const explicitScript = process.env.ZIRA_ELZAB_SIDECAR_SCRIPT?.trim();
+  const userData = getElectronUserDataPath();
+  const candidates = [
+    explicitScript,
+    path.join(process.cwd(), 'resources', 'elzab', 'sidecar', 'elzab-stx-sidecar.ps1'),
+    typeof process.resourcesPath === 'string'
+      ? path.join(process.resourcesPath, 'elzab', 'sidecar', 'elzab-stx-sidecar.ps1')
+      : undefined,
+    userData ? path.join(userData, 'elzab', 'sidecar', 'elzab-stx-sidecar.ps1') : undefined,
+  ].filter((candidate): candidate is string => !!candidate);
+
+  const script = candidates.find((candidate) => existsSync(candidate));
+  if (!script) return undefined;
+
+  return {
+    executablePath: powerShell,
+    args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+    cwd: path.dirname(script),
+    displayPath: script,
+  };
 }

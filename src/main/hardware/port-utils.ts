@@ -337,6 +337,10 @@ export async function isWindowsPrinterPresent(printerName: string): Promise<bool
         logger.info(`[PortUtils] "${printerName}" on ${portUpper}: unknown brand, no PnP cross-check`);
         return true;
       }
+      if (bp.vids.length === 0) {
+        logger.info(`[PortUtils] "${printerName}" on ${portUpper}: brand=${bp.brand} has no VID table, trusting spooler`);
+        return true;
+      }
       const hasMatchingDevice = bp.vids.some(v => presentVids.has(v.toLowerCase()));
       logger.info(`[PortUtils] "${printerName}" on ${portUpper}: brand=${bp.brand} present=${hasMatchingDevice}`);
       return hasMatchingDevice;

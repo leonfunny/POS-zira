@@ -5,8 +5,10 @@ import {
   type FiscalAttemptJournal,
   type FiscalAttemptRow,
 } from '../../database/repos/fiscal-attempt-repo';
+import logger from '../../logger';
 import {
   createDefaultElzabBridge,
+  isRealFiscalPrintEnabled,
   type ElzabBridge,
   type ElzabConnectionConfig,
   type ElzabDiagnosticCode,
@@ -64,6 +66,7 @@ export class ElzabDriver {
 
     this.connectionState = 'protocol_ready';
     this.lastDiagnostic = undefined;
+    logger.info(`[ElzabDriver] Connected to ${this.options.port || this.options.address} via ELZAB_STX sidecar`);
     return true;
   }
 
@@ -244,13 +247,14 @@ export class ElzabDriver {
 
   private isAmbiguousAfterSent(result: ElzabOperationResult): boolean {
     const code = result.code || 'ELZAB_COMMAND_FAILED';
-    if (code === 'ELZAB_BRIDGE_BAD_RESPONSE' || code === 'ELZAB_COMMAND_FAILED') return true;
     const detail = (result.detail || '').toLowerCase();
+    if (/receiptbegin failed|receiptconditions failed/.test(detail)) return false;
+    if (code === 'ELZAB_BRIDGE_BAD_RESPONSE' || code === 'ELZAB_COMMAND_FAILED') return true;
     return /timeout|timed out|etimedout|econnreset|econnaborted|broken pipe|crash|exited|killed/.test(detail);
   }
 
   private assertRealFiscalAllowed(operation: string): void {
-    if (process.env.ALLOW_REAL_FISCAL_PRINT === 'true') return;
+    if (isRealFiscalPrintEnabled()) return;
     const detail = `Real ELZAB fiscal ${operation} is disabled. Set ALLOW_REAL_FISCAL_PRINT=true only during controlled production go-live.`;
     this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
     throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
@@ -272,6 +276,10 @@ export class ElzabDriver {
   private setFailure(result: ElzabOperationResult): void {
     const code = result.code || 'ELZAB_COMMAND_FAILED';
     this.lastDiagnostic = { code, detail: result.detail };
+    if (code === 'ELZAB_LOCAL_MENU_MODE') {
+      this.connectionState = 'protocol_ready';
+      return;
+    }
     this.connectionState = code === 'ELZAB_PROTOCOL_NOT_READY' ? 'physical_present' : 'disconnected';
   }
 }

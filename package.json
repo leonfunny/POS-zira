@@ -105,6 +105,10 @@
       {
         "from": "resources/drivers",
         "to": "drivers"
+      },
+      {
+        "from": "resources/elzab",
+        "to": "elzab"
       }
     ]
   }

@@ -4,7 +4,7 @@ import { resolveCustomerDisplayProfile } from '../../shared/customer-display-pro
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
-import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2 } from 'lucide-react';
+import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2 } from 'lucide-react';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -85,6 +85,14 @@ const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 
 function isPaperControlPrinterType(printerType: PrinterTypeValue): boolean {
   return PAPER_CONTROL_PRINTER_TYPES.includes(printerType as typeof PAPER_CONTROL_PRINTER_TYPES[number]);
+}
+
+function printerTypeLabel(t: (key: string) => string, printerType?: string | null): string {
+  const value = String(printerType || '').toUpperCase();
+  if (!value) return 'Printer';
+  const key = `printer.${value}`;
+  const translated = t(key);
+  return translated && translated !== key ? translated : value;
 }
 
 // Default printer config
@@ -358,6 +366,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     charsetUsed?: string;
     cutModeUsed?: string;
   } | null>(null);
+  const [copiedTestError, setCopiedTestError] = useState(false);
   // Live progress — updated as each step streams back from main process
   const [liveSteps, setLiveSteps] = useState<Array<{ step: string; ok: boolean; detail?: string; error?: string }>>([]);
   // Calibrate state
@@ -874,6 +883,61 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     return printers[printerType as keyof typeof printers] || { ...defaultPrinterConfig };
   };
 
+  const formatTestPrintDebugText = (
+    result: NonNullable<typeof testResult>,
+    printerConfig?: Partial<PrinterConfig>,
+  ): string => {
+    const lines = [
+      'Zira AI test print debug',
+      `Time: ${new Date().toISOString()}`,
+      `Printer type: ${result.printerType}`,
+      `Success: ${result.success}`,
+    ];
+
+    if (result.error) lines.push(`Error: ${result.error}`);
+    if (result.modelName) lines.push(`Model: ${result.modelName}`);
+    if (result.charsetUsed) lines.push(`Charset: ${result.charsetUsed}`);
+    if (result.cutModeUsed) lines.push(`Cut mode: ${result.cutModeUsed}`);
+
+    if (printerConfig) {
+      lines.push('', 'Printer config:');
+      lines.push(`  enabled: ${printerConfig.enabled ?? 'unknown'}`);
+      lines.push(`  protocol: ${printerConfig.protocol ?? 'unknown'}`);
+      lines.push(`  port: ${printerConfig.port || 'none'}`);
+      lines.push(`  windowsPrinter: ${printerConfig.windowsPrinter || 'none'}`);
+      lines.push(`  address: ${printerConfig.address || 'none'}`);
+      lines.push(`  baudRate: ${printerConfig.baudRate ?? 'none'}`);
+      lines.push(`  paperWidth: ${printerConfig.paperWidth ?? 'none'}`);
+      lines.push(`  charsPerLine: ${printerConfig.charsPerLine ?? 'none'}`);
+      lines.push(`  charset: ${printerConfig.charset || 'none'}`);
+      lines.push(`  cutMode: ${printerConfig.cutMode || 'none'}`);
+      lines.push(`  serverPrinterId: ${printerConfig.serverPrinterId || 'none'}`);
+    }
+
+    if (result.steps?.length) {
+      lines.push('', 'Steps:');
+      result.steps.forEach((step, idx) => {
+        lines.push(
+          `  ${idx + 1}. ${step.ok ? 'OK' : 'FAIL'} ${step.step}` +
+          `${step.detail ? ` | detail: ${step.detail}` : ''}` +
+          `${step.error ? ` | error: ${step.error}` : ''}` +
+          `${typeof step.durationMs === 'number' ? ` | ${step.durationMs}ms` : ''}`,
+        );
+      });
+    }
+
+    return lines.join('\n');
+  };
+
+  const handleCopyTestPrintError = async (
+    result: NonNullable<typeof testResult>,
+    printerConfig?: Partial<PrinterConfig>,
+  ) => {
+    await navigator.clipboard.writeText(formatTestPrintDebugText(result, printerConfig));
+    setCopiedTestError(true);
+    setTimeout(() => setCopiedTestError(false), 2000);
+  };
+
   const openCustomPrinterForm = (printer?: ServerPrinterMapping) => {
     if (printer) {
       const printerType = ((printer.printerType || 'LABEL').toUpperCase() as PrinterTypeValue);
@@ -1067,6 +1131,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     if (testingPrinter) return;
     setTestingPrinter(printerType);
     setTestResult(null);
+    setCopiedTestError(false);
     setLiveSteps([]);
     // Subscribe to progress stream — main process emits one event per step
     const unsubscribe = window.electronAPI.onTestPrintProgress?.((step: any) => {
@@ -1092,8 +1157,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     } finally {
       setTestingPrinter(null);
       if (typeof unsubscribe === 'function') unsubscribe();
-      // Keep detail visible longer on failure so user can read the steps
-      setTimeout(() => { setTestResult(null); setLiveSteps([]); }, 15000);
+      // Keep failures visible so the cashier can copy the debug details.
+      setTimeout(() => {
+        setTestResult(prev => prev?.success ? null : prev);
+        setLiveSteps([]);
+      }, 15000);
     }
   };
 
@@ -1125,6 +1193,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     if (testingPrinter) return;
     setTestingPrinter('legacy');
     setTestResult(null);
+    setCopiedTestError(false);
     try {
       const result = await window.electronAPI.testPrint();
       setTestResult({ printerType: 'legacy', success: result.success, error: result.error });
@@ -1132,8 +1201,167 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setTestResult({ printerType: 'legacy', success: false, error: error.message });
     } finally {
       setTestingPrinter(null);
-      // Clear result after 5 seconds
-      setTimeout(() => setTestResult(null), 5000);
+      setTimeout(() => setTestResult(prev => prev?.success ? null : prev), 5000);
+    }
+  };
+
+  const refreshPrinterConfigFromStore = async () => {
+    const updatedConfig = await window.electronAPI.getConfig();
+    const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
+    setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
+    setPrinters(updatedConfig?.printers || {});
+    setSelectedPort(updatedConfig?.printerPort || '');
+    setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
+    setBaudRate(updatedConfig?.printerBaudRate || 9600);
+    setZebraPrinter(updatedConfig?.zebraPrinter || '');
+    setLabelWidth(updatedConfig?.labelWidth || 50);
+    setLabelHeight(updatedConfig?.labelHeight || 30);
+    syncedPrinterSignatureRef.current = incomingPrinterSignature;
+    await loadLocalPrinterRows();
+  };
+
+  const deviceText = (dev: DetectedPrinterDevice): string => {
+    return `${dev.brand || ''} ${dev.model || ''} ${dev.windowsPrinterName || ''}`.toLowerCase();
+  };
+
+  const isFiscalDevice = (dev: DetectedPrinterDevice): boolean => {
+    const text = deviceText(dev);
+    return (
+      (dev.brand || '').toUpperCase() === 'ELZAB' ||
+      (dev.brand || '').toUpperCase() === 'POSNET' ||
+      (dev.vid || '').toUpperCase() === 'C1CA' ||
+      (dev.vid || '').toUpperCase() === '1424' ||
+      text.includes('elzab') ||
+      text.includes('zeta online') ||
+      text.includes('posnet')
+    );
+  };
+
+  const isLabelDevice = (dev: DetectedPrinterDevice): boolean => {
+    const text = deviceText(dev);
+    return (
+      (dev.brand || '').toUpperCase() === 'ZEBRA' ||
+      (dev.vid || '').toUpperCase() === '0A5F' ||
+      text.includes('zebra') ||
+      text.includes('zdesigner') ||
+      text.includes('xp-423') ||
+      text.includes('xp423') ||
+      text.includes('labelwriter')
+    );
+  };
+
+  const isReceiptDevice = (dev: DetectedPrinterDevice): boolean => {
+    if (isFiscalDevice(dev) || isLabelDevice(dev)) return false;
+    const text = deviceText(dev);
+    return (
+      text.includes('xprinter') ||
+      text.includes('xp-80') ||
+      text.includes('xp80') ||
+      text.includes('xp-58') ||
+      text.includes('xp58') ||
+      text.includes('receipt') ||
+      text.includes('thermal') ||
+      text.includes('tm-t') ||
+      text.includes('tsp') ||
+      text.includes('srp-') ||
+      text.includes('ct-s') ||
+      dev.connectionType === 'SERIAL'
+    );
+  };
+
+  const pickDevice = (
+    devices: DetectedPrinterDevice[],
+    predicate: (dev: DetectedPrinterDevice) => boolean,
+    preferred?: (dev: DetectedPrinterDevice) => boolean,
+  ): DetectedPrinterDevice | undefined => {
+    const candidates = devices.filter(predicate);
+    if (!candidates.length) return undefined;
+    return candidates.find(dev => preferred?.(dev)) || candidates[0];
+  };
+
+  const handleSmartAssignPrinters = async () => {
+    if (autoSettingUp) return;
+    setAutoSettingUp(true);
+    setAutoSetupResult(null);
+    try {
+      const status = await refreshPrinterDiscovery();
+      const used = new Set<DetectedPrinterDevice>();
+      const assignments: Array<{ slot: PrinterTypeValue; device: DetectedPrinterDevice }> = [];
+      const devices = status.devices || [];
+
+      const fiscal = pickDevice(
+        devices,
+        isFiscalDevice,
+        dev => (dev.brand || '').toUpperCase() === 'ELZAB' || (dev.vid || '').toUpperCase() === 'C1CA',
+      );
+      if (fiscal) {
+        assignments.push({ slot: 'FISCAL', device: fiscal });
+        used.add(fiscal);
+      }
+
+      const receipt = pickDevice(
+        devices.filter(dev => !used.has(dev)),
+        isReceiptDevice,
+        dev => deviceText(dev).includes('xprinter') || deviceText(dev).includes('xp-80'),
+      );
+      if (receipt) {
+        assignments.push({ slot: 'RECEIPT', device: receipt });
+        used.add(receipt);
+      }
+
+      const label = pickDevice(
+        devices.filter(dev => !used.has(dev)),
+        isLabelDevice,
+        dev => (dev.brand || '').toUpperCase() === 'ZEBRA' || (dev.vid || '').toUpperCase() === '0A5F',
+      );
+      if (label) {
+        assignments.push({ slot: 'LABEL', device: label });
+      }
+
+      if (!assignments.length) {
+        setAutoSetupResult({
+          success: false,
+          message: 'No assignable fiscal, receipt, or label printer was detected.',
+        });
+        return;
+      }
+
+      const configured: string[] = [];
+      const failed: string[] = [];
+      for (const { slot, device } of assignments) {
+        const slotLabel = printerTypeLabel(t, slot);
+        if (device.autoSetupEligible === false) {
+          failed.push(`${device.brand} ${device.model} -> ${slotLabel}: manual protocol check required`);
+          continue;
+        }
+        const result = await window.electronAPI.autoSetupPrinter(slot, {
+          ...device,
+          targetType: slot,
+        });
+        if (result.success) {
+          configured.push(`${device.brand} ${device.model} -> ${slotLabel}`);
+        } else {
+          failed.push(`${device.brand} ${device.model} -> ${slotLabel}: ${result.message || 'setup failed'}`);
+        }
+      }
+
+      await refreshPrinterDiscovery();
+      await refreshPrinterConfigFromStore();
+
+      setAutoSetupResult({
+        success: failed.length === 0 && configured.length > 0,
+        message: [
+          configured.length ? `Assigned: ${configured.join(', ')}` : '',
+          failed.length ? `Failed: ${failed.join('; ')}` : '',
+        ].filter(Boolean).join('. '),
+      });
+    } catch (err: any) {
+      setAutoSetupResult({
+        success: false,
+        message: err?.message || 'Smart assign failed',
+      });
+    } finally {
+      setAutoSettingUp(false);
     }
   };
 
@@ -1190,7 +1418,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         // Auto-setup this device
         const result = await window.electronAPI.autoSetupPrinter(targetType, dev);
         if (result.success) {
-          configured.push(`${dev.brand} ${dev.model} → ${targetType}`);
+          configured.push(`${dev.brand} ${dev.model} -> ${printerTypeLabel(t, targetType)}`);
           claimedSlots.add(targetType);
         }
       }
@@ -1586,21 +1814,39 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
             <h2 className="text-sm font-semibold text-slate-700">Printer Detection</h2>
             <p className="text-xs text-slate-500 mt-0.5">Auto-detect and auto-recover all connected printers</p>
           </div>
-          <button
-            onClick={handleCheckPosnetDriver}
-            disabled={posnetChecking}
-            className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-          >
-            {posnetChecking ? (
-              <span className="flex items-center gap-1.5">
-                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSmartAssignPrinters}
+              disabled={autoSettingUp || posnetChecking}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
+              title="Assign connected fiscal, receipt/order, and label printers to the right slots"
+            >
+              {autoSettingUp ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                Scanning...
-              </span>
-            ) : 'Detect Printers'}
-          </button>
+              ) : (
+                <Wand2 className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+              {autoSettingUp ? 'Assigning...' : 'Smart assign'}
+            </button>
+            <button
+              onClick={handleCheckPosnetDriver}
+              disabled={posnetChecking || autoSettingUp}
+              className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+            >
+              {posnetChecking ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Scanning...
+                </span>
+              ) : 'Detect Printers'}
+            </button>
+          </div>
         </div>
 
         {posnetStatus && (
@@ -1688,7 +1934,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   {isAlreadyConfigured ? (
                     <div className="flex items-center justify-between pt-1">
                       <div className="text-green-600 font-medium">
-                        ✓ Configured as {targetType} printer
+                        ✓ Configured as {printerTypeLabel(t, targetType)} printer
                       </div>
                       {/* P6.1: Per-device refresh button — re-runs targeted recovery */}
                       <button
@@ -1755,7 +2001,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
-                              Auto Setup as {targetType}
+                              Auto Setup as {printerTypeLabel(t, targetType)}
                             </>
                           )}
                         </button>
@@ -1911,7 +2157,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         {printerType === 'KITCHEN' && <UtensilsCrossed size={16} />}
                       </span>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-700">{t(`printer.${printerType}`)}</h3>
+                        <h3 className="text-sm font-medium text-slate-700">{printerTypeLabel(t, printerType)}</h3>
                         <p className="text-xs text-slate-500">{t(`printer.${printerType}.desc`)}</p>
                       </div>
                     </div>
@@ -1966,13 +2212,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                           ))}
                           {!currentIsAllowed && (
                             <option value={printerConfig.protocol}>
-                              {t(labelTrKey(printerConfig.protocol))} (invalid for {printerType})
+                              {t(labelTrKey(printerConfig.protocol))} (invalid for {printerTypeLabel(t, printerType)})
                             </option>
                           )}
                         </select>
                         {!currentIsAllowed && (
                           <p className="mt-1 text-xs text-amber-700">
-                            {printerConfig.protocol} is not valid for {printerType}. Allowed: {allowedProtocols.join(', ')}
+                            {printerConfig.protocol} is not valid for {printerTypeLabel(t, printerType)}. Allowed: {allowedProtocols.join(', ')}
                           </p>
                         )}
                       </div>
@@ -2290,12 +2536,20 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               </div>
                             )}
                             {!testResult.success && (
-                              <button
-                                onClick={() => window.electronAPI.openLogFolder?.()}
-                                className="mt-2 px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
-                              >
-                                Open log folder
-                              </button>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  onClick={() => handleCopyTestPrintError(testResult, { ...printerConfig, enabled: true })}
+                                  className="px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
+                                >
+                                  {copiedTestError ? 'Copied' : 'Copy error'}
+                                </button>
+                                <button
+                                  onClick={() => window.electronAPI.openLogFolder?.()}
+                                  className="px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
+                                >
+                                  Open log folder
+                                </button>
+                              </div>
                             )}
                           </div>
                         )}
@@ -2679,7 +2933,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                           >
                             {PRINTER_TYPES.map((printerType) => (
-                              <option key={printerType} value={printerType}>{printerType}</option>
+                              <option key={printerType} value={printerType}>{printerTypeLabel(t, printerType)}</option>
                             ))}
                           </select>
                         </div>
@@ -3044,7 +3298,32 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     ? 'bg-green-50 text-green-700'
                     : 'bg-red-50 text-red-700'
                 }`}>
-                  {testResult.success ? t('test.success') : `${t('test.error')}: ${testResult.error}`}
+                  <div className="font-medium">
+                    {testResult.success ? t('test.success') : `${t('test.error')}: ${testResult.error}`}
+                  </div>
+                  {!testResult.success && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleCopyTestPrintError(testResult, {
+                          enabled: true,
+                          protocol,
+                          port: selectedPort,
+                          baudRate,
+                          windowsPrinter: zebraPrinter,
+                          paperWidth: labelWidth,
+                        })}
+                        className="px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
+                      >
+                        {copiedTestError ? 'Copied' : 'Copy error'}
+                      </button>
+                      <button
+                        onClick={() => window.electronAPI.openLogFolder?.()}
+                        className="px-2 py-1 rounded bg-white/70 text-slate-800 hover:bg-white text-[11px] font-medium"
+                      >
+                        Open log folder
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

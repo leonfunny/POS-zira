@@ -10,7 +10,8 @@ forced into the `FISCAL` slot.
 Current app support is a safe integration boundary only:
 
 - config/routing/status/test seams exist for `ELZAB_STX`
-- the driver fails closed when the official sidecar/DLL or hardware is missing
+- the driver auto-runs the bundled PowerShell sidecar when the official
+  `ElzabDR.dll` is present locally
 - fiscal receipt and report commands require a sidecar built against ELZAB's
   official `elzabdr`/STX API and verified on real hardware
 - no output is sent through the thermal ESC/POS driver and no non-fiscal output
@@ -29,6 +30,30 @@ Relevant ELZAB downloads for fiscal printers online:
 - `Stampa.zip` - Windows service/preflight tool.
 - `om_iprg.zip` - programmer manual.
 - `elzabdr.zip` - 32/64-bit Windows DLL, Linux SO, and sample receipt program.
+
+## Current Zira sidecar
+
+Zira ships a PowerShell sidecar at `resources/elzab/sidecar/elzab-stx-sidecar.ps1`.
+The Electron bridge auto-discovers it in development and in packaged builds. The
+sidecar loads ELZAB's official `ElzabDR.dll` with P/Invoke and supports:
+
+- `check`, `connect`, and `status` by opening the configured COM/IP target,
+  reading device name/status/VAT, then closing the connection
+- `test` as a non-fiscal STX printout
+- `receipt` as a real fiscal receipt only when `ALLOW_REAL_FISCAL_PRINT=true`
+  is set before starting the app
+
+The sidecar searches for `ElzabDR.dll` in:
+
+- `ZIRA_ELZABDR_DLL`
+- `ZIRA_ELZABDR_DIR\ElzabDR.dll`
+- `%APPDATA%\zira-ai\elzab\elzabdr\Windows\x64\ElzabDR.dll` on 64-bit Windows
+- `%APPDATA%\zira-ai\elzab\elzabdr\Windows\x86\ElzabDR.dll` on 32-bit Windows
+
+For development, extracting ELZAB's official `elzabdr.zip` into
+`%APPDATA%\zira-ai\elzab\elzabdr` is enough for auto-discovery. For production,
+install or copy the official SDK files with the deployment and keep
+`ALLOW_REAL_FISCAL_PRINT` off until authorized service is present for go-live.
 
 The manual lists USB-B and RJ45 RS-232 computer interfaces, built-in
 WiFi/Bluetooth, and protocol service choices `ELZAB`, `STX`, and `THERMAL`.
@@ -53,8 +78,9 @@ prefer IP.
    - protocol: `ELZAB_STX`
    - port: the detected `COMx`
    - baudRate: installer/service recommendation, default `9600` until verified
-7. Set `ZIRA_ELZAB_BRIDGE_PATH` to the sidecar executable only after that helper
-   exists and is verified against `elzabdr`.
+7. Extract `elzabdr.zip` under `%APPDATA%\zira-ai\elzab\elzabdr`, or set
+   `ZIRA_ELZABDR_DIR` / `ZIRA_ELZABDR_DLL` to the official SDK DLL location.
+   Zira will then auto-load the bundled PowerShell sidecar.
 
 ## Optional RNDIS/IP path
 
@@ -109,6 +135,8 @@ Do not schedule go-live on assumptions. Fiscal use requires:
 - Stampa connects and reports healthy device status.
 - Authorized service confirms fiscalization and sale readiness.
 - `ZIRA_ELZAB_BRIDGE_PATH` points to the approved sidecar helper.
+  If this is not set, the bundled PowerShell sidecar is used automatically when
+  `ElzabDR.dll` is found.
 - Zira test print returns success only through the sidecar. Missing sidecar,
   missing hardware, wrong protocol, or unsupported report/receipt commands must
   return explicit errors.
