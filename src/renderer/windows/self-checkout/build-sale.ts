@@ -43,7 +43,7 @@ export interface SelfCheckoutOrder {
 export interface SelfCheckoutOrderItem {
   id: string;
   order_id: string;
-  variant_id: string | null;
+  variant_id: string;
   name: string;
   sku: string | null;
   price: number;
@@ -131,7 +131,7 @@ export function buildSelfCheckoutSale({
   const orderItems: SelfCheckoutOrderItem[] = items.map((item) => ({
     id: randomId(),
     order_id: orderId,
-    variant_id: item.isBagFee ? null : item.variantId,
+    variant_id: item.variantId,
     name: item.name,
     sku: item.sku || null,
     price: item.price,
@@ -140,7 +140,7 @@ export function buildSelfCheckoutSale({
     vat_rate: item.vatRate ?? 23,
     staff_id: kioskUserId,
     staff_name: STAFF_NAME,
-    notes: item.isBagFee ? 'SELF_CHECKOUT_BAG_FEE' : null,
+    notes: null,
     course: null,
   }));
 

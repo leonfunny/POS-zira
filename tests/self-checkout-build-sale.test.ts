@@ -45,7 +45,7 @@ describe('calculateIncludedTax', () => {
     expect(calculateIncludedTax([makeItem({ price: 525, quantity: 1, vatRate: 5 })])).toBe(25);
   });
 
-  it('skips items with vatRate 0 or undefined (bag fee)', () => {
+  it('skips items with vatRate 0 or undefined', () => {
     const items = [
       makeItem({ price: 1000, vatRate: 0 }),
       makeItem({ price: 1000, vatRate: undefined }),
@@ -144,34 +144,6 @@ describe('buildSelfCheckoutSale — items shape', () => {
     });
   });
 
-  it('serializes the bag-fee line with variant_id=null and BAG_FEE note', () => {
-    const sale = buildSelfCheckoutSale({
-      items: [
-        makeItem({ variantId: 'real', price: 1230 }),
-        makeItem({
-          variantId: '__bag-fee__',
-          isBagFee: true,
-          name: 'Torba foliowa',
-          sku: 'BAG',
-          price: 20,
-          quantity: 2,
-          vatRate: undefined,
-        }),
-      ],
-      orderId: 'order-bag',
-      method: 'CARD',
-      kioskUserId: null,
-      now: FIXED_NOW,
-      randomId: seqId,
-    });
-
-    const bagLine = sale.items.find((i) => i.name === 'Torba foliowa');
-    expect(bagLine).toBeDefined();
-    expect(bagLine!.variant_id).toBeNull();
-    expect(bagLine!.notes).toBe('SELF_CHECKOUT_BAG_FEE');
-    expect(bagLine!.vat_rate).toBe(23); // fallback when vatRate undefined
-  });
-
   it('uses null sku when cart line has an empty sku string', () => {
     const sale = buildSelfCheckoutSale({
       items: [makeItem({ sku: '' })],
@@ -199,7 +171,7 @@ describe('buildSelfCheckoutSale — items shape', () => {
 });
 
 describe('buildSelfCheckoutSale — invariants the main handler depends on', () => {
-  it('every non-bag item carries a truthy variant_id for the stock decrement loop', () => {
+  it('every item carries a truthy variant_id for the stock decrement loop', () => {
     const sale = buildSelfCheckoutSale({
       items: [
         makeItem({ variantId: 'v-a' }),
@@ -214,7 +186,7 @@ describe('buildSelfCheckoutSale — invariants the main handler depends on', () 
 
     for (const item of sale.items) {
       // `pos:orders:create` calls productRepo.decrementStock(item.variant_id, item.quantity)
-      // only when variant_id is truthy. Non-bag items MUST have a real variant_id.
+      // only when variant_id is truthy. Kiosk cart lines MUST have a real variant_id.
       expect(item.variant_id).toBeTruthy();
       expect(item.quantity).toBeGreaterThan(0);
     }

@@ -15,7 +15,6 @@ import {
   Plus,
   ScanBarcode,
   Search,
-  ShoppingBag,
   ShoppingBasket,
   ShoppingCart,
   Trash2,
@@ -23,7 +22,7 @@ import {
 } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
-import { MAX_BAG_QUANTITY, ScCartItem, formatPLN } from '../useScCart';
+import { ScCartItem, formatPLN } from '../useScCart';
 import { resolveName } from '../../../../shared/catalog-names';
 
 // Short WebAudio confirmation beep on scan success (~80ms square wave @ 1kHz).
@@ -69,9 +68,6 @@ interface ScanScreenProps {
   onIncrement: (variantId: string) => void;
   onDecrement: (variantId: string) => void;
   onRemove: (variantId: string) => void;
-  bagFeeGrosze: number;
-  bagQuantity: number;
-  onBagQuantityChange: (quantity: number) => void;
   onCheckout: () => void;
   onCallStaff: () => void;
   onAbandon: () => void;
@@ -201,9 +197,6 @@ export default function ScanScreen({
   onIncrement,
   onDecrement,
   onRemove,
-  bagFeeGrosze,
-  bagQuantity,
-  onBagQuantityChange,
   onCheckout,
   onCallStaff,
   onAbandon,
@@ -482,7 +475,7 @@ export default function ScanScreen({
     };
   }, [handleScannedCode]);
 
-  const productCount = cartItems.reduce((sum, item) => sum + (item.isBagFee ? 0 : item.quantity), 0);
+  const productCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
@@ -746,15 +739,11 @@ export default function ScanScreen({
                   const isLastOne = item.quantity === 1;
                   return (
                     <li
-                      key={item.variantId + (item.isBagFee ? '-bag' : '')}
+                      key={item.variantId}
                       className={`sc-cart-item px-4 py-3 ${isFresh ? 'sc-cart-item-fresh bg-emerald-50/60' : ''}`}
                     >
                       <div className="flex items-start gap-3">
-                        {item.isBagFee ? (
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[var(--sc-surface-muted)] text-[var(--sc-primary-deep)]">
-                            <ShoppingBag size={26} />
-                          </div>
-                        ) : item.imageUrl ? (
+                        {item.imageUrl ? (
                           <img
                             src={item.imageUrl}
                             alt=""
@@ -822,44 +811,6 @@ export default function ScanScreen({
           </div>
 
           <div className="sc-cart-footer border-t border-[var(--sc-border)] bg-white p-4">
-            <div className="sc-bag-control mb-3 grid grid-cols-[minmax(0,1fr)_178px] items-center gap-3 rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--sc-primary-deep)]">
-                  <ShoppingBag size={26} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-base font-black leading-tight text-[var(--sc-ink)]">
-                    {t.bagQuestion}
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-[var(--sc-muted)]">
-                    {formatPLN(bagFeeGrosze)} / {t.bagUnit}
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onBagQuantityChange(bagQuantity - 1)}
-                  disabled={bagQuantity <= 0}
-                  className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
-                  aria-label="-"
-                >
-                  <Minus size={24} />
-                </button>
-                <div className="sc-tabular flex h-11 items-center justify-center rounded-xl bg-white px-3 text-2xl font-black text-[var(--sc-ink)]">
-                  {bagQuantity}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onBagQuantityChange(bagQuantity + 1)}
-                  disabled={bagQuantity >= MAX_BAG_QUANTITY}
-                  className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] disabled:cursor-not-allowed disabled:opacity-35"
-                  aria-label="+"
-                >
-                  <Plus size={24} />
-                </button>
-              </div>
-            </div>
             <div className="mb-3 flex items-end justify-between gap-4">
               <span className="text-lg font-black uppercase tracking-wide text-[var(--sc-muted)]">
                 {t.total}

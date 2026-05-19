@@ -54,10 +54,6 @@ interface ScStrings {
   abandonConfirmTitle: string;
   abandonConfirmBody: string;
   abandonConfirm: string;
-  // Bag fee
-  bagQuestion: string;
-  bagUnit: string;
-  bagFeeProductionBlocked: string;
   // Receipt
   receiptTitle: string;
   receiptDemoBody: string;
@@ -171,9 +167,6 @@ const PL: ScStrings = {
   abandonConfirmTitle: 'Porzucić zakupy?',
   abandonConfirmBody: 'Cały koszyk zostanie usunięty.',
   abandonConfirm: 'Tak, porzuć',
-  bagQuestion: 'Torby foliowe',
-  bagUnit: 'szt.',
-  bagFeeProductionBlocked: 'Opłata za torbę wymaga produktu z backendu przed sprzedażą produkcyjną.',
   receiptTitle: 'Finalizacja sprzedaży',
   receiptDemoBody: 'Demo: płatność, zamówienie i wydruk fiskalny są pominięte.',
   receiptProductionBlocked: 'Sprzedaż produkcyjna wymaga realnej płatności, zamówienia i drukarki fiskalnej.',
@@ -278,9 +271,6 @@ const EN: ScStrings = {
   abandonConfirmTitle: 'Abandon shopping?',
   abandonConfirmBody: 'The entire cart will be cleared.',
   abandonConfirm: 'Yes, abandon',
-  bagQuestion: 'Plastic bags',
-  bagUnit: 'each',
-  bagFeeProductionBlocked: 'Bag fee needs a real backend product before production checkout.',
   receiptTitle: 'Finalizing sale',
   receiptDemoBody: 'Demo: payment, order creation, and fiscal print are skipped.',
   receiptProductionBlocked: 'Production sale requires real payment, order creation, and fiscal printer integration.',
@@ -385,9 +375,6 @@ const VI: ScStrings = {
   abandonConfirmTitle: 'Hủy giao dịch?',
   abandonConfirmBody: 'Toàn bộ giỏ hàng sẽ bị xóa.',
   abandonConfirm: 'Có, hủy',
-  bagQuestion: 'Túi nhựa',
-  bagUnit: 'cái',
-  bagFeeProductionBlocked: 'Phí túi cần có sản phẩm thật trên backend trước khi bán production.',
   receiptTitle: 'Hoàn tất giao dịch',
   receiptDemoBody: 'Demo: thanh toán, tạo đơn và in fiskal được bỏ qua.',
   receiptProductionBlocked: 'Giao dịch thật cần tích hợp thanh toán, tạo đơn và máy in fiskal.',

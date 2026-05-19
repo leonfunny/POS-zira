@@ -3,7 +3,7 @@
  *
  * Source requirements: docs/SELF_CHECKOUT_DESIGN_BRIEF.md.
  * This checks the customer flow, not implementation internals:
- * welcome -> scanner-start shopping -> cart/bag quantity -> payment modal
+ * welcome -> scanner-start shopping -> cart/product quantity -> payment modal
  * -> assisted BLIK/card -> receipt -> thank-you/reset, plus abandon,
  * staff lock, empty-cart pay disabled, and production welcome language switching.
  */
@@ -106,7 +106,6 @@ async function createPage(browser, options = {}) {
     config: {
       selfCheckoutLanguage: options.lang || 'en',
       selfCheckoutMode: options.mode || 'demo',
-      selfCheckoutBagFeeAmount: 0.2,
       selfCheckoutIdleTimeoutMs: 90000,
     },
   });
@@ -274,10 +273,9 @@ async function runPrimaryBLIKFlow(browser) {
   await assertNoOverflow(page, 'shopping with item');
 
   await page.getByLabel('+').last().click();
-  await page.getByLabel('+').last().click();
-  await page.waitForSelector('text=7,40 zł');
+  await page.waitForSelector('text=14,00 zł');
   await page.getByLabel('-').last().click();
-  await page.waitForSelector('text=7,20 zł');
+  await page.waitForSelector('text=7,00 zł');
 
   await page.getByRole('button', { name: /^pay$/i }).click();
   await page.waitForSelector('[role="dialog"]');
@@ -400,7 +398,7 @@ async function main() {
       'welcome/shopping language availability',
       'scanner starts shopping and adds product',
       'empty cart payment disabled',
-      'bag quantity changes total',
+      'product quantity changes total',
       'payment modal has no visible BLIK/card input',
       'cancel payment returns to cart',
       'BLIK and card assisted-payment demo paths reach receipt',

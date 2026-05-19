@@ -92,7 +92,6 @@ export default function SelfCheckoutApp() {
   const [lang, setLang] = useState<ScLanguage>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
-  const [bagFeeGrosze, setBagFeeGrosze] = useState<number>(20);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
   const [lastReceiptPrinted, setLastReceiptPrinted] = useState(true);
@@ -120,8 +119,6 @@ export default function SelfCheckoutApp() {
   const helpPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const cart = useScCart();
-  const bagItem = cart.cart.items.find((item) => item.isBagFee);
-  const bagQuantity = bagItem?.quantity ?? 0;
   const t = getScStrings(lang);
 
   const handleLangChange = useCallback((next: ScLanguage) => {
@@ -193,11 +190,6 @@ export default function SelfCheckoutApp() {
         const savedLang = config?.selfCheckoutLanguage as ScLanguage | undefined;
         if (savedLang === 'pl' || savedLang === 'en' || savedLang === 'vi') {
           setLang(savedLang);
-        }
-
-        const fee = Number(config?.selfCheckoutBagFeeAmount);
-        if (Number.isFinite(fee) && fee >= 0) {
-          setBagFeeGrosze(Math.round(fee * 100));
         }
 
         const timeout = Number(config?.selfCheckoutIdleTimeoutMs);
@@ -329,7 +321,7 @@ export default function SelfCheckoutApp() {
       const displayName = resolveName(product, lang);
       const stock = getProductStock(product);
       const existing = cart.cart.items.find(
-        (i) => i.variantId === product.id && !i.isBagFee,
+        (i) => i.variantId === product.id,
       );
       const alreadyInCart = existing?.quantity ?? 0;
       if (typeof stock === 'number' && stock <= 0) {
@@ -523,9 +515,6 @@ export default function SelfCheckoutApp() {
       if (cart.cart.items.length === 0 || cart.cart.totalGrosze <= 0) {
         fail(t.emptyCart);
       }
-      if (cart.cart.items.some((item) => item.isBagFee)) {
-        fail(t.bagFeeProductionBlocked);
-      }
 
       const orderId = crypto.randomUUID();
 
@@ -637,11 +626,7 @@ export default function SelfCheckoutApp() {
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
             if (!item) return;
-            if (
-              !item.isBagFee
-              && typeof item.stockAtAdd === 'number'
-              && item.quantity + 1 > item.stockAtAdd
-            ) {
+            if (typeof item.stockAtAdd === 'number' && item.quantity + 1 > item.stockAtAdd) {
               showToast(
                 'error',
                 formatScMessage(t.productInsufficientStock, {
@@ -658,9 +643,6 @@ export default function SelfCheckoutApp() {
             if (item) cart.setQuantity(id, item.quantity - 1);
           }}
           onRemove={(id) => cart.remove(id)}
-          bagFeeGrosze={bagFeeGrosze}
-          bagQuantity={bagQuantity}
-          onBagQuantityChange={(quantity) => cart.setBagQuantity(quantity, bagFeeGrosze)}
           onCheckout={() => setPaymentOpen(true)}
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}

@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Coins,
   Languages,
   Maximize,
   Monitor,
@@ -49,7 +48,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [fakePayment, setFakePayment] = useState(false);
-  const [bagFee, setBagFee] = useState<number>(0.20);
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
@@ -62,7 +60,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     setKioskLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
     setFakePayment(Boolean(c.selfCheckoutFakePaymentEnabled));
-    setBagFee(typeof c.selfCheckoutBagFeeAmount === 'number' ? c.selfCheckoutBagFeeAmount : 0.20);
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
   }, [config]);
@@ -106,7 +103,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
         selfCheckoutMode: mode,
         selfCheckoutFakePaymentEnabled: fakePayment,
         selfCheckoutLanguage: kioskLanguage,
-        selfCheckoutBagFeeAmount: bagFee,
         selfCheckoutMonitor: monitor,
         selfCheckoutIdleTimeoutMs: idleTimeoutMs,
       });
@@ -337,25 +333,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
                 className="h-5 w-5 accent-[var(--primary)]"
               />
             </div>
-          </SettingField>
-
-          <SettingField
-            icon={<Coins size={17} />}
-            label={t('selfCheckout.bagFee')}
-            help={t('selfCheckout.bagFeeHelp')}
-          >
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={bagFee}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value) || 0;
-                setBagFee(v);
-                persist({ selfCheckoutBagFeeAmount: v });
-              }}
-              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
-            />
           </SettingField>
 
           <SettingField

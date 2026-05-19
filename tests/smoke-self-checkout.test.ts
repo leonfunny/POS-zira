@@ -3,10 +3,10 @@
 // Run: `npm run smoke:self-checkout`
 //
 // What this verifies (without a real kiosk, scanner, or printer):
-//   1. Scanning 2 products + 1 bag fee assembles the cart correctly
+//   1. Scanning 2 products assembles the cart correctly
 //   2. Stock is tracked per cart item (defends bug #1: cumulative cart qty)
 //   3. The order payload sent to `pos:orders:create` matches the shape the
-//      main handler expects, and every non-bag item carries a variant_id
+//      main handler expects, and every item carries a variant_id
 //      so the decrementStock loop will fire
 //   4. The TTS announcement sequence for the cart total is non-empty and
 //      starts with a method prefix clip
@@ -171,16 +171,7 @@ describe('Self-checkout kiosk smoke', () => {
     expect(milkLine?.quantity).toBe(2);
     pass('Stock check correctly capped milk at 2 (cumulative cart-aware guard)');
 
-    // ── 4. Add bag fee ───────────────────────────────────────────────────
-    step('Customer requests 1 plastic bag (bag-fee line)');
-    cart.push({
-      variantId: '__bag-fee__', name: 'Torba foliowa', sku: 'BAG',
-      price: 20, quantity: 1, isBagFee: true,
-    });
-    log('cart lines', cart.length);
-    pass('Bag fee added as separate cart line (isBagFee=true)');
-
-    // ── 5. Pay button reachable → build sale payload ─────────────────────
+    // ── 4. Pay button reachable → build sale payload ─────────────────────
     step('Customer taps Pay → CARD → "Money received"');
     const orderId = 'order-smoke-001';
     const sale = buildSelfCheckoutSale({
@@ -198,25 +189,20 @@ describe('Self-checkout kiosk smoke', () => {
     expect(sale.order.source).toBe('SELF_CHECKOUT');
     expect(sale.order.status).toBe('COMPLETED');
     expect(sale.order.payment_method).toBe('CARD');
-    expect(sale.order.total).toBe(350 + 540 * 2 + 20);
+    expect(sale.order.total).toBe(350 + 540 * 2);
     expect(sale.order.tax).toBe(calculateIncludedTax(cart));
-    expect(sale.items).toHaveLength(3);
+    expect(sale.items).toHaveLength(2);
     pass('Order payload shape matches pos:orders:create contract');
 
-    // ── 6. variant_id integrity (so decrementStock fires) ───────────────
-    step('Verify every non-bag item has variant_id (stock decrement requirement)');
+    // ── 5. variant_id integrity (so decrementStock fires) ───────────────
+    step('Verify every item has variant_id (stock decrement requirement)');
     for (const item of sale.items) {
-      const role = item.notes === 'SELF_CHECKOUT_BAG_FEE' ? 'BAG' : 'PRODUCT';
-      log(`${item.name}`, `variant_id=${item.variant_id ?? 'null'} qty=${item.quantity} (${role})`);
-      if (item.notes === 'SELF_CHECKOUT_BAG_FEE') {
-        expect(item.variant_id).toBeNull();
-      } else {
-        expect(item.variant_id).toBeTruthy();
-      }
+      log(`${item.name}`, `variant_id=${item.variant_id} qty=${item.quantity}`);
+      expect(item.variant_id).toBeTruthy();
     }
-    pass('Bag line has variant_id=null; product lines have real variant_id');
+    pass('All kiosk cart lines have real variant_id');
 
-    // ── 7. TTS sequence for total ────────────────────────────────────────
+    // ── 6. TTS sequence for total ────────────────────────────────────────
     step('Build Polish announcement for total');
     const sequence = buildAnnouncementSequence({
       method: 'CARD', totalGrosze: sale.order.total,
@@ -230,7 +216,7 @@ describe('Self-checkout kiosk smoke', () => {
     })[0]).toBe('prefix_blik.mp3');
     pass('TTS announcement clips would play in correct order');
 
-    // ── 8. Fire pos:orders:create + verify stock decrements ─────────────
+    // ── 7. Fire pos:orders:create + verify stock decrements ─────────────
     step('Submit order to pos:orders:create');
     const beforeStock = {
       bread: ipc.products.get('v-bread')!.in_stock,
@@ -255,11 +241,9 @@ describe('Self-checkout kiosk smoke', () => {
     expect(afterStock.bread).toBe(beforeStock.bread - 1);
     expect(afterStock.milk).toBe(beforeStock.milk - 2);
     expect(afterStock.cheese).toBe(beforeStock.cheese); // never scanned
-    // Bag fee should NOT trigger a stock decrement.
-    expect(ipc.stockDecrements.find((d) => d.variantId === '__bag-fee__')).toBeUndefined();
-    pass('Stock decremented exactly for scanned products (bag fee skipped)');
+    pass('Stock decremented exactly for scanned products');
 
-    // ── 9. Fire print + sync ─────────────────────────────────────────────
+    // ── 8. Fire print + sync ─────────────────────────────────────────────
     step('Trigger receipt print + sync');
     const printResult = ipc.printReceipt(orderId);
     ipc.syncOrders();
@@ -270,7 +254,7 @@ describe('Self-checkout kiosk smoke', () => {
     expect(ipc.receiptsPrinted).toContain(orderId);
     pass('Receipt printed + sync fired');
 
-    // ── 10. Final summary ────────────────────────────────────────────────
+    // ── 9. Final summary ────────────────────────────────────────────────
     step('Summary');
     log('orders saved', ipc.ordersCreated.length);
     log('lines stocked', ipc.stockDecrements.length);

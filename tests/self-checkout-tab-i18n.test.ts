@@ -24,7 +24,6 @@ const REQUIRED_KEYS = [
   'selfCheckout.fakePayment',
   'selfCheckout.fakePaymentHelp',
   'selfCheckout.defaultLanguage',
-  'selfCheckout.bagFee',
   'selfCheckout.displayMonitor',
   'selfCheckout.idleTimeout',
   'selfCheckout.blocker.paymentTerminal',

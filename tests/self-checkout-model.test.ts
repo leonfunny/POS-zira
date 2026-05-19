@@ -82,14 +82,20 @@ describe('self-checkout runtime model', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:close')");
   });
 
-  it('models bag fee as a local quantity instead of a single yes/no toggle', () => {
+  it('keeps free bags out of self-checkout pricing and order payloads', () => {
     const cartSource = readSource('src/renderer/windows/self-checkout/useScCart.ts');
     const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const saleSource = readSource('src/renderer/windows/self-checkout/build-sale.ts');
+    const settingsSource = readSource('src/renderer/components/SelfCheckoutTab.tsx');
 
-    expect(cartSource).toContain('setBagQuantity');
-    expect(cartSource).toContain('MAX_BAG_QUANTITY');
+    expect(cartSource).not.toContain('setBagQuantity');
     expect(cartSource).not.toContain('setBagFee');
-    expect(scanSource).toContain('bagQuantity');
-    expect(scanSource).toContain('t.bagUnit');
+    expect(scanSource).not.toContain('bagQuantity');
+    expect(scanSource).not.toContain('bagQuestion');
+    expect(appSource).not.toContain('selfCheckoutBagFeeAmount');
+    expect(appSource).not.toContain('bagFeeProductionBlocked');
+    expect(saleSource).not.toContain('SELF_CHECKOUT_BAG_FEE');
+    expect(settingsSource).not.toContain('selfCheckout.bagFee');
   });
 });

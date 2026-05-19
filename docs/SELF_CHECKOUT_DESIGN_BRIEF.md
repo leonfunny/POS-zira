@@ -101,7 +101,7 @@ Recommended palette:
 | `--sc-primary-soft` | `#FBE8DF` | Subtle brand background, never as full-page wash. |
 | `--sc-success` | `#15803D` | Open, paid, ready, item added. |
 | `--sc-info` | `#2563EB` | Scanner/terminal guidance, not primary CTA. |
-| `--sc-warning` | `#B7791F` | Demo mode, bag quantity, retry warnings. |
+| `--sc-warning` | `#B7791F` | Demo mode and retry warnings. |
 | `--sc-danger` | `#B42318` | Closed, error, staff lock, payment failure. |
 
 Rules:
@@ -146,7 +146,7 @@ Purpose:
 - show kiosk readiness
 - choose demo vs production
 - choose customer display monitor
-- set default language, bag fee, idle timeout
+- set default language and idle timeout
 - launch kiosk window
 - explain blockers in plain operational language
 
@@ -161,7 +161,7 @@ Layout:
 - top row: title, mode badge, last readiness state
 - readiness band: demo available, production blocked, hardware missing
 - launch panel: one primary launch action
-- settings grid: language, bag fee, display, timeout
+- settings grid: language, display, timeout
 - dependency panel: payment terminal, fiscal printer, order creation
 
 This tab should not look like the customer kiosk.
@@ -175,7 +175,6 @@ Purpose:
 - scan products
 - recover via category buttons if scanning fails
 - review basket
-- adjust bag quantity
 - pay
 - show fiscal/receipt progress
 - thank the customer and reset
@@ -209,7 +208,6 @@ The customer kiosk should keep this high-level state model:
    - Main scan/cart state.
    - Left/center: scan prompt and category fallback.
    - Right: cart list and running total.
-   - Bag quantity is adjusted inline in the cart panel.
    - Primary CTA: open the payment modal.
 
 4. `paymentModal`
@@ -282,7 +280,6 @@ Recommended structure:
 - main scan zone: large barcode icon/scan instruction/latest scanned item
 - category fallback row/grid below scan zone
 - cart panel on the right
-- inline bag quantity control in the cart panel
 - sticky total + pay CTA at bottom-right
 
 Suggested desktop kiosk grid:
@@ -296,17 +293,15 @@ The cart should not be a tiny POS table. It needs:
 - quantity controls
 - obvious remove affordance
 - price aligned with tabular numbers
-- bag quantity stepper capped for kiosk sanity
 
-### Cart And Bags
+### Cart Review
 
 Recommended structure:
 - cart review stays on the shopping screen
-- bag quantity is a small stepper near the total
 - language remains visible in the top bar
 - action: pay opens the payment modal immediately
 
-Do not bury the bag option in a separate mandatory step. It is a cart option, not a full screen.
+Bags are free at Chesaigon and are not part of kiosk cart pricing or quantity tracking.
 
 ### Payment Modal
 
@@ -433,7 +428,7 @@ Use:
 - PL, EN, and VI visible on every customer state.
 - Card and BLIK as separate choices in demo mode; both hand off to the terminal.
 - NIP/faktura is staff-only for V1; do not ask self-checkout customers for NIP.
-- Bag fee as a local inline cart quantity, not a separate screen.
+- Bags are free at Chesaigon; do not add a priced bag cart path.
 - No cash in self-checkout V1.
 - Production mode fail-closed until payment, fiscal, and order creation are real.
 
@@ -446,7 +441,7 @@ Decisions from the 2026-05-12 redesign pass:
 1. Languages: PL, EN, VI.
 2. Payment methods: separate card and BLIK choices, no cash.
 3. Payment input: handled by the physical terminal, not by kiosk on-screen forms.
-4. Bag fee: local-only for now, exposed as quantity in the cart.
+4. Bags: free at Chesaigon, outside kiosk pricing.
 5. Pay action: opens immediately from shopping/cart, without a mandatory summary screen.
 6. Welcome ads: possible later, but not part of the checkout flow until the core flow is stable.
 

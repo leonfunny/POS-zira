@@ -15,11 +15,9 @@ export interface ScCartItem {
   quantity: number;
   vatRate?: number;
   imageUrl?: string;
-  /** True when added by the local bag-quantity control (UI shows it inline). */
-  isBagFee?: boolean;
   /** Stock snapshot at add time. Used to block the +/scan path from over-ordering
    *  beyond what the catalog reported. `undefined` means stock is not tracked
-   *  for this variant (e.g. bag fee) and quantity is unconstrained. */
+   *  for this variant and quantity is unconstrained. */
   stockAtAdd?: number;
   /** Display-only translations carried alongside canonical `name`.
    *  Cart row renders via `resolveName`; receipts always use canonical `name`. */
@@ -33,7 +31,12 @@ export interface ScCart {
 
 const EMPTY: ScCart = { items: [], totalGrosze: 0 };
 const STORAGE_KEY = 'self-checkout:cart';
-export const MAX_BAG_QUANTITY = 9;
+
+function isLegacyBagFeeItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const candidate = item as Partial<ScCartItem>;
+  return candidate.variantId === '__bag-fee__';
+}
 
 function recalc(items: ScCartItem[]): ScCart {
   const totalGrosze = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
@@ -50,7 +53,8 @@ export function useScCart() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as ScCart;
       if (Array.isArray(parsed?.items) && parsed.items.length > 0) {
-        setCart(recalc(parsed.items));
+        const items = parsed.items.filter((item) => !isLegacyBagFeeItem(item));
+        if (items.length > 0) setCart(recalc(items));
       }
     } catch {
       /* ignore corrupt cache */
@@ -69,45 +73,18 @@ export function useScCart() {
   const add = useCallback((item: Omit<ScCartItem, 'quantity'>, quantity = 1) => {
     const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
     setCart((prev) => {
-      const idx = prev.items.findIndex((i) =>
-        item.isBagFee
-          ? i.variantId === item.variantId && i.isBagFee
-          : i.variantId === item.variantId && !i.isBagFee,
-      );
+      const idx = prev.items.findIndex((i) => i.variantId === item.variantId);
       const items = [...prev.items];
       if (idx >= 0) {
-        items[idx] = item.isBagFee
-          ? { ...items[idx], ...item, quantity: Math.min(MAX_BAG_QUANTITY, safeQuantity) }
-          : {
-              ...items[idx],
-              quantity: items[idx].quantity + safeQuantity,
-              stockAtAdd: item.stockAtAdd ?? items[idx].stockAtAdd,
-            };
+        items[idx] = {
+          ...items[idx],
+          quantity: items[idx].quantity + safeQuantity,
+          stockAtAdd: item.stockAtAdd ?? items[idx].stockAtAdd,
+        };
       } else {
         items.push({
           ...item,
-          quantity: item.isBagFee ? Math.min(MAX_BAG_QUANTITY, safeQuantity) : safeQuantity,
-        });
-      }
-      return recalc(items);
-    });
-  }, []);
-
-  const setBagQuantity = useCallback((quantity: number, price: number) => {
-    const safeQuantity = Math.min(
-      MAX_BAG_QUANTITY,
-      Math.max(0, Math.floor(Number(quantity) || 0)),
-    );
-    setCart((prev) => {
-      const items = prev.items.filter((i) => !i.isBagFee);
-      if (safeQuantity > 0 && price > 0) {
-        items.push({
-          variantId: '__bag-fee__',
-          name: 'Torba foliowa',
-          sku: 'BAG',
-          price,
           quantity: safeQuantity,
-          isBagFee: true,
         });
       }
       return recalc(items);
@@ -120,9 +97,7 @@ export function useScCart() {
         i.variantId === variantId
           ? {
               ...i,
-              quantity: i.isBagFee
-                ? Math.min(MAX_BAG_QUANTITY, Math.max(0, quantity))
-                : Math.max(0, quantity),
+              quantity: Math.max(0, quantity),
             }
           : i,
       );
@@ -147,7 +122,7 @@ export function useScCart() {
     }
   }, []);
 
-  return { cart, add, setQuantity, remove, setBagQuantity, clear };
+  return { cart, add, setQuantity, remove, clear };
 }
 
 export function formatPLN(grosze: number): string {

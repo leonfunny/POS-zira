@@ -444,7 +444,6 @@ export interface AgentConfig {
   selfCheckoutKioskUserId?: string;      // Dedicated staff user for kiosk sales
   selfCheckoutMode?: 'demo' | 'production'; // Demo allows mocked terminal/fiscal flow; production must pass readiness gates.
   selfCheckoutFakePaymentEnabled?: boolean; // Test only: bypass terminal but still create/sync/print production checkout.
-  selfCheckoutBagFeeAmount?: number;     // Bag fee in PLN (default 0.20)
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
 

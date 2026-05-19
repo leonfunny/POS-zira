@@ -568,23 +568,6 @@ body.self-checkout-root {
     padding: 0.5rem 0.75rem;
   }
 
-  .sc-bag-control {
-    grid-template-columns: minmax(0, 1fr) 160px;
-    gap: 0.5rem;
-    margin-bottom: 0.375rem;
-    padding: 0.375rem;
-  }
-
-  .sc-bag-control button,
-  .sc-bag-control .sc-tabular {
-    height: 2.25rem;
-  }
-
-  .sc-bag-control [class~="h-10"] {
-    width: 2.25rem;
-    height: 2.25rem;
-  }
-
   .sc-cart-footer [class~="mb-3"] {
     margin-bottom: 0.375rem;
   }
