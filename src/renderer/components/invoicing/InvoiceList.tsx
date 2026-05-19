@@ -41,9 +41,17 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
         limit: 50,
       };
       const result = await window.electronAPI.invoice.list(filter);
-      setInvoices(result);
+      if (!result.success) {
+        setInvoices([]);
+        setError(result.error || 'Failed to load invoices');
+        return;
+      }
+      setInvoices(result.data ?? []);
+      setError(null);
     } catch (err) {
       rlog.error('Failed to load invoices:', err);
+      setInvoices([]);
+      setError(err instanceof Error ? err.message : 'Failed to load invoices');
     } finally {
       setLoading(false);
     }

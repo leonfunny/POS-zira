@@ -74,8 +74,11 @@ export default function InvoiceForm({
 
   const loadInvoice = async () => {
     try {
-      const invoice = await window.electronAPI.invoice.get(invoiceId!);
-      if (!invoice) throw new Error('Invoice not found');
+      const result = await window.electronAPI.invoice.get(invoiceId!);
+      if (!result.success || !result.data?.invoice) {
+        throw new Error(result.error || 'Invoice not found');
+      }
+      const { invoice, items: loadedItems } = result.data;
 
       setType(invoice.type as InvoiceType);
       setCustomerName(invoice.customer_name);
@@ -86,8 +89,6 @@ export default function InvoiceForm({
       setDueDate(invoice.due_date || '');
       setPaymentMethod(invoice.payment_method as InvoicePaymentMethod);
       setNotes(invoice.notes || '');
-      // Items are loaded separately or embedded in the row; populate from invoice if available
-      const loadedItems = (invoice as any).items as InvoiceItemRow[] | undefined;
       if (loadedItems) {
         setItems(loadedItems.map((item: InvoiceItemRow) => ({
           id: item.id,

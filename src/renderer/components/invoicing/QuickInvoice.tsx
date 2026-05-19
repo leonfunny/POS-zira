@@ -102,7 +102,10 @@ export default function QuickInvoice({ sellerSettings, language }: QuickInvoiceP
         throw new Error(result.error || 'Failed to create invoice');
       }
 
-      const createdInvoice = result.data;
+      const createdInvoice = result.data.invoice;
+      if (!createdInvoice?.id) {
+        throw new Error('Invoice was created but no invoice id was returned');
+      }
 
       const issueResult = await window.electronAPI.invoice.issue(createdInvoice.id);
       if (!issueResult.success) {
@@ -128,8 +131,8 @@ export default function QuickInvoice({ sellerSettings, language }: QuickInvoiceP
         await window.electronAPI.invoice.markPaid(createdInvoice.id);
       }
 
-      setSuccess(`${t('invoice.created')}: ${createdInvoice.invoice_number}`);
       resetForm();
+      setSuccess(`${t('invoice.created')}: ${createdInvoice.invoice_number}`);
     } catch (err: any) {
       setError(err.message);
     } finally {

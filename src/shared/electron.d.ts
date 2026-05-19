@@ -53,12 +53,14 @@ import type {
   UpdateStatus,
   InvoiceRow,
   InvoiceItemRow,
+  InvoiceData,
   InvoiceCreateDTO,
   InvoiceListFilter,
   InvoiceType,
   InvoiceCustomerRow,
   InvoiceCustomerCreateDTO,
   AccountingProductCreateDTO,
+  SellerSettingsRow,
   SellerSettingsUpdateDTO,
   SecurityConfig,
   SecurityStatus,
@@ -107,6 +109,12 @@ interface PosDailyStats {
   total_sales: number;
   cash_total: number;
   card_total: number;
+}
+
+interface IpcResult<T = void> {
+  success: boolean;
+  data?: T;
+  error?: string;
 }
 
 interface PosOrderRow {
@@ -484,43 +492,43 @@ interface ElectronAPI {
 
   // Invoicing
   invoice: {
-    list: (filter?: InvoiceListFilter) => Promise<InvoiceRow[]>;
-    get: (id: string) => Promise<InvoiceRow | null>;
-    create: (data: InvoiceCreateDTO) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
-    update: (id: string, data: Partial<InvoiceCreateDTO>) => Promise<{ success: boolean; error?: string }>;
-    delete: (id: string) => Promise<{ success: boolean; error?: string }>;
-    issue: (id: string) => Promise<{ success: boolean; error?: string }>;
-    cancel: (id: string, reason: string) => Promise<{ success: boolean; error?: string }>;
-    duplicate: (id: string) => Promise<{ success: boolean; error?: string }>;
-    print: (id: string, options?: any) => Promise<{ success: boolean; error?: string }>;
-    printA4: (id: string) => Promise<{ success: boolean; error?: string }>;
-    markPaid: (id: string) => Promise<{ success: boolean; error?: string }>;
-    addPayment: (invoiceId: string, amount: number, method?: string, reference?: string) => Promise<{ success: boolean; error?: string }>;
-    getNextNumber: (type: InvoiceType) => Promise<{ success: boolean; number?: string; error?: string }>;
-    createCorrection: (originalId: string, reason: string, newItems: any[]) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
-    convertProforma: (proformaId: string) => Promise<{ success: boolean; data?: InvoiceRow; error?: string }>;
+    list: (filter?: InvoiceListFilter) => Promise<IpcResult<InvoiceRow[]>>;
+    get: (id: string) => Promise<IpcResult<InvoiceData>>;
+    create: (data: InvoiceCreateDTO) => Promise<IpcResult<InvoiceData>>;
+    update: (id: string, data: Partial<InvoiceCreateDTO>) => Promise<IpcResult<InvoiceData>>;
+    delete: (id: string) => Promise<IpcResult>;
+    issue: (id: string) => Promise<IpcResult<InvoiceRow>>;
+    cancel: (id: string, reason: string) => Promise<IpcResult<InvoiceRow>>;
+    duplicate: (id: string) => Promise<IpcResult<InvoiceData>>;
+    print: (id: string, options?: any) => Promise<IpcResult>;
+    printA4: (id: string) => Promise<IpcResult>;
+    markPaid: (id: string) => Promise<IpcResult<InvoiceRow>>;
+    addPayment: (invoiceId: string, amount: number, method?: string, reference?: string) => Promise<IpcResult<InvoiceRow>>;
+    getNextNumber: (type: InvoiceType) => Promise<IpcResult<string>>;
+    createCorrection: (originalId: string, reason: string, newItems: any[]) => Promise<IpcResult<InvoiceData>>;
+    convertProforma: (proformaId: string) => Promise<IpcResult<InvoiceData>>;
     customer: {
-      list: () => Promise<InvoiceCustomerRow[]>;
-      search: (query: string) => Promise<InvoiceCustomerRow[]>;
-      get: (id: string) => Promise<InvoiceCustomerRow | null>;
-      create: (data: InvoiceCustomerCreateDTO) => Promise<{ success: boolean; data?: InvoiceCustomerRow; error?: string }>;
-      update: (id: string, data: Partial<InvoiceCustomerCreateDTO>) => Promise<{ success: boolean; error?: string }>;
-      delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+      list: () => Promise<IpcResult<InvoiceCustomerRow[]>>;
+      search: (query: string) => Promise<IpcResult<InvoiceCustomerRow[]>>;
+      get: (id: string) => Promise<IpcResult<InvoiceCustomerRow>>;
+      create: (data: InvoiceCustomerCreateDTO) => Promise<IpcResult<InvoiceCustomerRow>>;
+      update: (id: string, data: Partial<InvoiceCustomerCreateDTO>) => Promise<IpcResult<InvoiceCustomerRow>>;
+      delete: (id: string) => Promise<IpcResult>;
     };
     product: {
-      list: () => Promise<any[]>;
-      search: (query: string) => Promise<any[]>;
-      get: (id: string) => Promise<any>;
-      create: (data: AccountingProductCreateDTO) => Promise<{ success: boolean; error?: string }>;
-      update: (id: string, data: Partial<AccountingProductCreateDTO>) => Promise<{ success: boolean; error?: string }>;
-      delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+      list: () => Promise<IpcResult<any[]>>;
+      search: (query: string) => Promise<IpcResult<any[]>>;
+      get: (id: string) => Promise<IpcResult<any>>;
+      create: (data: AccountingProductCreateDTO) => Promise<IpcResult<any>>;
+      update: (id: string, data: Partial<AccountingProductCreateDTO>) => Promise<IpcResult<any>>;
+      delete: (id: string) => Promise<IpcResult>;
     };
     seller: {
-      get: () => Promise<any>;
-      update: (data: SellerSettingsUpdateDTO) => Promise<{ success: boolean; error?: string }>;
+      get: () => Promise<IpcResult<SellerSettingsRow | null>>;
+      update: (data: SellerSettingsUpdateDTO) => Promise<IpcResult<SellerSettingsRow>>;
     };
     vatRates: {
-      get: () => Promise<any>;
+      get: () => Promise<IpcResult<any>>;
     };
     lookup: {
       nip: (nip: string) => Promise<any>;

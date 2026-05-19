@@ -15,9 +15,15 @@ export function useInvoices(filter?: InvoiceListFilter) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await window.electronAPI.invoice.list(filter);
-      setInvoices(list);
+      const result = await window.electronAPI.invoice.list(filter);
+      if (result.success) {
+        setInvoices(result.data ?? []);
+      } else {
+        setInvoices([]);
+        rlog.error('[useInvoices] Failed to load:', result.error);
+      }
     } catch (err) {
+      setInvoices([]);
       rlog.error('[useInvoices] Failed to load:', err);
     } finally {
       setLoading(false);

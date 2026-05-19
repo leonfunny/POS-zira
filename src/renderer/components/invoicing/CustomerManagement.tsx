@@ -35,9 +35,17 @@ export default function CustomerManagement({ language }: CustomerManagementProps
         ? await window.electronAPI.invoice.customer.search(search)
         : await window.electronAPI.invoice.customer.list();
 
-      setCustomers(result);
+      if (!result.success) {
+        setCustomers([]);
+        setError(result.error || 'Failed to load customers');
+        return;
+      }
+      setCustomers(result.data ?? []);
+      setError(null);
     } catch (err) {
       rlog.error('Failed to load customers:', err);
+      setCustomers([]);
+      setError(err instanceof Error ? err.message : 'Failed to load customers');
     } finally {
       setLoading(false);
     }

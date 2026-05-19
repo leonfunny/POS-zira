@@ -47,17 +47,32 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
   useEffect(() => {
     const searchCustomers = async () => {
       if (search.trim().length < 2) {
-        // Load recent customers
-        const result = await window.electronAPI.invoice.customer.list();
-        setResults(result.slice(0, 5));
+        try {
+          const result = await window.electronAPI.invoice.customer.list();
+          if (result.success) {
+            setResults((result.data ?? []).slice(0, 5));
+          } else {
+            setResults([]);
+            rlog.error('Customer list error:', result.error);
+          }
+        } catch (err) {
+          setResults([]);
+          rlog.error('Customer list error:', err);
+        }
         return;
       }
 
       setLoading(true);
       try {
         const result = await window.electronAPI.invoice.customer.search(search);
-        setResults(result);
+        if (result.success) {
+          setResults(result.data ?? []);
+        } else {
+          setResults([]);
+          rlog.error('Customer search error:', result.error);
+        }
       } catch (err) {
+        setResults([]);
         rlog.error('Customer search error:', err);
       } finally {
         setLoading(false);
