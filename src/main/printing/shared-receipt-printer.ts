@@ -4,6 +4,14 @@ import { ApiClient } from '../network/api-client';
 import logger from '../logger';
 
 const SHARED_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
+const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
+
+let assignmentEndpointUnavailableUntil = 0;
+
+function isEndpointUnavailable(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return /\b(404|501)\b/.test(message);
+}
 
 export interface SharedReceiptPrintMeta {
   referenceType?: string;
@@ -27,6 +35,10 @@ export async function submitSharedReceiptPrint(
   const token = getSecureAuthToken();
   if (!token) return { handled: false, printed: false };
 
+  if (Date.now() < assignmentEndpointUnavailableUntil) {
+    return { handled: false, printed: false };
+  }
+
   const config = getConfig();
   const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
 
@@ -35,6 +47,9 @@ export async function submitSharedReceiptPrint(
     const response = await client.listPrinterAssignments(token);
     printerId = response.assignments.find((assignment) => assignment.role === SHARED_RECEIPT_ROLE)?.printerId;
   } catch (err: any) {
+    if (isEndpointUnavailable(err)) {
+      assignmentEndpointUnavailableUntil = Date.now() + ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS;
+    }
     logger.warn(`[SharedReceiptPrinter] Assignment lookup failed; falling back to local printer: ${err?.message || err}`);
     return { handled: false, printed: false, error: err?.message || String(err) };
   }

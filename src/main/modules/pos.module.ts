@@ -1069,6 +1069,20 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
+    ipcMain.handle('pos:print-receipt-and-open-drawer', async (_e, orderId: string) => {
+      try {
+        const result = await this.paymentController?.printReceiptAndOpenDrawer(orderId);
+        return {
+          success: true,
+          receiptPrinted: result?.receiptPrinted ?? false,
+          drawerOpened: result?.drawerOpened ?? false,
+          error: result?.error,
+        };
+      } catch (e: any) {
+        return { success: false, receiptPrinted: false, drawerOpened: false, error: e.message };
+      }
+    });
+
     ipcMain.handle('pos:print-fiscal-receipt', async (_e, orderId: string) => {
       try { const printed = await this.paymentController?.printFiscalReceipt(orderId); return { success: true, fiscalPrinted: printed ?? false }; }
       catch (e: any) { return { success: false, fiscalPrinted: false, error: e.message }; }

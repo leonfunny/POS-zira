@@ -792,4 +792,8 @@ describe('Cash drawer IPC contract', () => {
   it('POS preload declaration exposes drawerOpened and error for manual drawer opens', () => {
     expect(electronDts).toContain('openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>');
   });
+
+  it('POS preload declaration exposes combined receipt and drawer print result', () => {
+    expect(electronDts).toContain('printReceiptAndOpenDrawer: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; drawerOpened: boolean; error?: string }>');
+  });
 });

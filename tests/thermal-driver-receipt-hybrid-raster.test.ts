@@ -78,4 +78,21 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     expect(printed.toString('utf8')).toContain('ul. Marszalkowska 1');
     expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
   });
+
+  it('prefixes the cash drawer pulse when printing a cash receipt with drawer', async () => {
+    const driver = new ThermalDriver('COM1', 9600, 'SERIAL', 80, 48, false, {
+      charset: 'utf8',
+      cutMode: 'partial',
+    });
+    (driver as any).connected = true;
+
+    const printRaw = vi.fn(async () => undefined);
+    (driver as any).printRaw = printRaw;
+
+    await driver.printReceiptWithDrawer(buildReceipt());
+
+    const printed = printRaw.mock.calls[0][0] as Buffer;
+    expect([...printed.slice(0, 5)]).toEqual([0x1b, 0x70, 0x00, 0x19, 0xfa]);
+    expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
+  });
 });

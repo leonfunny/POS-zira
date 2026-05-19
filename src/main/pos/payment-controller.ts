@@ -11,6 +11,12 @@ export interface PaymentResult {
   error?: string;
 }
 
+export interface ReceiptWithDrawerResult {
+  receiptPrinted: boolean;
+  drawerOpened: boolean;
+  error?: string;
+}
+
 export interface RefundReceiptOverride {
   amount: number;
   reason?: string;
@@ -20,6 +26,7 @@ export interface RefundReceiptOverride {
 type PrinterDriver = {
   isConnected(): boolean;
   printReceipt(data: ReceiptData): Promise<void>;
+  printReceiptWithDrawer?(data: ReceiptData): Promise<void>;
   openDrawer(): Promise<void>;
 };
 
@@ -82,6 +89,29 @@ export class PaymentController {
     return raw ? `${fallback}: ${raw}` : fallback;
   }
 
+  private async routeSharedReceipt(
+    receiptData: ReceiptData,
+    meta: { referenceType?: string; referenceId?: string; source?: string },
+    successMessage: string,
+    failureMessage: string,
+  ): Promise<{ handled: boolean; printed: boolean; printerId?: string; error?: string } | null> {
+    if (!this.sharedReceiptPrinter) return null;
+
+    try {
+      const shared = await this.sharedReceiptPrinter(receiptData, meta);
+      if (!shared.handled) return null;
+      if (shared.printed) {
+        logger.info(`${successMessage} via shared printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
+      } else {
+        logger.error(`${failureMessage}: ${shared.error || 'shared printer did not accept the job'}`);
+      }
+      return shared;
+    } catch (err: any) {
+      logger.warn(`[Payment] Shared receipt route failed before assignment; falling back to local printer: ${err?.message || err}`);
+      return null;
+    }
+  }
+
   private async printReceiptData(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string },
@@ -94,20 +124,9 @@ export class PaymentController {
     // Shared (network) printer route is only valid for the RECEIPT/order copy.
     // FISCAL printing must always be local — fiscal idempotency, legal liability
     // and the elzabdr/POSNET drivers live on the POS that owns the device.
-    if (printerType === PrinterType.RECEIPT && this.sharedReceiptPrinter) {
-      try {
-        const shared = await this.sharedReceiptPrinter(receiptData, meta);
-        if (shared.handled) {
-          if (shared.printed) {
-            logger.info(`${successMessage} via shared printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
-          } else {
-            logger.error(`${failureMessage}: ${shared.error || 'shared printer did not accept the job'}`);
-          }
-          return shared.printed;
-        }
-      } catch (err: any) {
-        logger.warn(`[Payment] Shared receipt route failed before assignment; falling back to local printer: ${err?.message || err}`);
-      }
+    if (printerType === PrinterType.RECEIPT) {
+      const shared = await this.routeSharedReceipt(receiptData, meta, successMessage, failureMessage);
+      if (shared) return shared.printed;
     }
 
     const printer = this.getPrinter(printerType);
@@ -210,6 +229,86 @@ export class PaymentController {
       '[Payment] No receipt printer connected, skipping print',
       PrinterType.RECEIPT,
     );
+  }
+
+  /**
+   * Print the cash-payment order copy and open the cash drawer.
+   *
+   * This is only for the initial POS flow where the tender includes CASH. It
+   * intentionally does not replace reprint/refund/remote receipt paths.
+   */
+  async printReceiptAndOpenDrawer(orderId: string): Promise<ReceiptWithDrawerResult> {
+    const receiptData = this.buildSaleReceiptData(orderId);
+    if (!receiptData) {
+      const error = `Order ${orderId} not found`;
+      logger.warn(`[Payment] Cannot print receipt/open drawer: ${error}`);
+      return { receiptPrinted: false, drawerOpened: false, error };
+    }
+
+    const orderNumberLabel = receiptData.orderNumber;
+    const successMessage = `[Payment] Receipt printed for order ${orderNumberLabel}`;
+    const failureMessage = '[Payment] Receipt print failed';
+
+    const shared = await this.routeSharedReceipt(
+      receiptData,
+      { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos' },
+      successMessage,
+      failureMessage,
+    );
+    if (shared) {
+      const drawerOpened = await this.openCashDrawer();
+      return {
+        receiptPrinted: shared.printed,
+        drawerOpened,
+        error: shared.printed ? undefined : shared.error,
+      };
+    }
+
+    const printer = this.getPrinter(PrinterType.RECEIPT);
+    if (!printer || !printer.isConnected()) {
+      const error = '[Payment] No receipt printer connected, skipping print and drawer';
+      logger.warn(error);
+      return { receiptPrinted: false, drawerOpened: false, error };
+    }
+
+    if (printer.printReceiptWithDrawer) {
+      try {
+        await printer.printReceiptWithDrawer(receiptData);
+        logger.info(`${successMessage}; cash drawer pulse sent`);
+        return { receiptPrinted: true, drawerOpened: true };
+      } catch (err) {
+        logger.error(`${failureMessage}: ${err}`);
+        const drawerOpened = await this.openCashDrawer();
+        return {
+          receiptPrinted: false,
+          drawerOpened,
+          error: this.describePrintFailure(err, failureMessage),
+        };
+      }
+    }
+
+    const [receiptPrinted, drawerOpened] = await Promise.all([
+      printer.printReceipt(receiptData)
+        .then(() => {
+          logger.info(successMessage);
+          return true;
+        })
+        .catch((err) => {
+          logger.error(`${failureMessage}: ${err}`);
+          return false;
+        }),
+      printer.openDrawer()
+        .then(() => {
+          logger.info('[Payment] Cash drawer opened');
+          return true;
+        })
+        .catch((err) => {
+          logger.error(`[Payment] Cash drawer open failed: ${err}`);
+          return false;
+        }),
+    ]);
+
+    return { receiptPrinted, drawerOpened };
   }
 
   /**
@@ -320,10 +419,7 @@ export class PaymentController {
       return { success: false, receiptPrinted: false, error: error || 'Order not found' };
     }
 
-    const [receiptPrinted, drawerOpened] = await Promise.all([
-      this.printReceipt(orderId),
-      this.openCashDrawer(),
-    ]);
+    const { receiptPrinted, drawerOpened } = await this.printReceiptAndOpenDrawer(orderId);
     return { success: true, receiptPrinted, drawerOpened };
   }
 

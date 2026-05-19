@@ -136,6 +136,37 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(result.drawerOpened).toBe(false);
   });
 
+  it('printReceiptAndOpenDrawer uses the combined local thermal path when available', async () => {
+    const printer = makeFakePrinter({}) as ReturnType<typeof makeFakePrinter> & {
+      printReceiptWithDrawer: ReturnType<typeof vi.fn>;
+    };
+    printer.printReceiptWithDrawer = vi.fn(async () => undefined);
+    const ctl = buildController(printer);
+
+    const result = await ctl.printReceiptAndOpenDrawer('order-1');
+
+    expect(result).toEqual({ receiptPrinted: true, drawerOpened: true });
+    expect(printer.printReceiptWithDrawer).toHaveBeenCalledTimes(1);
+    expect(printer.printReceipt).not.toHaveBeenCalled();
+    expect(printer.openDrawer).not.toHaveBeenCalled();
+  });
+
+  it('printReceiptAndOpenDrawer opens the local drawer when the shared route handled the receipt', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'printer-remote-1' }));
+    const ctl = buildController(printer, sharedReceiptPrinter);
+
+    const result = await ctl.printReceiptAndOpenDrawer('order-1');
+
+    expect(result).toEqual({ receiptPrinted: true, drawerOpened: true, error: undefined });
+    expect(sharedReceiptPrinter).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-1', orderNumber: 'POS-20260505-0001' }),
+      expect.objectContaining({ referenceType: 'POS_RECEIPT', referenceId: 'order-1', source: 'pos' }),
+    );
+    expect(printer.openDrawer).toHaveBeenCalledTimes(1);
+    expect(printer.printReceipt).not.toHaveBeenCalled();
+  });
+
   it('completeCardPayment returns success=true with receiptPrinted=false when print rejects', async () => {
     const printer = makeFakePrinter({ printRejects: true });
     const ctl = buildController(printer);
@@ -203,6 +234,16 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     const printer = makeFakePrinter({ drawerRejects: true });
     const ctl = buildController(printer);
     await expect(ctl.openCashDrawer()).resolves.toBe(false);
+  });
+
+  it('reprintReceipt never opens the cash drawer', async () => {
+    const printer = makeFakePrinter({});
+    const ctl = buildController(printer);
+
+    await expect(ctl.reprintReceipt('order-1')).resolves.toBe(true);
+
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+    expect(printer.openDrawer).not.toHaveBeenCalled();
   });
 
   it('prints the Polish catalog name on the customer receipt while keeping order rows canonical', async () => {

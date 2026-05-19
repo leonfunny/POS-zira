@@ -11,6 +11,7 @@ import { matchBrand, type RecoveryResult } from '../detection/types';
 import { withPortLock } from '../posnet/port-mutex';
 
 const execFileAsync = promisify(execFile);
+const PRESENCE_CACHE_TTL_MS = 60_000;
 
 /**
  * Connection type for thermal printer
@@ -23,12 +24,14 @@ export type ThermalConnectionType = 'USB' | 'SERIAL';
  * Uses ESC/POS commands for thermal receipt printers
  */
 export class ThermalDriver {
+  private static usbPrintLocks = new Map<string, Promise<void>>();
+
   private connected = false;
   private formatter: EscPosFormatter;
   private connectionType: ThermalConnectionType;
   /** Detected brand name, used for recovery matching. */
   private brand: string = '';
-  /** Timestamp of last successful printer presence check (ms) — skip re-check within 10s */
+  /** Timestamp of last successful printer presence check (ms). */
   private lastPresenceCheckAt: number = 0;
 
   /**
@@ -193,6 +196,9 @@ export class ThermalDriver {
       logger.info(`[ThermalDriver] Health check: "${this.printerNameOrPort}" present again — marking connected`);
       this.connected = true;
     }
+    if (this.connectionType === 'USB' && stillAvailable) {
+      this.lastPresenceCheckAt = Date.now();
+    }
     return this.connected;
   }
 
@@ -226,6 +232,7 @@ export class ThermalDriver {
     } else {
       // Verify Windows printer is physically present
       this.connected = await isWindowsPrinterPresent(newIdentifier);
+      if (this.connected) this.lastPresenceCheckAt = Date.now();
     }
     if (!this.connected) {
       logger.warn(`[ThermalDriver] Reconnect failed — "${newIdentifier}" not physically present`);
@@ -337,11 +344,44 @@ export class ThermalDriver {
    * still responding before sending the actual job.
    */
   private async printRaw(data: Buffer | string): Promise<void> {
+    if (this.connectionType === 'USB') {
+      return this.withUsbPrintLock(
+        `thermal.printRaw(${this.printerNameOrPort})`,
+        () => this.printRawUnlocked(data),
+      );
+    }
+
+    return this.printRawUnlocked(data);
+  }
+
+  private async withUsbPrintLock<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    const key = this.printerNameOrPort.trim().toUpperCase();
+    const previous = ThermalDriver.usbPrintLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const next = previous.catch(() => undefined).then(() => current);
+    ThermalDriver.usbPrintLocks.set(key, next);
+
+    await previous.catch(() => undefined);
+
+    try {
+      logger.debug(`[ThermalDriver] Acquired USB print lock for "${this.printerNameOrPort}" (${operation})`);
+      return await fn();
+    } finally {
+      release();
+      if (ThermalDriver.usbPrintLocks.get(key) === next) {
+        ThermalDriver.usbPrintLocks.delete(key);
+      }
+      logger.debug(`[ThermalDriver] Released USB print lock for "${this.printerNameOrPort}" (${operation})`);
+    }
+  }
+
+  private async printRawUnlocked(data: Buffer | string): Promise<void> {
     // ─── Pre-flight verification ───────────────────────────────────────────
     if (this.connectionType === 'USB') {
-      // Skip presence check if we verified within the last 10 seconds
+      // Skip presence check if we verified recently.
       const now = Date.now();
-      if (now - this.lastPresenceCheckAt > 10_000) {
+      if (now - this.lastPresenceCheckAt > PRESENCE_CACHE_TTL_MS) {
         const present = await isWindowsPrinterPresent(this.printerNameOrPort);
         if (!present) {
           this.connected = false;
@@ -506,15 +546,9 @@ export class ThermalDriver {
   }
 
   /**
-   * Print receipt
+   * Build the exact byte buffer sent for a receipt.
    */
-  async printReceipt(data: ReceiptData): Promise<void> {
-    if (!this.connected) {
-      throw new Error('Printer not connected');
-    }
-
-    logger.info('[ThermalDriver] Printing receipt...');
-
+  private async formatReceiptForPrint(data: ReceiptData): Promise<Buffer> {
     const escposData = this.formatter.formatReceipt(data);
 
     // Check if ESC/POS data contains non-ASCII text (Vietnamese, Polish, etc.).
@@ -536,12 +570,10 @@ export class ThermalDriver {
       // rather than risk emitting mangled text.
       if (firstUnicodeLine < 0 || lastUnicodeLine < 0) {
         logger.info('[ThermalDriver] Non-ASCII detected — rendering full receipt as raster image');
-        const rasterData = await this.renderTextToRaster(lines);
-        await this.printRaw(rasterData);
+        return this.renderTextToRaster(lines);
       } else if (firstUnicodeLine === 0 && lastUnicodeLine === lines.length - 1) {
         logger.info('[ThermalDriver] Non-ASCII spans the full receipt — rendering full receipt as raster image');
-        const rasterData = await this.renderTextToRaster(lines);
-        await this.printRaw(rasterData);
+        return this.renderTextToRaster(lines);
       } else {
         const rasterLines = lines.slice(firstUnicodeLine, lastUnicodeLine + 1);
         logger.info(
@@ -561,13 +593,47 @@ export class ThermalDriver {
           this.formatter.formatPlainLinesAsText(lines.slice(lastUnicodeLine + 1)),
           this.formatter.getReceiptTrailer(),
         ]);
-        await this.printRaw(hybridReceipt);
+        return hybridReceipt;
       }
-    } else {
-      await this.printRaw(escposData);
     }
 
+    return escposData;
+  }
+
+  /**
+   * Print receipt
+   */
+  async printReceipt(data: ReceiptData): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info('[ThermalDriver] Printing receipt...');
+
+    const receiptData = await this.formatReceiptForPrint(data);
+    await this.printRaw(receiptData);
+
     logger.info('[ThermalDriver] Receipt printed successfully');
+  }
+
+  /**
+   * Print a cash-sale order copy and pulse the cash drawer in one spooler job.
+   */
+  async printReceiptWithDrawer(data: ReceiptData): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info('[ThermalDriver] Printing receipt with cash drawer pulse...');
+
+    const receiptData = await this.formatReceiptForPrint(data);
+    const combined = Buffer.concat([
+      this.formatter.getCashDrawerCommand(),
+      receiptData,
+    ]);
+    await this.printRaw(combined);
+
+    logger.info('[ThermalDriver] Receipt printed and cash drawer pulse sent');
   }
 
   /**

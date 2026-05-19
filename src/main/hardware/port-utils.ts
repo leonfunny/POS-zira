@@ -236,9 +236,10 @@ export async function getPresentPrinterVids(): Promise<Set<string>> {
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
       `$vids = @(${vids.map(v => `'${v}'`).join(',')})\n` +
+      '$ids = Get-PnpDevice -PresentOnly -Status OK | ForEach-Object { $_.InstanceId }\n' +
+      '$text = $ids -join "`n"\n' +
       'foreach ($vid in $vids) {\n' +
-      '  $found = Get-PnpDevice -PresentOnly -Status OK | Where-Object { $_.InstanceId -match "VID_$vid" }\n' +
-      '  if ($found) { Write-Output $vid }\n' +
+      '  if ($text -match "VID_$vid") { Write-Output $vid }\n' +
       '}\n';
     const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
     const { stdout } = await execFileAsync(

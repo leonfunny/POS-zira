@@ -92,4 +92,16 @@ describe('submitSharedReceiptPrint', () => {
     expect(result).toEqual({ handled: false, printed: false });
     expect(createPrintJob).not.toHaveBeenCalled();
   });
+
+  it('briefly caches endpoint-unavailable assignment lookups', async () => {
+    listPrinterAssignments.mockRejectedValue(new Error('HTTP 404'));
+
+    const first = await submitSharedReceiptPrint(receiptData);
+    const second = await submitSharedReceiptPrint(receiptData);
+
+    expect(first).toMatchObject({ handled: false, printed: false, error: 'HTTP 404' });
+    expect(second).toEqual({ handled: false, printed: false });
+    expect(listPrinterAssignments).toHaveBeenCalledTimes(1);
+    expect(createPrintJob).not.toHaveBeenCalled();
+  });
 });

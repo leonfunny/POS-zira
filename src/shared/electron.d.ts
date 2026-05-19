@@ -604,6 +604,7 @@ interface ElectronAPI {
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
+      printReceiptAndOpenDrawer: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; drawerOpened: boolean; error?: string }>;
       printFiscalReceipt: (orderId: string) => Promise<{ success: boolean; fiscalPrinted: boolean; error?: string }>;
       hasFiscalPrinter: () => Promise<{ success: boolean; configured: boolean; connected: boolean }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;

@@ -303,25 +303,13 @@ export default function PaymentModal({
     setSavingLabel(t('test.printing') || 'Printing...');
     let printResult: PrintReceiptResponse | undefined;
     try {
-      const tasks: Array<Promise<unknown>> = [];
       if (printOrderCopy) {
-        tasks.push(
-          window.electronAPI.pos.payment.printReceipt(orderId).catch(
-            (err: unknown) => {
-              rlog.warn('[PaymentModal] Receipt print failed:', err);
-              return { success: false, receiptPrinted: false } as PrintReceiptResponse;
-            },
-          ),
+        printResult = await window.electronAPI.pos.payment.printReceiptAndOpenDrawer(orderId).catch(
+          (err: unknown) => {
+            rlog.warn('[PaymentModal] Receipt print/drawer failed:', err);
+            return { success: false, receiptPrinted: false } as PrintReceiptResponse;
+          },
         );
-        tasks.push(
-          window.electronAPI.pos.payment.openCashDrawer().catch(
-            (err: unknown) => rlog.warn('[PaymentModal] Cash drawer failed:', err),
-          ),
-        );
-      }
-      const results = await Promise.all(tasks);
-      if (printOrderCopy) {
-        printResult = results[0] as PrintReceiptResponse;
       } else {
         // Synthesize a "skipped" outcome so deriveReceiptOutcome does not
         // emit a "receipt not printed" warning for non-cash flows.
