@@ -1,20 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Package, PackagePlus, Printer, X } from 'lucide-react';
+import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import DeactivateProductDialog from './DeactivateProductDialog';
+import ProductEditForm from './ProductEditForm';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
 
 interface ProductDetailDrawerProps {
   product: ProductListItem | null;
+  categories: Category[];
   categoryById: Map<string, Category>;
   language: string;
   t: (key: string) => string;
+  canUpdateProduct: boolean;
+  canDeactivateProduct: boolean;
   canAdjustStock: boolean;
+  canManageCategories: boolean;
   adminBackendReady: boolean;
   onClose: () => void;
   onImportDraft: (product: ProductListItem) => void;
+  onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
 }
 
@@ -53,23 +60,34 @@ function DetailRow({ label, value, mono }: { label: string; value: React.ReactNo
 
 export default function ProductDetailDrawer({
   product,
+  categories,
   categoryById,
   language,
   t,
+  canUpdateProduct,
+  canDeactivateProduct,
   canAdjustStock,
+  canManageCategories,
   adminBackendReady,
   onClose,
   onImportDraft,
+  onManageCategories,
   onProductChanged,
 }: ProductDetailDrawerProps) {
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDirty, setEditDirty] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
 
   useEffect(() => {
     setLabelBusy(false);
     setLabelMessage(null);
     setStockOpen(false);
+    setEditing(false);
+    setEditDirty(false);
+    setDeactivateOpen(false);
   }, [product?.id]);
 
   if (!product) return null;
@@ -82,6 +100,13 @@ export default function ProductDetailDrawer({
   const stock = product.available_qty ?? product.in_stock ?? 0;
   const canPrintLabel = !!product.barcode && !labelBusy;
   const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
+  const canEditProduct = canUpdateProduct && !product._isDraft;
+  const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0;
+
+  const handleCloseDrawer = () => {
+    if (editing && editDirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
+    onClose();
+  };
 
   const handlePrintLabel = async () => {
     if (!product.barcode || labelBusy) return;
@@ -102,7 +127,7 @@ export default function ProductDetailDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/35" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/35" onClick={handleCloseDrawer}>
       <aside
         className="flex h-full w-full max-w-[480px] flex-col bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
@@ -117,7 +142,7 @@ export default function ProductDetailDrawer({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseDrawer}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
             title={tOr(t, 'products.drawer.close', 'Close')}
           >
@@ -157,9 +182,25 @@ export default function ProductDetailDrawer({
               ) : null}
               <button
                 type="button"
+                onClick={() => setEditing(true)}
+                disabled={!canEditProduct}
+                className="mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title={
+                  product._isDraft
+                    ? tOr(t, 'products.edit.draftDisabled', 'Import the draft before editing')
+                    : !canUpdateProduct
+                      ? tOr(t, 'products.edit.unavailable', 'Product editing needs product admin backend support')
+                      : undefined
+                }
+              >
+                <Pencil size={17} />
+                {tOr(t, 'products.edit.edit', 'Edit')}
+              </button>
+              <button
+                type="button"
                 onClick={() => void handlePrintLabel()}
                 disabled={!canPrintLabel}
-                className="mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
                 title={!product.barcode ? tOr(t, 'products.label.noBarcode', 'Add a barcode before printing a label') : undefined}
               >
                 <Printer size={17} />
@@ -181,6 +222,22 @@ export default function ProductDetailDrawer({
                 <PackagePlus size={17} />
                 {tOr(t, 'products.stock.adjust', 'Adjust stock')}
               </button>
+              <button
+                type="button"
+                onClick={() => setDeactivateOpen(true)}
+                disabled={!canStopSelling}
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
+                title={
+                  product._isDraft
+                    ? tOr(t, 'products.deactivate.draftDisabled', 'Import the draft before stopping sales')
+                    : !canDeactivateProduct
+                      ? tOr(t, 'products.deactivate.unavailable', 'Stopping sales needs product admin backend support')
+                      : undefined
+                }
+              >
+                <Ban size={17} />
+                {tOr(t, 'products.deactivate.button', 'Stop selling')}
+              </button>
               {labelMessage ? (
                 <div className={`mt-2 rounded-md border px-3 py-2 text-xs ${
                   labelMessage.ok
@@ -193,29 +250,48 @@ export default function ProductDetailDrawer({
             </div>
           </div>
 
-          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <div className="flex gap-2">
-              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-              <span>
-                {adminBackendReady
-                  ? tOr(t, 'products.drawer.readOnlyClient', 'Product field editing is still disabled in this desktop build.')
-                  : tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
-              </span>
+          {!canEditProduct ? (
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <div className="flex gap-2">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                <span>
+                  {adminBackendReady
+                    ? tOr(t, 'products.drawer.readOnlyClient', 'Product field editing is still disabled in this desktop build.')
+                    : tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : null}
 
-          <div className="mt-5 rounded-lg border border-slate-200">
-            <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
-            <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
-            <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
-            <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
-            <DetailRow label={tOr(t, 'products.drawer.stock', 'Stock')} value={stock} />
-            <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
-            <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
-            <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
-            <DetailRow label={tOr(t, 'products.drawer.saleUnit', 'Sale unit')} value={product.sale_unit || '-'} />
-            <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
-          </div>
+          {editing ? (
+            <ProductEditForm
+              product={product}
+              categories={categories}
+              language={language}
+              t={t}
+              canManageCategories={canManageCategories}
+              onManageCategories={onManageCategories}
+              onDirtyChange={setEditDirty}
+              onCancel={() => {
+                setEditing(false);
+                setEditDirty(false);
+              }}
+              onSaved={onProductChanged}
+            />
+          ) : (
+            <div className="mt-5 rounded-lg border border-slate-200">
+              <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
+              <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
+              <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
+              <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
+              <DetailRow label={tOr(t, 'products.drawer.stock', 'Stock')} value={stock} />
+              <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
+              <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
+              <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
+              <DetailRow label={tOr(t, 'products.drawer.saleUnit', 'Sale unit')} value={product.sale_unit || '-'} />
+              <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
+            </div>
+          )}
         </div>
 
         {stockOpen ? (
@@ -224,6 +300,18 @@ export default function ProductDetailDrawer({
             t={t}
             onClose={() => setStockOpen(false)}
             onAdjusted={onProductChanged}
+          />
+        ) : null}
+
+        {deactivateOpen ? (
+          <DeactivateProductDialog
+            product={product}
+            t={t}
+            onClose={() => setDeactivateOpen(false)}
+            onDeactivated={async () => {
+              await onProductChanged();
+              onClose();
+            }}
           />
         ) : null}
       </aside>

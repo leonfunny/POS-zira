@@ -70,11 +70,14 @@ function shouldRenderInfoLabelViaWindows(config?: PrinterConfig | null): boolean
   return /xprinter|xp-?423|xp-?42/i.test(printerName);
 }
 
-/** How often to run printer health checks (ms) */
-const HEALTH_CHECK_INTERVAL = 30_000;
+/** How often to run printer health checks (ms).
+ *  Each tick can spawn a PowerShell PnP/spooler query in getPosnetDriverStatus(),
+ *  which briefly blocks the main process. Keep this high enough that UI clicks
+ *  don't visibly lag every cycle. */
+const HEALTH_CHECK_INTERVAL = 90_000;
 
 /** Health check backoff multipliers: after N consecutive failures, skip N×interval checks.
- *  Index = min(failCount, length-1). E.g. [1,2,4,10] → 30s, 60s, 120s, 300s */
+ *  Index = min(failCount, length-1). E.g. [1,2,4,10] → 90s, 180s, 360s, 900s */
 const HEALTH_CHECK_BACKOFF = [1, 2, 4, 10];
 
 /** Max retries for a failed print job */

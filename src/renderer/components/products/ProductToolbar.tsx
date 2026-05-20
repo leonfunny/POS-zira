@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, RefreshCw, Search, SlidersHorizontal } from 'lucide-react';
+import { Plus, RefreshCw, Search, SlidersHorizontal, Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductKindFilter } from '../../hooks/useProducts';
@@ -16,9 +16,11 @@ interface ProductToolbarProps {
   onKindFilterChange: (value: ProductKindFilter) => void;
   loading: boolean;
   syncing: boolean;
+  canManageCategories: boolean;
   onRefresh: () => void;
   onSync: () => void;
   onAddProduct: () => void;
+  onManageCategories: () => void;
 }
 
 const FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts'];
@@ -40,9 +42,11 @@ export default function ProductToolbar({
   onKindFilterChange,
   loading,
   syncing,
+  canManageCategories,
   onRefresh,
   onSync,
   onAddProduct,
+  onManageCategories,
 }: ProductToolbarProps) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
@@ -82,6 +86,17 @@ export default function ProductToolbar({
         >
           <Plus size={18} />
           {tOr(t, 'products.addProduct', 'Add product')}
+        </button>
+
+        <button
+          type="button"
+          onClick={onManageCategories}
+          disabled={!canManageCategories}
+          className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title={!canManageCategories ? tOr(t, 'products.category.unavailable', 'Category management needs product admin backend support') : undefined}
+        >
+          <Tags size={17} />
+          {tOr(t, 'products.category.manage', 'Categories')}
         </button>
 
         <button

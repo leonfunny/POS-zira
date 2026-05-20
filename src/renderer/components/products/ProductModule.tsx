@@ -4,6 +4,7 @@ import { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useProducts, ProductListItem } from '../../hooks/useProducts';
 import type { ProductAdminCapabilities } from '../../../shared/types';
+import CategoryManagerDialog from './CategoryManagerDialog';
 import ProductAddFlow from './ProductAddFlow';
 import ProductDetailDrawer from './ProductDetailDrawer';
 import ProductTable from './ProductTable';
@@ -52,6 +53,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addInitialBarcode, setAddInitialBarcode] = useState('');
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [adminCapabilities, setAdminCapabilities] = useState<ProductAdminCapabilities | null>(null);
   const [adminCapabilityError, setAdminCapabilityError] = useState<string | null>(null);
   const [adminCapabilitiesLoading, setAdminCapabilitiesLoading] = useState(true);
@@ -60,6 +62,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
   const noPriceCount = useMemo(() => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length, [allProducts]);
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
+  const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -147,12 +150,14 @@ export default function ProductModule({ language }: ProductModuleProps) {
         onKindFilterChange={setKindFilter}
         loading={loading}
         syncing={syncing}
+        canManageCategories={canManageCategories}
         onRefresh={() => void refresh()}
         onSync={() => void syncProducts()}
         onAddProduct={() => {
           setAddInitialBarcode('');
           setAddOpen(true);
         }}
+        onManageCategories={() => setCategoryManagerOpen(true)}
       />
 
       {syncMessage ? (
@@ -185,16 +190,16 @@ export default function ProductModule({ language }: ProductModuleProps) {
             : `${tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}${adminCapabilityError ? `: ${adminCapabilityError}` : ''}`}
       </div>
 
-      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-        <div className="flex gap-2">
-          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-          <span>
-            {adminBackendReady
-              ? tOr(t, 'products.drawer.readOnlyClient', 'Product field editing is still disabled in this desktop build.')
-              : tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
-          </span>
+      {!adminCapabilitiesLoading && !adminBackendReady ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="flex gap-2">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+            <span>
+              {tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
+            </span>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {loading && allProducts.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm text-slate-500">
@@ -220,13 +225,18 @@ export default function ProductModule({ language }: ProductModuleProps) {
 
       <ProductDetailDrawer
         product={selectedProduct}
+        categories={categories}
         categoryById={categoryById}
         language={language}
         t={t}
+        canUpdateProduct={adminCapabilities?.canUpdateProduct === true}
+        canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
         canAdjustStock={adminCapabilities?.canAdjustStock === true}
+        canManageCategories={canManageCategories}
         adminBackendReady={adminBackendReady}
         onClose={() => setSelectedProduct(null)}
         onImportDraft={handleImportDraft}
+        onManageCategories={() => setCategoryManagerOpen(true)}
         onProductChanged={refresh}
       />
 
@@ -239,6 +249,17 @@ export default function ProductModule({ language }: ProductModuleProps) {
         onImported={refresh}
         onOpenProduct={handleOpenProduct}
       />
+
+      {categoryManagerOpen ? (
+        <CategoryManagerDialog
+          language={language}
+          t={t}
+          canCreateCategory={adminCapabilities?.canCreateCategory === true}
+          canUpdateCategory={adminCapabilities?.canUpdateCategory === true}
+          onClose={() => setCategoryManagerOpen(false)}
+          onChanged={refresh}
+        />
+      ) : null}
     </div>
   );
 }

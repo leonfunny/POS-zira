@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownLeft,
@@ -112,6 +112,76 @@ function documentEffectLabel(type: WarehouseDocType): string {
   return 'count';
 }
 
+interface WarehouseLineRowProps {
+  line: DraftLine;
+  docType: WarehouseDocType;
+  language: string;
+  currency: string;
+  removeLabel: string;
+  onUpdate: (lineId: string, patch: Partial<Pick<DraftLine, 'quantity' | 'countedQuantity' | 'unitValueGrosze'>>) => void;
+  onRemove: (lineId: string) => void;
+}
+
+// Memoized so typing in a quantity input only re-renders the touched row
+// instead of all lines (every keystroke calls setLines). onUpdate/onRemove
+// must be stable (useCallback) for the memo to actually skip work.
+const WarehouseLineRow = React.memo(function WarehouseLineRow({
+  line,
+  docType,
+  language,
+  currency,
+  removeLabel,
+  onUpdate,
+  onRemove,
+}: WarehouseLineRowProps) {
+  const delta = lineDelta(docType, line);
+  const isInventory = docType === 'INW';
+  const displayQty = isInventory ? line.countedQuantity : line.quantity;
+
+  return (
+    <tr className="bg-white">
+      <td className="border-b border-slate-100 px-4 py-3">
+        <div className="truncate text-sm font-semibold text-slate-950">{resolveName(line as any, language) || line.name}</div>
+        <div className="mt-1 text-xs text-slate-500">{line.unit}</div>
+      </td>
+      <td className="border-b border-slate-100 px-3 py-3 text-sm tabular-nums text-slate-700">{formatQty(line.bookStock)}</td>
+      <td className="border-b border-slate-100 px-3 py-3">
+        <input
+          value={displayQty}
+          onChange={(event) => {
+            const value = numberOrZero(event.target.value);
+            onUpdate(line.id, isInventory ? { countedQuantity: value } : { quantity: value });
+          }}
+          className="h-10 w-full rounded-md border border-slate-300 px-2 text-sm font-semibold tabular-nums text-slate-950 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          inputMode="decimal"
+        />
+      </td>
+      <td className={`border-b border-slate-100 px-3 py-3 text-sm font-semibold tabular-nums ${
+        delta > 0 ? 'text-emerald-700' : delta < 0 ? 'text-rose-700' : 'text-slate-500'
+      }`}>
+        {delta > 0 ? '+' : ''}{formatQty(delta)}
+      </td>
+      <td className="border-b border-slate-100 px-3 py-3 text-xs text-slate-600">
+        <div className="truncate font-mono">{line.barcode || '-'}</div>
+        <div className="truncate font-mono text-slate-400">{line.sku || '-'}</div>
+      </td>
+      <td className="border-b border-slate-100 px-3 py-3 text-sm tabular-nums text-slate-700">
+        {formatMoney(Math.abs(delta) * line.unitValueGrosze, currency)}
+      </td>
+      <td className="border-b border-slate-100 px-2 py-3">
+        <button
+          type="button"
+          onClick={() => onRemove(line.id)}
+          className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+          title={removeLabel}
+        >
+          <Trash2 size={17} />
+        </button>
+      </td>
+    </tr>
+  );
+});
+
 export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const { t } = useTranslation(language);
   const scanRef = useRef<HTMLInputElement>(null);
@@ -137,10 +207,21 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const [posting, setPosting] = useState(false);
 
   const currency = tOr(t, 'pos.currency', 'zl');
+  const removeLineLabel = tOr(t, 'warehouse.remove', 'Remove');
   const selectedType = DOC_TYPES.find((item) => item.type === docType) || DOC_TYPES[0];
 
-  const findWarehouse = (value: string): WarehouseInfo | undefined =>
-    warehouses.find((warehouse) => warehouse.id === value || warehouse.code === value);
+  // O(1) lookup by id OR code — findWarehouse used to do .find() on every call,
+  // and the module calls it 3-4 times per render (label, select fallback, summary).
+  const warehouseByKey = useMemo(() => {
+    const map = new Map<string, WarehouseInfo>();
+    for (const warehouse of warehouses) {
+      if (warehouse.id) map.set(warehouse.id, warehouse);
+      if (warehouse.code) map.set(warehouse.code, warehouse);
+    }
+    return map;
+  }, [warehouses]);
+
+  const findWarehouse = (value: string): WarehouseInfo | undefined => warehouseByKey.get(value);
 
   const warehouseLabel = (value: string): string => {
     const warehouse = findWarehouse(value);
@@ -281,13 +362,17 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
     requestAnimationFrame(() => scanRef.current?.focus());
   };
 
-  const updateLine = (lineId: string, patch: Partial<Pick<DraftLine, 'quantity' | 'countedQuantity' | 'unitValueGrosze'>>) => {
-    setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
-  };
+  // Stable identity so memoized line rows skip re-renders when other rows change.
+  const updateLine = useCallback(
+    (lineId: string, patch: Partial<Pick<DraftLine, 'quantity' | 'countedQuantity' | 'unitValueGrosze'>>) => {
+      setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
+    },
+    [],
+  );
 
-  const removeLine = (lineId: string) => {
+  const removeLine = useCallback((lineId: string) => {
     setLines((current) => current.filter((line) => line.id !== lineId));
-  };
+  }, []);
 
   const clearDocument = () => {
     setLines([]);
@@ -705,51 +790,18 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((line) => {
-                    const delta = lineDelta(docType, line);
-                    return (
-                      <tr key={line.id} className="bg-white">
-                        <td className="border-b border-slate-100 px-4 py-3">
-                          <div className="truncate text-sm font-semibold text-slate-950">{resolveName(line as any, language) || line.name}</div>
-                          <div className="mt-1 text-xs text-slate-500">{line.unit}</div>
-                        </td>
-                        <td className="border-b border-slate-100 px-3 py-3 text-sm tabular-nums text-slate-700">{formatQty(line.bookStock)}</td>
-                        <td className="border-b border-slate-100 px-3 py-3">
-                          <input
-                            value={docType === 'INW' ? line.countedQuantity : line.quantity}
-                            onChange={(event) => {
-                              const value = numberOrZero(event.target.value);
-                              updateLine(line.id, docType === 'INW' ? { countedQuantity: value } : { quantity: value });
-                            }}
-                            className="h-10 w-full rounded-md border border-slate-300 px-2 text-sm font-semibold tabular-nums text-slate-950 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                            inputMode="decimal"
-                          />
-                        </td>
-                        <td className={`border-b border-slate-100 px-3 py-3 text-sm font-semibold tabular-nums ${
-                          delta > 0 ? 'text-emerald-700' : delta < 0 ? 'text-rose-700' : 'text-slate-500'
-                        }`}>
-                          {delta > 0 ? '+' : ''}{formatQty(delta)}
-                        </td>
-                        <td className="border-b border-slate-100 px-3 py-3 text-xs text-slate-600">
-                          <div className="truncate font-mono">{line.barcode || '-'}</div>
-                          <div className="truncate font-mono text-slate-400">{line.sku || '-'}</div>
-                        </td>
-                        <td className="border-b border-slate-100 px-3 py-3 text-sm tabular-nums text-slate-700">
-                          {formatMoney(Math.abs(delta) * line.unitValueGrosze, currency)}
-                        </td>
-                        <td className="border-b border-slate-100 px-2 py-3">
-                          <button
-                            type="button"
-                            onClick={() => removeLine(line.id)}
-                            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
-                            title={tOr(t, 'warehouse.remove', 'Remove')}
-                          >
-                            <Trash2 size={17} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {lines.map((line) => (
+                    <WarehouseLineRow
+                      key={line.id}
+                      line={line}
+                      docType={docType}
+                      language={language}
+                      currency={currency}
+                      removeLabel={removeLineLabel}
+                      onUpdate={updateLine}
+                      onRemove={removeLine}
+                    />
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -26,12 +26,15 @@ Completed in the desktop client on 2026-05-20:
 - Product-admin capability probe: desktop now checks `/api/v1/warehouse/product-admin/capabilities` through IPC/preload and fails closed when the endpoint or auth is unavailable.
 - Product-admin client plumbing: typed API client, IPC, preload, and Electron declarations now exist for create/update/deactivate/stock/category mutations, but renderer mutation UI stays disabled until backend capabilities are true.
 - Phase 5 partial: stock adjustment dialog is wired to `pos.productAdmin.adjustStock`, validates quantity/reason, uses an idempotency key, and is enabled only when `canAdjustStock` is true.
+- Phase 6 partial: product field edit form and stop-selling dialog are wired to `pos.productAdmin.updateVariant` and `pos.productAdmin.deactivateVariant`, validate key fields/reason, preserve unsaved-change confirmation, and are enabled only when matching capabilities are true.
+- Phase 7 partial: category manager dialog is wired to `pos.productAdmin.listCategories/createCategory/updateCategory`, supports empty admin categories from backend, uses idempotency/concurrency fields, and is enabled only when category capabilities are true.
 - Phase 9 partial: static contract tests plus existing catalog/sync tests and renderer/main typechecks.
 
-Blocked until backend support lands:
+Blocked until backend support lands or returns true capabilities in a real tenant:
 
-- Phase 6 normal product update/deactivate.
-- Phase 7 category create/update.
+- Final live validation of Phase 5 stock adjustment.
+- Final live validation of Phase 6 product update/deactivate.
+- Final live validation of Phase 7 category create/update.
 
 These blocked phases must stay disabled until `/api/v1/warehouse/product-admin/capabilities` reports the needed capability and the mutation endpoints in the server change request are available.
 

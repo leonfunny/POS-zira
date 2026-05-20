@@ -1,0 +1,298 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Tags } from 'lucide-react';
+import { resolveName } from '../../../shared/catalog-names';
+import type { ProductAdminUpdateVariantInput } from '../../../shared/types';
+import type { Category } from '../../hooks/usePosDb';
+import type { ProductListItem } from '../../hooks/useProducts';
+
+interface ProductEditFormProps {
+  product: ProductListItem;
+  categories: Category[];
+  language: string;
+  t: (key: string) => string;
+  canManageCategories: boolean;
+  onCancel: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onManageCategories: () => void;
+  onSaved: () => Promise<void> | void;
+}
+
+function tOr(t: (key: string) => string, key: string, fallback: string): string {
+  const value = t(key);
+  return value && value !== key ? value : fallback;
+}
+
+function moneyInputFromGrosze(value: number | null | undefined): string {
+  return ((Number(value) || 0) / 100).toFixed(2);
+}
+
+function parseMoneyToGrosze(value: string): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
+export default function ProductEditForm({
+  product,
+  categories,
+  language,
+  t,
+  canManageCategories,
+  onCancel,
+  onDirtyChange,
+  onManageCategories,
+  onSaved,
+}: ProductEditFormProps) {
+  const [name, setName] = useState(product.name || '');
+  const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
+  const [vatRate, setVatRate] = useState(String(Number(product.vat_rate) || 23));
+  const [barcode, setBarcode] = useState(product.barcode || '');
+  const [sku, setSku] = useState(product.sku || '');
+  const [categoryId, setCategoryId] = useState(product.category_id || '');
+  const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
+  const [imageUrl, setImageUrl] = useState(product.image_url || '');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    setName(product.name || '');
+    setPriceGross(moneyInputFromGrosze(product.retail_price));
+    setVatRate(String(Number(product.vat_rate) || 23));
+    setBarcode(product.barcode || '');
+    setSku(product.sku || '');
+    setCategoryId(product.category_id || '');
+    setSaleUnit(product.sale_unit || '');
+    setImageUrl(product.image_url || '');
+    setBusy(false);
+    setMessage(null);
+  }, [product.id]);
+
+  const sortedCategories = useMemo(() => {
+    return [...categories].sort((a, b) =>
+      resolveName(a, language).localeCompare(resolveName(b, language)),
+    );
+  }, [categories, language]);
+
+  const dirty = useMemo(() => (
+    name !== (product.name || '')
+    || priceGross !== moneyInputFromGrosze(product.retail_price)
+    || vatRate !== String(Number(product.vat_rate) || 23)
+    || barcode !== (product.barcode || '')
+    || sku !== (product.sku || '')
+    || categoryId !== (product.category_id || '')
+    || saleUnit !== (product.sale_unit || '')
+    || imageUrl !== (product.image_url || '')
+  ), [barcode, categoryId, imageUrl, name, priceGross, product, saleUnit, sku, vatRate]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  const validate = (): string | null => {
+    if (!name.trim()) return tOr(t, 'products.edit.nameRequired', 'Enter product name');
+    if (parseMoneyToGrosze(priceGross) === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
+    const vat = Number(vatRate);
+    if (!Number.isFinite(vat) || vat < 0) return tOr(t, 'products.edit.vatInvalid', 'Enter a valid VAT rate');
+    return null;
+  };
+
+  const handleSave = async () => {
+    const validationError = validate();
+    if (validationError) {
+      setMessage({ ok: false, text: validationError });
+      return;
+    }
+
+    const priceGrossGrosze = parseMoneyToGrosze(priceGross);
+    if (priceGrossGrosze === null) return;
+
+    const payload: ProductAdminUpdateVariantInput = {
+      name: name.trim(),
+      barcode: barcode.trim() || null,
+      sku: sku.trim() || null,
+      priceGrossGrosze,
+      vatRate: Number(vatRate),
+      categoryId: categoryId || null,
+      saleUnit: saleUnit.trim() || null,
+      imageUrl: imageUrl.trim() || null,
+      isActive: product.is_active !== 0,
+      expectedUpdatedAt: product.updated_at || undefined,
+    };
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await window.electronAPI.pos.productAdmin.updateVariant(product.id, payload);
+      if (!result?.ok) {
+        setMessage({
+          ok: false,
+          text: result?.error || result?.code || tOr(t, 'products.edit.failed', 'Could not save product'),
+        });
+        return;
+      }
+      setMessage({ ok: true, text: tOr(t, 'products.edit.success', 'Product saved') });
+      await onSaved();
+      onDirtyChange?.(false);
+      onCancel();
+    } catch (err: any) {
+      setMessage({ ok: false, text: err?.message || tOr(t, 'products.edit.failed', 'Could not save product') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCancel = () => {
+    if (dirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
+    onCancel();
+  };
+
+  return (
+    <section className="mt-5 rounded-lg border border-slate-200 bg-white">
+      <div className="border-b border-slate-200 px-4 py-3">
+        <h3 className="text-sm font-semibold text-slate-950">{tOr(t, 'products.edit.title', 'Edit product')}</h3>
+      </div>
+      <div className="space-y-4 p-4">
+        <label className="block">
+          <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+            {tOr(t, 'products.drawer.canonicalName', 'Canonical name')}
+          </span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.priceGross', 'Gross price')}
+            </span>
+            <input
+              inputMode="decimal"
+              value={priceGross}
+              onChange={(event) => setPriceGross(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.vat', 'VAT')}
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={vatRate}
+              onChange={(event) => setVatRate(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.barcode', 'Barcode')}
+            </span>
+            <input
+              value={barcode}
+              onChange={(event) => setBarcode(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.sku', 'SKU')}
+            </span>
+            <input
+              value={sku}
+              onChange={(event) => setSku(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.category', 'Category')}
+            </span>
+            <div className="flex gap-2">
+              <select
+                value={categoryId}
+                onChange={(event) => setCategoryId(event.target.value)}
+                className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+              >
+                <option value="">{tOr(t, 'products.allCategories', 'All categories')}</option>
+                {sortedCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {resolveName(category, language)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={onManageCategories}
+                disabled={!canManageCategories}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tOr(t, 'products.category.manage', 'Categories')}
+              >
+                <Tags size={17} />
+              </button>
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+            </span>
+            <input
+              value={saleUnit}
+              onChange={(event) => setSaleUnit(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+            {tOr(t, 'products.edit.imageUrl', 'Image URL')}
+          </span>
+          <input
+            value={imageUrl}
+            onChange={(event) => setImageUrl(event.target.value)}
+            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          />
+        </label>
+
+        {message ? (
+          <div className={`rounded-md border px-3 py-2 text-sm ${
+            message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'
+          }`}>
+            {message.text}
+          </div>
+        ) : null}
+      </div>
+
+      <footer className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+        >
+          {tOr(t, 'products.edit.cancel', 'Cancel')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={busy}
+          className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? tOr(t, 'products.edit.saving', 'Saving...') : tOr(t, 'products.edit.save', 'Save')}
+        </button>
+      </footer>
+    </section>
+  );
+}

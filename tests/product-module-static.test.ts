@@ -9,8 +9,12 @@ function readSource(relativePath: string): string {
 const app = readSource('../src/renderer/App.tsx');
 const sidebar = readSource('../src/renderer/components/Sidebar.tsx');
 const moduleSource = readSource('../src/renderer/components/products/ProductModule.tsx');
+const toolbar = readSource('../src/renderer/components/products/ProductToolbar.tsx');
 const drawer = readSource('../src/renderer/components/products/ProductDetailDrawer.tsx');
+const categoryManager = readSource('../src/renderer/components/products/CategoryManagerDialog.tsx');
 const stockDialog = readSource('../src/renderer/components/products/StockAdjustmentDialog.tsx');
+const editForm = readSource('../src/renderer/components/products/ProductEditForm.tsx');
+const deactivateDialog = readSource('../src/renderer/components/products/DeactivateProductDialog.tsx');
 const addFlow = readSource('../src/renderer/components/products/ProductAddFlow.tsx');
 const useProducts = readSource('../src/renderer/hooks/useProducts.ts');
 const sharedTypes = readSource('../src/shared/types.ts');
@@ -33,13 +37,16 @@ describe('Product module implementation contract', () => {
     expect(sidebar).toContain("labelKey: 'sidebar.products'");
   });
 
-  it('keeps product mutations blocked until backend product-admin endpoints exist', () => {
+  it('keeps product mutations behind product-admin capabilities', () => {
     expect(drawer).toContain('products.drawer.readOnly');
     expect(moduleSource).toContain('window.electronAPI.pos.productAdmin.getCapabilities()');
     expect(moduleSource).toContain('products.admin.notReady');
-    expect(moduleSource).not.toContain('productAdmin.update');
-    expect(moduleSource).not.toContain('productAdmin.adjustStock');
-    expect(drawer).not.toContain('productAdmin.deactivate');
+    expect(moduleSource).toContain('canUpdateProduct={adminCapabilities?.canUpdateProduct === true}');
+    expect(moduleSource).toContain('canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}');
+    expect(moduleSource).toContain('canAdjustStock={adminCapabilities?.canAdjustStock === true}');
+    expect(moduleSource).toContain('canManageCategories={canManageCategories}');
+    expect(drawer).toContain('canEditProduct = canUpdateProduct && !product._isDraft');
+    expect(drawer).toContain('canStopSelling = canDeactivateProduct && !product._isDraft');
   });
 
   it('exposes product-admin capabilities fail-closed without exposing mutations', () => {
@@ -90,6 +97,43 @@ describe('Product module implementation contract', () => {
     expect(stockDialog).toContain('products.stock.reasonRequired');
     expect(stockDialog).not.toContain('productRepo');
     expect(stockDialog).not.toContain('upsertMany');
+  });
+
+  it('enables product edit and stop-selling only through backend product-admin IPC', () => {
+    expect(drawer).toContain('ProductEditForm');
+    expect(drawer).toContain('DeactivateProductDialog');
+    expect(drawer).toContain('disabled={!canEditProduct}');
+    expect(drawer).toContain('disabled={!canStopSelling}');
+    expect(editForm).toContain('window.electronAPI.pos.productAdmin.updateVariant');
+    expect(editForm).toContain('parseMoneyToGrosze');
+    expect(editForm).toContain('priceGrossGrosze');
+    expect(editForm).toContain('expectedUpdatedAt: product.updated_at || undefined');
+    expect(editForm).toContain('products.edit.discardConfirm');
+    expect(deactivateDialog).toContain('window.electronAPI.pos.productAdmin.deactivateVariant');
+    expect(deactivateDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');
+    expect(deactivateDialog).toContain('products.deactivate.reasonRequired');
+    expect(editForm).not.toContain('productRepo');
+    expect(editForm).not.toContain('upsertMany');
+    expect(deactivateDialog).not.toContain('productRepo');
+    expect(deactivateDialog).not.toContain('upsertMany');
+  });
+
+  it('enables category management only through backend product-admin IPC', () => {
+    expect(moduleSource).toContain('CategoryManagerDialog');
+    expect(moduleSource).toContain('adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true');
+    expect(toolbar).toContain('canManageCategories');
+    expect(toolbar).toContain('products.category.unavailable');
+    expect(drawer).toContain('onManageCategories={onManageCategories}');
+    expect(editForm).toContain('canManageCategories');
+    expect(editForm).toContain('onManageCategories');
+    expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.listCategories');
+    expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.createCategory');
+    expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.updateCategory');
+    expect(categoryManager).toContain('idempotencyKey: makeIdempotencyKey()');
+    expect(categoryManager).toContain('expectedUpdatedAt: category.updatedAt || undefined');
+    expect(categoryManager).toContain('expectedVersion: category.version');
+    expect(categoryManager).not.toContain('productRepo');
+    expect(categoryManager).not.toContain('upsertMany');
   });
 
   it('loads products, drafts, categories, and preserves filters on sync events', () => {

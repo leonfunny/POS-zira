@@ -146,27 +146,23 @@ export const productRepo = {
   },
 
   search(query: string): ProductVariantRow[] {
-    // Try exact SQL LIKE first (fast path for SKU/barcode)
-    const like = `%${query}%`;
-    const sqlResults = database.all<ProductVariantRow>(
-      `SELECT * FROM product_variants WHERE is_active = 1 AND (sku LIKE ? OR barcode LIKE ?) ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
-      [like, like],
-    );
-    // Diacritics-aware search on name (bánh bao ↔ banh bao, łódź ↔ lodz)
-    const normalizedQuery = normalizeSearch(query);
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    // One full scan — sku/barcode/name filtering happens in JS on the same
+    // dataset. The previous version ran two SELECT * queries per keystroke
+    // (sku/barcode LIKE, then a full diacritics-aware scan) and then merged;
+    // for a 5000-row catalog that was ~2× the work for no extra hits.
+    const normalizedQuery = normalizeSearch(trimmed);
+    const lowerQuery = trimmed.toLowerCase();
     const allActive = database.all<ProductVariantRow>(
       `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
-    const nameMatches = allActive.filter(p =>
-      normalizeSearch(p.name).includes(normalizedQuery),
-    );
-    // Merge results, deduplicate by id
-    const seen = new Set<string>();
-    const merged: ProductVariantRow[] = [];
-    for (const r of [...sqlResults, ...nameMatches]) {
-      if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
-    }
-    return merged;
+    return allActive.filter((p) => {
+      if (p.sku && p.sku.toLowerCase().includes(lowerQuery)) return true;
+      if (p.barcode && p.barcode.toLowerCase().includes(lowerQuery)) return true;
+      return normalizeSearch(p.name).includes(normalizedQuery);
+    });
   },
 
   upsertMany(products: ProductVariantRow[]): void {
