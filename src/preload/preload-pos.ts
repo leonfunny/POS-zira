@@ -24,6 +24,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     categories: {
       getAll: () => ipcRenderer.invoke('pos:categories:getAll'),
     },
+    productAdmin: {
+      getCapabilities: () => ipcRenderer.invoke('pos:product-admin:capabilities'),
+      createProduct: (payload: any) => ipcRenderer.invoke('pos:product-admin:create-product', payload),
+      updateVariant: (variantId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:update-variant', variantId, payload),
+      deactivateVariant: (variantId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:deactivate-variant', variantId, payload),
+      adjustStock: (variantId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:adjust-stock', variantId, payload),
+      listCategories: () => ipcRenderer.invoke('pos:product-admin:categories:list'),
+      createCategory: (payload: any) => ipcRenderer.invoke('pos:product-admin:categories:create', payload),
+      updateCategory: (categoryId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:categories:update', categoryId, payload),
+    },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
       getDailyStats: (date: string) => ipcRenderer.invoke('pos:orders:getDailyStats', date),

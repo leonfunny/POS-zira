@@ -7,6 +7,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
+    "dev:app": "concurrently -k \"npm run dev:main\" \"npm run dev:renderer\" \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-electron.ps1\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json --noEmit",

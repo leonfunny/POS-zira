@@ -1,0 +1,756 @@
+openapi: 3.0.3
+info:
+  title: Zira POS Product Admin API
+  version: "1.0.0"
+  description: >
+    Contract requested by the POS-zira desktop Products module. The backend
+    catalog remains the source of truth; desktop clients must not perform
+    normal product administration as local-only SQLite edits.
+servers:
+  - url: https://api.example.com
+    description: Production base URL placeholder
+security:
+  - bearerAuth: []
+tags:
+  - name: ProductAdmin
+    description: Product, stock, and category administration for POS catalogs.
+paths:
+  /api/v1/warehouse/product-admin/capabilities:
+    get:
+      tags: [ProductAdmin]
+      operationId: getProductAdminCapabilities
+      summary: Detect product administration support for the current tenant.
+      parameters:
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Capability flags for this tenant/backend deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductAdminCapabilities"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/warehouse/product-admin/products:
+    post:
+      tags: [ProductAdmin]
+      operationId: createProductVariant
+      summary: Create a sellable POS product variant.
+      parameters:
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Product and variant created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/warehouse/product-admin/variants/{variantId}:
+    patch:
+      tags: [ProductAdmin]
+      operationId: updateProductVariant
+      summary: Update product variant fields, excluding stock.
+      parameters:
+        - $ref: "#/components/parameters/VariantId"
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariantRequest"
+      responses:
+        "200":
+          description: Variant updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VariantMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/warehouse/product-admin/variants/{variantId}/deactivate:
+    post:
+      tags: [ProductAdmin]
+      operationId: deactivateProductVariant
+      summary: Soft deactivate a product variant and hide it from normal POS selling.
+      parameters:
+        - $ref: "#/components/parameters/VariantId"
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeactivateVariantRequest"
+      responses:
+        "200":
+          description: Variant soft-deactivated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VariantMutationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/warehouse/product-admin/variants/{variantId}/stock-adjustments:
+    post:
+      tags: [ProductAdmin]
+      operationId: adjustProductStock
+      summary: Adjust product stock with an audit reason.
+      parameters:
+        - $ref: "#/components/parameters/VariantId"
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAdjustmentRequest"
+      responses:
+        "200":
+          description: Stock adjusted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAdjustmentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/warehouse/product-admin/categories:
+    get:
+      tags: [ProductAdmin]
+      operationId: listProductAdminCategories
+      summary: List all active admin categories, including empty categories.
+      parameters:
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Category list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [ProductAdmin]
+      operationId: createProductCategory
+      summary: Create a product category.
+      parameters:
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryMutationRequest"
+      responses:
+        "201":
+          description: Category created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/warehouse/product-admin/categories/{categoryId}:
+    patch:
+      tags: [ProductAdmin]
+      operationId: updateProductCategory
+      summary: Update a product category.
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+        - $ref: "#/components/parameters/SalonSlug"
+        - $ref: "#/components/parameters/SalonCode"
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryMutationRequest"
+      responses:
+        "200":
+          description: Category updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    SalonSlug:
+      name: X-Salon-Slug
+      in: header
+      required: false
+      schema:
+        type: string
+    SalonCode:
+      name: X-Salon-Code
+      in: header
+      required: false
+      schema:
+        type: string
+    AgentId:
+      name: X-Agent-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    VariantId:
+      name: variantId
+      in: path
+      required: true
+      schema:
+        type: string
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: User or tenant is not allowed to administer products.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Duplicate, stale version, tenant mismatch, or idempotency conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ValidationError:
+      description: Business validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotImplemented:
+      description: Product-admin capability is not available on this backend.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    ProductAdminCapabilities:
+      type: object
+      required:
+        - version
+        - canCreateProduct
+        - canUpdateProduct
+        - canDeactivateProduct
+        - canAdjustStock
+        - canCreateCategory
+        - canUpdateCategory
+        - supportsOptimisticConcurrency
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        canCreateProduct:
+          type: boolean
+        canUpdateProduct:
+          type: boolean
+        canDeactivateProduct:
+          type: boolean
+        canAdjustStock:
+          type: boolean
+        canCreateCategory:
+          type: boolean
+        canUpdateCategory:
+          type: boolean
+        supportsOptimisticConcurrency:
+          type: boolean
+
+    CreateProductRequest:
+      type: object
+      required: [name, vatRate]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        barcode:
+          type: string
+          nullable: true
+        sku:
+          type: string
+          nullable: true
+        retailPrice:
+          type: number
+          minimum: 0
+          description: Decimal PLN for UI ergonomics.
+        priceGrossGrosze:
+          type: integer
+          minimum: 0
+          description: Integer minor unit. Reject mismatch when both price fields are present.
+        vatRate:
+          type: number
+        initialStockQty:
+          type: number
+          minimum: 0
+          default: 0
+        categoryId:
+          type: string
+          nullable: true
+        saleUnit:
+          type: string
+          nullable: true
+          example: szt
+        imageUrl:
+          type: string
+          nullable: true
+
+    UpdateVariantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        barcode:
+          type: string
+          nullable: true
+        sku:
+          type: string
+          nullable: true
+        retailPrice:
+          type: number
+          minimum: 0
+        priceGrossGrosze:
+          type: integer
+          minimum: 0
+        vatRate:
+          type: number
+        categoryId:
+          type: string
+          nullable: true
+        saleUnit:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+        expectedVersion:
+          type: integer
+          minimum: 0
+      description: Omitted fields are unchanged. Stock is intentionally not accepted here.
+
+    DeactivateVariantRequest:
+      type: object
+      required: [reason]
+      properties:
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+        expectedVersion:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+          minLength: 1
+
+    StockAdjustmentRequest:
+      type: object
+      required: [mode, reason]
+      properties:
+        mode:
+          type: string
+          enum: [receive, recount, damage, loss, return]
+        quantity:
+          type: number
+          minimum: 0
+          description: Required for receive, damage, loss, and policy-based return.
+        newQuantity:
+          type: number
+          minimum: 0
+          description: Required for recount.
+        reason:
+          type: string
+          minLength: 1
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+        expectedVersion:
+          type: integer
+          minimum: 0
+
+    ProductTemplate:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        categoryId:
+          type: string
+          nullable: true
+
+    ProductVariant:
+      type: object
+      required:
+        - id
+        - templateId
+        - name
+        - priceGrossGrosze
+        - vatRate
+        - totalStockQty
+        - availableQty
+        - isActive
+        - updatedAt
+      properties:
+        id:
+          type: string
+        templateId:
+          type: string
+        name:
+          type: string
+        nameTranslations:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        sku:
+          type: string
+          nullable: true
+        barcode:
+          type: string
+          nullable: true
+        retailPrice:
+          type: number
+          nullable: true
+        priceGrossGrosze:
+          type: integer
+          minimum: 0
+        vatRate:
+          type: number
+        categoryId:
+          type: string
+          nullable: true
+        totalStockQty:
+          type: number
+        availableQty:
+          type: number
+        isActive:
+          type: boolean
+        saleUnit:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        thumbnailUrl:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+
+    ProductMutationResponse:
+      type: object
+      required: [product, variant, serverTime]
+      properties:
+        product:
+          $ref: "#/components/schemas/ProductTemplate"
+        variant:
+          $ref: "#/components/schemas/ProductVariant"
+        serverTime:
+          type: string
+          format: date-time
+
+    VariantMutationResponse:
+      type: object
+      required: [variant, serverTime]
+      properties:
+        variant:
+          $ref: "#/components/schemas/ProductVariant"
+        serverTime:
+          type: string
+          format: date-time
+
+    StockAdjustment:
+      type: object
+      required:
+        - id
+        - variantId
+        - mode
+        - previousQuantity
+        - newQuantity
+        - reason
+        - createdAt
+      properties:
+        id:
+          type: string
+        variantId:
+          type: string
+        mode:
+          type: string
+          enum: [receive, recount, damage, loss, return]
+        quantityDelta:
+          type: number
+        previousQuantity:
+          type: number
+        newQuantity:
+          type: number
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          nullable: true
+
+    StockAdjustmentResponse:
+      type: object
+      required: [adjustment, variant, serverTime]
+      properties:
+        adjustment:
+          $ref: "#/components/schemas/StockAdjustment"
+        variant:
+          $ref: "#/components/schemas/ProductVariant"
+        serverTime:
+          type: string
+          format: date-time
+
+    ProductCategory:
+      type: object
+      required: [id, name, isActive, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+          nullable: true
+          example: "#2563eb"
+        icon:
+          type: string
+          nullable: true
+        sortOrder:
+          type: integer
+          nullable: true
+        isActive:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+
+    CategoryListResponse:
+      type: object
+      required: [categories, serverTime]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductCategory"
+        serverTime:
+          type: string
+          format: date-time
+
+    CategoryMutationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        color:
+          type: string
+          nullable: true
+        icon:
+          type: string
+          nullable: true
+        sortOrder:
+          type: integer
+          nullable: true
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+        expectedVersion:
+          type: integer
+          minimum: 0
+
+    CategoryMutationResponse:
+      type: object
+      required: [category, serverTime]
+      properties:
+        category:
+          $ref: "#/components/schemas/ProductCategory"
+        serverTime:
+          type: string
+          format: date-time
+
+    ErrorEnvelope:
+      type: object
+      required: [ok, code, message]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        code:
+          type: string
+          enum:
+            - DUPLICATE_BARCODE
+            - DUPLICATE_SKU
+            - STALE_PRODUCT
+            - PRODUCT_NOT_FOUND
+            - CATEGORY_NOT_FOUND
+            - INVALID_PRICE
+            - INVALID_STOCK_QUANTITY
+            - INSUFFICIENT_STOCK
+            - UNSUPPORTED_CAPABILITY
+            - SALON_CONTEXT_MISMATCH
+            - UNAUTHORIZED_PRODUCT_ADMIN
+            - INVALID_CATEGORY
+            - INVALID_VAT_RATE
+            - PRICE_MINOR_UNIT_MISMATCH
+            - IDEMPOTENCY_CONFLICT
+        message:
+          type: string
+        field:
+          type: string
+          nullable: true
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+        serverTime:
+          type: string
+          format: date-time

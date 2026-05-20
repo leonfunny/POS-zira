@@ -1,0 +1,232 @@
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, Package, PackagePlus, Printer, X } from 'lucide-react';
+import { resolveName } from '../../../shared/catalog-names';
+import type { Category } from '../../hooks/usePosDb';
+import type { ProductListItem } from '../../hooks/useProducts';
+import ProductStatusBadge from './ProductStatusBadge';
+import StockAdjustmentDialog from './StockAdjustmentDialog';
+
+interface ProductDetailDrawerProps {
+  product: ProductListItem | null;
+  categoryById: Map<string, Category>;
+  language: string;
+  t: (key: string) => string;
+  canAdjustStock: boolean;
+  adminBackendReady: boolean;
+  onClose: () => void;
+  onImportDraft: (product: ProductListItem) => void;
+  onProductChanged: () => Promise<void> | void;
+}
+
+function tOr(t: (key: string) => string, key: string, fallback: string): string {
+  const value = t(key);
+  return value && value !== key ? value : fallback;
+}
+
+function formatMoney(amountGrosze: number, currency: string): string {
+  return `${((Number(amountGrosze) || 0) / 100).toFixed(2)} ${currency}`;
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '-';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 border-b border-slate-100 py-3 last:border-b-0">
+      <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
+      <div className={`min-w-0 text-sm text-slate-900 ${mono ? 'font-mono' : ''}`}>{value || '-'}</div>
+    </div>
+  );
+}
+
+export default function ProductDetailDrawer({
+  product,
+  categoryById,
+  language,
+  t,
+  canAdjustStock,
+  adminBackendReady,
+  onClose,
+  onImportDraft,
+  onProductChanged,
+}: ProductDetailDrawerProps) {
+  const [labelBusy, setLabelBusy] = useState(false);
+  const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [stockOpen, setStockOpen] = useState(false);
+
+  useEffect(() => {
+    setLabelBusy(false);
+    setLabelMessage(null);
+    setStockOpen(false);
+  }, [product?.id]);
+
+  if (!product) return null;
+
+  const currency = tOr(t, 'pos.currency', 'zl');
+  const displayName = resolveName(product, language) || product.name;
+  const category = product.category_id ? categoryById.get(product.category_id) : null;
+  const categoryName = category ? resolveName(category, language) : '-';
+  const image = product.thumbnail_url || product.image_url;
+  const stock = product.available_qty ?? product.in_stock ?? 0;
+  const canPrintLabel = !!product.barcode && !labelBusy;
+  const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
+
+  const handlePrintLabel = async () => {
+    if (!product.barcode || labelBusy) return;
+    setLabelBusy(true);
+    setLabelMessage(null);
+    try {
+      const result = await window.electronAPI.printLabel(product.barcode, displayName);
+      if (result?.success) {
+        setLabelMessage({ ok: true, text: tOr(t, 'products.label.printed', 'Label printed') });
+      } else {
+        setLabelMessage({ ok: false, text: result?.error || tOr(t, 'products.label.failed', 'Could not print label') });
+      }
+    } catch (err: any) {
+      setLabelMessage({ ok: false, text: err?.message || tOr(t, 'products.label.failed', 'Could not print label') });
+    } finally {
+      setLabelBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/35" onClick={onClose}>
+      <aside
+        className="flex h-full w-full max-w-[480px] flex-col bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+        aria-label={tOr(t, 'products.drawer.title', 'Product details')}
+      >
+        <header className="flex min-h-16 items-center justify-between border-b border-slate-200 px-5">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              {tOr(t, 'products.drawer.title', 'Product details')}
+            </div>
+            <h2 className="truncate text-lg font-semibold text-slate-950">{displayName}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            title={tOr(t, 'products.drawer.close', 'Close')}
+          >
+            <X size={20} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="flex gap-4">
+            {image ? (
+              <img
+                src={image}
+                alt={displayName}
+                className="h-28 w-28 rounded-lg border border-slate-200 bg-slate-100 object-cover"
+              />
+            ) : (
+              <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400">
+                <Package size={36} />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="mb-3">
+                <ProductStatusBadge product={product} t={t} />
+              </div>
+              <div className="text-2xl font-bold tabular-nums text-slate-950">
+                {formatMoney(product.retail_price, currency)}
+              </div>
+              <div className="mt-1 text-sm text-slate-500">VAT {Number(product.vat_rate) || 0}%</div>
+              {product._isDraft && product.barcode ? (
+                <button
+                  type="button"
+                  onClick={() => onImportDraft(product)}
+                  className="mt-4 inline-flex h-11 items-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700"
+                >
+                  {tOr(t, 'products.add.importDraft', 'Import draft')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void handlePrintLabel()}
+                disabled={!canPrintLabel}
+                className="mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title={!product.barcode ? tOr(t, 'products.label.noBarcode', 'Add a barcode before printing a label') : undefined}
+              >
+                <Printer size={17} />
+                {labelBusy ? tOr(t, 'products.label.printing', 'Printing...') : tOr(t, 'products.label.print', 'Print label')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setStockOpen(true)}
+                disabled={!canOpenStockAdjustment}
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
+                title={
+                  product._isDraft
+                    ? tOr(t, 'products.stock.draftDisabled', 'Import the draft before adjusting stock')
+                    : !canAdjustStock
+                      ? tOr(t, 'products.stock.unavailable', 'Stock adjustment needs product admin backend support')
+                      : undefined
+                }
+              >
+                <PackagePlus size={17} />
+                {tOr(t, 'products.stock.adjust', 'Adjust stock')}
+              </button>
+              {labelMessage ? (
+                <div className={`mt-2 rounded-md border px-3 py-2 text-xs ${
+                  labelMessage.ok
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-rose-200 bg-rose-50 text-rose-700'
+                }`}>
+                  {labelMessage.text}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <div className="flex gap-2">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+              <span>
+                {adminBackendReady
+                  ? tOr(t, 'products.drawer.readOnlyClient', 'Product field editing is still disabled in this desktop build.')
+                  : tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-lg border border-slate-200">
+            <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
+            <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
+            <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
+            <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
+            <DetailRow label={tOr(t, 'products.drawer.stock', 'Stock')} value={stock} />
+            <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
+            <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
+            <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
+            <DetailRow label={tOr(t, 'products.drawer.saleUnit', 'Sale unit')} value={product.sale_unit || '-'} />
+            <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
+          </div>
+        </div>
+
+        {stockOpen ? (
+          <StockAdjustmentDialog
+            product={product}
+            t={t}
+            onClose={() => setStockOpen(false)}
+            onAdjusted={onProductChanged}
+          />
+        ) : null}
+      </aside>
+    </div>
+  );
+}

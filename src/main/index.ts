@@ -27,6 +27,7 @@ import {
 import { HardwareModule } from './modules/hardware.module';
 import { SyncModule } from './modules/sync.module';
 import { PosModule } from './modules/pos.module';
+import { WarehouseModule } from './modules/warehouse.module';
 import { InvoiceModule } from './modules/invoice.module';
 import { AuthModule } from './modules/auth.module';
 import { RemoteModule } from './modules/remote.module';
@@ -38,6 +39,7 @@ import { SystemToolsModule } from './modules/system-tools.module';
 import { SecurityModule } from './modules/security.module';
 import { CheckinModule } from './modules/checkin.module';
 import { BackupModule } from './modules/backup.module';
+import { ForecastModule } from './modules/forecast.module';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -289,6 +291,7 @@ async function startApp() {
       .use(new HardwareModule(container))
       .use(new SyncModule(container))
       .use(new PosModule(container))
+      .use(new WarehouseModule(container))
       .use(new InvoiceModule(container))
       .use(new AuthModule(container))
       .use(new RemoteModule(container))
@@ -296,6 +299,7 @@ async function startApp() {
       .use(new TelegramModule(container))
       .use(new BrowserModule(container))
       .use(new BackupModule(container))
+      .use(new ForecastModule())
       .use(new SystemToolsModule(container))
       .use(new AiModule(container))
       .use(new SecurityModule(container))

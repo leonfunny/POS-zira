@@ -274,6 +274,10 @@ export class HardwareModule extends BaseModule {
       return this.testPrint();
     });
 
+    ipcMain.handle(IPC_CHANNELS.PRINT_LABEL, async (_event, barcode: string, text?: string) => {
+      return this.printLabel(barcode, text);
+    });
+
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, async (_, printerType: string) => {
       return this.testPrinterByType(printerType as PrinterType);
     });

@@ -10,6 +10,9 @@ import BooksySyncTab from './components/BooksySync';
 import AuthScreen from './components/AuthScreen';
 import InvoicingTab from './components/invoicing/InvoicingTab';
 import OrdersTab from './components/OrdersTab';
+import ProductModule from './components/products/ProductModule';
+import WarehouseModule from './components/warehouse/WarehouseModule';
+import ForecastOrderingTab from './components/forecast/ForecastOrderingTab';
 import SecurityTab from './components/security/SecurityTab';
 import CheckinWizard from './components/checkin/CheckinWizard';
 import BookingsTodayScreen from './components/booking/BookingsTodayScreen';
@@ -32,6 +35,9 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   booksy: true,
   invoicing: true,   // Free feature
   orders: true,      // Order history — free
+  products: true,    // Product/catalog management
+  warehouse: true,   // Warehouse documents
+  forecast: true,    // Forecast ordering
   settings: true,    // Always enabled
   debug: true,
   pos: true,         // Always show POS tab
@@ -56,6 +62,9 @@ const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   bookings: 'bookings',
   invoicing: 'invoicing',
   orders: 'orders',
+  products: 'products',
+  warehouse: 'warehouse',
+  forecast: 'forecast',
   security: 'security',
   settings: 'settings',
   debug: 'debug',
@@ -117,7 +126,7 @@ export default function App() {
 
   // Get visible tabs based on entitlements and user preferences
   const visibleTabs = useMemo((): Tab[] => {
-    const allTabs: Tab[] = ['pos', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'security', 'settings', 'debug'];
+    const allTabs: Tab[] = ['pos', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
     return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
   }, [isFeatureEnabled, config?.hiddenTabs]);
@@ -464,6 +473,15 @@ export default function App() {
               )}
               {activeTab === 'orders' && isFeatureEnabled('orders') && (
                 <OrdersTab language={(config?.language as Language) || 'en'} />
+              )}
+              {activeTab === 'products' && isFeatureEnabled('products') && (
+                <ProductModule language={(config?.language as Language) || 'en'} />
+              )}
+              {activeTab === 'warehouse' && isFeatureEnabled('warehouse') && (
+                <WarehouseModule language={(config?.language as Language) || 'en'} />
+              )}
+              {activeTab === 'forecast' && isFeatureEnabled('forecast') && (
+                <ForecastOrderingTab language={(config?.language as Language) || 'en'} />
               )}
               {activeTab === 'security' && isFeatureEnabled('security') && (
                 <SecurityTab config={config} />

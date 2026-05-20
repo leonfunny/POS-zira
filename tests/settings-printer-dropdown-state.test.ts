@@ -106,20 +106,25 @@ describe('Settings printer dropdown state', () => {
   it('wires salon-level shared printer assignments through Settings and IPC', () => {
     expect(settingsSource).toContain('Self-checkout receipt printing');
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
+    expect(settingsSource).toContain('const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[]');
+    expect(sharedTypesSource).toContain("| 'FISCAL_RECEIPT'");
+    expect(sharedTypesSource).toContain("| 'POS_RECEIPT'");
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList({');
     expect(settingsSource).toContain('shareableOnly: true');
     expect(settingsSource).toContain('role: SELF_CHECKOUT_RECEIPT_ROLE');
+    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.assignmentsList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.upsertAssignment(SELF_CHECKOUT_RECEIPT_ROLE, printerId)');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE)');
     expect(settingsSource).toContain('sharedReceiptOwnedByThisPos');
-    expect(settingsSource).toContain('Managed on owner POS');
+    expect(settingsSource).toContain('isSalonPrinterRouteReady(printer)');
     expect(settingsSource).toContain('Stop sharing');
     expect(settingsSource).toContain('function isSharedReceiptRouteCandidate');
     expect(settingsSource).toContain("printer.id === selectedPrinterId || hasServerPrinterTarget(printer)");
     expect(settingsSource).toContain("sharedReceiptPrinter.agentIsOnline ? 'POS app online' : 'POS app offline'");
     expect(settingsSource).toContain("sharedReceiptPrinter.isOnline ? 'Printer online' : 'Printer offline'");
     expect(settingsSource).toContain('Use for self-checkout');
+    expect(settingsSource).not.toContain('Choose on owner POS');
 
     expect(sharedTypesSource).toContain("PRINT_AGENT_SALON_PRINTERS_LIST: 'print-agent-salon-printers-list'");
     expect(sharedTypesSource).toContain("PRINT_AGENT_PRINTER_ASSIGNMENTS_UPSERT: 'print-agent-printer-assignments-upsert'");
@@ -132,6 +137,15 @@ describe('Settings printer dropdown state', () => {
     expect(apiClientSource).toContain("params.set('role', options.role)");
     expect(apiClientSource).toContain('/print-agent/salons/me/printer-assignments');
     expect(apiClientSource).toContain('/print-agent/salons/me/printers${query ? `?${query}` : \'\'}');
+  });
+
+  it('shows salon printer inventory separately from local hardware config', () => {
+    expect(settingsSource).toContain('Salon online printers');
+    expect(settingsSource).toContain('Read-only salon inventory');
+    expect(settingsSource).toContain('salonReadyPrinters.length');
+    expect(settingsSource).toContain('Planned printer routes');
+    expect(settingsSource).toContain('Needs blocking API');
+    expect(settingsSource).toContain('Hardware settings still stay on the owner POS');
   });
 
   it('labels backend printer rows as this POS local config', () => {

@@ -21,6 +21,7 @@ export interface Product {
   vat_amount?: number;
   is_on_sale?: number;
   thumbnail_url?: string | null;
+  sale_unit?: string | null;
   // Translation map (migration v28). JSON string of `{lang: name}`.
   // Orders/fiscal payloads use canonical `name`; paper receipts localize
   // separately at print time.

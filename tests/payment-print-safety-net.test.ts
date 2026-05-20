@@ -210,6 +210,29 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(printer.printReceipt).not.toHaveBeenCalled();
   });
 
+  it('keeps fiscal receipts on the local FISCAL printer and never uses the shared receipt route', async () => {
+    const fiscalPrinter = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'remote-fiscal' }));
+    const getPrinter = vi.fn((type: string) => (
+      type === PrinterType.FISCAL ? fiscalPrinter as any : null
+    ));
+    const ctl = new PaymentController(
+      getPrinter,
+      () => true,
+      () => 'ChÃ¨ SÃ i GÃ²n',
+      () => 'ChÃ¨ SÃ i GÃ²n Sp. z o.o.',
+      () => 'ul. MarszaÅ‚kowska 1',
+      () => '5220052349',
+      sharedReceiptPrinter,
+    );
+
+    await expect(ctl.printFiscalReceipt('order-1')).resolves.toBe(true);
+
+    expect(getPrinter).toHaveBeenCalledWith(PrinterType.FISCAL);
+    expect(sharedReceiptPrinter).not.toHaveBeenCalled();
+    expect(fiscalPrinter.printReceipt).toHaveBeenCalledTimes(1);
+  });
+
   it('completeCashPayment with NO printer attached still returns success', async () => {
     const ctl = buildController(null);
     const result = await ctl.completeCashPayment('order-1');

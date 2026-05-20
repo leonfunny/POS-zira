@@ -54,7 +54,21 @@ import {
   setConfigValue,
   getSecureApiKey,
 } from '../config/store';
-import type { SelectedService } from '../../shared/types';
+import type {
+  ProductAdminCategoryListResponse,
+  ProductAdminCategoryMutationInput,
+  ProductAdminCategoryMutationResponse,
+  ProductAdminCapabilities,
+  ProductAdminCreateProductInput,
+  ProductAdminDeactivateVariantInput,
+  ProductAdminIpcResult,
+  ProductAdminProductMutationResponse,
+  ProductAdminStockAdjustmentInput,
+  ProductAdminStockAdjustmentResponse,
+  ProductAdminUpdateVariantInput,
+  ProductAdminVariantMutationResponse,
+  SelectedService,
+} from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import { seedIfEmpty } from '../database/seed';
 import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson } from '../sync/pos-order-adapter';
@@ -506,6 +520,195 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
     ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
+
+    const emptyProductAdminCapabilities = (): ProductAdminCapabilities => ({
+      version: 0,
+      canCreateProduct: false,
+      canUpdateProduct: false,
+      canDeactivateProduct: false,
+      canAdjustStock: false,
+      canCreateCategory: false,
+      canUpdateCategory: false,
+      supportsOptimisticConcurrency: false,
+    });
+
+    ipcMain.handle(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES, async () => {
+      const token = getSecureAuthToken();
+      if (!token) {
+        return { ok: false, capabilities: emptyProductAdminCapabilities(), error: 'no-auth' };
+      }
+      try {
+        const capabilities = await apiClient.getProductAdminCapabilities(token);
+        return { ok: true, capabilities };
+      } catch (err: any) {
+        logger.debug(`[PosModule] product-admin capabilities unavailable: ${err?.message ?? err}`);
+        return {
+          ok: false,
+          capabilities: emptyProductAdminCapabilities(),
+          error: err?.message ?? 'product-admin-unavailable',
+        };
+      }
+    });
+
+    const toProductAdminError = <T>(err: any, fallback: string): ProductAdminIpcResult<T> => ({
+      ok: false,
+      error: err?.message ?? fallback,
+      code: err?.code,
+      field: err?.field,
+      details: err?.details,
+    });
+
+    const refreshProductsAfterProductAdminMutation = async (source: string) => {
+      try {
+        const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+        await syncMod?.deltaSync?.();
+      } catch (syncErr: any) {
+        logger.debug(`[PosModule] product-admin post-mutation sync skipped (${source}): ${syncErr?.message ?? syncErr}`);
+      }
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source });
+    };
+
+    type ProductAdminCapability = keyof Pick<
+      ProductAdminCapabilities,
+      | 'canCreateProduct'
+      | 'canUpdateProduct'
+      | 'canDeactivateProduct'
+      | 'canAdjustStock'
+      | 'canCreateCategory'
+      | 'canUpdateCategory'
+    >;
+
+    const withProductAdminCapability = async <T>(
+      capability: ProductAdminCapability,
+      label: string,
+      action: (token: string) => Promise<T>,
+      afterSuccess?: (data: T) => Promise<void>,
+    ): Promise<ProductAdminIpcResult<T>> => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, error: 'no-auth', code: 'UNAUTHORIZED_PRODUCT_ADMIN' };
+      try {
+        const capabilities = await apiClient.getProductAdminCapabilities(token);
+        if (capabilities[capability] !== true) {
+          return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' };
+        }
+        const data = await action(token);
+        if (afterSuccess) await afterSuccess(data);
+        return { ok: true, data };
+      } catch (err: any) {
+        logger.warn(`[PosModule] product-admin ${label} failed: ${err?.message ?? err}`);
+        return toProductAdminError<T>(err, `${label}-failed`);
+      }
+    };
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CREATE_PRODUCT,
+      async (_e, payload: ProductAdminCreateProductInput) => {
+        const input = {
+          ...(payload || {}),
+          idempotencyKey: payload?.idempotencyKey || randomUUID(),
+        } as ProductAdminCreateProductInput;
+        return withProductAdminCapability<ProductAdminProductMutationResponse>(
+          'canCreateProduct',
+          'create product',
+          (token) => apiClient.createProductVariant(token, input),
+          () => refreshProductsAfterProductAdminMutation('product_admin_create'),
+        );
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_UPDATE_VARIANT,
+      async (_e, variantId: string, payload: ProductAdminUpdateVariantInput) =>
+        withProductAdminCapability<ProductAdminVariantMutationResponse>(
+          'canUpdateProduct',
+          'update variant',
+          (token) => apiClient.updateProductVariant(token, variantId, payload || {}),
+          () => refreshProductsAfterProductAdminMutation('product_admin_update'),
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT,
+      async (_e, variantId: string, payload: ProductAdminDeactivateVariantInput) =>
+        withProductAdminCapability<ProductAdminVariantMutationResponse>(
+          'canDeactivateProduct',
+          'deactivate variant',
+          (token) => apiClient.deactivateProductVariant(token, variantId, payload || { reason: '' }),
+          () => refreshProductsAfterProductAdminMutation('product_admin_deactivate'),
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_ADJUST_STOCK,
+      async (_e, variantId: string, payload: ProductAdminStockAdjustmentInput) => {
+        const input = {
+          ...(payload || {}),
+          idempotencyKey: payload?.idempotencyKey || randomUUID(),
+        } as ProductAdminStockAdjustmentInput;
+        return withProductAdminCapability<ProductAdminStockAdjustmentResponse>(
+          'canAdjustStock',
+          'adjust stock',
+          (token) => apiClient.adjustProductStock(token, variantId, input),
+          async (data) => {
+            await refreshProductsAfterProductAdminMutation('product_admin_stock_adjustment');
+            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
+              source: 'product_admin',
+              adjustment: data.adjustment,
+              variant: data.variant,
+            });
+          },
+        );
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_LIST,
+      async () => {
+        const token = getSecureAuthToken();
+        if (!token) {
+          return { ok: false, error: 'no-auth', code: 'UNAUTHORIZED_PRODUCT_ADMIN' } as ProductAdminIpcResult<ProductAdminCategoryListResponse>;
+        }
+        try {
+          const capabilities = await apiClient.getProductAdminCapabilities(token);
+          if (!capabilities.canCreateCategory && !capabilities.canUpdateCategory) {
+            return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' } as ProductAdminIpcResult<ProductAdminCategoryListResponse>;
+          }
+          const data = await apiClient.listProductAdminCategories(token);
+          return { ok: true, data } as ProductAdminIpcResult<ProductAdminCategoryListResponse>;
+        } catch (err: any) {
+          logger.warn(`[PosModule] product-admin list categories failed: ${err?.message ?? err}`);
+          return toProductAdminError<ProductAdminCategoryListResponse>(err, 'list categories failed');
+        }
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_CREATE,
+      async (_e, payload: ProductAdminCategoryMutationInput) => {
+        const input = {
+          ...(payload || {}),
+          idempotencyKey: payload?.idempotencyKey || randomUUID(),
+        } as ProductAdminCategoryMutationInput;
+        return withProductAdminCapability<ProductAdminCategoryMutationResponse>(
+          'canCreateCategory',
+          'create category',
+          (token) => apiClient.createProductAdminCategory(token, input),
+          () => refreshProductsAfterProductAdminMutation('product_admin_category_create'),
+        );
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE,
+      async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) =>
+        withProductAdminCapability<ProductAdminCategoryMutationResponse>(
+          'canUpdateCategory',
+          'update category',
+          (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
+          () => refreshProductsAfterProductAdminMutation('product_admin_category_update'),
+        ),
+    );
 
     // Draft products (server-mirrored, see DraftProductSync)
     ipcMain.handle('pos:draft-products:getAll', () => draftProductRepo.getAll());

@@ -236,7 +236,13 @@ export interface SalonPrinterMapping extends ServerPrinterMapping {
   agentLastSeenAt?: string | null;
 }
 
-export type SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
+export type SalonPrinterRole =
+  | 'SELF_CHECKOUT_RECEIPT'
+  | 'POS_RECEIPT'
+  | 'FISCAL_RECEIPT'
+  | 'KITCHEN'
+  | 'LABEL'
+  | 'A4';
 
 export interface SalonPrinterAssignment {
   id: string;
@@ -829,6 +835,7 @@ export const IPC_CHANNELS = {
   LIST_PORTS: 'list-ports',
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   TEST_PRINT: 'test-print',
+  PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
   TEST_PRINT_PROGRESS: 'test-print-progress',  // Main → Renderer: per-step progress stream
@@ -929,6 +936,14 @@ export const IPC_CHANNELS = {
   POS_PRODUCTS_SEARCH: 'pos:products:search',
   POS_PRODUCTS_SEARCH_BY_CODE: 'pos:products:searchByCode',
   POS_PRODUCTS_GET_BY_BARCODE: 'pos:products:getByBarcode',
+  POS_PRODUCT_ADMIN_CAPABILITIES: 'pos:product-admin:capabilities',
+  POS_PRODUCT_ADMIN_CREATE_PRODUCT: 'pos:product-admin:create-product',
+  POS_PRODUCT_ADMIN_UPDATE_VARIANT: 'pos:product-admin:update-variant',
+  POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT: 'pos:product-admin:deactivate-variant',
+  POS_PRODUCT_ADMIN_ADJUST_STOCK: 'pos:product-admin:adjust-stock',
+  POS_PRODUCT_ADMIN_CATEGORIES_LIST: 'pos:product-admin:categories:list',
+  POS_PRODUCT_ADMIN_CATEGORIES_CREATE: 'pos:product-admin:categories:create',
+  POS_PRODUCT_ADMIN_CATEGORIES_UPDATE: 'pos:product-admin:categories:update',
 
   // POS - Categories
   POS_CATEGORIES_GET_ALL: 'pos:categories:getAll',
@@ -958,6 +973,33 @@ export const IPC_CHANNELS = {
   POS_CATALOG_UPDATED: 'pos:catalog-updated',
   POS_STOCK_UPDATED: 'pos:stock-updated',
   POS_ORDER_SYNCED: 'pos:order-synced',
+
+  // Warehouse / Magazyn
+  WAREHOUSE_WAREHOUSES_LIST: 'warehouse:warehouses:list',
+  WAREHOUSE_DOCUMENTS_LIST: 'warehouse:documents:list',
+  WAREHOUSE_DOCUMENTS_GET: 'warehouse:documents:get',
+  WAREHOUSE_DOCUMENTS_CREATE: 'warehouse:documents:create',
+  WAREHOUSE_DOCUMENTS_UPDATE: 'warehouse:documents:update',
+  WAREHOUSE_DOCUMENTS_SET_LINES: 'warehouse:documents:set-lines',
+  WAREHOUSE_DOCUMENTS_POST: 'warehouse:documents:post',
+  WAREHOUSE_DOCUMENTS_CANCEL: 'warehouse:documents:cancel',
+  WAREHOUSE_DOCUMENTS_PRINT: 'warehouse:documents:print',
+  WAREHOUSE_INVENTORY_CREATE: 'warehouse:inventory:create',
+  WAREHOUSE_INVENTORY_SET_LINES: 'warehouse:inventory:set-lines',
+  WAREHOUSE_INVENTORY_RECONCILE: 'warehouse:inventory:reconcile',
+  WAREHOUSE_INVENTORY_POST: 'warehouse:inventory:post',
+  WAREHOUSE_INVENTORY_PRINT: 'warehouse:inventory:print',
+
+  // Forecast / Daily Ordering
+  FORECAST_GET_RECOMMENDATIONS: 'forecast:get-recommendations',
+  FORECAST_RECOMPUTE: 'forecast:recompute',
+  FORECAST_GET_POLICIES: 'forecast:get-policies',
+  FORECAST_SAVE_POLICY: 'forecast:save-policy',
+  FORECAST_EXPORT_CSV: 'forecast:export-csv',
+  FORECAST_GET_TODAY_SALES: 'forecast:get-today-sales',
+  FORECAST_CREATE_ORDER_DRAFT: 'forecast:create-order-draft',
+  FORECAST_LIST_ORDER_DRAFTS: 'forecast:list-order-drafts',
+  FORECAST_GET_ORDER_DRAFT: 'forecast:get-order-draft',
 
   // POS - Tables
   POS_TABLES_GET_ALL: 'pos:tables:getAll',
@@ -2096,6 +2138,462 @@ export interface InvoicePrintOptions {
 }
 
 // ==========================================
+// Warehouse / Magazyn Types
+// ==========================================
+
+export type WarehouseDocumentType = 'PZ' | 'WZ' | 'RW' | 'PW' | 'MM' | 'INW';
+export type WarehouseDocumentStatus = 'DRAFT' | 'POSTED' | 'CANCELLED';
+
+export interface WarehouseInfo {
+  id: string;
+  code: string;
+  name: string;
+  isDefault?: boolean;
+  isActive?: boolean;
+}
+
+export interface WarehouseDocumentLineInput {
+  productVariantId: string;
+  sku?: string | null;
+  barcode?: string | null;
+  name?: string;
+  unit?: string;
+  quantity: number;
+  countedQuantity?: number;
+  unitCostGrosze?: number;
+  vatRate?: number;
+  bookStock?: number;
+}
+
+export interface WarehouseDocumentCreateInput {
+  type: WarehouseDocumentType;
+  warehouseId?: string;
+  warehouseCode?: string;
+  targetWarehouseId?: string;
+  targetWarehouseCode?: string;
+  contractorName?: string;
+  sourceDocumentNo?: string;
+  issueDate?: string;
+  operationDate?: string;
+  notes?: string;
+  lines?: WarehouseDocumentLineInput[];
+  idempotencyKey?: string;
+}
+
+export interface WarehouseDocumentUpdateInput {
+  warehouseId?: string;
+  warehouseCode?: string;
+  targetWarehouseId?: string;
+  targetWarehouseCode?: string;
+  contractorName?: string;
+  sourceDocumentNo?: string;
+  issueDate?: string;
+  operationDate?: string;
+  notes?: string;
+}
+
+export interface WarehouseDocument {
+  id: string;
+  type: WarehouseDocumentType;
+  status: WarehouseDocumentStatus | string;
+  number?: string | null;
+  warehouseId?: string | null;
+  warehouseCode?: string | null;
+  targetWarehouseId?: string | null;
+  targetWarehouseCode?: string | null;
+  contractorName?: string | null;
+  sourceDocumentNo?: string | null;
+  issueDate?: string | null;
+  operationDate?: string | null;
+  postedAt?: string | null;
+  notes?: string | null;
+  lines?: any[];
+  [key: string]: any;
+}
+
+export interface WarehouseDocumentListFilter {
+  type?: WarehouseDocumentType;
+  warehouseId?: string;
+  warehouseCode?: string;
+  status?: WarehouseDocumentStatus | string;
+  from?: string;
+  to?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface WarehousePrintPayload {
+  document: WarehouseDocument;
+  lines?: any[];
+  [key: string]: any;
+}
+
+export interface WarehouseInventoryCountLineInput {
+  productVariantId: string;
+  sku?: string | null;
+  barcode?: string | null;
+  name?: string;
+  unit?: string;
+  bookStock: number;
+  countedQuantity: number;
+  unitCostGrosze?: number;
+}
+
+export interface WarehouseInventoryCountCreateInput {
+  warehouseId?: string;
+  warehouseCode?: string;
+  scope?: string;
+  notes?: string;
+  lines?: WarehouseInventoryCountLineInput[];
+  idempotencyKey?: string;
+}
+
+export interface WarehouseInventoryCount {
+  id: string;
+  status: string;
+  number?: string | null;
+  warehouseId?: string | null;
+  warehouseCode?: string | null;
+  notes?: string | null;
+  lines?: any[];
+  [key: string]: any;
+}
+
+// ==========================================
+// POS Product Admin Capability Types
+// ==========================================
+
+export interface ProductAdminCapabilities {
+  version: number;
+  canCreateProduct: boolean;
+  canUpdateProduct: boolean;
+  canDeactivateProduct: boolean;
+  canAdjustStock: boolean;
+  canCreateCategory: boolean;
+  canUpdateCategory: boolean;
+  supportsOptimisticConcurrency: boolean;
+}
+
+export type ProductAdminErrorCode =
+  | 'DUPLICATE_BARCODE'
+  | 'DUPLICATE_SKU'
+  | 'STALE_PRODUCT'
+  | 'PRODUCT_NOT_FOUND'
+  | 'CATEGORY_NOT_FOUND'
+  | 'INVALID_PRICE'
+  | 'INVALID_STOCK_QUANTITY'
+  | 'INSUFFICIENT_STOCK'
+  | 'UNSUPPORTED_CAPABILITY'
+  | 'SALON_CONTEXT_MISMATCH'
+  | 'UNAUTHORIZED_PRODUCT_ADMIN'
+  | 'INVALID_CATEGORY'
+  | 'INVALID_VAT_RATE'
+  | 'PRICE_MINOR_UNIT_MISMATCH'
+  | 'IDEMPOTENCY_CONFLICT';
+
+export interface ProductAdminErrorEnvelope {
+  ok: false;
+  code: ProductAdminErrorCode | string;
+  message: string;
+  field?: string | null;
+  details?: Record<string, unknown> | null;
+  serverTime?: string;
+}
+
+export interface ProductAdminIpcResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+  code?: ProductAdminErrorCode | string;
+  field?: string | null;
+  details?: Record<string, unknown> | null;
+}
+
+export interface ProductAdminProductTemplate {
+  id: string;
+  name: string;
+  categoryId?: string | null;
+}
+
+export interface ProductAdminVariant {
+  id: string;
+  templateId: string | null;
+  name: string;
+  nameTranslations?: Record<string, string> | null;
+  sku?: string | null;
+  barcode?: string | null;
+  retailPrice?: number | null;
+  priceGrossGrosze: number;
+  vatRate: number;
+  categoryId?: string | null;
+  totalStockQty: number;
+  availableQty: number;
+  isActive: boolean;
+  saleUnit?: string | null;
+  imageUrl?: string | null;
+  thumbnailUrl?: string | null;
+  updatedAt: string;
+  version?: number;
+}
+
+export interface ProductAdminCreateProductInput {
+  name: string;
+  barcode?: string | null;
+  sku?: string | null;
+  retailPrice?: number;
+  priceGrossGrosze?: number;
+  vatRate: number;
+  initialStockQty?: number;
+  categoryId?: string | null;
+  saleUnit?: string | null;
+  imageUrl?: string | null;
+  idempotencyKey?: string;
+}
+
+export interface ProductAdminUpdateVariantInput {
+  name?: string;
+  barcode?: string | null;
+  sku?: string | null;
+  retailPrice?: number;
+  priceGrossGrosze?: number;
+  vatRate?: number;
+  categoryId?: string | null;
+  saleUnit?: string | null;
+  imageUrl?: string | null;
+  isActive?: boolean;
+  expectedUpdatedAt?: string;
+  expectedVersion?: number;
+}
+
+export interface ProductAdminDeactivateVariantInput {
+  expectedUpdatedAt?: string;
+  expectedVersion?: number;
+  reason: string;
+}
+
+export type ProductStockAdjustmentMode = 'receive' | 'recount' | 'damage' | 'loss' | 'return';
+
+export interface ProductAdminStockAdjustmentInput {
+  mode: ProductStockAdjustmentMode;
+  quantity?: number;
+  newQuantity?: number;
+  reason: string;
+  expectedUpdatedAt?: string;
+  expectedVersion?: number;
+  idempotencyKey?: string;
+}
+
+export interface ProductAdminStockAdjustment {
+  id: string;
+  variantId: string;
+  mode: ProductStockAdjustmentMode;
+  quantityDelta?: number;
+  previousQuantity: number;
+  newQuantity: number;
+  reason: string;
+  createdAt: string;
+  createdBy?: string | null;
+}
+
+export interface ProductAdminProductMutationResponse {
+  product: ProductAdminProductTemplate;
+  variant: ProductAdminVariant;
+  serverTime: string;
+}
+
+export interface ProductAdminVariantMutationResponse {
+  variant: ProductAdminVariant;
+  serverTime: string;
+}
+
+export interface ProductAdminStockAdjustmentResponse {
+  adjustment: ProductAdminStockAdjustment;
+  variant: ProductAdminVariant;
+  serverTime: string;
+}
+
+export interface ProductAdminCategory {
+  id: string;
+  name: string;
+  color?: string | null;
+  icon?: string | null;
+  sortOrder?: number | null;
+  isActive: boolean;
+  updatedAt: string;
+  version?: number;
+}
+
+export interface ProductAdminCategoryListResponse {
+  categories: ProductAdminCategory[];
+  serverTime: string;
+}
+
+export interface ProductAdminCategoryMutationInput {
+  name: string;
+  color?: string | null;
+  icon?: string | null;
+  sortOrder?: number | null;
+  expectedUpdatedAt?: string;
+  expectedVersion?: number;
+  idempotencyKey?: string;
+}
+
+export interface ProductAdminCategoryMutationResponse {
+  category: ProductAdminCategory;
+  serverTime: string;
+}
+
+// ==========================================
+// Forecast / Daily Ordering Types
+// ==========================================
+
+export type ForecastRiskLevel = 'ok' | 'watch' | 'reorder' | 'stockout';
+
+export interface ForecastRunOptions {
+  asOfDate?: string;      // YYYY-MM-DD, defaults to today
+  horizonDays?: number;   // days to cover in the daily order
+  historyDays?: number;   // days of local sales history to inspect
+  categoryId?: string;
+}
+
+export interface ForecastDailyPoint {
+  date: string;
+  units: number;
+}
+
+export interface ReplenishmentPolicyDTO {
+  variantId: string;
+  leadTimeDays: number;
+  safetyStockDays: number;
+  minDisplayQty: number;
+  packSize: number;
+  maxStock: number | null;
+  supplierName: string | null;
+  updatedAt: string;
+}
+
+export interface ForecastRecommendationDTO {
+  id: string;
+  runId: string;
+  variantId: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  stockOnHand: number;
+  avgDailyDemand: number;
+  velocity7d: number;
+  velocity30d: number;
+  forecastUnits: number;
+  forecastDaily: ForecastDailyPoint[];
+  leadTimeDays: number;
+  safetyStockDays: number;
+  minDisplayQty: number;
+  maxStock: number | null;
+  reorderPoint: number;
+  targetStock: number;
+  suggestedOrderQty: number;
+  packSize: number;
+  estimatedRetailValue: number;
+  riskLevel: ForecastRiskLevel;
+  confidence: number;
+  reason: string;
+  warnings: string[];
+  supplierName: string | null;
+  updatedAt: string;
+}
+
+export interface ForecastRunDTO {
+  id: string;
+  generatedAt: string;
+  asOfDate: string;
+  horizonDays: number;
+  historyDays: number;
+  itemCount: number;
+  totalSuggestedQty: number;
+  totalEstimatedRetailValue: number;
+  warnings: string[];
+}
+
+export interface ForecastOrderingResponse {
+  run: ForecastRunDTO;
+  recommendations: ForecastRecommendationDTO[];
+}
+
+export interface TodaySalesItemDTO {
+  variantId: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  quantity: number;
+  revenue: number;
+  orderCount: number;
+  avgUnitPrice: number;
+  stockOnHand: number;
+  velocity7d: number;
+  velocity30d: number;
+  lastSoldAt: string | null;
+}
+
+export interface TodaySalesReportDTO {
+  date: string;
+  itemCount: number;
+  totalUnits: number;
+  totalRevenue: number;
+  totalOrders: number;
+  items: TodaySalesItemDTO[];
+}
+
+export type ForecastOrderDraftStatus = 'draft' | 'ordered' | 'received' | 'cancelled';
+
+export interface ForecastOrderDraftLineInput {
+  variantId: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  supplierName: string | null;
+  stockOnHand: number;
+  velocity7d: number;
+  velocity30d: number;
+  suggestedOrderQty: number;
+  orderQty: number;
+  unitValue: number;
+  reason: string;
+}
+
+export interface ForecastOrderDraftCreateInput {
+  sourceRunId?: string | null;
+  asOfDate: string;
+  notes?: string | null;
+  lines: ForecastOrderDraftLineInput[];
+}
+
+export interface ForecastOrderDraftLineDTO extends ForecastOrderDraftLineInput {
+  id: string;
+  draftId: string;
+  estimatedRetailValue: number;
+  sortOrder: number;
+}
+
+export interface ForecastOrderDraftDTO {
+  id: string;
+  status: ForecastOrderDraftStatus;
+  sourceRunId: string | null;
+  asOfDate: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  itemCount: number;
+  totalQty: number;
+  totalEstimatedRetailValue: number;
+  lines: ForecastOrderDraftLineDTO[];
+}
+
+// ==========================================
 // Feature Entitlements Types (SuperAdmin Control)
 // ==========================================
 
@@ -2108,6 +2606,9 @@ export type FeatureKey =
   | 'settings'    // Settings tab (thường luôn bật)
   | 'debug'       // Debug tab
   | 'orders'      // Order history tab
+  | 'products'    // Product/catalog management tab
+  | 'warehouse'   // Warehouse documents / Magazyn tab
+  | 'forecast'    // Sales forecast and daily replenishment tab
   | 'pos'         // POS window
   | 'remote'      // Remote control
   | 'telegram'    // Telegram bot
@@ -2118,7 +2619,7 @@ export type FeatureKey =
   | 'selfCheckout'; // Self-checkout kiosk window
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'products' | 'warehouse' | 'forecast' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -2151,6 +2652,9 @@ export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   settings: true,    // Always enabled
   debug: false,
   orders: true,      // Order history — free, tied to POS sales
+  products: true,    // Product/catalog management — free, tied to POS catalog
+  warehouse: true,   // Warehouse documents — UI shell until backend posting exists
+  forecast: true,    // Local sales forecast and daily ordering assistance
   pos: false,
   selfCheckout: false,
   remote: false,

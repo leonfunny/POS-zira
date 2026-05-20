@@ -15,6 +15,9 @@ import {
   Maximize,
   LogOut,
   LayoutDashboard,
+  Package,
+  TrendingUp,
+  Warehouse,
 } from 'lucide-react';
 import { Language, languageNames } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
@@ -54,6 +57,9 @@ const MENU_GROUPS: MenuGroup[] = [
       { tab: 'selfCheckout', icon: <ScanBarcode size={18} />, labelKey: 'sidebar.selfCheckout' },
       { tab: 'billiard', icon: <LayoutDashboard size={18} />, labelKey: 'sidebar.billiard' },
       { tab: 'orders', icon: <ClipboardList size={18} />, labelKey: 'sidebar.orders' },
+      { tab: 'products', icon: <Package size={18} />, labelKey: 'sidebar.products' },
+      { tab: 'warehouse', icon: <Warehouse size={18} />, labelKey: 'sidebar.warehouse' },
+      { tab: 'forecast', icon: <TrendingUp size={18} />, labelKey: 'sidebar.forecast' },
       { tab: 'invoicing', icon: <FileText size={18} />, labelKey: 'sidebar.invoicing' },
     ],
   },

@@ -195,6 +195,11 @@ class Database {
     const tablesToClear = [
       'order_items',      // Must be first (FK to orders)
       'orders',
+      'forecast_order_draft_lines',
+      'forecast_order_drafts',
+      'forecast_recommendations',
+      'forecast_runs',
+      'replenishment_policies',
       'shifts',
       'product_variants',
       'categories',

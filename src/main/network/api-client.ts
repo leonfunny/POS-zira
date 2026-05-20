@@ -18,6 +18,27 @@ import {
   ServerPrinterMapping,
   TelegramLoginTokenResponse,
   TelegramLoginTokenStatus,
+  WarehouseDocument,
+  WarehouseDocumentCreateInput,
+  WarehouseDocumentLineInput,
+  WarehouseDocumentListFilter,
+  WarehouseDocumentUpdateInput,
+  WarehouseInfo,
+  WarehouseInventoryCount,
+  WarehouseInventoryCountCreateInput,
+  WarehouseInventoryCountLineInput,
+  WarehousePrintPayload,
+  ProductAdminCapabilities,
+  ProductAdminCategoryListResponse,
+  ProductAdminCategoryMutationInput,
+  ProductAdminCategoryMutationResponse,
+  ProductAdminCreateProductInput,
+  ProductAdminDeactivateVariantInput,
+  ProductAdminProductMutationResponse,
+  ProductAdminStockAdjustmentInput,
+  ProductAdminStockAdjustmentResponse,
+  ProductAdminUpdateVariantInput,
+  ProductAdminVariantMutationResponse,
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
@@ -418,6 +439,203 @@ export class ApiClient {
     return JSON.parse(text);
   }
 
+  private async warehouseRequest<T>(
+    token: string,
+    method: string,
+    path: string,
+    body?: any,
+    idempotencyKey?: string,
+  ): Promise<T | null> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const agentId = getConfigValue('agentId') as string | undefined;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
+    if (agentId) headers['X-Agent-Id'] = agentId;
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/warehouse${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      let parsed: any = null;
+      try { parsed = raw ? JSON.parse(raw) : null; } catch { /* keep raw message */ }
+      throw new Error(parsed?.message || parsed?.error || raw || `HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    return (text ? JSON.parse(text) : {}) as T;
+  }
+
+  async listWarehouses(token: string): Promise<{ warehouses: WarehouseInfo[] } | null> {
+    const data: any = await this.warehouseRequest(token, 'GET', '/warehouses');
+    if (!data) return null;
+    const warehouses = Array.isArray(data) ? data : data.warehouses ?? data.items ?? data.data ?? [];
+    return { warehouses };
+  }
+
+  async listWarehouseDocuments(
+    token: string,
+    filter: WarehouseDocumentListFilter = {},
+  ): Promise<{ documents: WarehouseDocument[]; total?: number; page?: number; limit?: number } | null> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null || value === '') continue;
+      params.set(key, String(value));
+    }
+    const query = params.toString();
+    const data: any = await this.warehouseRequest(token, 'GET', `/documents${query ? `?${query}` : ''}`);
+    if (!data) return null;
+    return {
+      documents: data.documents ?? data.items ?? data.data ?? (Array.isArray(data) ? data : []),
+      total: data.total,
+      page: data.page,
+      limit: data.limit,
+    };
+  }
+
+  async getWarehouseDocument(token: string, id: string): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(token, 'GET', `/documents/${encodeURIComponent(id)}`);
+    return data?.document ?? data ?? null;
+  }
+
+  async createWarehouseDocument(
+    token: string,
+    payload: WarehouseDocumentCreateInput,
+  ): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      '/documents',
+      payload,
+      payload.idempotencyKey,
+    );
+    return data?.document ?? data ?? null;
+  }
+
+  async updateWarehouseDocument(
+    token: string,
+    id: string,
+    payload: WarehouseDocumentUpdateInput,
+  ): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'PATCH',
+      `/documents/${encodeURIComponent(id)}`,
+      payload,
+    );
+    return data?.document ?? data ?? null;
+  }
+
+  async setWarehouseDocumentLines(
+    token: string,
+    id: string,
+    lines: WarehouseDocumentLineInput[],
+  ): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'PUT',
+      `/documents/${encodeURIComponent(id)}/lines`,
+      { lines },
+    );
+    return data?.document ?? data ?? null;
+  }
+
+  async postWarehouseDocument(token: string, id: string): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      `/documents/${encodeURIComponent(id)}/post`,
+      {},
+      `post-${id}`,
+    );
+    return data?.document ?? data ?? null;
+  }
+
+  async cancelWarehouseDocument(token: string, id: string, reason?: string): Promise<WarehouseDocument | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      `/documents/${encodeURIComponent(id)}/cancel`,
+      { reason },
+    );
+    return data?.document ?? data ?? null;
+  }
+
+  async getWarehouseDocumentPrint(token: string, id: string): Promise<WarehousePrintPayload | null> {
+    return this.warehouseRequest<WarehousePrintPayload>(
+      token,
+      'GET',
+      `/documents/${encodeURIComponent(id)}/print`,
+    );
+  }
+
+  async createWarehouseInventoryCount(
+    token: string,
+    payload: WarehouseInventoryCountCreateInput,
+  ): Promise<WarehouseInventoryCount | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      '/inventory-counts',
+      payload,
+      payload.idempotencyKey,
+    );
+    return data?.inventoryCount ?? data?.count ?? data ?? null;
+  }
+
+  async setWarehouseInventoryLines(
+    token: string,
+    id: string,
+    lines: WarehouseInventoryCountLineInput[],
+  ): Promise<WarehouseInventoryCount | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'PUT',
+      `/inventory-counts/${encodeURIComponent(id)}/lines`,
+      { lines },
+    );
+    return data?.inventoryCount ?? data?.count ?? data ?? null;
+  }
+
+  async reconcileWarehouseInventory(token: string, id: string): Promise<WarehouseInventoryCount | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      `/inventory-counts/${encodeURIComponent(id)}/reconcile`,
+      {},
+    );
+    return data?.inventoryCount ?? data?.count ?? data ?? null;
+  }
+
+  async postWarehouseInventory(token: string, id: string): Promise<WarehouseInventoryCount | null> {
+    const data: any = await this.warehouseRequest(
+      token,
+      'POST',
+      `/inventory-counts/${encodeURIComponent(id)}/post`,
+      {},
+      `inventory-post-${id}`,
+    );
+    return data?.inventoryCount ?? data?.count ?? data ?? null;
+  }
+
+  async getWarehouseInventoryPrint(token: string, id: string): Promise<WarehousePrintPayload | null> {
+    return this.warehouseRequest<WarehousePrintPayload>(
+      token,
+      'GET',
+      `/inventory-counts/${encodeURIComponent(id)}/print`,
+    );
+  }
+
   async listAgentPrinters(token: string, agentId: string): Promise<AgentPrintersResponse> {
     const result = await this.request(
       'GET',
@@ -776,6 +994,170 @@ export class ApiClient {
   // ==========================================
   // POS Methods
   // ==========================================
+
+  private async productAdminRequest<T>(
+    token: string,
+    method: string,
+    path: string,
+    body?: any,
+    idempotencyKey?: string,
+  ): Promise<T> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const agentId = getConfigValue('agentId') as string | undefined;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
+    if (agentId) headers['X-Agent-Id'] = agentId;
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/warehouse/product-admin${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const raw = await response.text();
+    let data: any = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = raw;
+    }
+
+    if (!response.ok) {
+      const message = typeof data === 'object'
+        ? data?.message || data?.error || `HTTP ${response.status}`
+        : raw || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & {
+        status?: number;
+        code?: string;
+        field?: string | null;
+        details?: Record<string, unknown> | null;
+        serverBody?: unknown;
+      };
+      error.status = response.status;
+      if (data && typeof data === 'object') {
+        error.code = data.code;
+        error.field = data.field;
+        error.details = data.details;
+        error.serverBody = data;
+      }
+      throw error;
+    }
+
+    return data as T;
+  }
+
+  /**
+   * Product admin runtime capabilities.
+   * GET /api/v1/warehouse/product-admin/capabilities
+   */
+  async getProductAdminCapabilities(token: string): Promise<ProductAdminCapabilities> {
+    const raw = await this.productAdminRequest<any>(token, 'GET', '/capabilities');
+    return {
+      version: Number(raw?.version) || 0,
+      canCreateProduct: raw?.canCreateProduct === true,
+      canUpdateProduct: raw?.canUpdateProduct === true,
+      canDeactivateProduct: raw?.canDeactivateProduct === true,
+      canAdjustStock: raw?.canAdjustStock === true,
+      canCreateCategory: raw?.canCreateCategory === true,
+      canUpdateCategory: raw?.canUpdateCategory === true,
+      supportsOptimisticConcurrency: raw?.supportsOptimisticConcurrency === true,
+    };
+  }
+
+  async createProductVariant(
+    token: string,
+    payload: ProductAdminCreateProductInput,
+  ): Promise<ProductAdminProductMutationResponse> {
+    const { idempotencyKey, ...body } = payload;
+    return this.productAdminRequest<ProductAdminProductMutationResponse>(
+      token,
+      'POST',
+      '/products',
+      body,
+      idempotencyKey,
+    );
+  }
+
+  async updateProductVariant(
+    token: string,
+    variantId: string,
+    payload: ProductAdminUpdateVariantInput,
+  ): Promise<ProductAdminVariantMutationResponse> {
+    return this.productAdminRequest<ProductAdminVariantMutationResponse>(
+      token,
+      'PATCH',
+      `/variants/${encodeURIComponent(variantId)}`,
+      payload,
+    );
+  }
+
+  async deactivateProductVariant(
+    token: string,
+    variantId: string,
+    payload: ProductAdminDeactivateVariantInput,
+  ): Promise<ProductAdminVariantMutationResponse> {
+    return this.productAdminRequest<ProductAdminVariantMutationResponse>(
+      token,
+      'POST',
+      `/variants/${encodeURIComponent(variantId)}/deactivate`,
+      payload,
+    );
+  }
+
+  async adjustProductStock(
+    token: string,
+    variantId: string,
+    payload: ProductAdminStockAdjustmentInput,
+  ): Promise<ProductAdminStockAdjustmentResponse> {
+    const { idempotencyKey, ...body } = payload;
+    return this.productAdminRequest<ProductAdminStockAdjustmentResponse>(
+      token,
+      'POST',
+      `/variants/${encodeURIComponent(variantId)}/stock-adjustments`,
+      body,
+      idempotencyKey,
+    );
+  }
+
+  async listProductAdminCategories(token: string): Promise<ProductAdminCategoryListResponse> {
+    return this.productAdminRequest<ProductAdminCategoryListResponse>(
+      token,
+      'GET',
+      '/categories',
+    );
+  }
+
+  async createProductAdminCategory(
+    token: string,
+    payload: ProductAdminCategoryMutationInput,
+  ): Promise<ProductAdminCategoryMutationResponse> {
+    const { idempotencyKey, ...body } = payload;
+    return this.productAdminRequest<ProductAdminCategoryMutationResponse>(
+      token,
+      'POST',
+      '/categories',
+      body,
+      idempotencyKey,
+    );
+  }
+
+  async updateProductAdminCategory(
+    token: string,
+    categoryId: string,
+    payload: ProductAdminCategoryMutationInput,
+  ): Promise<ProductAdminCategoryMutationResponse> {
+    return this.productAdminRequest<ProductAdminCategoryMutationResponse>(
+      token,
+      'PATCH',
+      `/categories/${encodeURIComponent(categoryId)}`,
+      payload,
+    );
+  }
 
   /**
    * Get POS products and categories (with optional delta since timestamp)

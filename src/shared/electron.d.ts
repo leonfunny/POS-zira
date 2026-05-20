@@ -1,7 +1,8 @@
 /**
  * Global type declaration for window.electronAPI
  *
- * This is a superset of all preload variants (main, POS, customer-display).
+ * This is a superset of all preload variants (main, POS, customer-display,
+ * self-checkout).
  * Each BrowserWindow only exposes a subset via contextBridge, but we declare
  * the full shape so renderer code can use any property without type errors.
  */
@@ -62,6 +63,13 @@ import type {
   AccountingProductCreateDTO,
   SellerSettingsRow,
   SellerSettingsUpdateDTO,
+  ForecastOrderingResponse,
+  ForecastOrderDraftCreateInput,
+  ForecastOrderDraftDTO,
+  ForecastRecommendationDTO,
+  ForecastRunOptions,
+  ReplenishmentPolicyDTO,
+  TodaySalesReportDTO,
   SecurityConfig,
   SecurityStatus,
   SecurityAlert,
@@ -72,6 +80,28 @@ import type {
   SalonCustomer,
   ServiceRecommendation,
   CustomerServiceHistory,
+  WarehouseDocument,
+  WarehouseDocumentCreateInput,
+  WarehouseDocumentLineInput,
+  WarehouseDocumentListFilter,
+  WarehouseDocumentUpdateInput,
+  WarehouseInfo,
+  WarehouseInventoryCount,
+  WarehouseInventoryCountCreateInput,
+  WarehouseInventoryCountLineInput,
+  WarehousePrintPayload,
+  ProductAdminCapabilities,
+  ProductAdminCategoryListResponse,
+  ProductAdminCategoryMutationInput,
+  ProductAdminCategoryMutationResponse,
+  ProductAdminCreateProductInput,
+  ProductAdminDeactivateVariantInput,
+  ProductAdminIpcResult,
+  ProductAdminProductMutationResponse,
+  ProductAdminStockAdjustmentInput,
+  ProductAdminStockAdjustmentResponse,
+  ProductAdminUpdateVariantInput,
+  ProductAdminVariantMutationResponse,
 } from './types';
 
 // ── POS DB row types (mirrors repos) ──
@@ -115,6 +145,7 @@ interface IpcResult<T = void> {
   success: boolean;
   data?: T;
   error?: string;
+  code?: string;
 }
 
 interface PosOrderRow {
@@ -202,6 +233,7 @@ interface ElectronAPI {
   listPorts: () => Promise<string[]>;
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
+  printLabel: (barcode: string, text?: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
   validatePrinterPort: (port: string, protocol: import('./types').PrinterProtocol) => Promise<{
@@ -543,6 +575,19 @@ interface ElectronAPI {
     };
   };
 
+  // Forecast / Daily Ordering
+  forecast: {
+    getRecommendations: (options?: ForecastRunOptions) => Promise<IpcResult<ForecastOrderingResponse>>;
+    recompute: (options?: ForecastRunOptions) => Promise<IpcResult<ForecastOrderingResponse>>;
+    getPolicies: (variantIds?: string[]) => Promise<IpcResult<ReplenishmentPolicyDTO[]>>;
+    savePolicy: (policy: Partial<ReplenishmentPolicyDTO> & { variantId: string }) => Promise<IpcResult<ReplenishmentPolicyDTO>>;
+    exportCsv: (recommendations: ForecastRecommendationDTO[]) => Promise<IpcResult<string>>;
+    getTodaySales: (date?: string) => Promise<IpcResult<TodaySalesReportDTO>>;
+    createOrderDraft: (input: ForecastOrderDraftCreateInput) => Promise<IpcResult<ForecastOrderDraftDTO>>;
+    listOrderDrafts: (limit?: number) => Promise<IpcResult<ForecastOrderDraftDTO[]>>;
+    getOrderDraft: (id: string) => Promise<IpcResult<ForecastOrderDraftDTO | null>>;
+  };
+
   // Security Camera AI
   security: {
     getStatus: () => Promise<SecurityStatus>;
@@ -556,6 +601,30 @@ interface ElectronAPI {
     getAnalytics: (cameraId: string, date: string) => Promise<SecurityAnalytics | null>;
     onStatusChanged: (callback: (status: SecurityStatus) => void) => () => void;
     onAlert: (callback: (alert: SecurityAlert) => void) => () => void;
+  };
+
+  // Warehouse / Magazyn
+  warehouse: {
+    warehouses: {
+      list: () => Promise<IpcResult<{ warehouses: WarehouseInfo[] }>>;
+    };
+    documents: {
+      list: (filter?: WarehouseDocumentListFilter) => Promise<IpcResult<{ documents: WarehouseDocument[]; total?: number; page?: number; limit?: number }>>;
+      get: (id: string) => Promise<IpcResult<WarehouseDocument>>;
+      create: (payload: WarehouseDocumentCreateInput) => Promise<IpcResult<WarehouseDocument>>;
+      update: (id: string, payload: WarehouseDocumentUpdateInput) => Promise<IpcResult<WarehouseDocument>>;
+      setLines: (id: string, lines: WarehouseDocumentLineInput[]) => Promise<IpcResult<WarehouseDocument>>;
+      post: (id: string) => Promise<IpcResult<WarehouseDocument>>;
+      cancel: (id: string, reason?: string) => Promise<IpcResult<WarehouseDocument>>;
+      print: (id: string) => Promise<IpcResult<WarehousePrintPayload>>;
+    };
+    inventory: {
+      create: (payload: WarehouseInventoryCountCreateInput) => Promise<IpcResult<WarehouseInventoryCount>>;
+      setLines: (id: string, lines: WarehouseInventoryCountLineInput[]) => Promise<IpcResult<WarehouseInventoryCount>>;
+      reconcile: (id: string) => Promise<IpcResult<WarehouseInventoryCount>>;
+      post: (id: string) => Promise<IpcResult<WarehouseInventoryCount>>;
+      print: (id: string) => Promise<IpcResult<WarehousePrintPayload>>;
+    };
   };
 
   // POS
@@ -575,6 +644,16 @@ interface ElectronAPI {
     };
     categories: {
       getAll: () => Promise<PosCategory[]>;
+    };
+    productAdmin: {
+      getCapabilities: () => Promise<{ ok: boolean; capabilities: ProductAdminCapabilities; error?: string }>;
+      createProduct: (payload: ProductAdminCreateProductInput) => Promise<ProductAdminIpcResult<ProductAdminProductMutationResponse>>;
+      updateVariant: (variantId: string, payload: ProductAdminUpdateVariantInput) => Promise<ProductAdminIpcResult<ProductAdminVariantMutationResponse>>;
+      deactivateVariant: (variantId: string, payload: ProductAdminDeactivateVariantInput) => Promise<ProductAdminIpcResult<ProductAdminVariantMutationResponse>>;
+      adjustStock: (variantId: string, payload: ProductAdminStockAdjustmentInput) => Promise<ProductAdminIpcResult<ProductAdminStockAdjustmentResponse>>;
+      listCategories: () => Promise<ProductAdminIpcResult<ProductAdminCategoryListResponse>>;
+      createCategory: (payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
+      updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
     };
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;

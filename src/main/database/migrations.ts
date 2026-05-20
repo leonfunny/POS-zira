@@ -1110,4 +1110,115 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_lvi_draft_id ON local_variant_imports(draft_id);
     `,
   },
+  {
+    version: 31,
+    name: 'sales_forecast_ordering',
+    up: `
+      CREATE TABLE IF NOT EXISTS replenishment_policies (
+        variant_id TEXT PRIMARY KEY,
+        lead_time_days INTEGER NOT NULL DEFAULT 1,
+        safety_stock_days INTEGER NOT NULL DEFAULT 1,
+        min_display_qty INTEGER NOT NULL DEFAULT 0,
+        pack_size INTEGER NOT NULL DEFAULT 1,
+        max_stock INTEGER,
+        supplier_name TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS forecast_runs (
+        id TEXT PRIMARY KEY,
+        generated_at TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        horizon_days INTEGER NOT NULL,
+        history_days INTEGER NOT NULL,
+        item_count INTEGER NOT NULL DEFAULT 0,
+        total_suggested_qty INTEGER NOT NULL DEFAULT 0,
+        total_estimated_retail_value INTEGER NOT NULL DEFAULT 0,
+        warnings_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_forecast_runs_generated_at ON forecast_runs(generated_at);
+
+      CREATE TABLE IF NOT EXISTS forecast_recommendations (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        variant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        sku TEXT,
+        barcode TEXT,
+        category_id TEXT,
+        category_name TEXT,
+        stock_on_hand INTEGER NOT NULL DEFAULT 0,
+        avg_daily_demand REAL NOT NULL DEFAULT 0,
+        velocity_7d REAL NOT NULL DEFAULT 0,
+        velocity_30d REAL NOT NULL DEFAULT 0,
+        forecast_units REAL NOT NULL DEFAULT 0,
+        forecast_daily_json TEXT NOT NULL,
+        lead_time_days INTEGER NOT NULL DEFAULT 1,
+        safety_stock_days INTEGER NOT NULL DEFAULT 1,
+        min_display_qty INTEGER NOT NULL DEFAULT 0,
+        max_stock INTEGER,
+        reorder_point REAL NOT NULL DEFAULT 0,
+        target_stock REAL NOT NULL DEFAULT 0,
+        suggested_order_qty INTEGER NOT NULL DEFAULT 0,
+        pack_size INTEGER NOT NULL DEFAULT 1,
+        estimated_retail_value INTEGER NOT NULL DEFAULT 0,
+        risk_level TEXT NOT NULL DEFAULT 'ok',
+        confidence REAL NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL,
+        warnings_json TEXT,
+        supplier_name TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES forecast_runs(id),
+        FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_forecast_recommendations_run ON forecast_recommendations(run_id);
+      CREATE INDEX IF NOT EXISTS idx_forecast_recommendations_variant ON forecast_recommendations(variant_id);
+      CREATE INDEX IF NOT EXISTS idx_forecast_recommendations_risk ON forecast_recommendations(risk_level);
+    `,
+  },
+  {
+    version: 32,
+    name: 'forecast_order_drafts',
+    up: `
+      CREATE TABLE IF NOT EXISTS forecast_order_drafts (
+        id TEXT PRIMARY KEY,
+        source_run_id TEXT,
+        as_of_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        notes TEXT,
+        item_count INTEGER NOT NULL DEFAULT 0,
+        total_qty INTEGER NOT NULL DEFAULT 0,
+        total_estimated_retail_value INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (source_run_id) REFERENCES forecast_runs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_forecast_order_drafts_created_at ON forecast_order_drafts(created_at);
+      CREATE INDEX IF NOT EXISTS idx_forecast_order_drafts_status ON forecast_order_drafts(status);
+
+      CREATE TABLE IF NOT EXISTS forecast_order_draft_lines (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL,
+        variant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        sku TEXT,
+        barcode TEXT,
+        supplier_name TEXT,
+        stock_on_hand INTEGER NOT NULL DEFAULT 0,
+        velocity_7d REAL NOT NULL DEFAULT 0,
+        velocity_30d REAL NOT NULL DEFAULT 0,
+        suggested_order_qty INTEGER NOT NULL DEFAULT 0,
+        order_qty INTEGER NOT NULL DEFAULT 0,
+        unit_value INTEGER NOT NULL DEFAULT 0,
+        estimated_retail_value INTEGER NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (draft_id) REFERENCES forecast_order_drafts(id),
+        FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_forecast_order_draft_lines_draft ON forecast_order_draft_lines(draft_id);
+      CREATE INDEX IF NOT EXISTS idx_forecast_order_draft_lines_variant ON forecast_order_draft_lines(variant_id);
+    `,
+  },
 ];

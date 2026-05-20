@@ -83,6 +83,61 @@ type SettingsTab = 'general' | 'pos' | 'printers';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 
+type SalonPrinterRouteDefinition = {
+  role: SalonPrinterRole;
+  printerType: PrinterTypeValue;
+  title: string;
+  description: string;
+  enabled: boolean;
+  blocking?: boolean;
+};
+
+const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[] = [
+  {
+    role: SELF_CHECKOUT_RECEIPT_ROLE,
+    printerType: 'RECEIPT',
+    title: 'Self-checkout receipts',
+    description: 'Order copies can be routed to a receipt printer owned by any online POS.',
+    enabled: true,
+  },
+  {
+    role: 'POS_RECEIPT',
+    printerType: 'RECEIPT',
+    title: 'POS order copies',
+    description: 'Future route for cashier order copies. Local receipt printing remains unchanged until backend support lands.',
+    enabled: false,
+  },
+  {
+    role: 'FISCAL_RECEIPT',
+    printerType: 'FISCAL',
+    title: 'Fiscal receipts',
+    description: 'Requires a blocking backend job result before POS 2 can use POS 1 fiscal hardware.',
+    enabled: false,
+    blocking: true,
+  },
+  {
+    role: 'KITCHEN',
+    printerType: 'KITCHEN',
+    title: 'Kitchen tickets',
+    description: 'Future route for kitchen printers.',
+    enabled: false,
+  },
+  {
+    role: 'LABEL',
+    printerType: 'LABEL',
+    title: 'Labels',
+    description: 'Future route for label printers.',
+    enabled: false,
+  },
+  {
+    role: 'A4',
+    printerType: 'A4',
+    title: 'A4 documents',
+    description: 'Future route for office printers.',
+    enabled: false,
+  },
+];
+
 function isPaperControlPrinterType(printerType: PrinterTypeValue): boolean {
   return PAPER_CONTROL_PRINTER_TYPES.includes(printerType as typeof PAPER_CONTROL_PRINTER_TYPES[number]);
 }
@@ -202,8 +257,27 @@ function isReceiptServerPrinter(printer: ServerPrinterMapping): boolean {
   return String(printer.printerType || '').toUpperCase() === 'RECEIPT';
 }
 
+function isServerPrinterType(printer: ServerPrinterMapping, printerType: PrinterTypeValue): boolean {
+  return String(printer.printerType || '').toUpperCase() === printerType;
+}
+
 function isSharedReceiptRouteCandidate(printer: SalonPrinterMapping, selectedPrinterId: string): boolean {
   return isReceiptServerPrinter(printer) && (printer.id === selectedPrinterId || hasServerPrinterTarget(printer));
+}
+
+function isSalonPrinterRouteReady(printer: SalonPrinterMapping): boolean {
+  return printer.isEnabled !== false
+    && !!printer.agentIsOnline
+    && !!printer.isOnline
+    && hasServerPrinterTarget(printer);
+}
+
+function getSalonPrinterRouteState(printer: SalonPrinterMapping): { label: string; className: string } {
+  if (printer.isEnabled === false) return { label: 'Disabled', className: 'bg-slate-100 text-slate-500' };
+  if (!hasServerPrinterTarget(printer)) return { label: 'No target', className: 'bg-amber-50 text-amber-700' };
+  if (!printer.agentIsOnline) return { label: 'POS offline', className: 'bg-red-50 text-red-700' };
+  if (!printer.isOnline) return { label: 'Printer offline', className: 'bg-slate-100 text-slate-500' };
+  return { label: 'Ready', className: 'bg-green-50 text-green-700' };
 }
 
 function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
@@ -463,6 +537,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [sharedPrintersLoading, setSharedPrintersLoading] = useState(false);
   const [sharedPrintersError, setSharedPrintersError] = useState<string | null>(null);
   const [sharedPrinterSavingId, setSharedPrinterSavingId] = useState<string | null>(null);
+  const [salonPrinterInventory, setSalonPrinterInventory] = useState<SalonPrinterMapping[]>([]);
   const [customPrinterForm, setCustomPrinterForm] = useState<CustomPrinterForm>(() => emptyCustomPrinterForm());
   const [customPrinterModalOpen, setCustomPrinterModalOpen] = useState(false);
   const [customPrinterSaving, setCustomPrinterSaving] = useState(false);
@@ -602,16 +677,19 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     setSharedPrintersLoading(true);
     setSharedPrintersError(null);
     try {
-      const [printersResult, assignmentsResult] = await Promise.allSettled([
+      const [printersResult, inventoryResult, assignmentsResult] = await Promise.allSettled([
         window.electronAPI.printAgentPrinters.salonList({
           shareableOnly: true,
           role: SELF_CHECKOUT_RECEIPT_ROLE,
         }),
+        window.electronAPI.printAgentPrinters.salonList(),
         window.electronAPI.printAgentPrinters.assignmentsList(),
       ]);
 
+      let receiptRows: SalonPrinterMapping[] = [];
       if (printersResult.status === 'fulfilled') {
         const rows = normalizeSalonPrinterList(printersResult.value);
+        receiptRows = rows;
         setSalonPrinters(rows);
         setWindowsPrinters(prev => mergeWindowsPrinterOptions(
           prev,
@@ -622,6 +700,20 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         ));
       } else {
         setSalonPrinters([]);
+      }
+
+      if (inventoryResult.status === 'fulfilled') {
+        const rows = normalizeSalonPrinterList(inventoryResult.value);
+        setSalonPrinterInventory(rows);
+        setWindowsPrinters(prev => mergeWindowsPrinterOptions(
+          prev,
+          rows
+            .map((printer) => printer.windowsPrinterName)
+            .filter(Boolean)
+            .map((name) => ({ name: name as string, port: '' })),
+        ));
+      } else {
+        setSalonPrinterInventory(receiptRows);
       }
 
       if (assignmentsResult.status === 'fulfilled') {
@@ -640,6 +732,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       }
     } catch (err: any) {
       setSalonPrinters([]);
+      setSalonPrinterInventory([]);
       setPrinterAssignments([]);
       setSharedPrintersError(err?.message || 'Failed to load shared printer settings');
     } finally {
@@ -1654,10 +1747,17 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const currentAgentId = config?.agentId || '';
   const sharedReceiptAssignment = printerAssignments.find((assignment) => assignment.role === SELF_CHECKOUT_RECEIPT_ROLE) || null;
   const sharedReceiptPrinter = sharedReceiptAssignment
-    ? salonPrinters.find((printer) => printer.id === sharedReceiptAssignment.printerId) || null
+    ? salonPrinters.find((printer) => printer.id === sharedReceiptAssignment.printerId)
+      || salonPrinterInventory.find((printer) => printer.id === sharedReceiptAssignment.printerId)
+      || null
     : null;
   const selectedSharedPrinterId = sharedReceiptAssignment?.printerId || '';
   const sharedReceiptPrinters = salonPrinters.filter((printer) => isSharedReceiptRouteCandidate(printer, selectedSharedPrinterId));
+  const salonInventoryPrinters = salonPrinterInventory.length > 0 ? salonPrinterInventory : salonPrinters;
+  const salonConfiguredPrinters = salonInventoryPrinters.filter(hasServerPrinterTarget);
+  const salonReadyPrinters = salonConfiguredPrinters.filter(isSalonPrinterRouteReady);
+  const enabledSalonRoutes = SALON_PRINTER_ROUTES.filter((route) => route.enabled);
+  const futureSalonRoutes = SALON_PRINTER_ROUTES.filter((route) => !route.enabled);
   const customFormAllowedProtocols = ALLOWED_PROTOCOLS_BY_TYPE[customPrinterForm.printerType as PrinterType] || [];
   const customFormUsesWindowsPrinter = customPrinterForm.protocol === 'WINDOWS'
     || customPrinterForm.protocol === 'ZEBRA'
@@ -1678,11 +1778,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   };
   const sharedReceiptOwnedByThisPos = !!sharedReceiptPrinter && isPrinterOwnedByThisPos(sharedReceiptPrinter);
   const sharedReceiptRouteReady = !!sharedReceiptPrinter
-    && sharedReceiptPrinter.isEnabled !== false
-    && !!sharedReceiptPrinter.agentIsOnline
-    && !!sharedReceiptPrinter.isOnline;
+    && isSalonPrinterRouteReady(sharedReceiptPrinter);
   const currentPosHasShareableReceiptPrinter = sharedReceiptPrinters.some((printer) => isPrinterOwnedByThisPos(printer));
-  const canManageSharedReceiptRoute = currentPosHasShareableReceiptPrinter || sharedReceiptOwnedByThisPos;
+  const readySharedReceiptPrinters = sharedReceiptPrinters.filter(isSalonPrinterRouteReady);
+  const canManageSharedReceiptRoute = readySharedReceiptPrinters.length > 0 || sharedReceiptOwnedByThisPos;
   const sharedReceiptOwnerLabel = sharedReceiptPrinter ? getServerPrinterOwnerLabel(sharedReceiptPrinter) : '';
   const sharedReceiptStatusTitle = sharedReceiptAssignment
     ? sharedReceiptOwnedByThisPos
@@ -1692,10 +1791,12 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const sharedReceiptStatusDescription = sharedReceiptAssignment
     ? sharedReceiptOwnedByThisPos
       ? 'Self-checkout receipts print from the printer connected to this POS.'
-      : 'Route changes are managed on the POS that owns the shared printer.'
-    : currentPosHasShareableReceiptPrinter
-      ? 'Choose the receipt printer this POS should share with self-checkout.'
-      : 'Set this up on the POS that has the receipt printer connected.';
+      : 'Self-checkout receipts are routed through the selected online POS.'
+    : readySharedReceiptPrinters.length > 0
+      ? 'Choose any online receipt printer in this salon. Hardware settings still stay on the owner POS.'
+      : currentPosHasShareableReceiptPrinter
+        ? 'This POS has receipt printers configured, but none are ready.'
+        : 'Set this up on the POS that has the receipt printer connected.';
 
   return (
     <div className="space-y-4">
@@ -2704,9 +2805,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 )}
                 {sharedReceiptPrinters.map((printer) => {
                   const selected = selectedSharedPrinterId === printer.id;
-                  const disabled = printer.isEnabled === false;
                   const ownedByThisPos = isPrinterOwnedByThisPos(printer);
-                  const canUseThisPrinter = ownedByThisPos && !disabled;
+                  const routeState = getSalonPrinterRouteState(printer);
+                  const canUseThisPrinter = isSalonPrinterRouteReady(printer);
                   return (
                     <div key={printer.id} className={`border rounded-lg px-3 py-2 ${selected ? 'border-brand-300 bg-brand-50/40' : 'border-slate-200'}`}>
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2728,8 +2829,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </div>
                         <div className="flex flex-col gap-2 md:items-end">
                           <div className="flex flex-wrap gap-1.5 text-[11px] md:justify-end">
-                            <span className={`px-2 py-1 rounded-full ${printer.isOnline ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                              {printer.isOnline ? 'Printer online' : 'Printer offline'}
+                            <span className={`px-2 py-1 rounded-full ${routeState.className}`}>
+                              {routeState.label}
                             </span>
                             <span className={`px-2 py-1 rounded-full ${printer.isEnabled !== false ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
                               {printer.isEnabled !== false ? 'Enabled' : 'Disabled'}
@@ -2747,7 +2848,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               </button>
                             ) : (
                               <div className="min-h-10 px-3 py-2 rounded-lg bg-slate-100 text-sm font-medium text-slate-500">
-                                Managed on owner POS
+                                Route selected
                               </div>
                             )
                           ) : (
@@ -2763,9 +2864,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             >
                               {sharedPrinterSavingId === printer.id
                                 ? 'Saving...'
-                                : ownedByThisPos
-                                  ? 'Use for self-checkout'
-                                  : 'Choose on owner POS'}
+                                : 'Use for self-checkout'}
                             </button>
                           )}
                         </div>
@@ -2775,9 +2874,106 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 })}
                 {!canManageSharedReceiptRoute && selectedSharedPrinterId && (
                   <div className="text-xs text-slate-500">
-                    This POS can use the shared route, but it cannot change the salon-wide printer choice because the printer is owned by another POS.
+                    The selected route is kept, but no ready receipt printer is currently available for changes.
                   </div>
                 )}
+              </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-lg p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Salon online printers</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Read-only salon inventory. A printer is ready only when its owner POS app is online, the device is connected, and a target is configured.
+                  </p>
+                </div>
+                <div className="text-xs text-slate-500 md:text-right">
+                  <span className="font-semibold text-slate-700">{salonReadyPrinters.length}</span> ready / {salonConfiguredPrinters.length} configured
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {enabledSalonRoutes.map((route) => {
+                  const assignment = printerAssignments.find((item) => item.role === route.role) || null;
+                  const selectedPrinter = assignment
+                    ? salonInventoryPrinters.find((printer) => printer.id === assignment.printerId)
+                      || salonPrinters.find((printer) => printer.id === assignment.printerId)
+                      || null
+                    : null;
+                  const candidates = salonInventoryPrinters
+                    .filter((printer) => isServerPrinterType(printer, route.printerType))
+                    .filter(hasServerPrinterTarget);
+
+                  return (
+                    <div key={route.role} className="rounded-lg border border-slate-200 px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-slate-800">{route.title}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{route.description}</div>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-green-50 px-2 py-1 text-[11px] font-medium text-green-700">
+                          Live
+                        </span>
+                      </div>
+                      {selectedPrinter && (
+                        <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                          Selected: <span className="font-medium text-slate-800">{getServerPrinterName(selectedPrinter)}</span> - {getServerPrinterOwnerLabel(selectedPrinter)}
+                        </div>
+                      )}
+                      <div className="mt-3 space-y-2">
+                        {candidates.length === 0 && (
+                          <div className="rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+                            {sharedPrintersLoading ? 'Loading printers...' : `No configured ${route.printerType} printers found`}
+                          </div>
+                        )}
+                        {candidates.slice(0, 4).map((printer) => {
+                          const state = getSalonPrinterRouteState(printer);
+                          const selected = assignment?.printerId === printer.id;
+                          return (
+                            <div key={`${route.role}-${printer.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-slate-700">{getServerPrinterName(printer)}</div>
+                                <div className="mt-0.5 truncate text-xs text-slate-500">
+                                  {getServerPrinterOwnerLabel(printer)} - {getServerPrinterTarget(printer)}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {selected && (
+                                  <span className="rounded-full bg-brand-100 px-2 py-1 text-[11px] font-medium text-brand-700">Selected</span>
+                                )}
+                                <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${state.className}`}>{state.label}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="rounded-lg border border-slate-200 px-3 py-3">
+                  <div className="text-sm font-medium text-slate-800">Planned printer routes</div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    These roles are visible here so the Settings model can grow without changing local hardware setup.
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {futureSalonRoutes.map((route) => {
+                      const readyCount = salonReadyPrinters.filter((printer) => isServerPrinterType(printer, route.printerType)).length;
+                      return (
+                        <div key={route.role} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-slate-700">{route.title}</div>
+                            <div className="mt-0.5 truncate text-xs text-slate-500">{route.description}</div>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-medium ${readyCount > 0 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {route.blocking ? 'Needs blocking API' : 'Backend needed'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 

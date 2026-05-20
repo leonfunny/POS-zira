@@ -38,6 +38,10 @@ import {
   SellerSettingsUpdateDTO,
   VatSummaryEntry,
   CompanyLookupResult,
+  ForecastOrderDraftCreateInput,
+  ForecastRecommendationDTO,
+  ForecastRunOptions,
+  ReplenishmentPolicyDTO,
   FeatureKey,
   SalonEntitlements,
   DeleteConfirmConfig,
@@ -47,6 +51,17 @@ import {
   SecurityAlert,
   SecurityAnalytics,
   SalonPrintersListOptions,
+  WarehouseDocumentCreateInput,
+  WarehouseDocumentLineInput,
+  WarehouseDocumentListFilter,
+  WarehouseDocumentUpdateInput,
+  WarehouseInventoryCountCreateInput,
+  WarehouseInventoryCountLineInput,
+  ProductAdminCategoryMutationInput,
+  ProductAdminCreateProductInput,
+  ProductAdminDeactivateVariantInput,
+  ProductAdminStockAdjustmentInput,
+  ProductAdminUpdateVariantInput,
 } from '../shared/types';
 
 // Log preload initialization
@@ -106,6 +121,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listPorts: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_PORTS),
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
+  printLabel: (barcode: string, text?: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
   validatePrinterPort: (port: string, protocol: string) => ipcRenderer.invoke(IPC_CHANNELS.VALIDATE_PRINTER_PORT, port, protocol),
@@ -490,6 +506,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Forecast / Daily Ordering
+  forecast: {
+    getRecommendations: (options?: ForecastRunOptions) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_GET_RECOMMENDATIONS, options),
+    recompute: (options?: ForecastRunOptions) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_RECOMPUTE, options),
+    getPolicies: (variantIds?: string[]) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_GET_POLICIES, variantIds),
+    savePolicy: (policy: Partial<ReplenishmentPolicyDTO> & { variantId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_SAVE_POLICY, policy),
+    exportCsv: (recommendations: ForecastRecommendationDTO[]) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_EXPORT_CSV, recommendations),
+    getTodaySales: (date?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_GET_TODAY_SALES, date),
+    createOrderDraft: (input: ForecastOrderDraftCreateInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_CREATE_ORDER_DRAFT, input),
+    listOrderDrafts: (limit?: number) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_LIST_ORDER_DRAFTS, limit),
+    getOrderDraft: (id: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FORECAST_GET_ORDER_DRAFT, id),
+  },
+
   // Security Camera AI
   security: {
     getStatus: (): Promise<SecurityStatus> => ipcRenderer.invoke(IPC_CHANNELS.SECURITY_GET_STATUS),
@@ -513,6 +551,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Warehouse / Magazyn
+  warehouse: {
+    warehouses: {
+      list: () => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_WAREHOUSES_LIST),
+    },
+    documents: {
+      list: (filter?: WarehouseDocumentListFilter) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_LIST, filter),
+      get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_GET, id),
+      create: (payload: WarehouseDocumentCreateInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_CREATE, payload),
+      update: (id: string, payload: WarehouseDocumentUpdateInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_UPDATE, id, payload),
+      setLines: (id: string, lines: WarehouseDocumentLineInput[]) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_SET_LINES, id, lines),
+      post: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_POST, id),
+      cancel: (id: string, reason?: string) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_CANCEL, id, reason),
+      print: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_DOCUMENTS_PRINT, id),
+    },
+    inventory: {
+      create: (payload: WarehouseInventoryCountCreateInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_INVENTORY_CREATE, payload),
+      setLines: (id: string, lines: WarehouseInventoryCountLineInput[]) =>
+        ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_INVENTORY_SET_LINES, id, lines),
+      reconcile: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_INVENTORY_RECONCILE, id),
+      post: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_INVENTORY_POST, id),
+      print: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_INVENTORY_PRINT, id),
+    },
+  },
+
   // POS (embedded tab in main window)
   pos: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.POS_GET_STATE),
@@ -533,6 +602,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     categories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
+    },
+    productAdmin: {
+      getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES),
+      createProduct: (payload: ProductAdminCreateProductInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CREATE_PRODUCT, payload),
+      updateVariant: (variantId: string, payload: ProductAdminUpdateVariantInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_UPDATE_VARIANT, variantId, payload),
+      deactivateVariant: (variantId: string, payload: ProductAdminDeactivateVariantInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT, variantId, payload),
+      adjustStock: (variantId: string, payload: ProductAdminStockAdjustmentInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_ADJUST_STOCK, variantId, payload),
+      listCategories: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_LIST),
+      createCategory: (payload: ProductAdminCategoryMutationInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_CREATE, payload),
+      updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE, categoryId, payload),
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),
