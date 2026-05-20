@@ -702,7 +702,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       },
     },
     draftProducts: {
-      getAll: () => ipcRenderer.invoke('pos:draft-products:getAll'),
+      getAll: (limit?: number) => ipcRenderer.invoke('pos:draft-products:getAll', limit),
       getByStatus: (status: string) => ipcRenderer.invoke('pos:draft-products:getByStatus', status),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),

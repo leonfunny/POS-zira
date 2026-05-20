@@ -713,7 +713,7 @@ interface ElectronAPI {
       onSyncEntry: (callback: (data: any) => void) => () => void;
     };
     draftProducts: {
-      getAll: () => Promise<any[]>;
+      getAll: (limit?: number) => Promise<any[]>;
       getByStatus: (status: string) => Promise<any[]>;
       getByBarcode: (barcode: string) => Promise<any | null>;
       getById: (id: string) => Promise<any | null>;
@@ -908,5 +908,4 @@ declare global {
 }
 
 export {};
-
 

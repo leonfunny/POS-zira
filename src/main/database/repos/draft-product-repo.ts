@@ -18,7 +18,16 @@ export interface DraftProductRow {
 }
 
 export const draftProductRepo = {
-  getAll(): DraftProductRow[] {
+  getAll(limit?: number): DraftProductRow[] {
+    const normalizedLimit = Number.isFinite(Number(limit))
+      ? Math.max(1, Math.min(1000, Math.round(Number(limit))))
+      : null;
+    if (normalizedLimit) {
+      return database.all<DraftProductRow>(
+        'SELECT * FROM draft_products WHERE deleted_at IS NULL ORDER BY updated_at DESC, name LIMIT ?',
+        [normalizedLimit],
+      );
+    }
     return database.all<DraftProductRow>(
       'SELECT * FROM draft_products WHERE deleted_at IS NULL ORDER BY updated_at DESC, name',
     );

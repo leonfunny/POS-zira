@@ -711,7 +711,7 @@ export class PosModule extends BaseModule {
     );
 
     // Draft products (server-mirrored, see DraftProductSync)
-    ipcMain.handle('pos:draft-products:getAll', () => draftProductRepo.getAll());
+    ipcMain.handle('pos:draft-products:getAll', (_e, limit?: number) => draftProductRepo.getAll(limit));
     ipcMain.handle('pos:draft-products:getByStatus', (_e, status: string) => draftProductRepo.getByStatus(status));
     ipcMain.handle('pos:draft-products:getByBarcode', (_e, barcode: string) => draftProductRepo.getByBarcode(barcode));
     ipcMain.handle('pos:draft-products:getById', (_e, id: string) => draftProductRepo.getById(id));

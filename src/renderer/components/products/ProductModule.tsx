@@ -14,6 +14,8 @@ interface ProductModuleProps {
   language: Language;
 }
 
+const PRODUCT_TABLE_RENDER_LIMIT = 300;
+
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
@@ -61,6 +63,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
   const noPriceCount = useMemo(() => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length, [allProducts]);
+  const visibleProducts = useMemo(() => products.slice(0, PRODUCT_TABLE_RENDER_LIMIT), [products]);
+  const productRowsTruncated = visibleProducts.length < products.length;
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
 
@@ -176,6 +180,13 @@ export default function ProductModule({ language }: ProductModuleProps) {
         </div>
       ) : null}
 
+      {productRowsTruncated ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+          {tOr(t, 'products.renderLimit', 'Showing first')} {visibleProducts.length} / {products.length}.{' '}
+          {tOr(t, 'products.renderLimitHint', 'Use search or filters to narrow the list.')}
+        </div>
+      ) : null}
+
       <div className={`rounded-md border px-3 py-2 text-sm ${
         adminCapabilitiesLoading
           ? 'border-slate-200 bg-white text-slate-600'
@@ -214,7 +225,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
         </div>
       ) : (
         <ProductTable
-          products={products}
+          products={visibleProducts}
           categoryById={categoryById}
           language={language}
           t={t}

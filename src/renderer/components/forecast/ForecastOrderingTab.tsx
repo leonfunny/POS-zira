@@ -27,6 +27,9 @@ interface ForecastOrderingTabProps {
   language: Language;
 }
 
+const FORECAST_ROW_RENDER_LIMIT = 300;
+const FORECAST_DRAFT_LINE_RENDER_LIMIT = 200;
+
 interface PolicyDraft {
   leadTimeDays: number;
   safetyStockDays: number;
@@ -164,6 +167,14 @@ export default function ForecastOrderingTab({ language }: ForecastOrderingTabPro
       );
     });
   }, [onlySuggested, query, recommendations, riskFilter]);
+  const displayedRecommendations = useMemo(
+    () => filtered.slice(0, FORECAST_ROW_RENDER_LIMIT),
+    [filtered],
+  );
+  const displayedDraftLines = useMemo(
+    () => draftLines.slice(0, FORECAST_DRAFT_LINE_RENDER_LIMIT),
+    [draftLines],
+  );
 
   const summary = useMemo(() => {
     const reorderCount = recommendations.filter((rec) => rec.suggestedOrderQty > 0).length;
@@ -671,7 +682,7 @@ export default function ForecastOrderingTab({ language }: ForecastOrderingTabPro
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {draftLines.map((line) => (
+                {displayedDraftLines.map((line) => (
                   <tr key={line.variantId} className={!line.selected ? 'opacity-50' : ''}>
                     <td className="px-3 py-2">
                       <label className="flex items-start gap-2">
@@ -705,6 +716,11 @@ export default function ForecastOrderingTab({ language }: ForecastOrderingTabPro
                 ))}
               </tbody>
             </table>
+            {displayedDraftLines.length < draftLines.length ? (
+              <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+                {tOr(t, 'forecast.renderLimit', 'Showing first')} {displayedDraftLines.length} / {draftLines.length}.
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -764,7 +780,7 @@ export default function ForecastOrderingTab({ language }: ForecastOrderingTabPro
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filtered.map((rec) => (
+                  {displayedRecommendations.map((rec) => (
                     <tr
                       key={rec.id}
                       onClick={() => setSelected(rec)}
@@ -790,6 +806,12 @@ export default function ForecastOrderingTab({ language }: ForecastOrderingTabPro
                   ))}
                 </tbody>
               </table>
+              {displayedRecommendations.length < filtered.length ? (
+                <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+                  {tOr(t, 'forecast.renderLimit', 'Showing first')} {displayedRecommendations.length} / {filtered.length}.{' '}
+                  {tOr(t, 'forecast.renderLimitHint', 'Use search or filters to narrow the list.')}
+                </div>
+              ) : null}
             </div>
           )}
         </section>

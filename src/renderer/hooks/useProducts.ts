@@ -32,6 +32,7 @@ interface UseProductsResult {
 }
 
 const LOW_STOCK_THRESHOLD = 5;
+const DRAFT_PRODUCTS_INITIAL_LIMIT = 250;
 
 function normalizeSearch(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -136,7 +137,7 @@ export function useProducts(language: string): UseProductsResult {
       const [productRows, categoryRows, draftRows] = await Promise.all([
         window.electronAPI.pos.products.getAll(),
         window.electronAPI.pos.categories.getAll(),
-        window.electronAPI.pos.draftProducts.getAll().catch(() => []),
+        window.electronAPI.pos.draftProducts.getAll(DRAFT_PRODUCTS_INITIAL_LIMIT).catch(() => []),
       ]);
       if (requestId !== requestIdRef.current) return;
       setCategories((categoryRows || []) as Category[]);

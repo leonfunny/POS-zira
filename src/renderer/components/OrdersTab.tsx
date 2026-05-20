@@ -134,6 +134,16 @@ export default function OrdersTab({ language }: OrdersTabProps) {
   const [reprintFeedback, setReprintFeedback] = useState<ReprintFeedback>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const displayedOrders = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return orders;
+    return orders.filter((order) => (
+      (order.order_number || '').toLowerCase().includes(needle)
+      || (order.customer_name || '').toLowerCase().includes(needle)
+      || (order.staff_name || '').toLowerCase().includes(needle)
+      || order.id.toLowerCase().includes(needle)
+    ));
+  }, [orders, search]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,19 +159,8 @@ export default function OrdersTab({ language }: OrdersTabProps) {
         limit: PAGE_SIZE,
       } as any);
       const rows = (result?.orders || []) as OrderRow[];
-      const filtered = search.trim()
-        ? rows.filter((o) => {
-          const needle = search.trim().toLowerCase();
-          return (
-            (o.order_number || '').toLowerCase().includes(needle)
-            || (o.customer_name || '').toLowerCase().includes(needle)
-            || (o.staff_name || '').toLowerCase().includes(needle)
-            || o.id.toLowerCase().includes(needle)
-          );
-        })
-        : rows;
-      setOrders(filtered);
-      setTotal(result?.total ?? filtered.length);
+      setOrders(rows);
+      setTotal(result?.total ?? rows.length);
     } catch (err: any) {
       rlog.warn('[OrdersTab] getHistory failed:', err);
       setError(err?.message || 'Failed to load orders');
@@ -170,15 +169,15 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [period, customFrom, customTo, paymentMethod, staffName, search, page]);
+  }, [period, customFrom, customTo, paymentMethod, staffName, page]);
 
   useEffect(() => { void load(); }, [load]);
 
   // Reset to page 1 whenever filters change
   useEffect(() => { setPage(1); }, [period, customFrom, customTo, paymentMethod, staffName, search]);
 
-  const pageTotalGrosze = useMemo(() => orders.reduce((sum, o) => sum + (o.total || 0), 0), [orders]);
-  const pageCount = orders.length;
+  const pageTotalGrosze = useMemo(() => displayedOrders.reduce((sum, o) => sum + (o.total || 0), 0), [displayedOrders]);
+  const pageCount = displayedOrders.length;
 
   const handleExpand = useCallback(async (orderId: string) => {
     if (expandedId === orderId) {
@@ -351,13 +350,13 @@ export default function OrdersTab({ language }: OrdersTabProps) {
             </div>
           ) : error ? (
             <div className="flex items-center justify-center p-12 text-sm text-rose-600">{error}</div>
-          ) : orders.length === 0 ? (
+          ) : displayedOrders.length === 0 ? (
             <div className="flex items-center justify-center p-12 text-sm text-slate-500">
               {tOr(t, 'orders.empty', 'Không có đơn hàng nào trong khoảng thời gian này')}
             </div>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {orders.map((order) => {
+              {displayedOrders.map((order) => {
                 const isExpanded = expandedId === order.id;
                 const isReprintBusy = reprintBusyId === order.id;
                 const feedback = reprintFeedback?.orderId === order.id ? reprintFeedback : null;
