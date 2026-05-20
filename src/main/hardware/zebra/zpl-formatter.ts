@@ -67,17 +67,30 @@ export class ZplFormatter {
       .substring(0, maxLength);
   }
 
+  private transliteratePolishToAscii(text: string): string {
+    return text.replace(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻß]/g, (char) => ASCII_TRANSLITERATION[char] || char);
+  }
+
   /**
    * Replace characters that the printer font cannot render with readable
-   * ASCII equivalents. Zebra Font 0 only needs ł/Ł replacement on tested
-   * units; Xprinter-compatible firmware drops broader Polish glyphs.
+   * ASCII equivalents. Xprinter-compatible firmware drops broader Polish
+   * glyphs; Zebra Font 0 at least drops ł/Ł on tested units.
    */
   private transliterateForZebra(text: string): string {
     if (this.textProfile === 'ascii') {
-      return text.replace(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻß]/g, (char) => ASCII_TRANSLITERATION[char] || char);
+      return this.transliteratePolishToAscii(text);
     }
 
     return text.replace(/ł/g, 'l').replace(/Ł/g, 'L');
+  }
+
+  /**
+   * Food information labels use Font 0 blocks; GK420d renders some Latin
+   * Extended-A glyphs such as ą as blanks even with ^CI28. Keep the labels
+   * readable until we ship/download a Unicode font to the printer.
+   */
+  private transliterateForInfoLabel(text: string): string {
+    return this.transliteratePolishToAscii(text);
   }
 
   /**
@@ -626,23 +639,43 @@ export class ZplFormatter {
       return `${d}.${m}.${y}`;
     };
 
-    // Heuristic line budgets per height
     const tallLabel = heightMm >= 90;
-    const ingredientsLines = tallLabel ? 10 : heightMm >= 40 ? (heightMm >= 50 ? 4 : 3) : 2;
-    const manufacturerLines = tallLabel ? 5 : heightMm >= 40 ? 2 : 1;
+    const compactLabel = heightMm < 40;
+    const margin = tallLabel ? 40 : compactLabel ? 8 : 10;
+    const contentWidth = Math.max(80, widthDots - margin * 2);
+    const titleFont = tallLabel ? 40 : compactLabel ? 25 : 22;
+    const titleLines = tallLabel ? 3 : 2;
+    const bodyFont = tallLabel ? 26 : compactLabel ? 19 : 16;
+    const metaFont = tallLabel ? 28 : compactLabel ? 20 : 18;
+    const countryFont = tallLabel ? 22 : 14;
+    const titleBlockHeight = tallLabel ? titleFont * titleLines + 28 : titleFont * titleLines + 6;
+    const bodyLineGap = tallLabel ? 8 : compactLabel ? 1 : 2;
+    const sectionGap = tallLabel ? 24 : compactLabel ? 4 : 4;
+    const metaGap = tallLabel ? 24 : compactLabel ? 4 : 4;
+
+    // Heuristic line budgets per height
+    const ingredientsLines = tallLabel ? 10 : compactLabel ? 5 : heightMm >= 50 ? 4 : 3;
+    const manufacturerLines = tallLabel ? 5 : compactLabel ? 2 : 2;
     const showCountry = heightMm >= 40 && data.countryOfOrigin;
 
-    // Truncate helper: wrap at ~charsPerLine, append … on overflow
-    // 203 DPI, font width 16 dots ≈ 2mm/char → widthMm/2 chars/line
-    const charsPerLine = Math.max(20, Math.floor(widthMm / (tallLabel ? 1.7 : 2)));
-    const truncate = (text: string, maxLines: number): string => {
-      const words = text.split(/\s+/);
+    // Wrap helper: wrap at an estimated Font 0 width and append ASCII
+    // ellipsis on overflow. The prefix ("Skladniki:", "Producent:") is part
+    // of the wrapped text so it cannot steal a line after truncation.
+    const charsPerLineForFont = (fontDots: number): number =>
+      Math.max(16, Math.floor(contentWidth / Math.max(11, fontDots * 0.75)));
+    const wrapText = (text: string | null | undefined, maxLines: number, charsPerLine: number): string => {
+      const source = (text ?? "").trim();
+      if (!source) return "";
+
+      const words = source.split(/\s+/);
       const lines: string[] = [];
+      let overflow = false;
       let current = "";
       for (const w of words) {
         if ((current + " " + w).trim().length > charsPerLine) {
           if (lines.length >= maxLines - 1) {
-            return [...lines, current.trim()].slice(0, maxLines).join("\\&") + "…";
+            overflow = true;
+            break;
           }
           lines.push(current.trim());
           current = w;
@@ -651,44 +684,47 @@ export class ZplFormatter {
         }
       }
       if (current) lines.push(current);
-      return lines.slice(0, maxLines).join("\\&");
-    };
 
-    const ingredientsText = this.transliterateForZebra(
-      `Składniki: ${truncate(data.ingredients, ingredientsLines)}`,
+      const visibleLines = lines.slice(0, maxLines);
+      if (overflow && visibleLines.length > 0) {
+        const lastIndex = visibleLines.length - 1;
+        const suffix = "...";
+        visibleLines[lastIndex] = `${visibleLines[lastIndex].slice(0, Math.max(1, charsPerLine - suffix.length)).trimEnd()}${suffix}`;
+      }
+
+      return visibleLines.join("\\&");
+    };
+    const titleCharsPerLine = charsPerLineForFont(titleFont);
+    const bodyCharsPerLine = charsPerLineForFont(bodyFont);
+
+    const ingredientsText = this.transliterateForInfoLabel(
+      wrapText(`Składniki: ${data.ingredients ?? ""}`, ingredientsLines, bodyCharsPerLine),
     );
-    const bestBeforeText = this.transliterateForZebra(
+    const bestBeforeText = this.transliterateForInfoLabel(
       `Najlepiej spożyć przed: ${formatBestBefore(data.bestBefore)}`,
     );
-    const manufacturerText = this.transliterateForZebra(
-      `${rolePrefixMap[data.manufacturerRole]}: ${truncate(data.manufacturerInfo, manufacturerLines)}`,
+    const manufacturerText = this.transliterateForInfoLabel(
+      wrapText(`${rolePrefixMap[data.manufacturerRole]}: ${data.manufacturerInfo ?? ""}`, manufacturerLines, bodyCharsPerLine),
     );
     const countryText = showCountry
-      ? this.transliterateForZebra(`Kraj pochodzenia: ${data.countryOfOrigin}`)
+      ? this.transliterateForInfoLabel(`Kraj pochodzenia: ${data.countryOfOrigin}`)
       : null;
 
-    const margin = tallLabel ? 40 : 10;
-    const contentWidth = Math.max(80, widthDots - margin * 2);
-    const titleFont = tallLabel ? 40 : 22;
-    const titleLines = tallLabel ? 3 : 2;
-    const bodyFont = tallLabel ? 26 : 16;
-    const metaFont = tallLabel ? 28 : 18;
-    const countryFont = tallLabel ? 22 : 14;
     let y = margin;
     const blocks: string[] = [];
 
     // Product name — bold, larger
-    blocks.push(`^FO${margin},${y}^A0N,${titleFont},${titleFont}^FB${contentWidth},${titleLines},0,L,0^FD${this.transliterateForZebra(data.productName)}^FS`);
-    y += tallLabel ? titleFont * titleLines + 28 : 50;
+    blocks.push(`^FO${margin},${y}^A0N,${titleFont},${titleFont}^FB${contentWidth},${titleLines},0,L,0^FD${this.transliterateForInfoLabel(wrapText(data.productName, titleLines, titleCharsPerLine))}^FS`);
+    y += titleBlockHeight;
     // Ingredients
     blocks.push(`^FO${margin},${y}^A0N,${bodyFont},${bodyFont}^FB${contentWidth},${ingredientsLines},0,L,0^FD${ingredientsText}^FS`);
-    y += (bodyFont + (tallLabel ? 8 : 2)) * ingredientsLines + (tallLabel ? 24 : 4);
+    y += (bodyFont + bodyLineGap) * ingredientsLines + sectionGap;
     // Best-before
     blocks.push(`^FO${margin},${y}^A0N,${metaFont},${metaFont}^FD${bestBeforeText}^FS`);
-    y += metaFont + (tallLabel ? 24 : 4);
+    y += metaFont + metaGap;
     // Manufacturer
     blocks.push(`^FO${margin},${y}^A0N,${bodyFont},${bodyFont}^FB${contentWidth},${manufacturerLines},0,L,0^FD${manufacturerText}^FS`);
-    y += (bodyFont + (tallLabel ? 8 : 2)) * manufacturerLines + (tallLabel ? 16 : 2);
+    y += (bodyFont + bodyLineGap) * manufacturerLines + (tallLabel ? 16 : compactLabel ? 4 : 2);
     // Country (optional)
     if (countryText) {
       blocks.push(`^FO${margin},${y}^A0N,${countryFont},${countryFont}^FD${countryText}^FS`);

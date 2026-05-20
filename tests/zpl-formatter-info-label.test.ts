@@ -19,18 +19,28 @@ describe("ZplFormatter.formatInfoLabel", () => {
     expect(zpl).toContain("Bánh quy");
     expect(zpl).toContain("Skladniki:");
     expect(zpl).toContain("cukier");
-    expect(zpl).toContain("Najlepiej spożyć przed: 31.12.2026");
+    expect(zpl).toContain("Najlepiej spozyc przed: 31.12.2026");
     expect(zpl).toContain("Producent:");
     expect(zpl).toContain("Lotus Bakeries");
   });
 
-  it("at 50x30 truncates ingredients and drops countryOfOrigin", () => {
+  it("at 50x30 keeps ingredients when they fit and drops countryOfOrigin", () => {
     const f = new ZplFormatter(50, 30);
     const zpl = f.formatInfoLabel(sampleData, 50, 30);
     expect(zpl).toContain("Bánh quy");
     expect(zpl).toContain("Skladniki:");
-    expect(zpl).toContain("…");
+    expect(zpl).toContain("olej palmowy, sol");
     expect(zpl).not.toContain("Kraj pochodzenia");
+  });
+
+  it("uses a larger compact layout on 50x30 labels", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatInfoLabel(sampleData, 50, 30);
+
+    expect(zpl).toContain("^FO8,8^A0N,25,25^FB384,2");
+    expect(zpl).toContain("^FO8,64^A0N,19,19^FB384,5");
+    expect(zpl).toContain("^FO8,168^A0N,20,20");
+    expect(zpl).toContain("^FO8,192^A0N,19,19^FB384,2");
   });
 
   it("at 60x40 includes countryOfOrigin row when present", () => {
@@ -85,7 +95,7 @@ describe("ZplFormatter.formatInfoLabel", () => {
       .toContain("Dostawca:");
   });
 
-  it("uses UTF-8 charset so Polish chars render", () => {
+  it("keeps UTF-8 charset while using font-safe text", () => {
     const f = new ZplFormatter(60, 40);
     const zpl = f.formatInfoLabel(sampleData, 60, 40);
     expect(zpl).toContain("^CI28");
@@ -97,6 +107,35 @@ describe("ZplFormatter.formatInfoLabel", () => {
     const f = new ZplFormatter(60, 40);
     const zpl = f.formatInfoLabel({ ...sampleData, quantity: 3 }, 60, 40);
     expect(zpl).toContain("^PQ3");
+  });
+
+  it("transliterates Polish glyphs on info labels so Font 0 does not print blanks", () => {
+    const f = new ZplFormatter(60, 40);
+    const zpl = f.formatInfoLabel({
+      ...sampleData,
+      productName: "Mąka żytnia 1kg",
+      ingredients: "Mąka PSZENNA, cukier, sól",
+      manufacturerInfo: "Zażółć sp. z o.o.",
+    }, 60, 40);
+
+    expect(zpl).toContain("Maka zytnia 1kg");
+    expect(zpl).toContain("Skladniki: Maka PSZENNA");
+    expect(zpl).toContain("sol");
+    expect(zpl).toContain("Zazolc sp. z o.o.");
+    expect(zpl).not.toContain("Mąka");
+    expect(zpl).not.toContain("Zażółć");
+  });
+
+  it("does not crash when backend omits optional info-label text fields", () => {
+    const f = new ZplFormatter(60, 40);
+    const zpl = f.formatInfoLabel({
+      ...sampleData,
+      ingredients: undefined as any,
+      manufacturerInfo: undefined as any,
+    }, 60, 40);
+
+    expect(zpl).toContain("Skladniki:");
+    expect(zpl).toContain("Producent:");
   });
 });
 
