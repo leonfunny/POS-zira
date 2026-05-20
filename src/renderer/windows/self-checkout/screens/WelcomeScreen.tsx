@@ -1,9 +1,10 @@
 // Idle / welcome screen. It must be scan-first: a barcode starts the
 // session just like the visible start button.
-import React, { useCallback, useEffect, useRef } from 'react';
+import React from 'react';
 import { ChefHat, CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
+import { useScannerCapture } from '../useScannerCapture';
 
 type CatalogDepartment = 'grocery' | 'kitchen';
 
@@ -23,79 +24,9 @@ export default function WelcomeScreen({
   onCallStaff,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
-  const scannerInputRef = useRef<HTMLInputElement>(null);
-  const scannerBuffer = useRef<string>('');
-  const scannerLastKey = useRef<number>(0);
-  const lastScanRef = useRef<{ code: string; at: number } | null>(null);
-
-  const handleScannedCode = useCallback(
-    (rawCode: string) => {
-      const code = rawCode.trim();
-      if (code.length < 4) return;
-      const now = Date.now();
-      if (lastScanRef.current?.code === code && now - lastScanRef.current.at < 600) return;
-      lastScanRef.current = { code, at: now };
-      void onScanStart(code);
-    },
-    [onScanStart],
-  );
-
-  const focusScannerInput = useCallback(() => {
-    scannerInputRef.current?.focus();
-  }, []);
-
-  const handleScannerInputKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const code = e.currentTarget.value;
-      e.currentTarget.value = '';
-      handleScannedCode(code);
-    },
-    [handleScannedCode],
-  );
-
-  useEffect(() => {
-    focusScannerInput();
-    const handler = () => setTimeout(focusScannerInput, 50);
-    document.addEventListener('pointerdown', handler);
-    const interval = setInterval(focusScannerInput, 1000);
-    return () => {
-      document.removeEventListener('pointerdown', handler);
-      clearInterval(interval);
-    };
-  }, [focusScannerInput]);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement | null)?.dataset?.scannerCapture === 'true') return;
-      const now = Date.now();
-      if (now - scannerLastKey.current > 150) {
-        scannerBuffer.current = '';
-      }
-      scannerLastKey.current = now;
-      if (e.key === 'Enter') {
-        const code = scannerBuffer.current.trim();
-        scannerBuffer.current = '';
-        handleScannedCode(code);
-        return;
-      }
-      if (e.key.length === 1 && /[0-9A-Za-z\-_]/.test(e.key)) {
-        scannerBuffer.current += e.key;
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [handleScannedCode]);
-
-  useEffect(() => {
-    const unsubscribe = window.electronAPI?.onBarcodeScanned?.((barcode: string) => {
-      handleScannedCode(barcode);
-    });
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
-  }, [handleScannedCode]);
+  const { scannerInputRef, handleScannerInputKeyDown } = useScannerCapture({
+    onScan: onScanStart,
+  });
 
   return (
     <div className="sc-shell relative flex h-screen w-screen flex-col overflow-hidden select-none">

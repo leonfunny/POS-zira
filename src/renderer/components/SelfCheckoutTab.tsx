@@ -85,6 +85,17 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
   const modeLabel = mode === 'demo'
     ? t('selfCheckout.mode.demo')
     : t('selfCheckout.mode.production');
+  const paymentRuntimeState = runtime.paymentProfile === 'assistedDemo'
+    ? t('selfCheckout.demoOnly')
+    : runtime.paymentProfile === 'terminalProduction'
+      ? t('selfCheckout.mode.production')
+      : t('selfCheckout.blocked');
+  const paymentRuntimeBlocked = runtime.paymentProfile === 'unavailable';
+  const productionDependencyState = mode === 'demo'
+    ? t('selfCheckout.skipped')
+    : isProductionBlocked
+      ? t('selfCheckout.blocked')
+      : t('selfCheckout.mode.production');
 
   const persist = async (patch: Record<string, any>) => {
     try {
@@ -223,17 +234,17 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <RuntimePill
               label={t('selfCheckout.payment')}
-              state={mode === 'demo' ? t('selfCheckout.demoOnly') : fakePayment ? t('selfCheckout.fakePayment') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
-              blocked={isProductionBlocked}
+              state={paymentRuntimeState}
+              blocked={paymentRuntimeBlocked}
             />
             <RuntimePill
               label={t('selfCheckout.fiscalPrint')}
-              state={mode === 'demo' ? t('selfCheckout.skipped') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
+              state={productionDependencyState}
               blocked={isProductionBlocked}
             />
             <RuntimePill
               label={t('selfCheckout.orderCreate')}
-              state={mode === 'demo' ? t('selfCheckout.skipped') : isProductionBlocked ? t('selfCheckout.blocked') : t('selfCheckout.mode.production')}
+              state={productionDependencyState}
               blocked={isProductionBlocked}
             />
           </div>

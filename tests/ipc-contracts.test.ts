@@ -39,6 +39,8 @@ const electronDts = readSource('../src/shared/electron.d.ts');
 const preloadMain = readSource('../src/preload/preload.ts');
 const preloadPos = readSource('../src/preload/preload-pos.ts');
 const preloadDisplay = readSource('../src/preload/preload-display.ts');
+const preloadSelfCheckout = readSource('../src/preload/preload-self-checkout.ts');
+const windowManagerSource = readSource('../src/main/windows/window-manager.ts');
 const sharedTypes = readSource('../src/shared/types.ts');
 const settingsSrc = readSource('../src/renderer/components/Settings.tsx');
 
@@ -796,4 +798,50 @@ describe('Cash drawer IPC contract', () => {
   it('POS preload declaration exposes combined receipt and drawer print result', () => {
     expect(electronDts).toContain('printReceiptAndOpenDrawer: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; drawerOpened: boolean; error?: string }>');
   });
+});
+
+describe('IPC channel contracts - self-checkout preload', () => {
+  const requiredSelfCheckoutMethods = [
+    { method: 'getAll', ipc: 'pos:products:getAll' },
+    { method: 'getByBarcode', ipc: 'pos:products:getByBarcode' },
+    { method: 'getByCategory', ipc: 'pos:products:getByCategory' },
+    { method: 'search', ipc: 'pos:products:search' },
+    { method: 'searchByCode', ipc: 'pos:products:searchByCode' },
+    { method: 'getAll', ipc: 'pos:categories:getAll' },
+    { method: 'create', ipc: 'pos:orders:create' },
+    { method: 'printReceipt', ipc: 'pos:print-receipt' },
+    { method: 'cardPayment', ipc: 'pos:payment:card' },
+    { method: 'onElavonStatus', ipc: 'pos:elavon-status' },
+    { method: 'orders', ipc: 'pos:sync:orders' },
+    { method: 'onProductsSynced', ipc: 'pos:products-synced' },
+    { method: 'onBarcodeScanned', ipc: 'barcode-scanned' },
+    { method: 'getConfig', ipc: 'get-config' },
+    { method: 'helpRequest', ipc: 'self-checkout:help-request' },
+    { method: 'checkStatus', ipc: 'self-checkout:help-status' },
+    { method: 'close', ipc: 'self-checkout:close' },
+  ];
+
+  it('self-checkout window uses its own narrow preload', () => {
+    expect(windowManagerSource).toContain("preload: 'preload-self-checkout.js'");
+  });
+
+  for (const { method, ipc } of requiredSelfCheckoutMethods) {
+    it(`preload-self-checkout.ts exposes ${method} via ${ipc}`, () => {
+      expect(preloadSelfCheckout).toContain(method);
+      expect(preloadSelfCheckout).toContain(ipc);
+    });
+  }
+
+  for (const forbidden of [
+    'saveConfig',
+    'set-config',
+    'display:check-in',
+    'display:search-by-phone',
+    'display:request-service',
+    'display:close',
+  ]) {
+    it(`preload-self-checkout.ts does not expose ${forbidden}`, () => {
+      expect(preloadSelfCheckout).not.toContain(forbidden);
+    });
+  }
 });

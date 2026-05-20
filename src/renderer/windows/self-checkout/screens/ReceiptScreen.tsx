@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowDown, CheckCircle2, FileText, Hand, Printer } from 'lucide-react';
+import { AlertTriangle, ArrowDown, CheckCircle2, FileText, Hand, Printer } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import type { SelfCheckoutMode } from '../self-checkout-model';
@@ -39,6 +39,7 @@ export default function ReceiptScreen({
   const t = getScStrings(lang);
   // Visible countdown so the customer knows the screen will auto-advance.
   const [remainingMs, setRemainingMs] = useState(AUTO_ADVANCE_MS);
+  const printFailed = !receiptPrinted && !fiscalPrinting;
 
   useEffect(() => {
     if (!receiptPrinted || fiscalPrinting) return;
@@ -57,7 +58,17 @@ export default function ReceiptScreen({
 
   return (
     <div className="sc-shell flex h-screen w-screen flex-col text-[var(--sc-ink)] select-none">
-      <header className="flex justify-end px-8 py-4">
+      <header className="flex justify-end gap-3 px-8 py-4">
+        {onCallStaff && !printFailed && (
+          <button
+            type="button"
+            onClick={onCallStaff}
+            className="sc-help-action sc-focusable flex items-center gap-2 px-5 text-base"
+          >
+            <Hand size={20} />
+            {t.callStaff}
+          </button>
+        )}
         <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
       </header>
       <main className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-6 pb-6 text-center">
@@ -95,12 +106,17 @@ export default function ReceiptScreen({
             <ReceiptStep icon={<CheckCircle2 size={24} />} label={t.paymentSuccess} done />
             <ReceiptStep
               icon={<FileText size={24} />}
-              label={mode === 'demo' ? t.receiptDemoBody : t.receiptTitle}
+              label={mode === 'demo' ? t.receiptDemoBody : t.receiptOrderSaved}
+              done
+            />
+            <ReceiptStep
+              icon={<Printer size={24} />}
+              label={fiscalPrinting ? t.receiptFiscalPrinting : t.receiptPrintStep}
               done={mode === 'demo' || receiptPrinted}
             />
             <ReceiptStep
               icon={<CheckCircle2 size={24} />}
-              label={receiptPrinted ? t.thankYouSub : t.callStaff}
+              label={receiptPrinted ? t.receiptCollectStep : t.callStaff}
               done={receiptPrinted}
             />
           </div>
@@ -136,23 +152,13 @@ export default function ReceiptScreen({
             </div>
           )}
 
-          {!receiptPrinted && !fiscalPrinting && (
-            <button
-              type="button"
-              onClick={onComplete}
-              className="sc-focusable mt-6 w-full rounded-[24px] border-2 border-emerald-600 bg-emerald-600 px-6 py-5 text-2xl font-black text-white transition-colors hover:bg-emerald-700"
-            >
-              {t.receiptContinue}
-            </button>
-          )}
-
-          {onCallStaff && (
+          {printFailed && onCallStaff && (
             <button
               type="button"
               onClick={onCallStaff}
-              className="sc-help-action sc-focusable mx-auto mt-5 flex items-center gap-2 px-5 text-base"
+              className="sc-focusable mt-6 flex w-full items-center justify-center gap-3 rounded-[24px] border-2 border-amber-700 bg-amber-600 px-6 py-5 text-2xl font-black text-white transition-colors hover:bg-amber-700"
             >
-              <Hand size={20} />
+              <AlertTriangle size={24} />
               {t.callStaff}
             </button>
           )}

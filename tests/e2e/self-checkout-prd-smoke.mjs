@@ -5,7 +5,7 @@
  * This checks the customer flow, not implementation internals:
  * welcome -> scanner-start shopping -> cart/product quantity -> payment modal
  * -> assisted BLIK/card -> receipt -> thank-you/reset, plus abandon,
- * staff lock, empty-cart pay disabled, and production welcome language switching.
+ * staff lock, empty-cart pay disabled, and production fail-closed readiness.
  */
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
@@ -21,6 +21,44 @@ const PRODUCT = {
   retail_price: 700,
   vat_rate: 23,
   in_stock: 20,
+};
+const KITCHEN_CATEGORY = {
+  id: 'prd-smoke-kitchen',
+  name: 'Kitchen menu',
+  name_translations: JSON.stringify({ pl: 'Kuchnia', vi: 'Nhà bếp' }),
+};
+const KITCHEN_PRODUCT = {
+  id: 'prd-smoke-pho-ga',
+  template_id: 'prd-smoke-pho-ga-template',
+  name: 'Pho ga bowl',
+  sku: 'PHO-GA',
+  barcode: null,
+  category_id: KITCHEN_CATEGORY.id,
+  retail_price: 2500,
+  vat_rate: 8,
+  in_stock: 8,
+};
+const SOLD_OUT_KITCHEN_PRODUCT = {
+  id: 'prd-smoke-spring-rolls',
+  template_id: 'prd-smoke-spring-rolls-template',
+  name: 'Sold out spring rolls',
+  sku: 'SPRING-ROLLS',
+  barcode: null,
+  category_id: KITCHEN_CATEGORY.id,
+  retail_price: 1500,
+  vat_rate: 8,
+  in_stock: 0,
+};
+const NO_PRICE_KITCHEN_PRODUCT = {
+  id: 'prd-smoke-no-price-tea',
+  template_id: 'prd-smoke-no-price-tea-template',
+  name: 'No price tea',
+  sku: 'NO-PRICE-TEA',
+  barcode: null,
+  category_id: KITCHEN_CATEGORY.id,
+  retail_price: 0,
+  vat_rate: 8,
+  in_stock: 4,
 };
 const COMPACT_CART_PRODUCTS = [
   PRODUCT,
@@ -46,6 +84,13 @@ const COMPACT_CART_PRODUCTS = [
 const PRODUCTS_BY_BARCODE = Object.fromEntries(
   COMPACT_CART_PRODUCTS.map((product) => [product.barcode, product]),
 );
+const CATALOG_PRODUCTS = [
+  ...COMPACT_CART_PRODUCTS,
+  KITCHEN_PRODUCT,
+  SOLD_OUT_KITCHEN_PRODUCT,
+  NO_PRICE_KITCHEN_PRODUCT,
+];
+const CATALOG_CATEGORIES = [KITCHEN_CATEGORY];
 
 const browserCandidates = [
   process.env.PLAYWRIGHT_BROWSER_EXECUTABLE,
@@ -68,7 +113,7 @@ async function createPage(browser, options = {}) {
   });
   const page = await context.newPage();
 
-  await page.addInitScript(({ productsByBarcode, config }) => {
+  await page.addInitScript(({ productsByBarcode, catalogProducts, catalogCategories, config }) => {
     const scanCallbacks = [];
     window.__scSmoke = {
       emitBarcode: (barcode) => {
@@ -87,13 +132,19 @@ async function createPage(browser, options = {}) {
         };
       },
       pos: {
-        categories: { getAll: async () => [] },
+        categories: { getAll: async () => catalogCategories },
         products: {
-          getAll: async () => Object.values(productsByBarcode),
+          getAll: async () => catalogProducts,
           getByBarcode: async (barcode) => productsByBarcode[barcode] || null,
           getByCategory: async () => [],
-          searchByCode: async () => [],
-          search: async () => [],
+          searchByCode: async (query) => catalogProducts.filter((product) => (
+            [product.barcode, product.sku]
+              .filter(Boolean)
+              .some((value) => String(value).toLowerCase().includes(String(query).toLowerCase()))
+          )),
+          search: async (query) => catalogProducts.filter((product) => (
+            String(product.name).toLowerCase().includes(String(query).toLowerCase())
+          )),
         },
       },
       selfCheckout: {
@@ -103,6 +154,8 @@ async function createPage(browser, options = {}) {
     };
   }, {
     productsByBarcode: PRODUCTS_BY_BARCODE,
+    catalogProducts: CATALOG_PRODUCTS,
+    catalogCategories: CATALOG_CATEGORIES,
     config: {
       selfCheckoutLanguage: options.lang || 'en',
       selfCheckoutMode: options.mode || 'demo',
@@ -140,6 +193,27 @@ async function assertNoOverflow(page, label) {
   }));
   assert(metrics.scrollWidth <= metrics.clientWidth, `${label}: horizontal overflow`);
   assert(metrics.scrollHeight <= metrics.clientHeight, `${label}: vertical overflow`);
+}
+
+async function runKitchenMenuFlow(browser) {
+  const { context, page } = await createPage(browser);
+
+  await page.getByRole('button', { name: /^kitchen$/i }).click();
+  await page.waitForSelector(`text=${KITCHEN_PRODUCT.name}`);
+  assert(await page.getByRole('button', { name: /sold out spring rolls/i }).isDisabled(), 'sold-out menu product is disabled');
+  assert(await page.getByRole('button', { name: /no price tea/i }).isDisabled(), 'no-price menu product is disabled');
+  await page.getByRole('button', { name: /^search$/i }).click();
+  await page.getByPlaceholder(/EAN, SKU/i).fill('not-real-product');
+  await page.waitForSelector('text=No product found');
+  assert(await page.getByRole('button', { name: /call staff/i }).count() > 0, 'search no-result can call staff');
+  await page.getByRole('button', { name: /keep scanning/i }).click();
+  await page.waitForSelector('[role="dialog"]', { state: 'detached' });
+  await page.getByRole('button', { name: /pho ga bowl/i }).click();
+  await page.waitForFunction(() => document.body.innerText.includes('25,00'));
+  assert(!(await page.getByRole('button', { name: /^pay$/i }).isDisabled()), 'menu-added item enables payment');
+  await assertNoOverflow(page, 'kitchen menu shopping');
+
+  await context.close();
 }
 
 async function assertPaymentDialogViewportSafe(page, label) {
@@ -257,9 +331,13 @@ async function runEmptyCartAndProductionChecks(browser) {
 
   {
     const { context, page } = await createPage(browser, { mode: 'production' });
-    assert(await languageButtonCount(page) === 3, 'production welcome exposes PL/EN/VI');
-    assert(await page.getByRole('button', { name: /^grocery$/i }).count() > 0, 'production welcome has shopping CTA');
-    await assertNoOverflow(page, 'production welcome');
+    await page.waitForSelector('text=This checkout is closed');
+    assert(await languageButtonCount(page) === 3, 'production unavailable exposes PL/EN/VI');
+    assert(await page.getByRole('button', { name: /^grocery$/i }).count() === 0, 'production unavailable hides shopping CTA');
+    assert(await page.getByText('Payment terminal is unavailable.').count() > 0, 'production shows terminal blocker');
+    assert(await page.getByText('Fiscal printer is unavailable.').count() > 0, 'production shows fiscal blocker');
+    assert(await page.getByText('Order creation readiness is not confirmed yet.').count() > 0, 'production shows order blocker');
+    await assertNoOverflow(page, 'production unavailable');
     await context.close();
   }
 }
@@ -300,7 +378,7 @@ async function runPrimaryBLIKFlow(browser) {
   assert(await languageButtonCount(page) === 3, 'receipt exposes PL/EN/VI');
   await page.waitForSelector('text=Thank you!', { timeout: 8000 });
   assert(await languageButtonCount(page) === 3, 'thank-you exposes PL/EN/VI');
-  await page.getByRole('button', { name: /start shopping/i }).click();
+  await page.getByRole('button', { name: /start shopping/i }).evaluate((button) => button.click());
   await page.waitForSelector('text=Start shopping');
 
   await context.close();
@@ -385,6 +463,7 @@ async function main() {
   try {
     await runEmptyCartAndProductionChecks(browser);
     await runPrimaryBLIKFlow(browser);
+    await runKitchenMenuFlow(browser);
     await runCardTerminalFlow(browser);
     await runCompactViewportChecks(browser);
     await runAbandonAndStaffChecks(browser);
@@ -397,6 +476,9 @@ async function main() {
     checked: [
       'welcome/shopping language availability',
       'scanner starts shopping and adds product',
+      'kitchen menu product adds to cart without barcode',
+      'sold-out and no-price menu products are disabled',
+      'search no-result offers recovery actions',
       'empty cart payment disabled',
       'product quantity changes total',
       'payment modal has no visible BLIK/card input',
@@ -406,7 +488,7 @@ async function main() {
       'compact viewport shows three cart rows and unclipped receipt total',
       'abandon clears cart',
       'call staff locks kiosk',
-      'production welcome remains available',
+      'production mode fails closed until readiness contracts exist',
     ],
   }, null, 2));
 }

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  resolveSelfCheckoutPaymentProfile,
   resolveSelfCheckoutMode,
   resolveSelfCheckoutRuntime,
 } from '../src/renderer/windows/self-checkout/self-checkout-model';
@@ -17,10 +18,24 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutMode('bogus')).toBe('demo');
   });
 
-  it('allows production mode once self-checkout uses the POS sale path', () => {
-    expect(resolveSelfCheckoutRuntime({ selfCheckoutMode: 'demo' }).unavailableReasons).toEqual([]);
+  it('keeps production mode fail-closed until unattended contracts exist', () => {
+    const demo = resolveSelfCheckoutRuntime({ selfCheckoutMode: 'demo' });
+    expect(demo.unavailableReasons).toEqual([]);
+    expect(demo.paymentProfile).toBe('assistedDemo');
+
     const production = resolveSelfCheckoutRuntime({ selfCheckoutMode: 'production' });
-    expect(production.unavailableReasons).toEqual([]);
+    expect(production.unavailableReasons).toEqual([
+      'no_terminal',
+      'no_fiscal_printer',
+      'order_creation_unverified',
+    ]);
+    expect(production.paymentProfile).toBe('unavailable');
+  });
+
+  it('resolves payment profiles without allowing assisted methods in production', () => {
+    expect(resolveSelfCheckoutPaymentProfile('demo', [])).toBe('assistedDemo');
+    expect(resolveSelfCheckoutPaymentProfile('production', [])).toBe('terminalProduction');
+    expect(resolveSelfCheckoutPaymentProfile('production', ['no_terminal'])).toBe('unavailable');
   });
 
   it('keeps customer checkout out of separate summary and payment routes', () => {
@@ -45,6 +60,9 @@ describe('self-checkout runtime model', () => {
     expect(paymentSource).not.toContain('BlikPad');
     expect(paymentSource).not.toContain('blikCode');
     expect(paymentSource).toContain("'CASH' | 'CARD' | 'BLIK'");
+    expect(paymentSource).toContain("const ASSISTED_PAYMENT_METHODS: PaymentMethod[] = ['BLIK', 'CARD', 'CASH']");
+    expect(paymentSource).toContain("const assisted = profile === 'assistedDemo'");
+    expect(paymentSource).toContain("if (phase !== 'idle' || !assisted) return");
     expect(paymentSource).toContain('blikInstructionTitle');
     expect(paymentSource).toContain('BLIK_PHONE_DISPLAY');
     expect(paymentSource).toContain('paymentTerminalHint');
@@ -59,7 +77,7 @@ describe('self-checkout runtime model', () => {
     // in SelfCheckoutApp.tsx.
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
     const buildSaleSource = readSource('src/renderer/windows/self-checkout/build-sale.ts');
-    const preloadSource = readSource('src/preload/preload-display.ts');
+    const preloadSource = readSource('src/preload/preload-self-checkout.ts');
 
     expect(buildSaleSource).toContain("source: 'SELF_CHECKOUT'");
     expect(appSource).toContain('buildSelfCheckoutSale');
@@ -71,9 +89,22 @@ describe('self-checkout runtime model', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");
   });
 
+  it('locks the receipt screen on print failure instead of completing the session', () => {
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const receiptSource = readSource('src/renderer/windows/self-checkout/screens/ReceiptScreen.tsx');
+
+    expect(receiptSource).toContain('const printFailed = !receiptPrinted && !fiscalPrinting');
+    expect(receiptSource).toContain('if (!receiptPrinted || fiscalPrinting) return');
+    expect(receiptSource).toContain('{printFailed && onCallStaff && (');
+    expect(receiptSource).not.toContain('onClick={onComplete}');
+    expect(receiptSource).not.toContain('t.receiptContinue');
+    expect(appSource).toContain("|| screen === 'receipt'");
+    expect(appSource).not.toContain("if (screen === 'receipt' && lastReceiptPrinted) return;");
+  });
+
   it('keeps the self-checkout staff swipe-down exit wired to its own close IPC', () => {
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
-    const preloadSource = readSource('src/preload/preload-display.ts');
+    const preloadSource = readSource('src/preload/preload-self-checkout.ts');
 
     expect(appSource).toContain("document.addEventListener('touchstart'");
     expect(appSource).toContain("document.addEventListener('touchmove'");
@@ -97,5 +128,17 @@ describe('self-checkout runtime model', () => {
     expect(appSource).not.toContain('bagFeeProductionBlocked');
     expect(saleSource).not.toContain('SELF_CHECKOUT_BAG_FEE');
     expect(settingsSource).not.toContain('selfCheckout.bagFee');
+  });
+
+  it('keeps scan and menu copy aligned for PL and VI customers', () => {
+    const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
+    const i18nSource = readSource('src/renderer/windows/self-checkout/i18n.ts');
+
+    expect(scanSource).toContain('hybrid customer kiosk');
+    expect(scanSource).not.toContain('Scanner is the ONLY path');
+    expect(i18nSource).toContain("paymentNotice: 'Płatność z obsługą'");
+    expect(i18nSource).toContain("grocery: 'Sklep'");
+    expect(i18nSource).toContain("paymentNotice: 'Thanh toán có nhân viên hỗ trợ'");
+    expect(i18nSource).toContain("grocery: 'Cửa hàng'");
   });
 });

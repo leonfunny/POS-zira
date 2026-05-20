@@ -79,12 +79,9 @@ const WINDOW_CONFIGS: Record<string, WindowConfig> = {
   selfCheckout: {
     id: 'selfCheckout',
     htmlFile: 'windows/self-checkout/index.html',
-    // Reuse the customer-display preload bridge for now — self-checkout
-    // talks to the same backend (pos socket + apiKey REST) and doesn't
-    // need a different IPC surface yet. If a kiosk-specific preload
-    // becomes necessary (e.g. exposing only a payment terminal API)
-    // we can add `preload-kiosk.js` later.
-    preload: 'preload-display.js',
+    // Public kiosk surface: keep the preload narrow and do not expose the
+    // broader customer-display/config/check-in bridge.
+    preload: 'preload-self-checkout.js',
     width: 1280,
     height: 800,
     fullscreen: true,

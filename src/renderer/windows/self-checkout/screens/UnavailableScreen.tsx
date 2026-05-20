@@ -30,6 +30,10 @@ function localizeReason(reason: string, t: ReturnType<typeof getScStrings>): str
     case 'shift_closed':
     case 'no_open_shift':
       return t.reasonShiftClosed;
+    case 'order_creation_unverified':
+    case 'order_creation_unavailable':
+    case 'no_order_readiness':
+      return t.reasonOrderCreationUnavailable;
     case 'unknown':
       return t.reasonUnknown;
     default:
@@ -56,7 +60,19 @@ export default function UnavailableScreen({
             Zira AI
           </div>
         </div>
-        <LanguageSwitch lang={lang} onLangChange={onLangChange} />
+        <div className="flex items-center gap-3">
+          {onCallStaff && (
+            <button
+              type="button"
+              onClick={onCallStaff}
+              className="sc-help-action sc-focusable flex items-center gap-2 px-6 text-base"
+            >
+              <Hand size={22} />
+              {t.callStaff}
+            </button>
+          )}
+          <LanguageSwitch lang={lang} onLangChange={onLangChange} />
+        </div>
       </header>
 
       <main className="flex flex-1 items-center justify-center px-10 pb-16">
@@ -82,17 +98,6 @@ export default function UnavailableScreen({
                 </li>
               ))}
             </ul>
-          )}
-
-          {onCallStaff && (
-            <button
-              type="button"
-              onClick={onCallStaff}
-              className="sc-help-action sc-focusable mx-auto mt-9 flex items-center gap-2 px-6 text-base"
-            >
-              <Hand size={22} />
-              {t.callStaff}
-            </button>
           )}
         </section>
       </main>

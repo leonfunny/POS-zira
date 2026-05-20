@@ -18,7 +18,7 @@ Do not blindly accept generated design-system output. For this kiosk, `ui-ux-pro
 The design direction is:
 - operational, not decorative
 - touch-first, not mouse-first
-- scanner-first, not browsing-first
+- scan-first with menu fallback, not browsing-only
 - high contrast, not subtle SaaS gray-on-gray
 - warm Zira accent, not orange everywhere
 - customer-simple, operator-diagnostic
@@ -27,7 +27,7 @@ The design direction is:
 
 Self-checkout must feel like a real retail kiosk, not a developer demo.
 
-The hard goal: a customer can walk up, understand the machine in under 3 seconds, scan items, review the cart, pay, receive fiscal/receipt feedback, and leave without staff help unless something exceptional happens.
+The hard goal: a customer can walk up, understand the machine in under 3 seconds, scan barcode items or pick kitchen/menu items, review the cart, pay, receive fiscal/receipt feedback, and leave without staff help unless something exceptional happens.
 
 Borrow from proven flows:
 - Zabka: open/welcome clarity, category fallback, cart panel, large checkout CTA.
@@ -426,10 +426,11 @@ Ship V1 as pure checkout, no promo/media.
 
 Use:
 - PL, EN, and VI visible on every customer state.
-- Card and BLIK as separate choices in demo mode; both hand off to the terminal.
+- Card and BLIK as separate choices in production only after a real terminal result contract exists.
+- Cash is allowed only in assisted/demo mode where staff collects and confirms payment.
 - NIP/faktura is staff-only for V1; do not ask self-checkout customers for NIP.
 - Bags are free at Chesaigon; do not add a priced bag cart path.
-- No cash in self-checkout V1.
+- No cash in unattended production self-checkout V1.
 - Production mode fail-closed until payment, fiscal, and order creation are real.
 
 The customer shopping screen should be the main redesign investment. If that screen is weak, the rest of the flow will still feel fake.
@@ -439,8 +440,8 @@ The customer shopping screen should be the main redesign investment. If that scr
 Decisions from the 2026-05-12 redesign pass:
 
 1. Languages: PL, EN, VI.
-2. Payment methods: separate card and BLIK choices, no cash.
-3. Payment input: handled by the physical terminal, not by kiosk on-screen forms.
+2. Payment methods: assisted/demo may show cash, card, and manual BLIK; unattended production must show only terminal-driven card/BLIK.
+3. Payment input: production payment is handled by the physical terminal, not by kiosk on-screen forms or manual phone transfer.
 4. Bags: free at Chesaigon, outside kiosk pricing.
 5. Pay action: opens immediately from shopping/cart, without a mandatory summary screen.
 6. Welcome ads: possible later, but not part of the checkout flow until the core flow is stable.

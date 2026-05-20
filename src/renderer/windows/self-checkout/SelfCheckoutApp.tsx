@@ -2,13 +2,14 @@
 // unavailable -> welcome -> shopping -> receipt -> thank-you.
 // Payment selection is an overlay on shopping; the customer should not leave
 // the cart screen just to pick card/cash.
-// Payment is currently manual: the kiosk speaks a Polish announcement so
-// staff knows the amount + method, staff collects payment physically, then
-// taps "Money received" to save the order, sync, and print the receipt.
+// Payment is currently an assisted profile: the kiosk speaks a Polish
+// announcement so staff knows the amount + method, staff collects payment
+// physically, then taps "Money received" to save the order, sync, and print.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScLanguage, getScStrings } from './i18n';
 import { resolveName } from '../../../shared/catalog-names';
 import {
+  SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
@@ -22,35 +23,11 @@ import ThankYouScreen from './screens/ThankYouScreen';
 import HelpLockedOverlay from './screens/HelpLockedOverlay';
 import ReceiptScreen from './screens/ReceiptScreen';
 import UnavailableScreen from './screens/UnavailableScreen';
-
-interface ProductLookupResult {
-  id: string;
-  template_id?: string | null;
-  name: string;
-  sku?: string | null;
-  barcode?: string | null;
-  category_id?: string | null;
-  retail_price?: number;
-  price?: number;
-  price_gross?: number;
-  vat_rate?: number;
-  image_url?: string | null;
-  thumbnail_url?: string | null;
-  in_stock?: number;
-  available_qty?: number;
-  /** JSON-encoded `{lang: name}` from the SQLite mirror. Display only;
-   *  receipt/fiscal payloads always use canonical `name`. */
-  name_translations?: string | null;
-}
-
-interface CategoryLookupResult {
-  id: string;
-  name: string;
-  icon?: string | null;
-  color?: string | null;
-  sort_order?: number;
-  name_translations?: string | null;
-}
+import type {
+  CatalogCategory as CategoryLookupResult,
+  CatalogDepartment,
+  SearchProduct as ProductLookupResult,
+} from './types';
 
 declare global {
   interface Window {
@@ -59,8 +36,6 @@ declare global {
 }
 
 type ToastState = { kind: 'ok' | 'error'; text: string } | null;
-type CatalogDepartment = 'grocery' | 'kitchen';
-
 const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
 // Show a 15s "are you still there?" warning before hard reset, per kiosk
 // research (Kiosk Marketplace, Walmart UX research). Warn at total-15s.
@@ -91,6 +66,7 @@ export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
+  const [paymentProfile, setPaymentProfile] = useState<SelfCheckoutPaymentProfile>('assistedDemo');
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
@@ -182,6 +158,7 @@ export default function SelfCheckoutApp() {
 
         const runtime = resolveSelfCheckoutRuntime(config);
         setMode(runtime.mode);
+        setPaymentProfile(runtime.paymentProfile);
         setUnavailableReasons(runtime.unavailableReasons);
         if (runtime.unavailableReasons.length > 0) {
           goTo('unavailable');
@@ -297,14 +274,14 @@ export default function SelfCheckoutApp() {
       screen === 'welcome'
       || screen === 'thankyou'
       || screen === 'unavailable'
+      || screen === 'receipt'
       || help
       || idleWarnOpen
     ) return;
-    if (screen === 'receipt' && lastReceiptPrinted) return;
     const warnDelay = Math.max(0, idleTimeoutMs - IDLE_WARN_MS);
     const warn = setTimeout(() => setIdleWarnOpen(true), warnDelay);
     return () => clearTimeout(warn);
-  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, lastReceiptPrinted, screen]);
+  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, screen]);
 
   useEffect(() => {
     if (!idleWarnOpen) return;
@@ -556,16 +533,6 @@ export default function SelfCheckoutApp() {
   );
 
   const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);
-  const cancelHelp = useCallback(async () => {
-    if (!help) return;
-    try {
-      await window.electronAPI?.selfCheckout?.cancelHelp?.(help.id);
-    } catch {
-      /* ignore — local cleanup proceeds */
-    }
-    setHelp(null);
-  }, [help]);
-
   if (help) {
     return (
       <HelpLockedOverlay
@@ -573,9 +540,6 @@ export default function SelfCheckoutApp() {
         acknowledged={help.acknowledged}
         reason={help.reason}
         onLangChange={handleLangChange}
-        // Let the customer back out after staff has acknowledged — they may
-        // have realized they don't actually need help, e.g. accidental tap.
-        onCancel={help.acknowledged ? cancelHelp : undefined}
       />
     );
   }
@@ -668,7 +632,7 @@ export default function SelfCheckoutApp() {
         {paymentOpen && (
           <PaymentScreen
             lang={lang}
-            mode={mode}
+            profile={paymentProfile}
             totalGrosze={cart.cart.totalGrosze}
             terminalStatus={paymentStatus}
             errorText={checkoutError}

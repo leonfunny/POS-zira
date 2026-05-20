@@ -37,6 +37,8 @@ interface ScStrings {
   productOutOfStock: string;
   productInsufficientStock: string;
   productNoPrice: string;
+  soldOut: string;
+  noPrice: string;
   scanFailed: string;
   emptyCart: string;
   remove: string;
@@ -60,6 +62,9 @@ interface ScStrings {
   receiptProductionBlocked: string;
   receiptPrintFailed: string;
   receiptContinue: string;
+  receiptOrderSaved: string;
+  receiptPrintStep: string;
+  receiptCollectStep: string;
   // Payment
   paymentTitle: string;
   cash: string;
@@ -82,6 +87,8 @@ interface ScStrings {
   paymentProcessing: string;
   paymentSuccess: string;
   fakePaymentActive: string;
+  paymentUnavailableTitle: string;
+  paymentUnavailableBody: string;
   // Invoice (NIP / Faktura)
   invoiceToggleLabel: string;
   invoiceToggleHint: string;
@@ -102,6 +109,7 @@ interface ScStrings {
   reasonPrinterOffline: string;
   reasonTerminalOffline: string;
   reasonShiftClosed: string;
+  reasonOrderCreationUnavailable: string;
   reasonUnknown: string;
   // Manual staff-collect flow
   staffConfirmTitle: string;
@@ -123,7 +131,7 @@ const PL: ScStrings = {
   welcomeTitle: 'KASA OTWARTA',
   welcomeSubtitle: 'Zeskanuj produkt lub rozpocznij zakupy',
   startButton: 'Rozpocznij zakupy',
-  paymentNotice: 'Płatność tylko przez terminal',
+  paymentNotice: 'Płatność z obsługą',
   closedTitle: 'Ta kasa jest zamknięta',
   closedSubtitle: 'Poproś obsługę lub skorzystaj z innej kasy.',
   back: 'Wstecz',
@@ -136,7 +144,7 @@ const PL: ScStrings = {
   scanHint: 'Skaner doda produkt do koszyka automatycznie',
   manualEntry: 'Wprowadź kod',
   manualSearch: 'Szukaj',
-  grocery: 'Grocery',
+  grocery: 'Sklep',
   kitchen: 'Kuchnia',
   allCategories: 'Wszystkie',
   searchProducts: 'Szukaj produktu',
@@ -151,6 +159,8 @@ const PL: ScStrings = {
   productOutOfStock: '{name} - brak na stanie. Wezwij obsługę.',
   productInsufficientStock: '{name} - dostępna ilość: {stock}. Zmień ilość albo wezwij obsługę.',
   productNoPrice: '{name} - brak ceny. Wezwij obsługę.',
+  soldOut: 'Brak na stanie',
+  noPrice: 'Brak ceny',
   scanFailed: 'Skanowanie nie powiodło się. Spróbuj ponownie albo wezwij obsługę.',
   emptyCart: 'Koszyk pusty - zacznij skanować',
   remove: 'Usuń',
@@ -172,6 +182,9 @@ const PL: ScStrings = {
   receiptProductionBlocked: 'Sprzedaż produkcyjna wymaga realnej płatności, zamówienia i drukarki fiskalnej.',
   receiptPrintFailed: 'Płatność przyjęta, ale paragon nie został wydrukowany. Wezwij obsługę.',
   receiptContinue: 'Kontynuuj',
+  receiptOrderSaved: 'Zamówienie zapisane',
+  receiptPrintStep: 'Paragon fiskalny',
+  receiptCollectStep: 'Odbiór paragonu',
   paymentTitle: 'Wybierz formę płatności',
   cash: 'Gotówka',
   card: 'Karta płatnicza',
@@ -193,6 +206,8 @@ const PL: ScStrings = {
   paymentProcessing: 'Zapisywanie zamówienia',
   paymentSuccess: 'Płatność potwierdzona',
   fakePaymentActive: 'Płatność testowa zatwierdzona',
+  paymentUnavailableTitle: 'Płatność niedostępna',
+  paymentUnavailableBody: 'Ta kasa nie ma jeszcze gotowego profilu płatności produkcyjnej. Wezwij obsługę.',
   staffConfirmTitle: 'Czekam na obsługę',
   staffConfirmBody: 'Obsługa odbierze płatność i potwierdzi przyjęcie pieniędzy.',
   staffConfirmButton: 'Pieniądze przyjęte',
@@ -212,6 +227,7 @@ const PL: ScStrings = {
   reasonPrinterOffline: 'Drukarka fiskalna jest niedostępna.',
   reasonTerminalOffline: 'Terminal płatniczy jest niedostępny.',
   reasonShiftClosed: 'Zmiana nie została otwarta przez obsługę.',
+  reasonOrderCreationUnavailable: 'Ścieżka zapisu zamówienia nie ma jeszcze potwierdzonej gotowości.',
   reasonUnknown: 'Kasa chwilowo niedostępna.',
   popularCategories: 'Kategorie',
   productsInCategory: 'Produkty w kategorii',
@@ -227,7 +243,7 @@ const EN: ScStrings = {
   welcomeTitle: 'CHECKOUT OPEN',
   welcomeSubtitle: 'Scan a product or start shopping',
   startButton: 'Start shopping',
-  paymentNotice: 'Payment by terminal only',
+  paymentNotice: 'Assisted payment',
   closedTitle: 'This checkout is closed',
   closedSubtitle: 'Please ask staff or use another checkout.',
   back: 'Back',
@@ -255,6 +271,8 @@ const EN: ScStrings = {
   productOutOfStock: '{name} is out of stock. Call staff.',
   productInsufficientStock: '{name} has only {stock} available. Change quantity or call staff.',
   productNoPrice: '{name} has no price. Call staff.',
+  soldOut: 'Sold out',
+  noPrice: 'No price',
   scanFailed: 'Scan failed. Try again or call staff.',
   emptyCart: 'Cart is empty - start scanning',
   remove: 'Remove',
@@ -276,6 +294,9 @@ const EN: ScStrings = {
   receiptProductionBlocked: 'Production sale requires real payment, order creation, and fiscal printer integration.',
   receiptPrintFailed: 'Payment was accepted, but the receipt did not print. Please call staff.',
   receiptContinue: 'Continue',
+  receiptOrderSaved: 'Order saved',
+  receiptPrintStep: 'Fiscal receipt',
+  receiptCollectStep: 'Receipt pickup',
   paymentTitle: 'Choose payment method',
   cash: 'Cash',
   card: 'Card',
@@ -297,6 +318,8 @@ const EN: ScStrings = {
   paymentProcessing: 'Saving order',
   paymentSuccess: 'Payment confirmed',
   fakePaymentActive: 'Test payment approved',
+  paymentUnavailableTitle: 'Payment unavailable',
+  paymentUnavailableBody: 'This checkout does not have a production payment profile ready yet. Please call staff.',
   staffConfirmTitle: 'Waiting for staff',
   staffConfirmBody: 'Staff will collect payment and confirm money received.',
   staffConfirmButton: 'Money received',
@@ -316,6 +339,7 @@ const EN: ScStrings = {
   reasonPrinterOffline: 'Fiscal printer is unavailable.',
   reasonTerminalOffline: 'Payment terminal is unavailable.',
   reasonShiftClosed: 'Staff has not opened the shift.',
+  reasonOrderCreationUnavailable: 'Order creation readiness is not confirmed yet.',
   reasonUnknown: 'Checkout temporarily unavailable.',
   popularCategories: 'Categories',
   productsInCategory: 'Products in category',
@@ -331,7 +355,7 @@ const VI: ScStrings = {
   welcomeTitle: 'QUẦY ĐANG MỞ',
   welcomeSubtitle: 'Quét sản phẩm hoặc bắt đầu mua sắm',
   startButton: 'Bắt đầu mua sắm',
-  paymentNotice: 'Chỉ thanh toán qua máy POS',
+  paymentNotice: 'Thanh toán có nhân viên hỗ trợ',
   closedTitle: 'Quầy này đang đóng',
   closedSubtitle: 'Vui lòng hỏi nhân viên hoặc dùng quầy khác.',
   back: 'Quay lại',
@@ -344,7 +368,7 @@ const VI: ScStrings = {
   scanHint: 'Máy quét sẽ tự thêm sản phẩm vào giỏ',
   manualEntry: 'Nhập mã',
   manualSearch: 'Tìm',
-  grocery: 'Grocery',
+  grocery: 'Cửa hàng',
   kitchen: 'Nhà bếp',
   allCategories: 'Tất cả',
   searchProducts: 'Tìm sản phẩm',
@@ -359,6 +383,8 @@ const VI: ScStrings = {
   productOutOfStock: '{name} đã hết hàng. Gọi nhân viên.',
   productInsufficientStock: '{name} chỉ còn {stock}. Đổi số lượng hoặc gọi nhân viên.',
   productNoPrice: '{name} chưa có giá. Gọi nhân viên.',
+  soldOut: 'Hết hàng',
+  noPrice: 'Chưa có giá',
   scanFailed: 'Quét không thành công. Thử lại hoặc gọi nhân viên.',
   emptyCart: 'Giỏ hàng trống - hãy quét sản phẩm',
   remove: 'Xóa',
@@ -380,6 +406,9 @@ const VI: ScStrings = {
   receiptProductionBlocked: 'Giao dịch thật cần tích hợp thanh toán, tạo đơn và máy in fiskal.',
   receiptPrintFailed: 'Đã nhận thanh toán, nhưng chưa in được hóa đơn. Vui lòng gọi nhân viên.',
   receiptContinue: 'Tiếp tục',
+  receiptOrderSaved: 'Đơn hàng đã lưu',
+  receiptPrintStep: 'Hóa đơn fiskal',
+  receiptCollectStep: 'Nhận hóa đơn',
   paymentTitle: 'Chọn phương thức thanh toán',
   cash: 'Tiền mặt',
   card: 'Thẻ',
@@ -401,6 +430,8 @@ const VI: ScStrings = {
   paymentProcessing: 'Đang lưu đơn',
   paymentSuccess: 'Thanh toán thành công',
   fakePaymentActive: 'Đã duyệt thanh toán test',
+  paymentUnavailableTitle: 'Chưa thể thanh toán',
+  paymentUnavailableBody: 'Quầy này chưa có hồ sơ thanh toán production sẵn sàng. Vui lòng gọi nhân viên.',
   staffConfirmTitle: 'Chờ nhân viên',
   staffConfirmBody: 'Nhân viên sẽ thu tiền và xác nhận đã nhận.',
   staffConfirmButton: 'Đã thu tiền',
@@ -420,6 +451,7 @@ const VI: ScStrings = {
   reasonPrinterOffline: 'Máy in hóa đơn không khả dụng.',
   reasonTerminalOffline: 'Máy POS không khả dụng.',
   reasonShiftClosed: 'Nhân viên chưa mở ca.',
+  reasonOrderCreationUnavailable: 'Đường tạo đơn hàng chưa có xác nhận sẵn sàng.',
   reasonUnknown: 'Quầy tạm thời không khả dụng.',
   popularCategories: 'Danh mục',
   productsInCategory: 'Sản phẩm trong danh mục',

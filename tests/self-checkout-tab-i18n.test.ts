@@ -46,6 +46,14 @@ describe('SelfCheckoutTab i18n', () => {
     expect(source).toContain('setKioskLanguage(v)');
   });
 
+  it('shows payment readiness from the runtime profile instead of the fake payment flag', () => {
+    expect(source).toContain('runtime.paymentProfile ===');
+    expect(source).toContain("runtime.paymentProfile === 'unavailable'");
+    expect(source).toContain('state={paymentRuntimeState}');
+    expect(source).toContain('blocked={paymentRuntimeBlocked}');
+    expect(source).not.toContain("state={mode === 'demo' ? t('selfCheckout.demoOnly') : fakePayment ?");
+  });
+
   it('does not render the main operator labels as hardcoded English', () => {
     for (const phrase of [
       'POS kiosk control',

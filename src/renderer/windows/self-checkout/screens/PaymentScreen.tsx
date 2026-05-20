@@ -1,8 +1,8 @@
-// Payment overlay. The kiosk has no automated terminal integration yet, so
-// after the customer picks CARD or CASH we (1) play a pre-rendered Polish
-// announcement over the kiosk speakers so staff knows the amount + method,
-// then (2) wait for staff to physically collect payment and tap
-// "Money received" before saving the order and printing the receipt.
+// Assisted payment overlay. The kiosk has no automated terminal integration
+// yet, so after the customer picks CARD, CASH, or BLIK we (1) play a
+// pre-rendered Polish announcement over the kiosk speakers so staff knows the
+// amount + method, then (2) wait for staff to physically collect/confirm
+// payment and tap "Money received" before saving the order and printing.
 //
 // The announcement is assembled from clips in `public/tts-pl/` rendered by
 // `scripts/generate-tts-clips.mjs`. See `polish-amount-tts.ts` for the
@@ -11,7 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Banknote, CheckCircle2, CreditCard, Loader2, RotateCcw, Smartphone, X } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
-import type { SelfCheckoutMode } from '../self-checkout-model';
+import type { SelfCheckoutPaymentProfile } from '../self-checkout-model';
 import { formatPLN } from '../useScCart';
 import { cancelAnnouncement, playAnnouncement, warmUpClipCache } from '../polish-amount-tts';
 
@@ -23,10 +23,11 @@ type Phase = 'idle' | 'awaitStaff' | 'processing';
 // transfer (banking app → "Przelew na telefon"). Staff sees the transfer
 // land in their phone and taps "Money received".
 const BLIK_PHONE_DISPLAY = '729 448 788';
+const ASSISTED_PAYMENT_METHODS: PaymentMethod[] = ['BLIK', 'CARD', 'CASH'];
 
 interface PaymentScreenProps {
   lang: ScLanguage;
-  mode: SelfCheckoutMode;
+  profile: SelfCheckoutPaymentProfile;
   totalGrosze: number;
   terminalStatus?: string | null;
   errorText?: string | null;
@@ -37,7 +38,7 @@ interface PaymentScreenProps {
 
 export default function PaymentScreen({
   lang,
-  mode,
+  profile,
   totalGrosze,
   terminalStatus,
   errorText,
@@ -46,6 +47,7 @@ export default function PaymentScreen({
   onLangChange,
 }: PaymentScreenProps) {
   const t = getScStrings(lang);
+  const assisted = profile === 'assistedDemo';
   const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -59,7 +61,7 @@ export default function PaymentScreen({
   }, []);
 
   const chooseMethod = (next: PaymentMethod) => {
-    if (phase !== 'idle') return;
+    if (phase !== 'idle' || !assisted) return;
     setMethod(next);
     setPhase('awaitStaff');
     void playAnnouncement(next, totalGrosze);
@@ -112,6 +114,42 @@ export default function PaymentScreen({
       ? t.staffConfirmBody
       : t.terminalReadyBody;
 
+  if (!assisted) {
+    return (
+      <div className="sc-payment-overlay fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 select-none">
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="self-checkout-payment-title"
+          className="sc-surface sc-payment-dialog flex w-full max-w-3xl flex-col overflow-hidden"
+        >
+          <header className="sc-payment-header flex items-center justify-between border-b border-[var(--sc-border)]">
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="sc-secondary-action sc-focusable flex items-center gap-3 px-5 text-lg"
+            >
+              <X size={22} />
+              {t.cancel}
+            </button>
+            <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
+          </header>
+          <div className="p-8 text-center">
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[24px] bg-red-50 text-[var(--sc-danger)]">
+              <AlertTriangle size={42} />
+            </div>
+            <h1 id="self-checkout-payment-title" className="mt-6 text-4xl font-black text-[var(--sc-ink)]">
+              {t.paymentUnavailableTitle}
+            </h1>
+            <p className="mx-auto mt-4 max-w-xl text-xl font-semibold leading-8 text-[var(--sc-muted)]">
+              {t.paymentUnavailableBody}
+            </p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="sc-payment-overlay fixed inset-0 z-30 flex items-center justify-center bg-slate-950/55 select-none">
       <section
@@ -132,7 +170,7 @@ export default function PaymentScreen({
           </button>
           <div className="flex items-center gap-3">
             <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
-              {mode === 'demo' ? t.demoMode : t.productionMode}
+              {t.demoMode}
             </div>
             <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
           </div>
@@ -151,30 +189,29 @@ export default function PaymentScreen({
               </p>
 
               <div className="sc-payment-method-grid">
-                <PaymentMethodButton
-                  active={method === 'BLIK'}
-                  disabled={phase !== 'idle'}
-                  icon={<Smartphone size={48} />}
-                  title={t.payWithBlik}
-                  body={t.blikHint}
-                  onClick={() => chooseMethod('BLIK')}
-                />
-                <PaymentMethodButton
-                  active={method === 'CARD'}
-                  disabled={phase !== 'idle'}
-                  icon={<CreditCard size={48} />}
-                  title={t.payWithCard}
-                  body={t.cardTerminalHint}
-                  onClick={() => chooseMethod('CARD')}
-                />
-                <PaymentMethodButton
-                  active={method === 'CASH'}
-                  disabled={phase !== 'idle'}
-                  icon={<Banknote size={48} />}
-                  title={t.payWithCash}
-                  body={t.cashHint}
-                  onClick={() => chooseMethod('CASH')}
-                />
+                {ASSISTED_PAYMENT_METHODS.map((paymentMethod) => (
+                  <PaymentMethodButton
+                    key={paymentMethod}
+                    active={method === paymentMethod}
+                    disabled={phase !== 'idle'}
+                    icon={
+                      paymentMethod === 'BLIK' ? <Smartphone size={48} />
+                      : paymentMethod === 'CARD' ? <CreditCard size={48} />
+                      : <Banknote size={48} />
+                    }
+                    title={
+                      paymentMethod === 'BLIK' ? t.payWithBlik
+                      : paymentMethod === 'CARD' ? t.payWithCard
+                      : t.payWithCash
+                    }
+                    body={
+                      paymentMethod === 'BLIK' ? t.blikHint
+                      : paymentMethod === 'CARD' ? t.cardTerminalHint
+                      : t.cashHint
+                    }
+                    onClick={() => chooseMethod(paymentMethod)}
+                  />
+                ))}
               </div>
 
               {/* NIP / Faktura toggle. Must be set BEFORE the fiscal print:
