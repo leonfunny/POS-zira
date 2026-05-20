@@ -866,34 +866,100 @@ export class ApiClient {
       }
     }
 
-    // Map API items to ProductVariantRow shape
-    const toGrosze = (v: any) => v != null ? Math.round(parseFloat(v) * 100) : 0;
+    // Map API items to ProductVariantRow shape. The public products
+    // endpoint normally emits camelCase PLN decimals, while sync/log and
+    // older backend paths may emit snake_case values that are already stored
+    // as grosze. Keep both formats safe at this boundary.
+    const hasValue = (v: any) => v !== null && v !== undefined && v !== '';
+    const toGrosze = (v: any) => {
+      if (!hasValue(v)) return 0;
+      const n = Number.parseFloat(String(v));
+      return Number.isFinite(n) ? Math.round(n * 100) : 0;
+    };
+    const normalizePossiblyStoredPrice = (v: any) => {
+      if (!hasValue(v)) return 0;
+      const raw = String(v).trim();
+      const n = Number.parseFloat(raw.replace(',', '.'));
+      if (!Number.isFinite(n)) return 0;
+      if (/[.,]/.test(raw)) return Math.round(n * 100);
+      return Math.abs(n) < 500 ? Math.round(n * 100) : Math.round(n);
+    };
+    const normalizePossiblyStoredMinorUnits = (v: any) => {
+      if (!hasValue(v)) return 0;
+      const raw = String(v).trim();
+      const n = Number.parseFloat(raw.replace(',', '.'));
+      if (!Number.isFinite(n)) return 0;
+      return /[.,]/.test(raw) ? Math.round(n * 100) : Math.round(n);
+    };
+    const firstPositivePrice = (...candidates: Array<{ value: any; stored?: boolean }>) => {
+      for (const candidate of candidates) {
+        const price = candidate.stored
+          ? normalizePossiblyStoredPrice(candidate.value)
+          : toGrosze(candidate.value);
+        if (price > 0) return price;
+      }
+      return 0;
+    };
+    const firstPositiveMinorUnits = (...candidates: Array<{ value: any; stored?: boolean }>) => {
+      for (const candidate of candidates) {
+        const amount = candidate.stored
+          ? normalizePossiblyStoredMinorUnits(candidate.value)
+          : toGrosze(candidate.value);
+        if (amount > 0) return amount;
+      }
+      return 0;
+    };
     const products = items.map((item: any) => {
-      const retailGrosze = toGrosze(item.retailPrice);
+      const retailGrosze = firstPositivePrice(
+        { value: item.retailPrice },
+        { value: item.retail_price, stored: true },
+        { value: item.priceGross },
+        { value: item.price_gross, stored: true },
+        { value: item.price, stored: true },
+        { value: item.template?.retailPrice },
+        { value: item.template?.retail_price, stored: true },
+        { value: item.template?.priceGross },
+        { value: item.template?.price_gross, stored: true },
+      );
+      const priceGross = firstPositivePrice(
+        { value: item.priceGross },
+        { value: item.price_gross, stored: true },
+        { value: item.retailPrice },
+        { value: item.retail_price, stored: true },
+        { value: item.price, stored: true },
+        { value: item.template?.retailPrice },
+        { value: item.template?.retail_price, stored: true },
+      ) || retailGrosze;
       // Product display name follows the template's translations (Phase 1 scope —
       // variant-specific translations are deferred). Variant-level overrides land later.
       const translationSource = item.nameTranslations ?? item.name_translations ?? item.template?.nameTranslations ?? item.template?.name_translations;
       return {
         id: item.id,
-        template_id: item.templateId ?? null,
+        template_id: item.templateId ?? item.template_id ?? null,
         name: item.name ?? item.template?.name ?? '',
         sku: item.sku ?? null,
         barcode: item.barcode ?? null,
         retail_price: retailGrosze,
-        category_id: item.template?.categoryId ?? null,
-        image_url: item.imageUrl ?? null,
-        in_stock: item.totalStockQty ?? 0,
-        vat_rate: parseFloat(item.template?.taxRate) || 23,
-        is_active: item.isActive ? 1 : 0,
-        updated_at: item.updatedAt ?? null,
+        category_id: item.template?.categoryId ?? item.template?.category_id ?? item.categoryId ?? item.category_id ?? null,
+        image_url: item.imageUrl ?? item.image_url ?? null,
+        in_stock: item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
+        vat_rate: parseFloat(item.template?.taxRate ?? item.template?.tax_rate ?? item.vat_rate) || 23,
+        is_active: item.isActive ?? item.is_active ?? true ? 1 : 0,
+        updated_at: item.updatedAt ?? item.updated_at ?? null,
         // Enriched fields (backend v2 — fallback-safe for old backends)
-        available_qty: item.availableQty ?? item.totalStockQty ?? 0,
-        price_gross: toGrosze(item.priceGross) || retailGrosze,
-        price_net: toGrosze(item.priceNet),
-        vat_amount: toGrosze(item.vatAmount),
-        is_on_sale: item.isOnSale ? 1 : 0,
-        thumbnail_url: item.thumbnailUrl ?? null,
-        sale_unit: item.saleUnit ?? item.template?.baseUnit ?? null,
+        available_qty: item.availableQty ?? item.available_qty ?? item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
+        price_gross: priceGross,
+        price_net: firstPositivePrice(
+          { value: item.priceNet },
+          { value: item.price_net, stored: true },
+        ),
+        vat_amount: firstPositiveMinorUnits(
+          { value: item.vatAmount },
+          { value: item.vat_amount, stored: true },
+        ),
+        is_on_sale: item.isOnSale ?? item.is_on_sale ? 1 : 0,
+        thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,
+        sale_unit: item.saleUnit ?? item.sale_unit ?? item.template?.baseUnit ?? item.template?.base_unit ?? null,
         name_translations: encodeTranslations(translationSource),
       };
     });

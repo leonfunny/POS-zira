@@ -328,7 +328,7 @@ describe('SyncModule.runProductSync', () => {
     expect(r2).toEqual({ success: true, productsCount: 0 });
   });
 
-  it('manual sync ({force: true}) bypasses the backoff window', async () => {
+  it('manual sync ({force: true}) bypasses the backoff window and does a full sync', async () => {
     deltaSyncMock.mockRejectedValueOnce(new Error('boom'));
     const m = await freshModule();
     await m.runProductSync(); // sets backoff
@@ -340,9 +340,10 @@ describe('SyncModule.runProductSync', () => {
 
     // Manual call (button press): runs anyway.
     deltaSyncMock.mockClear();
-    deltaSyncMock.mockResolvedValueOnce(4);
+    fullSyncMock.mockResolvedValueOnce({ productsCount: 4, categoriesCount: 1 });
     const manual = await m.runProductSync({ force: true });
-    expect(deltaSyncMock).toHaveBeenCalledTimes(1);
+    expect(deltaSyncMock).not.toHaveBeenCalled();
+    expect(fullSyncMock).toHaveBeenCalledTimes(1);
     expect(manual).toEqual({ success: true, productsCount: 4 });
   });
 

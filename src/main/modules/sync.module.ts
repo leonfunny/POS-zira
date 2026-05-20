@@ -599,7 +599,7 @@ export class SyncModule extends BaseModule {
     if (this._productSyncInFlight) {
       return this._productSyncInFlight;
     }
-    this._productSyncInFlight = this._doProductSync();
+    this._productSyncInFlight = this._doProductSync(opts);
     try {
       return await this._productSyncInFlight;
     } finally {
@@ -607,10 +607,16 @@ export class SyncModule extends BaseModule {
     }
   }
 
-  private async _doProductSync(): Promise<ProductSyncResult> {
+  private async _doProductSync(opts: { force?: boolean } = {}): Promise<ProductSyncResult> {
     if (!this.productSync) return { success: false, error: 'no-product-sync' };
     try {
-      let productsCount = await this.productSync.deltaSync();
+      let productsCount: number;
+      if (opts.force) {
+        const result = await this.productSync.fullSync();
+        productsCount = result.productsCount;
+      } else {
+        productsCount = await this.productSync.deltaSync();
+      }
       const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
       if (reconciledLocalImports > 0) {
         productsCount += await this.productSync.deltaSync();
