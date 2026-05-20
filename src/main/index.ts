@@ -295,7 +295,7 @@ async function startApp() {
       .use(new BooksyModule(container))
       .use(new TelegramModule(container))
       .use(new BrowserModule(container))
-      .use(new BackupModule())
+      .use(new BackupModule(container))
       .use(new SystemToolsModule(container))
       .use(new AiModule(container))
       .use(new SecurityModule(container))

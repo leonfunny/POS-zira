@@ -2,6 +2,8 @@ import { app, ipcMain, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { BaseModule, ModuleState } from '../core/module';
+import type { ServiceContainer } from '../core/container';
+import { SERVICE_TOKENS } from '../core/tokens';
 import { database } from '../database/database';
 import { LocalBackupService } from '../database/backup-service';
 import { getConfig, setConfig } from '../config/store';
@@ -11,6 +13,10 @@ import logger from '../logger';
 export class BackupModule extends BaseModule {
   readonly name = 'backup';
   private service: LocalBackupService | null = null;
+
+  constructor(private container?: ServiceContainer) {
+    super();
+  }
 
   async init(): Promise<void> {
     const userDataDir = app.getPath('userData');
@@ -27,6 +33,7 @@ export class BackupModule extends BaseModule {
       fs,
       logger,
     });
+    this.container?.set(SERVICE_TOKENS.BACKUP_SERVICE, this.service);
     logger.info('[BackupModule] Initialized');
     this.setState(ModuleState.READY);
   }

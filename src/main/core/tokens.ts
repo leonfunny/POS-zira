@@ -8,6 +8,7 @@
 export const SERVICE_TOKENS = {
   // Infrastructure
   DATABASE: 'database',
+  BACKUP_SERVICE: 'backupService',
   EVENT_BUS: 'eventBus',
   TOOL_REGISTRY: 'toolRegistry',
 

@@ -262,6 +262,7 @@ export default function App() {
     try {
       clearRendererState();
       await logout();
+      await window.electronAPI.changeSalon();
       // Seed demo products/categories so offline mode isn't blank
       await window.electronAPI.pos.seedDemo();
       await refreshConfig();

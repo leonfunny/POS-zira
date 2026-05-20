@@ -22,6 +22,7 @@ import { billiardResourceRepo } from '../database/repos/billiard-resource-repo';
 import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
 import { billiardComboRepo } from '../database/repos/billiard-combo-repo';
 import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-repo';
+import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -78,7 +79,9 @@ export class SyncModule extends BaseModule {
 
   async init(): Promise<void> {
     logger.info('[SyncModule] Initializing...');
-    this.productSync = new ProductSync();
+    this.productSync = new ProductSync({
+      createRestorePoint: (reason: BackupRunReason) => this.createRestorePoint(reason),
+    });
     this.orderSync = new OrderSync();
     this.billiardSync = new BilliardSync();
     this.staffSync = new StaffSync();
@@ -568,6 +571,18 @@ export class SyncModule extends BaseModule {
 
   getToolDefinitions(): ToolDefinition[] {
     return [];
+  }
+
+  private async createRestorePoint(reason: BackupRunReason): Promise<void> {
+    const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
+    if (!backup) {
+      logger.debug(`[SyncModule] ${reason} restore point skipped: backup service not ready`);
+      return;
+    }
+    const result = await backup.runBackupNow(reason);
+    if (!result.success) {
+      logger.warn(`[SyncModule] ${reason} backup failed: ${result.error}`);
+    }
   }
 
   // ── Periodic product sync helpers ───────────────────────────────

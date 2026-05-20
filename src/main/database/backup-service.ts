@@ -15,6 +15,13 @@ export interface BackupRunResult {
   createdAt: string;
 }
 
+export type BackupRunReason =
+  | 'manual'
+  | 'startup'
+  | 'scheduled'
+  | 'pre-full-product-sync'
+  | 'pre-clear-salon-data';
+
 export interface BackupStatus {
   backupDir: string;
   lastStatus?: 'success' | 'failed';
@@ -185,7 +192,7 @@ export class LocalBackupService {
     return this.runBackupIfDue('startup');
   }
 
-  async runBackupIfDue(reason: 'startup' | 'scheduled'): Promise<BackupRunResult | null> {
+  async runBackupIfDue(reason: Extract<BackupRunReason, 'startup' | 'scheduled'>): Promise<BackupRunResult | null> {
     if (!this.isBackupDue()) return null;
     const result = await this.runBackupNow(reason);
     if (!result.success) {
@@ -195,7 +202,7 @@ export class LocalBackupService {
     return result;
   }
 
-  async runBackupNow(reason: 'manual' | 'startup' | 'scheduled' = 'manual'): Promise<BackupRunResult> {
+  async runBackupNow(reason: BackupRunReason = 'manual'): Promise<BackupRunResult> {
     const createdAt = this.deps.now().toISOString();
     const flush = this.deps.flushDatabase();
 

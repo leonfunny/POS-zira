@@ -5,6 +5,17 @@ import { orderRepo } from '../database/repos/order-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
+import type { BackupRunReason } from '../database/backup-service';
+import {
+  evaluateProductSyncGuard,
+  ProductSyncGuardError,
+  type ProductSyncGuardBaseline,
+  type ProductSyncGuardResult,
+} from './product-sync-guard';
+
+interface ProductSyncDeps {
+  createRestorePoint?: (reason: BackupRunReason) => Promise<void>;
+}
 
 /** Retry an async fn with exponential backoff (1s, 3s, 9s). */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
@@ -28,6 +39,8 @@ export class ProductSync {
   /** Remember if delta sync is unsupported — avoids 7s retry waste each connect. */
   private deltaUnsupported = false;
 
+  constructor(private deps: ProductSyncDeps = {}) {}
+
   /**
    * Full sync — download all products + categories from backend
    */
@@ -36,6 +49,18 @@ export class ProductSync {
     if (!token) throw new Error('Not authenticated');
 
     const data = await withRetry(() => apiClient.getPosProducts(token));
+    const baseline = this.getGuardBaseline();
+    const guard = evaluateProductSyncGuard({
+      mode: 'full',
+      baseline,
+      products: data.products,
+      categories: data.categories,
+      deletedIds: data.deletedIds,
+    });
+    this.enforceGuard(guard);
+    if (baseline.activeProductCount > 0 || baseline.categoryCount > 0) {
+      await this.createRestorePoint('pre-full-product-sync');
+    }
 
     database.transaction(() => {
       if (data.categories.length > 0) {
@@ -113,6 +138,15 @@ export class ProductSync {
       }
       throw err;
     }
+
+    const guard = evaluateProductSyncGuard({
+      mode: 'delta',
+      baseline: this.getGuardBaseline(),
+      products: data.products,
+      categories: data.categories,
+      deletedIds: data.deletedIds,
+    });
+    this.enforceGuard(guard);
 
     database.transaction(() => {
       if (data.products.length > 0) {
@@ -220,6 +254,37 @@ export class ProductSync {
       if (!productRepo.getById(row.server_variant_id)) continue;
       if (orderRepo.hasUnsyncedOrdersForVariant(row.variant_id)) continue;
       productRepo.deactivateByIds([row.variant_id]);
+    }
+  }
+
+  private getGuardBaseline(): ProductSyncGuardBaseline {
+    const products = database.all<any>(
+      'SELECT id, sku, barcode, retail_price, price_gross, is_active FROM product_variants',
+    );
+    const activeProductCount = database.get<{ count: number }>(
+      'SELECT COUNT(*) as count FROM product_variants WHERE is_active = 1',
+    )?.count ?? 0;
+    const categoryCount = database.get<{ count: number }>(
+      'SELECT COUNT(*) as count FROM categories',
+    )?.count ?? 0;
+    return { products, activeProductCount, categoryCount };
+  }
+
+  private enforceGuard(result: ProductSyncGuardResult): void {
+    if (result.allowed || !result.rejection) return;
+    logger.warn(`[ProductSync] ${result.rejection.message}`, {
+      code: result.rejection.code,
+      stats: result.stats,
+      samples: result.rejection.samples,
+    });
+    throw new ProductSyncGuardError(result.rejection, result.stats);
+  }
+
+  private async createRestorePoint(reason: BackupRunReason): Promise<void> {
+    try {
+      await this.deps.createRestorePoint?.(reason);
+    } catch (err: any) {
+      logger.warn(`[ProductSync] ${reason} restore point failed; continuing after sync guard passed:`, err?.message || err);
     }
   }
 }

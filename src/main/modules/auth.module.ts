@@ -35,6 +35,7 @@ import {
 } from '../config/store';
 import { ensureReceiptPrinterEnabledOnBoot } from '../config/ensure-receipt-enabled';
 import { database } from '../database/database';
+import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
 import { listWindowsPrintersDetailed } from '../hardware/port-utils';
 import logger from '../logger';
@@ -227,6 +228,7 @@ export class AuthModule extends BaseModule {
       try {
         const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
         socket?.disconnect();
+        await this.clearSalonDataWithBackup('change salon');
         setSecureApiKey('');
         setConfig({
           apiKey: '', agentId: '', salonId: '', salonName: '', salonSlug: '',
@@ -292,7 +294,7 @@ export class AuthModule extends BaseModule {
 
           // Multi-tenant isolation: clear if switching salons
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on telegram login failed:', err?.message); }
+            await this.clearSalonDataWithBackup('telegram login salon switch');
           }
 
           setConfig({
@@ -351,14 +353,16 @@ export class AuthModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
-      try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on logout failed:', err?.message); }
       const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
       socket?.disconnect();
       clearSecureTokens();
+      // Keep the local salon mirror on ordinary logout so a relogin to the
+      // same salon still has a healthy local-first baseline and sync guard.
+      // Explicit salon switching/offline reset clears it through AUTH_CHANGE_SALON.
       setConfig({
         authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' },
         salonName: '', salonSlug: '', salonCode: '', aiEnabled: false,
-        isPaired: false, agentId: '', salonId: '',
+        isPaired: false, agentId: '',
       });
       // Notify other modules (AI clears history, telegram stops, etc.)
       this.eventBus?.emit('user:logged-out', { reason: 'user-logout' });
@@ -380,7 +384,7 @@ export class AuthModule extends BaseModule {
 
           // Multi-tenant isolation: only clear if switching to a genuinely different salon
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            try { database.clearSalonData(); } catch (err: any) { logger.debug('[AuthModule] clear salon data on email login failed:', err?.message); }
+            await this.clearSalonDataWithBackup('email login salon switch');
           }
 
           const authUser: AuthUser = {
@@ -629,6 +633,31 @@ export class AuthModule extends BaseModule {
       logger.info(`[AuthModule] Synced ${result.count} Windows printer(s) to backend`);
     } catch (err: any) {
       logger.warn('[AuthModule] Windows printer sync failed:', err?.message);
+    }
+  }
+
+  private async clearSalonDataWithBackup(context: string): Promise<void> {
+    await this.createRestorePoint('pre-clear-salon-data', context);
+    try {
+      database.clearSalonData();
+    } catch (err: any) {
+      logger.debug(`[AuthModule] clear salon data failed during ${context}:`, err?.message);
+    }
+  }
+
+  private async createRestorePoint(reason: BackupRunReason, context: string): Promise<void> {
+    const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
+    if (!backup) {
+      logger.debug(`[AuthModule] ${reason} skipped during ${context}: backup service not ready`);
+      return;
+    }
+    try {
+      const result = await backup.runBackupNow(reason);
+      if (!result.success) {
+        logger.warn(`[AuthModule] ${reason} failed during ${context}: ${result.error}`);
+      }
+    } catch (err: any) {
+      logger.warn(`[AuthModule] ${reason} crashed during ${context}:`, err?.message || err);
     }
   }
 
