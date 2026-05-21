@@ -215,7 +215,12 @@ export class LocalBackupService {
     try {
       this.deps.fs.mkdirSync(this.deps.backupDir, { recursive: true });
       const backupPath = this.createUniqueBackupPath();
-      this.deps.fs.copyFileSync(flush.dbPath, backupPath);
+      // Atomic write: copy to .tmp then rename, so a crash mid-copy never
+      // leaves a half-written file at backupPath that future restores would
+      // pick up as valid.
+      const tmpPath = `${backupPath}.tmp`;
+      this.deps.fs.copyFileSync(flush.dbPath, tmpPath);
+      this.deps.fs.renameSync(tmpPath, backupPath);
       this.cleanupRetention();
       this.deps.setConfig({
         backupLastStatus: 'success',

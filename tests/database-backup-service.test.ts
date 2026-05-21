@@ -120,7 +120,8 @@ describe('LocalBackupService', () => {
     });
     expect(calls[0]).toBe('flush');
     expect(calls[1]).toBe('mkdir');
-    expect(calls[2]).toBe(`copy:${dbPath}->${backupPath('20260428-070506')}`);
+    expect(calls[2]).toBe(`copy:${dbPath}->${backupPath('20260428-070506')}.tmp`);
+    expect(calls[3]).toBe(`rename:${backupPath('20260428-070506')}.tmp->${backupPath('20260428-070506')}`);
     expect(deps.setConfig).toHaveBeenCalledWith({
       backupLastStatus: 'success',
       backupLastRunAt: defaultNow.toISOString(),

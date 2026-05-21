@@ -1,9 +1,10 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import { app } from 'electron';
 import { join } from 'path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync } from 'fs';
 import logger from '../logger';
 import { migrations } from './migrations';
+import { atomicWriteFileSync } from './atomic-write';
 import type { BackupFlushResult } from './backup-service';
 
 class Database {
@@ -67,7 +68,7 @@ class Database {
 
     try {
       const data = this.db.export();
-      writeFileSync(this.dbPath, Buffer.from(data));
+      atomicWriteFileSync(this.dbPath, Buffer.from(data));
       this.dirty = false;
       if (this.consecutiveFailures > 0) {
         logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
