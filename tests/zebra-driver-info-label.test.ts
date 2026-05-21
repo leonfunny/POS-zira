@@ -52,14 +52,22 @@ describe("ZebraDriver.printInfoLabel", () => {
     try {
       await xprinter.printInfoLabel({
         ...sample,
+        productName: "Bánh tráng rế Toàn Á",
         ingredients: "Wartości odżywcze, węglowodany, białko, sól",
-        manufacturerInfo: "Zollerstraße 7, właściciel marki",
+        manufacturerInfo: "Cơ sở chế biến thực phẩm Toàn Á, Zollerstraße 7, właściciel marki",
       });
 
       const zpl: string = xprinterSpool.mock.calls[0][0];
+      expect(zpl).toContain("Banh trang re Toan A");
       expect(zpl).toContain("Wartosci odzywcze");
+      expect(zpl).toContain("Co so che bien");
+      expect(zpl).toContain("thuc pham");
+      expect(zpl).toContain("Toan A");
       expect(zpl).toContain("Zollerstrasse 7");
-      expect(zpl).toContain("wlasciciel marki");
+      expect(zpl).toContain("wlasciciel");
+      expect(zpl).toContain("marki");
+      expect(zpl).not.toContain("Bánh");
+      expect(zpl).not.toContain("Cơ sở");
       expect(zpl).not.toContain("Wartości");
       expect(zpl).not.toContain("Zollerstraße");
     } finally {

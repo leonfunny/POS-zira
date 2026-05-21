@@ -16,7 +16,7 @@ describe("ZplFormatter.formatInfoLabel", () => {
   it("renders all four sections at 50x40", () => {
     const f = new ZplFormatter(50, 40);
     const zpl = f.formatInfoLabel(sampleData, 50, 40);
-    expect(zpl).toContain("Bánh quy");
+    expect(zpl).toContain("Banh quy");
     expect(zpl).toContain("Skladniki:");
     expect(zpl).toContain("cukier");
     expect(zpl).toContain("Najlepiej spozyc przed: 31.12.2026");
@@ -27,9 +27,10 @@ describe("ZplFormatter.formatInfoLabel", () => {
   it("at 50x30 keeps ingredients when they fit and drops countryOfOrigin", () => {
     const f = new ZplFormatter(50, 30);
     const zpl = f.formatInfoLabel(sampleData, 50, 30);
-    expect(zpl).toContain("Bánh quy");
+    expect(zpl).toContain("Banh quy");
     expect(zpl).toContain("Skladniki:");
-    expect(zpl).toContain("olej palmowy, sol");
+    expect(zpl).toContain("olej");
+    expect(zpl).toContain("palmowy, sol");
     expect(zpl).not.toContain("Kraj pochodzenia");
   });
 
@@ -37,10 +38,10 @@ describe("ZplFormatter.formatInfoLabel", () => {
     const f = new ZplFormatter(50, 30);
     const zpl = f.formatInfoLabel(sampleData, 50, 30);
 
-    expect(zpl).toContain("^FO8,8^A0N,25,25^FB384,2");
-    expect(zpl).toContain("^FO8,64^A0N,19,19^FB384,5");
-    expect(zpl).toContain("^FO8,168^A0N,20,20");
-    expect(zpl).toContain("^FO8,192^A0N,19,19^FB384,2");
+    expect(zpl).toContain("^FO16,16^A0N,22,22^FB368,2");
+    expect(zpl).toContain("^FO16,43^A0N,17,17^FB368,3");
+    expect(zpl).toContain("^FO16,105^A0N,19,19");
+    expect(zpl).toContain("^FO16,132^A0N,17,17^FB368,3");
   });
 
   it("at 60x40 includes countryOfOrigin row when present", () => {
@@ -124,6 +125,29 @@ describe("ZplFormatter.formatInfoLabel", () => {
     expect(zpl).toContain("Zazolc sp. z o.o.");
     expect(zpl).not.toContain("Mąka");
     expect(zpl).not.toContain("Zażółć");
+  });
+
+  it("transliterates Vietnamese glyphs on info labels so Font 0 does not print blanks", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatInfoLabel({
+      productName: "Bánh tráng rế cuốn chả giò Toàn Á",
+      ingredients: "Mąka pszenna, mąka ryżowa, cukier, sól.",
+      bestBefore: "2027-02-18",
+      manufacturerInfo: "Cơ sở chế biến thực phẩm Toàn Á, Hải Phòng, Wietnam",
+      manufacturerRole: ManufacturerRole.PRODUCER,
+      countryOfOrigin: null,
+      quantity: 1,
+    }, 50, 30);
+
+    expect(zpl).toContain("Banh trang re cuon");
+    expect(zpl).toContain("cha gio");
+    expect(zpl).toContain("Toan A");
+    expect(zpl).toContain("Skladniki: Maka pszenna");
+    expect(zpl).toContain("Najlepiej spozyc przed: 18.02.2027");
+    expect(zpl).toContain("Producent: Co so che bien thuc pham");
+    expect(zpl).toContain("Toan A, Hai Phong, Wietnam");
+    expect(zpl).not.toContain("...");
+    expect(zpl).not.toMatch(/[^\x00-\x7F]/);
   });
 
   it("does not crash when backend omits optional info-label text fields", () => {
