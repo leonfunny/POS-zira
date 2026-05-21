@@ -72,7 +72,7 @@ function getDiagnostics(): string {
 /**
  * Show error dialog with copy button and option to open logs
  */
-function showErrorDialog(title: string, error: Error | string): void {
+function showErrorDialog(title: string, error: Error | string): Promise<void> {
   const errorMessage = error instanceof Error
     ? `${error.message}\n\nStack trace:\n${error.stack}`
     : String(error);
@@ -84,7 +84,7 @@ function showErrorDialog(title: string, error: Error | string): void {
 
   logger.error(`[ErrorDialog] ${title}: ${errorMessage}`);
 
-  dialog.showMessageBox({
+  return dialog.showMessageBox({
     type: 'error',
     title: `Zira AI - ${title}`,
     message: title,
@@ -333,12 +333,13 @@ async function startApp() {
     logger.error('[Startup] Failed:', error);
     safeConsoleError('[Startup] Failed:', error);
 
-    if (app.isReady()) {
-      showErrorDialog('Initialization Failed', error);
-    } else {
-      app.whenReady().then(() => {
-        showErrorDialog('Initialization Failed', error);
-      });
+    try {
+      if (!app.isReady()) {
+        await app.whenReady();
+      }
+      await showErrorDialog('Initialization Failed', error);
+    } finally {
+      app.exit(1);
     }
   }
 }
