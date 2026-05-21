@@ -521,12 +521,37 @@ export class AuthModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     if (!socket) throw new Error('Socket not initialized');
 
+    // Snapshot identity BEFORE we mutate any state. We compare to the
+    // /print-agent/connect response below: if salon/agent/apiKey changed
+    // since the last pairing, the local SQLite mirror is stale (categories
+    // and products belong to a different tenant) and must be wiped so the
+    // next deltaSync falls back to fullSync.
+    const prevApiKey = getSecureApiKey();
+    const prevAgentId = config.agentId;
+    const prevSalonId = config.salonId;
+
     setSecureApiKey(apiKey);
 
     // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug
     try {
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
       const response = await client.connectWithApiKey(apiKey);
+
+      const identityChanged =
+        (prevApiKey && prevApiKey !== apiKey) ||
+        (prevAgentId && response.agentId && prevAgentId !== response.agentId) ||
+        (prevSalonId && response.salonId && prevSalonId !== response.salonId);
+      if (identityChanged) {
+        logger.info(
+          `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
+        );
+        try {
+          database.clearSalonData();
+        } catch (err: any) {
+          logger.warn('[AuthModule] clearSalonData after identity change failed:', err?.message);
+        }
+      }
+
       // Server-pushed printers carry their own isEnabled flag (typically false
       // until the dashboard admin flips it). Without this re-apply, a cashier
       // who relied on the boot-time auto-on would see Receipts toggle OFF

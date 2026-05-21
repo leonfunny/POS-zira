@@ -111,7 +111,17 @@ export class ProductSync {
     const lastSync = database.get<{ value: string }>(
       "SELECT value FROM sync_metadata WHERE key = 'products_last_sync'",
     );
-    if (!lastSync?.value) {
+    // Safety net for stale-cursor / empty-mirror state — e.g. a re-pair to a
+    // different agent where clearSalonData didn't run (legacy session). The
+    // cursor still points at the old data window so delta returns 0 changes
+    // forever and the cashier sees an empty catalogue.
+    const productCount = database.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM product_variants',
+    )?.n ?? 0;
+    if (!lastSync?.value || productCount === 0) {
+      logger.info(
+        `[ProductSync] Cursor=${!!lastSync?.value}, productCount=${productCount} → forcing fullSync`,
+      );
       const result = await this.fullSync();
       return result.productsCount;
     }

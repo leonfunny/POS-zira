@@ -419,6 +419,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [autoStart, setAutoStart] = useState(config?.autoStart ?? true);
   const [copied, setCopied] = useState(false);
   const [showChangeSalonConfirm, setShowChangeSalonConfirm] = useState(false);
+  const [isResyncingProducts, setIsResyncingProducts] = useState(false);
+  const [resyncResult, setResyncResult] = useState<'idle' | 'success' | 'error'>('idle');
 
   // API Key connection state
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -3927,6 +3929,35 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                   </p>
                 </div>
               )}
+              <div className="mt-2 pt-2 border-t border-green-200 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={isResyncingProducts}
+                  onClick={async () => {
+                    setIsResyncingProducts(true);
+                    setResyncResult('idle');
+                    try {
+                      await window.electronAPI.pos.sync.products();
+                      setResyncResult('success');
+                    } catch {
+                      setResyncResult('error');
+                    } finally {
+                      setIsResyncingProducts(false);
+                    }
+                  }}
+                  className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isResyncingProducts
+                    ? t('pairing.resyncProductsBusy')
+                    : t('pairing.resyncProducts')}
+                </button>
+                {resyncResult === 'success' && (
+                  <span className="text-xs text-green-600">{t('pairing.resyncProductsOk')}</span>
+                )}
+                {resyncResult === 'error' && (
+                  <span className="text-xs text-red-600">{t('pairing.resyncProductsFail')}</span>
+                )}
+              </div>
             </div>
             {/* Remote Support Toggle */}
             <div className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50">
