@@ -4,7 +4,7 @@ import { resolveCustomerDisplayProfile } from '../../shared/customer-display-pro
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import rlog from '../utils/logger';
-import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2 } from 'lucide-react';
+import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp } from 'lucide-react';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -390,6 +390,10 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
   { tab: 'pos',          label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
   { tab: 'selfCheckout', label: 'Self-Checkout',   icon: <ScanBarcode size={15} />,    color: 'text-emerald-600 bg-emerald-50' },
   { tab: 'billiard',     label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
+  { tab: 'orders',     label: 'Orders',           icon: <ClipboardList size={15} />,   color: 'text-slate-600 bg-slate-100' },
+  { tab: 'products',   label: 'Products',         icon: <Package size={15} />,         color: 'text-cyan-600 bg-cyan-50' },
+  { tab: 'warehouse',  label: 'Warehouse',        icon: <Warehouse size={15} />,       color: 'text-stone-600 bg-stone-100' },
+  { tab: 'forecast',   label: 'Forecast',         icon: <TrendingUp size={15} />,      color: 'text-lime-700 bg-lime-50' },
   { tab: 'invoicing', label: 'Invoicing',        icon: <FileText size={15} />,        color: 'text-purple-600 bg-purple-50' },
   { tab: 'booksy',    label: 'Booksy Sync',      icon: <CalendarDays size={15} />,    color: 'text-orange-600 bg-orange-50' },
   { tab: 'bookings',  label: 'Bookings',         icon: <CalendarDays size={15} />,    color: 'text-indigo-600 bg-indigo-50' },
