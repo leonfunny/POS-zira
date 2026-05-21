@@ -41,6 +41,7 @@ import { getIconPath } from '../paths';
 import { IPC_CHANNELS } from '../../shared/types';
 import TrayManager, { TrayManagerHost } from '../tray';
 import logger from '../logger';
+import { handleZoomShortcut, resetWindowZoom } from '../windows/zoom-controls';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -393,6 +394,7 @@ export class AgentOrchestrator implements TrayManagerHost {
 
     this.mainWindow.webContents.on('did-finish-load', () => {
       logger.info('[Window] Page loaded successfully');
+      if (this.mainWindow) resetWindowZoom(this.mainWindow, 'main');
     });
 
     this.mainWindow.on('enter-full-screen', () => {
@@ -406,6 +408,8 @@ export class AgentOrchestrator implements TrayManagerHost {
     this.mainWindow.webContents.on('before-input-event', (event, input) => {
       const win = this.mainWindow;
       const isRepeatedKeyPress = input.modifiers?.includes('isautorepeat');
+      if (win && handleZoomShortcut(win, event, input)) return;
+
       if (input.key === 'F11' && input.type === 'keyDown' && !isRepeatedKeyPress && win && !win.isKiosk()) {
         event.preventDefault();
         const nextFullScreen = !this.mainWindowFullScreen;

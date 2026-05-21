@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import logger from '../logger';
 import { PosStore } from '../pos/pos-store';
 import { getConfigValue } from '../config/store';
+import { handleZoomShortcut, resetWindowZoom } from './zoom-controls';
 
 const execFileAsync = promisify(execFile);
 
@@ -382,6 +383,10 @@ export class WindowManager {
       return { action: 'deny' };
     });
 
+    win.webContents.on('did-finish-load', () => {
+      resetWindowZoom(win, id);
+    });
+
     // Register for POS state broadcasts
     this.posStore.registerWindow(win);
 
@@ -425,6 +430,8 @@ export class WindowManager {
 
         return;
       }
+
+      if (handleZoomShortcut(win, event, input)) return;
 
       if (input.key === 'F11') {
         event.preventDefault();

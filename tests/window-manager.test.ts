@@ -20,6 +20,7 @@ let configValues: Record<string, any> = {};
 class MockWebContents extends EventEmitter {
   owner: MockBrowserWindow;
   sentMessages: Array<{ channel: string; payload: any }> = [];
+  zoomLevel = 0;
 
   constructor(owner: MockBrowserWindow) {
     super();
@@ -28,6 +29,10 @@ class MockWebContents extends EventEmitter {
 
   setWindowOpenHandler = vi.fn();
   toggleDevTools = vi.fn();
+  getZoomLevel = vi.fn(() => this.zoomLevel);
+  setZoomLevel = vi.fn((level: number) => {
+    this.zoomLevel = level;
+  });
 
   send(channel: string, payload?: any) {
     this.sentMessages.push({ channel, payload });
@@ -431,6 +436,28 @@ describe('WindowManager customer display behavior', () => {
     const exit = emitBeforeInput(win, { key: 'F11' });
     expect(exit.preventDefault).toHaveBeenCalledOnce();
     expect(win.fullscreenHistory.at(-1)).toBe(false);
+
+    manager.destroy();
+  });
+
+  it('handles POS zoom shortcuts with reset and clamping', () => {
+    const manager = new WindowManager(posStore as any);
+    const win = manager.createWindow('pos') as unknown as MockBrowserWindow;
+
+    win.webContents.zoomLevel = -9;
+    const reset = emitBeforeInput(win, { type: 'keyDown', key: '0', control: true });
+    expect(reset.preventDefault).toHaveBeenCalledOnce();
+    expect(win.webContents.zoomLevel).toBe(0);
+
+    win.webContents.zoomLevel = -9;
+    const zoomIn = emitBeforeInput(win, { type: 'keyDown', key: '=', code: 'Equal', control: true });
+    expect(zoomIn.preventDefault).toHaveBeenCalledOnce();
+    expect(win.webContents.zoomLevel).toBe(-3);
+
+    win.webContents.zoomLevel = 9;
+    const zoomOut = emitBeforeInput(win, { type: 'keyDown', key: '-', code: 'Minus', control: true });
+    expect(zoomOut.preventDefault).toHaveBeenCalledOnce();
+    expect(win.webContents.zoomLevel).toBe(3);
 
     manager.destroy();
   });
