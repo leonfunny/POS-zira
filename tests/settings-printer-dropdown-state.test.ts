@@ -91,6 +91,19 @@ describe('Settings printer dropdown state', () => {
     expect(hardwareModuleSource).toContain('for (const row of localPrinterRepo.getAll())');
     expect(hardwareModuleSource).toContain('printerStatuses.push({ printerId: row.id, isOnline })');
     expect(hardwareModuleSource).toContain('socket.sendDeviceStatus(status)');
+    expect(socketClientSource).toContain("this.emit('agent:connected', data)");
+    expect(hardwareModuleSource).toContain("socket?.on('agent:connected', this.handleAgentConnected)");
+  });
+
+  it('syncs saved local printer config back to backend printer rows', () => {
+    expect(settingsSource).toContain('function buildServerPrinterPayloadFromConfig');
+    expect(settingsSource).toContain('const syncServerPrinterRowsFromPayload = useCallback(async (payload: Partial<AgentConfig>)');
+    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.update(');
+    expect(settingsSource).toContain('buildServerPrinterPayloadFromConfig(printerType, pc)');
+    expect(settingsSource).toContain('isEnabled: !!pc.enabled');
+    expect(settingsSource).toContain('await syncServerPrinterRowsFromPayload(payload)');
+    expect(settingsSource).toContain('await loadLocalPrinterRows()');
+    expect(settingsSource).toContain('await loadSharedPrinterRouting()');
   });
 
   it('sends machineId with API-key socket auth and Windows printer sync', () => {

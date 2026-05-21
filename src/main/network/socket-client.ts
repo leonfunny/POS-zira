@@ -400,6 +400,10 @@ export default class SocketClient extends EventEmitter {
       this.emit('connected');
     });
 
+    this.socket.on('connected', (data) => {
+      this.emit('agent:connected', data);
+    });
+
     this.socket.on('disconnect', (reason) => {
       logger.info(`Socket disconnected: ${reason}`);
       this.emit('disconnected');

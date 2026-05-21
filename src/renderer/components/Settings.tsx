@@ -265,6 +265,32 @@ function isSharedReceiptRouteCandidate(printer: SalonPrinterMapping, selectedPri
   return isReceiptServerPrinter(printer) && (printer.id === selectedPrinterId || hasServerPrinterTarget(printer));
 }
 
+function buildServerPrinterPayloadFromConfig(
+  printerType: PrinterTypeValue,
+  pc: PrinterConfig,
+): Partial<ServerPrinterMapping> {
+  const usesWindowsPrinter = pc.protocol === 'WINDOWS' || pc.protocol === 'ZEBRA' || pc.protocol === 'THERMAL';
+  const paperWidth = pc.paperWidth || (printerType === 'LABEL' ? pc.labelWidth || 100 : 80);
+  const address = (pc.port || pc.address || '').trim();
+  const windowsPrinterName = (pc.windowsPrinter || '').trim();
+  const displayName = (pc.displayName || '').trim() || printerType;
+
+  return {
+    displayName,
+    printerType,
+    protocol: pc.protocol,
+    windowsPrinterName: usesWindowsPrinter ? windowsPrinterName || null : null,
+    address: usesWindowsPrinter ? null : address || null,
+    baudRate: pc.baudRate || 9600,
+    paperWidth,
+    paperHeight: printerType === 'LABEL' ? pc.labelHeight || null : null,
+    charsPerLine: pc.charsPerLine || charsPerLineFor(paperWidth),
+    supportsCut: pc.supportsCut ?? (printerType !== 'LABEL' && printerType !== 'A4'),
+    supportsCashDrawer: pc.supportsCashDrawer ?? printerType === 'RECEIPT',
+    isEnabled: !!pc.enabled,
+  };
+}
+
 function isSalonPrinterRouteReady(printer: SalonPrinterMapping): boolean {
   return printer.isEnabled !== false
     && !!printer.agentIsOnline
@@ -746,6 +772,27 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   }, []);
 
+  const syncServerPrinterRowsFromPayload = useCallback(async (payload: Partial<AgentConfig>) => {
+    const printerEntries = Object.entries(payload.printers || {}) as Array<[PrinterTypeValue, PrinterConfig]>;
+    const updates = printerEntries
+      .filter(([, pc]) => !!pc?.serverPrinterId)
+      .map(([printerType, pc]) => window.electronAPI.printAgentPrinters.update(
+        pc.serverPrinterId!,
+        buildServerPrinterPayloadFromConfig(printerType, pc),
+      ));
+
+    if (updates.length === 0) return;
+
+    const responses = await Promise.all(updates);
+    const lastResponse = responses[responses.length - 1];
+    if (lastResponse) {
+      setServerPrinters(normalizePrinterList(lastResponse));
+    }
+
+    await loadLocalPrinterRows();
+    await loadSharedPrinterRouting();
+  }, [loadLocalPrinterRows, loadSharedPrinterRouting]);
+
   useEffect(() => {
     if (config?.agentId) {
       loadServerPrinters().catch(() => {});
@@ -908,6 +955,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
     try {
       await Promise.resolve(onConfigChange(payload));
+      await syncServerPrinterRowsFromPayload(payload);
       syncedPrinterSignatureRef.current = signature;
       failedPrinterSignatureRef.current = null;
 
@@ -940,7 +988,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         }
       }
     }
-  }, [clearPrinterSaveResultLater, onConfigChange]);
+  }, [clearPrinterSaveResultLater, onConfigChange, syncServerPrinterRowsFromPayload]);
 
   useEffect(() => {
     if (!configSyncedRef.current) return;

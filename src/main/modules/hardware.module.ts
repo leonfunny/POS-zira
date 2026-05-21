@@ -127,6 +127,9 @@ export class HardwareModule extends BaseModule {
   private lastDetectionPortSignature: string = '';
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
+  private handleAgentConnected = () => {
+    this.notifyStatusChange();
+  };
 
   constructor(private container: ServiceContainer) {
     super();
@@ -190,6 +193,9 @@ export class HardwareModule extends BaseModule {
     // Expose printers map and module reference in container
     this.container.set(SERVICE_TOKENS.PRINTERS, this.printers);
     this.container.set(SERVICE_TOKENS.HARDWARE_MODULE, this);
+
+    const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+    socket?.on('agent:connected', this.handleAgentConnected);
 
     // Start periodic health checks
     this.startHealthCheck();
@@ -2124,6 +2130,8 @@ export class HardwareModule extends BaseModule {
   }
 
   async stop(): Promise<void> {
+    const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+    socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on stop failed:', err?.message); } }
@@ -2132,6 +2140,8 @@ export class HardwareModule extends BaseModule {
   }
 
   async destroy(): Promise<void> {
+    const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+    socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on destroy failed:', err?.message); } }
