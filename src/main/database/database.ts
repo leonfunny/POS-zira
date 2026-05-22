@@ -39,6 +39,59 @@ class Database {
    * still recover by creating a fresh empty DB on top of the corrupt
    * file's path (overwriting it on first save).
    */
+  /**
+   * Attempt to open `buffer` with sql.js and verify it can answer a basic
+   * sqlite_master query. Two failure modes are caught here:
+   *
+   *  1. Header corruption (Type B from Windows SSD fsync lie) — sql.js
+   *     throws "file is not a database" inside the WASM trampoline at
+   *     construction time. We catch the throw at the JS layer.
+   *  2. Page-level corruption — header is valid, file loads, but pages
+   *     past the schema root have bad checksums. sql.js succeeds in
+   *     `new SQL.Database(buffer)` but the first read query throws
+   *     "database disk image is malformed". Without this probe, the
+   *     orchestrator boots OK, login succeeds, then `clearSalonData`
+   *     transaction explodes and post-login sync sees malformed errors
+   *     forever — leaving the cashier staring at an empty catalog.
+   *
+   * Returns the loaded database when sane, or null when the buffer was
+   * quarantined (caller should create a fresh empty DB on top of the
+   * now-renamed path). Probe uses `sqlite_master` because every valid
+   * SQLite file — even an empty one — has that table; touching it forces
+   * sql.js to read the schema root page and surface page corruption.
+   */
+  static tryLoadOrQuarantine(
+    SQL: { Database: new (data?: Buffer) => SqlJsDatabase },
+    buffer: Buffer,
+    dbPath: string,
+  ): SqlJsDatabase | null {
+    if (!Database.isValidSqliteHeader(buffer)) {
+      Database.quarantineCorruptFile(dbPath, buffer);
+      return null;
+    }
+    let candidate: SqlJsDatabase | null = null;
+    try {
+      candidate = new SQL.Database(buffer);
+      // sqlite_master probe — touches the schema root page so any
+      // page-level corruption raises here instead of inside the first
+      // user query (e.g. AuthModule.clearSalonData transaction).
+      candidate.run('SELECT count(*) FROM sqlite_master');
+      return candidate;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.error(
+        `[DB] Corrupt database detected during integrity probe (${reason}); quarantining.`,
+      );
+      try {
+        candidate?.close();
+      } catch {
+        // closing a half-constructed db can throw — safe to ignore
+      }
+      Database.quarantineCorruptFile(dbPath, buffer);
+      return null;
+    }
+  }
+
   static quarantineCorruptFile(dbPath: string, buffer: Buffer): void {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const target = `${dbPath}.corrupted-${ts}`;
@@ -79,20 +132,11 @@ class Database {
 
     if (existsSync(this.dbPath)) {
       const buffer = readFileSync(this.dbPath);
-      if (Database.isValidSqliteHeader(buffer)) {
-        this.db = new SQL.Database(buffer);
+      const loaded = Database.tryLoadOrQuarantine(SQL, buffer, this.dbPath);
+      if (loaded) {
+        this.db = loaded;
         logger.info(`[DB] Loaded existing database: ${this.dbPath}`);
       } else {
-        // Type B corruption: file exists with wrong magic (typically all-zero
-        // header from a Windows SSD fsync that lied about flush). Without this
-        // gate, sql.js throws "file is not a database" at orchestrator step 8
-        // and the app never reaches the login screen — leaving the resync
-        // path (ProductSync.fullSync + SyncLogService.pullFromServer) unable
-        // to repopulate from the backend. Quarantine the corrupt file so a
-        // human can forensically inspect it, then fall through to fresh-DB
-        // creation. The cashier will log in next, kick the existing sync
-        // chain, and the local store rebuilds from server state.
-        Database.quarantineCorruptFile(this.dbPath, buffer);
         this.db = new SQL.Database();
         logger.info(`[DB] Created fresh empty database after corruption quarantine: ${this.dbPath}`);
       }
