@@ -1,17 +1,63 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import { app } from 'electron';
 import { join } from 'path';
-import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import logger from '../logger';
 import { migrations } from './migrations';
 import { atomicWriteFile, atomicWriteFileSync } from './atomic-write';
 import type { BackupFlushResult } from './backup-service';
 
 class Database {
+  // SQLite file format magic — bytes 0..14 spell "SQLite format 3" then
+  // a NUL terminator at byte 15. See https://www.sqlite.org/fileformat.html.
+  private static readonly SQLITE_MAGIC = 'SQLite format 3';
+
   private db: SqlJsDatabase | null = null;
   private dbPath: string = '';
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private dirty = false;
+
+  /**
+   * Cheap header sanity check before handing a buffer to sql.js. sql.js
+   * throws an unrecoverable "file is not a database" if magic is wrong,
+   * and that throw happens *inside* its WASM trampoline where we can't
+   * cleanly recover — so we have to gate at the JS layer instead.
+   * Returns false for any file shorter than 16 bytes or with mismatched
+   * magic.
+   */
+  static isValidSqliteHeader(buffer: Buffer): boolean {
+    if (buffer.length < 16) return false;
+    return buffer.slice(0, 15).toString('ascii') === Database.SQLITE_MAGIC;
+  }
+
+  /**
+   * Move a corrupt pos.db aside with a timestamp suffix so it survives
+   * for forensic inspection. Logs the path + size + first-16-bytes hex
+   * so the runtime team can grep `\[DB\] Quarantined corrupt database`
+   * to find every occurrence. If the rename itself fails (file locked
+   * by another process, ACL issue), log and return — the caller will
+   * still recover by creating a fresh empty DB on top of the corrupt
+   * file's path (overwriting it on first save).
+   */
+  static quarantineCorruptFile(dbPath: string, buffer: Buffer): void {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const target = `${dbPath}.corrupted-${ts}`;
+    const headHex = buffer
+      .slice(0, 16)
+      .toString('hex')
+      .match(/../g)
+      ?.join(' ');
+    logger.error(
+      `[DB] Quarantined corrupt database: path=${dbPath} size=${buffer.length} headHex="${headHex}" → ${target}`,
+    );
+    try {
+      renameSync(dbPath, target);
+    } catch (err) {
+      logger.error(
+        `[DB] Failed to quarantine corrupt file (continuing with fresh DB): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   async initialize(): Promise<void> {
     if (this.db) {
@@ -33,8 +79,23 @@ class Database {
 
     if (existsSync(this.dbPath)) {
       const buffer = readFileSync(this.dbPath);
-      this.db = new SQL.Database(buffer);
-      logger.info(`[DB] Loaded existing database: ${this.dbPath}`);
+      if (Database.isValidSqliteHeader(buffer)) {
+        this.db = new SQL.Database(buffer);
+        logger.info(`[DB] Loaded existing database: ${this.dbPath}`);
+      } else {
+        // Type B corruption: file exists with wrong magic (typically all-zero
+        // header from a Windows SSD fsync that lied about flush). Without this
+        // gate, sql.js throws "file is not a database" at orchestrator step 8
+        // and the app never reaches the login screen — leaving the resync
+        // path (ProductSync.fullSync + SyncLogService.pullFromServer) unable
+        // to repopulate from the backend. Quarantine the corrupt file so a
+        // human can forensically inspect it, then fall through to fresh-DB
+        // creation. The cashier will log in next, kick the existing sync
+        // chain, and the local store rebuilds from server state.
+        Database.quarantineCorruptFile(this.dbPath, buffer);
+        this.db = new SQL.Database();
+        logger.info(`[DB] Created fresh empty database after corruption quarantine: ${this.dbPath}`);
+      }
     } else {
       this.db = new SQL.Database();
       logger.info(`[DB] Created new database: ${this.dbPath}`);
