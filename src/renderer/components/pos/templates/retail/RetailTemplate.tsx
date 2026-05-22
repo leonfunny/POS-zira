@@ -164,9 +164,11 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   // the cashier back to the full catalogue mid-sale.
   const loadFilteredProducts = useCallback(async (): Promise<Product[]> => {
     if (searchQuery) {
-      // Retail till searches by EAN/SKU only — the cashier is keying or
-      // scanning a code off the packaging, not browsing by product name.
-      const variantsRaw = await window.electronAPI.pos.products.searchByCode(searchQuery);
+      // Retail till searches by name, SKU, and barcode — cashier may either
+      // scan/key a code or type a partial product name (grocery items where
+      // EAN is missing). Backed by productRepo.search() which normalises
+      // Polish + Vietnamese diacritics.
+      const variantsRaw = await window.electronAPI.pos.products.search(searchQuery);
       const variants: Product[] = activeCategoryId
         ? variantsRaw.filter((p: any) => p.category_id === activeCategoryId)
         : variantsRaw;

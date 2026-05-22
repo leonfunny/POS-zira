@@ -2,7 +2,12 @@ import { database } from '../database';
 
 /** Strip diacritics/accents for search matching (bánh → banh, łódź → lodz) */
 function normalizeSearch(str: string): string {
-  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return str
+    .replace(/[Đđ]/g, (ch) => (ch === 'Đ' ? 'D' : 'd'))
+    .replace(/[Łł]/g, (ch) => (ch === 'Ł' ? 'L' : 'l'))
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 export interface ProductVariantRow {
@@ -166,6 +171,7 @@ export const productRepo = {
     return allActive.filter((p) => {
       if (p.sku && p.sku.toLowerCase().includes(lowerQuery)) return true;
       if (p.barcode && p.barcode.toLowerCase().includes(lowerQuery)) return true;
+      if (p.sku && normalizeSearch(p.sku).includes(normalizedQuery)) return true;
       return normalizeSearch(p.name).includes(normalizedQuery);
     });
   },
