@@ -167,6 +167,17 @@ describe('CheckInView hub category summary', () => {
     expect(bookingCardSource).not.toContain('actionLabel: string;');
   });
 
+  it('does not confirm check-in until main process reports a successful save', () => {
+    expect(checkInViewSource).toContain('const [checkInError, setCheckInError]');
+    expect(checkInViewSource).toContain('const result = await window.electronAPI.display.checkIn');
+    expect(checkInViewSource).toContain('if (!result?.success)');
+    expect(checkInViewSource).toContain("t('customer.checkInFailed')");
+    expect(checkInViewSource).toContain('data-customer-display-checkin-error="true"');
+    expect(checkInViewSource.indexOf('if (!result?.success)')).toBeLessThan(
+      checkInViewSource.indexOf('setConfirmedCheckIn(payload)'),
+    );
+  });
+
   it('keeps the phone lookup flow to two columns with a single walk-in fallback action', () => {
     expect(checkInViewSource).toContain("lg:grid-cols-[320px_minmax(0,1fr)]");
     expect(checkInViewSource).not.toContain("lg:grid-cols-[320px_minmax(0,1fr)_340px]");

@@ -3,9 +3,10 @@ import React, { useEffect, useState } from 'react';
 interface RetailAssistedIdleViewProps {
   t: (key: string) => string;
   businessName?: string;
+  catalogEnabled?: boolean;
 }
 
-export default function RetailAssistedIdleView({ t, businessName }: RetailAssistedIdleViewProps) {
+export default function RetailAssistedIdleView({ t, businessName, catalogEnabled = false }: RetailAssistedIdleViewProps) {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -37,6 +38,11 @@ export default function RetailAssistedIdleView({ t, businessName }: RetailAssist
           <p className="mx-auto mt-8 max-w-3xl text-2xl leading-10 text-slate-600">
             {t('customer.retail.paymentPrompt')}
           </p>
+          {catalogEnabled && (
+            <p className="mx-auto mt-6 max-w-3xl rounded-lg border border-slate-200 bg-slate-50 px-6 py-4 text-xl font-semibold leading-8 text-slate-700">
+              {t('customer.retail.browsePrompt')}
+            </p>
+          )}
         </div>
       </main>
     </div>

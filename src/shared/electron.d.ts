@@ -419,8 +419,8 @@ interface ElectronAPI {
     touch: () => Promise<{ success: boolean }>;
     requestService: (serviceId: string) => Promise<{ success: boolean }>;
     getBookings: () => Promise<BooksyBookingSummary[]>;
-    checkIn: (data: { bookingId?: number; customerName: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean }) =>
-      Promise<{ success: boolean }>;
+    checkIn: (data: { bookingId?: number; customerName: string; customerPhone?: string; customerEmail?: string; serviceName?: string; services?: Array<{ id: string; name: string; price?: number; duration?: number }>; staffName?: string; bookingTime?: string; isWalkIn: boolean; upsellsAdded?: string[] }) =>
+      Promise<{ success: boolean; error?: string; bookingNumber?: string; checkinId?: string }>;
     browseServices: (categoryId?: string) => Promise<{ success: boolean }>;
     backToCheckin: () => Promise<{ success: boolean }>;
     backToIdle: () => Promise<{ success: boolean }>;
@@ -908,4 +908,3 @@ declare global {
 }
 
 export {};
-

@@ -112,6 +112,7 @@ export default function CheckInView({
   const [pendingCheckIn, setPendingCheckIn] = useState<CheckInPayload | null>(null);
   const [confirmedCheckIn, setConfirmedCheckIn] = useState<CheckInPayload | null>(null);
   const [selectedUpsells, setSelectedUpsells] = useState<string[]>([]);
+  const [checkInError, setCheckInError] = useState<string | null>(null);
   const [hubActionsHeight, setHubActionsHeight] = useState<number | null>(null);
   const [keyboardTarget, setKeyboardTarget] = useState<CustomerTouchKeyboardTarget>(null);
 
@@ -280,16 +281,27 @@ export default function CheckInView({
     payload: CheckInPayload,
     upsells: string[] = [],
   ) => {
-    await window.electronAPI.display.checkIn({
-      ...payload,
-      upsellsAdded: upsells.length ? upsells : undefined,
-    } as any);
+    setCheckInError(null);
+    try {
+      const result = await window.electronAPI.display.checkIn({
+        ...payload,
+        upsellsAdded: upsells.length ? upsells : undefined,
+      } as any);
+
+      if (!result?.success) {
+        setCheckInError(result?.error || t('customer.checkInFailed'));
+        return;
+      }
+    } catch (error: any) {
+      setCheckInError(error?.message || t('customer.checkInFailed'));
+      return;
+    }
 
     setConfirmedCheckIn(payload);
     setPendingCheckIn(null);
     setSelectedUpsells([]);
     setStep('confirmed');
-  }, []);
+  }, [t]);
 
   const finishUpsell = useCallback(async (overrideUpsells?: string[]) => {
     if (!pendingCheckIn) return;
@@ -375,6 +387,7 @@ export default function CheckInView({
 
   const startBookingLookup = useCallback(async () => {
     resetIdleTimer();
+    setCheckInError(null);
     setStep('booking');
     setBookingLoading(true);
     setSelectedBookingId(null);
@@ -391,6 +404,7 @@ export default function CheckInView({
 
   const startPhoneLookup = useCallback(() => {
     resetIdleTimer();
+    setCheckInError(null);
     setPhoneDigits('');
     setPhoneResults(null);
     setPhoneLoading(false);
@@ -400,6 +414,7 @@ export default function CheckInView({
 
   const startWalkIn = useCallback(() => {
     resetIdleTimer();
+    setCheckInError(null);
     setWalkInStage('identity');
     setWalkInName('');
     setSelectedWalkInServices([]);
@@ -663,6 +678,14 @@ export default function CheckInView({
       subtitle={screenSubtitle}
     >
       <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden" onPointerDown={handleCustomerDisplayPointerDown}>
+        {checkInError && (
+          <div
+            className="mb-4 shrink-0 rounded-2xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700"
+            data-customer-display-checkin-error="true"
+          >
+            {checkInError}
+          </div>
+        )}
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
           style={{
@@ -1412,4 +1435,3 @@ function CheckinRemoveIcon() {
     </svg>
   );
 }
-

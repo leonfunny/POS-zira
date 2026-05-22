@@ -1,4 +1,4 @@
-import type { AgentConfig } from '../../../shared/types';
+import type { AgentConfig, CustomerDisplayCatalogSection } from '../../../shared/types';
 import type { Language } from '../../i18n/translations';
 
 export interface CustomerDisplayBooking {
@@ -14,14 +14,18 @@ export interface CustomerDisplayBooking {
 export interface CustomerDisplayServiceItem {
   id: string;
   name: string;
+  name_translations?: string | null;
   price: number;
   duration: number;
   imageUrl?: string;
+  saleUnit?: string | null;
 }
 
 export interface CustomerDisplayServiceCategory {
   id: string;
   name: string;
+  name_translations?: string | null;
+  section?: CustomerDisplayCatalogSection;
   services: CustomerDisplayServiceItem[];
 }
 

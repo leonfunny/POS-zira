@@ -97,8 +97,9 @@ function applyProduct(entry: SyncLogEntry): boolean {
 
   // Pull display-only translations from either the variant payload or the
   // embedded template — backend Phase 1 emits at the template level.
+  const existing = productRepo.getById(entry.entity_id);
   const productTranslations =
-    encodeNameTranslations(p) ?? encodeNameTranslations(p.template);
+    encodeNameTranslations(p) ?? encodeNameTranslations(p.template) ?? existing?.name_translations ?? null;
 
   productRepo.upsertMany([{
     id: entry.entity_id,
@@ -121,6 +122,12 @@ function applyProduct(entry: SyncLogEntry): boolean {
     thumbnail_url: p.thumbnail_url ?? p.thumbnailUrl ?? null,
     sale_unit: p.sale_unit ?? p.saleUnit ?? null,
     name_translations: productTranslations,
+    customer_display_enabled: resolveDisplayEnabled(p, existing?.customer_display_enabled ?? 1),
+    customer_display_sort_order: resolveNullableInteger(
+      p,
+      ['customerDisplaySortOrder', 'customer_display_sort_order'],
+      existing?.customer_display_sort_order ?? null,
+    ),
   }]);
 
   return true;
@@ -596,6 +603,41 @@ function encodeNameTranslations(payload: any): string | null {
   return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null;
 }
 
+function hasOwn(obj: any, key: string): boolean {
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function firstOwnValue(payload: any, keys: string[]): { found: boolean; value: any } {
+  for (const key of keys) {
+    if (hasOwn(payload, key)) return { found: true, value: payload[key] };
+  }
+  return { found: false, value: undefined };
+}
+
+function resolveDisplayEnabled(payload: any, fallback: number | null): number {
+  const explicit = firstOwnValue(payload, ['customerDisplayEnabled', 'customer_display_enabled']);
+  if (!explicit.found) return fallback ?? 1;
+  if (explicit.value === false || explicit.value === 0 || explicit.value === '0') return 0;
+  return 1;
+}
+
+function resolveNullableInteger(payload: any, keys: string[], fallback: number | null): number | null {
+  const explicit = firstOwnValue(payload, keys);
+  if (!explicit.found) return fallback ?? null;
+  if (explicit.value == null || explicit.value === '') return null;
+  const parsed = Number(explicit.value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function resolveCatalogSection(payload: any, fallback: string | null): string | null {
+  const explicit = firstOwnValue(payload, ['customerDisplaySection', 'customer_display_section']);
+  if (!explicit.found) return fallback ?? null;
+  const normalized = typeof explicit.value === 'string' ? explicit.value.trim().toLowerCase() : '';
+  if (normalized === 'food') return 'food';
+  if (normalized === 'retail') return 'retail';
+  return null;
+}
+
 function applyCategory(entry: SyncLogEntry): boolean {
   const p = entry.payload;
   if (!entry.entity_id) return false;
@@ -605,9 +647,19 @@ function applyCategory(entry: SyncLogEntry): boolean {
     return true;
   }
 
+  const existing = database.get<{
+    name_translations: string | null;
+    customer_display_enabled: number | null;
+    customer_display_section: string | null;
+    customer_display_sort_order: number | null;
+  }>(
+    'SELECT name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order FROM categories WHERE id = ?',
+    [entry.entity_id],
+  );
+
   database.run(
-    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.entity_id,
       p.name ?? '',
@@ -615,7 +667,14 @@ function applyCategory(entry: SyncLogEntry): boolean {
       p.color ?? null,
       p.sort_order ?? p.sortOrder ?? 0,
       p.updated_at ?? p.updatedAt ?? entry.created_at,
-      encodeNameTranslations(p),
+      encodeNameTranslations(p) ?? existing?.name_translations ?? null,
+      resolveDisplayEnabled(p, existing?.customer_display_enabled ?? 1),
+      resolveCatalogSection(p, existing?.customer_display_section ?? null),
+      resolveNullableInteger(
+        p,
+        ['customerDisplaySortOrder', 'customer_display_sort_order'],
+        existing?.customer_display_sort_order ?? null,
+      ),
     ],
   );
 

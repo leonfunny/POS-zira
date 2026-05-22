@@ -32,6 +32,8 @@ export interface ProductVariantRow {
   // Orders / fiscal payloads keep canonical `name`; local customer receipts
   // may resolve Polish at print time.
   name_translations?: string | null;
+  customer_display_enabled?: number | null;
+  customer_display_sort_order?: number | null;
 }
 
 export interface CategoryRow {
@@ -43,6 +45,9 @@ export interface CategoryRow {
   updated_at: string | null;
   // Display-only localization (migration v28). Same contract as products.
   name_translations?: string | null;
+  customer_display_enabled?: number | null;
+  customer_display_section?: string | null;
+  customer_display_sort_order?: number | null;
 }
 
 // Hide template rows that have variant children. The sync layer mirrors
@@ -174,9 +179,9 @@ export const productRepo = {
         throw new Error(`Invalid product: missing id or name (id=${p.id})`);
       }
       database.run(
-        `INSERT OR REPLACE INTO product_variants (id, template_id, name, sku, barcode, retail_price, category_id, image_url, in_stock, vat_rate, is_active, updated_at, available_qty, price_gross, price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, name_translations)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0, p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23, p.is_active ?? 1, p.updated_at, p.available_qty ?? 0, p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0, p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit, p.name_translations ?? null],
+        `INSERT OR REPLACE INTO product_variants (id, template_id, name, sku, barcode, retail_price, category_id, image_url, in_stock, vat_rate, is_active, updated_at, available_qty, price_gross, price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, name_translations, customer_display_enabled, customer_display_sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0, p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23, p.is_active ?? 1, p.updated_at, p.available_qty ?? 0, p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0, p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit, p.name_translations ?? null, p.customer_display_enabled ?? 1, p.customer_display_sort_order ?? null],
       );
     }
   },
@@ -247,8 +252,8 @@ export const productRepo = {
         throw new Error(`Invalid category: missing id or name (id=${c.id})`);
       }
       database.run(
-        'INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null],
+        'INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null, c.customer_display_enabled ?? 1, c.customer_display_section ?? null, c.customer_display_sort_order ?? null],
       );
     }
   },

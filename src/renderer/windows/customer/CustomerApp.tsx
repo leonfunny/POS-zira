@@ -14,6 +14,7 @@ import { getTranslation, Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import CartView from './views/CartView';
 import CheckInView from './views/CheckInView';
+import CustomerCatalogView from './views/CustomerCatalogView';
 import IdleView from './views/IdleView';
 import PromoView from './views/PromoView';
 import PromoOnlyIdleView from './views/PromoOnlyIdleView';
@@ -63,16 +64,20 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-export default function CustomerApp() {
+function CustomerAppContent() {
   const [state, setState] = useState<PosState | null>(null);
   const [lang, setLang] = useState<Language>('en');
   const [displayProfile, setDisplayProfile] = useState<LiveCustomerDisplayProfile | null>(null);
+  const [retailCatalogEnabled, setRetailCatalogEnabled] = useState(true);
+  const [foodMenuEnabled, setFoodMenuEnabled] = useState(false);
   const staffGestureStartY = useRef<number[]>([]);
 
   const loadCustomerDisplayConfig = useCallback(async () => {
     const config = await window.electronAPI.getConfig();
     setLang(resolveCustomerDisplayLanguage(config));
     setDisplayProfile(resolveCustomerDisplayProfile(config));
+    setRetailCatalogEnabled(config.customerDisplayRetailCatalogEnabled !== false);
+    setFoodMenuEnabled(config.customerDisplayFoodMenuEnabled === true);
   }, []);
 
   useEffect(() => {
@@ -176,6 +181,7 @@ export default function CustomerApp() {
   const display = state?.display;
   const promoImages = display?.promoImages || [];
   const hasSalonData = (display?.serviceCategories?.length ?? 0) > 0;
+  const catalogEnabled = retailCatalogEnabled || foodMenuEnabled;
   const paymentStatus = display?.paymentStatus;
 
   const handleScreenTouch = useCallback(() => {
@@ -267,10 +273,24 @@ export default function CustomerApp() {
       );
     }
 
+    if (displayMode === 'interactive' && catalogEnabled) {
+      return (
+        <CustomerCatalogView
+          categories={display?.serviceCategories || []}
+          t={t}
+          language={lang}
+          businessName={display?.salonName}
+          onBack={handleBackToIdle}
+          onLanguageChange={handleDisplayLanguageChange}
+        />
+      );
+    }
+
     return (
       <RetailAssistedIdleView
         t={t}
         businessName={display?.salonName}
+        catalogEnabled={catalogEnabled}
       />
     );
   }
@@ -341,34 +361,40 @@ export default function CustomerApp() {
   }
 
   return (
-    <ErrorBoundary>
-      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
-        {displayMode === 'cart' && state?.cart && (
-          <>
-            <CartView
-              cart={state.cart}
-              t={t}
-              upsellItems={display?.upsellItems}
-              onRequestService={handleRequestService}
-            />
-            {paymentStatus && (
-              <div className="fixed inset-x-0 bottom-0 border-t border-brand-200 bg-brand-50 py-4 text-center backdrop-blur-sm animate-fadeIn">
-                <div className="inline-flex items-center gap-3">
-                  <div className="h-3 w-3 animate-pulse rounded-full bg-brand-500" />
-                  <span className="text-xl font-medium text-brand-700">{paymentStatus}</span>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-        {displayMode === 'thankyou' && (
-          <ThankYouView
-            lastOrderTotal={display?.lastOrderTotal}
+    <div className="flex h-screen items-center justify-center bg-gradient-to-br from-white via-rose-50 to-amber-50 text-slate-900">
+      {displayMode === 'cart' && state?.cart && (
+        <>
+          <CartView
+            cart={state.cart}
             t={t}
-            bookingUrl={display?.bookingUrl}
+            upsellItems={display?.upsellItems}
+            onRequestService={handleRequestService}
           />
-        )}
-      </div>
+          {paymentStatus && (
+            <div className="fixed inset-x-0 bottom-0 border-t border-brand-200 bg-brand-50 py-4 text-center backdrop-blur-sm animate-fadeIn">
+              <div className="inline-flex items-center gap-3">
+                <div className="h-3 w-3 animate-pulse rounded-full bg-brand-500" />
+                <span className="text-xl font-medium text-brand-700">{paymentStatus}</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {displayMode === 'thankyou' && (
+        <ThankYouView
+          lastOrderTotal={display?.lastOrderTotal}
+          t={t}
+          bookingUrl={display?.bookingUrl}
+        />
+      )}
+    </div>
+  );
+}
+
+export default function CustomerApp() {
+  return (
+    <ErrorBoundary>
+      <CustomerAppContent />
     </ErrorBoundary>
   );
 }

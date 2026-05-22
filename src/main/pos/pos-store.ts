@@ -3,7 +3,12 @@ import logger from '../logger';
 import { PromoLoader } from './promo-loader';
 import { getConfigValue } from '../config/store';
 import { productRepo } from '../database/repos/product-repo';
-import type { AgentConfig, LiveCustomerDisplayProfile, SelectedService } from '../../shared/types';
+import type {
+  AgentConfig,
+  CustomerDisplayCatalogSection,
+  LiveCustomerDisplayProfile,
+  SelectedService,
+} from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 
 // === State interfaces ===
@@ -24,6 +29,7 @@ export interface CartItem {
   notes?: string;         // All modes: item-level notes
   course?: number;        // Restaurant: course number (1=starter, 2=main, 3=dessert)
   vatRate?: number;       // VAT rate (e.g. 23, 8, 5, 0) - from product
+  name_translations?: string | null;
 }
 
 export interface CartState {
@@ -55,12 +61,16 @@ export interface UpsellDisplayItem {
 export interface ServiceCategory {
   id: string;
   name: string;
+  name_translations?: string | null;
+  section: CustomerDisplayCatalogSection;
   services: Array<{
     id: string;
     name: string;
+    name_translations?: string | null;
     price: number;
     duration: number;
     imageUrl?: string;
+    saleUnit?: string | null;
   }>;
 }
 
@@ -156,6 +166,109 @@ function createInitialState(): PosState {
     activeCustomer: null,
     tip: 0,
   };
+}
+
+export interface CustomerDisplayCatalogConfig {
+  retailEnabled: boolean;
+  foodEnabled: boolean;
+}
+
+const FOOD_MENU_KEYWORDS = [
+  'bar',
+  'beer',
+  'beverage',
+  'breakfast',
+  'burger',
+  'cafe',
+  'coffee',
+  'com',
+  'dania',
+  'danie',
+  'deser',
+  'desery',
+  'dessert',
+  'dinner',
+  'dish',
+  'drink',
+  'fnb',
+  'food',
+  'herbata',
+  'jedzenie',
+  'juice',
+  'kawa',
+  'kebab',
+  'kolacja',
+  'lunch',
+  'meal',
+  'menu',
+  'napoj',
+  'napoje',
+  'obiad',
+  'pho',
+  'piwo',
+  'pizza',
+  'przekaski',
+  'restaurant',
+  'snack',
+  'sniadanie',
+  'sok',
+  'tea',
+  'tra',
+  'water',
+  'wino',
+  'woda',
+  'do an',
+  'do uong',
+];
+
+const RETAIL_CATALOG_KEYWORDS = [
+  'grocery',
+  'goods',
+  'hang hoa',
+  'product',
+  'products',
+  'retail',
+  'shop',
+  'sklep',
+  'spozywcze',
+  'tap hoa',
+  'towar',
+  'towary',
+];
+
+function normalizeCatalogText(value: unknown): string {
+  return typeof value === 'string'
+    ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase()
+    : '';
+}
+
+function matchesAnyKeyword(value: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => value.includes(keyword));
+}
+
+export function resolveCustomerDisplayCatalogSection(category: unknown): CustomerDisplayCatalogSection {
+  const raw = category as Record<string, unknown> | null | undefined;
+  const explicit = normalizeCatalogText(
+    raw?.customer_display_section
+      ?? raw?.display_section
+      ?? raw?.displaySection
+      ?? raw?.section
+      ?? raw?.kind
+      ?? raw?.type,
+  );
+  if (matchesAnyKeyword(explicit, FOOD_MENU_KEYWORDS)) return 'food';
+  if (matchesAnyKeyword(explicit, RETAIL_CATALOG_KEYWORDS)) return 'retail';
+
+  const name = normalizeCatalogText(raw?.name);
+  if (matchesAnyKeyword(name, FOOD_MENU_KEYWORDS)) return 'food';
+  return 'retail';
+}
+
+export function isCustomerDisplayCatalogSectionEnabled(
+  section: CustomerDisplayCatalogSection,
+  config: CustomerDisplayCatalogConfig,
+): boolean {
+  return section === 'food' ? config.foodEnabled : config.retailEnabled;
 }
 
 // === Reducer ===
@@ -374,6 +487,13 @@ export class PosStore {
     });
   }
 
+  private getCustomerDisplayCatalogConfig(): CustomerDisplayCatalogConfig {
+    return {
+      retailEnabled: (getConfigValue('customerDisplayRetailCatalogEnabled') as boolean | undefined) !== false,
+      foodEnabled: (getConfigValue('customerDisplayFoodMenuEnabled') as boolean | undefined) === true,
+    };
+  }
+
   dispatch(action: PosAction): void {
     logger.info(`[PosStore] Dispatch: ${action.type}`);
     // Invalidate any in-flight async transitions (e.g. transitionToPromoOrIdle)
@@ -435,6 +555,24 @@ export class PosStore {
 
     const profile = this.getCustomerDisplayProfile();
     if (profile !== 'salon_checkin') {
+      const catalogConfig = this.getCustomerDisplayCatalogConfig();
+      const canBrowseCatalog = profile === 'retail_assisted'
+        && (catalogConfig.retailEnabled || catalogConfig.foodEnabled);
+      if (canBrowseCatalog) {
+        this.loadServiceCategories();
+        const categoryCount = this.state.display.serviceCategories?.length ?? 0;
+        if (categoryCount > 0) {
+          logger.info(`[PosStore] Customer touch detected -> retail catalog (${categoryCount} categories)`);
+          this.state = {
+            ...this.state,
+            display: { ...this.state.display, mode: 'interactive', browseInitialCategoryId: undefined },
+          };
+          this.broadcast();
+          this.resetInteractionTimer();
+          return;
+        }
+      }
+
       // Retail / promo-only profiles have no interactive next-step, but
       // the operator still expects tapping the screen to skip an empty
       // promo carousel back to the idle copy ("Your items will appear
@@ -557,21 +695,44 @@ export class PosStore {
   /** Load service categories from local DB for customer display */
   private loadServiceCategories(): void {
     try {
+      const catalogConfig = this.getCustomerDisplayCatalogConfig();
       const categories = productRepo.getCategories();
       const allProducts = productRepo.getAll();
-      const serviceCategories: ServiceCategory[] = categories.map((cat: any) => ({
-        id: cat.id,
-        name: cat.name,
-        services: allProducts
-          .filter((p: any) => p.category_id === cat.id)
-          .map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            price: p.retail_price,
-            duration: p.duration ?? 0,
-            imageUrl: p.image_url || undefined,
-          })),
-      })).filter((cat: any) => cat.services.length > 0);
+      const serviceCategories: ServiceCategory[] = categories
+        .filter((cat: any) => cat.customer_display_enabled !== 0)
+        .sort((a: any, b: any) => {
+          const aSort = a.customer_display_sort_order ?? a.sort_order ?? 0;
+          const bSort = b.customer_display_sort_order ?? b.sort_order ?? 0;
+          return aSort - bSort || String(a.name || '').localeCompare(String(b.name || ''));
+        })
+        .map((cat: any): ServiceCategory | null => {
+          const section = resolveCustomerDisplayCatalogSection(cat);
+          if (!isCustomerDisplayCatalogSectionEnabled(section, catalogConfig)) return null;
+
+          return {
+            id: cat.id,
+            name: cat.name,
+            name_translations: cat.name_translations ?? null,
+            section,
+            services: allProducts
+              .filter((p: any) => p.category_id === cat.id && p.customer_display_enabled !== 0)
+              .sort((a: any, b: any) => {
+                const aSort = a.customer_display_sort_order ?? 0;
+                const bSort = b.customer_display_sort_order ?? 0;
+                return aSort - bSort || String(a.name || '').localeCompare(String(b.name || ''));
+              })
+              .map((p: any) => ({
+                id: p.id,
+                name: p.name,
+                name_translations: p.name_translations ?? null,
+                price: p.retail_price,
+                duration: p.duration ?? 0,
+                imageUrl: p.thumbnail_url || p.image_url || undefined,
+                saleUnit: p.sale_unit ?? null,
+              })),
+          };
+        })
+        .filter((cat): cat is ServiceCategory => !!cat && cat.services.length > 0);
 
       this.state = {
         ...this.state,

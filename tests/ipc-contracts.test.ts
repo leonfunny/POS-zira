@@ -39,6 +39,7 @@ const electronDts = readSource('../src/shared/electron.d.ts');
 const preloadMain = readSource('../src/preload/preload.ts');
 const preloadPos = readSource('../src/preload/preload-pos.ts');
 const preloadDisplay = readSource('../src/preload/preload-display.ts');
+const posModuleSrc = readSource('../src/main/modules/pos.module.ts');
 const preloadSelfCheckout = readSource('../src/preload/preload-self-checkout.ts');
 const windowManagerSource = readSource('../src/main/windows/window-manager.ts');
 const sharedTypes = readSource('../src/shared/types.ts');
@@ -157,6 +158,28 @@ describe('IPC channel contracts - display preload', () => {
   it('keeps multi-service browse check-in payload in sync across preload and declarations', () => {
     expect(preloadDisplay).toContain('services');
     expect(electronDts).toContain('services');
+  });
+
+  it('guards customer-display IPC handlers to the customer window and live profile', () => {
+    expect(posModuleSrc).toContain('private allowCustomerDisplayIpc');
+    expect(posModuleSrc).toContain('BrowserWindow.fromWebContents(event.sender)');
+    expect(posModuleSrc).toContain("this.allowCustomerDisplayIpc(e, 'display:check-in', 'salon_checkin')");
+    expect(posModuleSrc).toContain("this.allowCustomerDisplayIpc(e, 'display:request-service', 'salon_checkin')");
+    expect(posModuleSrc).toContain("this.allowCustomerDisplayIpc(e, 'display:search-by-phone', 'salon_checkin')");
+    expect(windowManagerSource).toContain("logger.warn('[WindowManager] Rejected display:close from non-customer window')");
+    expect(windowManagerSource).toContain("return { success: false, error: 'invalid_display_sender' }");
+  });
+
+  it('only confirms customer check-in after local persistence succeeds', () => {
+    const handlerStart = posModuleSrc.indexOf("ipcMain.handle('display:check-in'");
+    const handlerEnd = posModuleSrc.indexOf('// Customer display: switch to browse services from checkin', handlerStart);
+    const handler = posModuleSrc.slice(handlerStart, handlerEnd);
+
+    expect(handler).toContain("return { success: false, error: 'customer_name_required' }");
+    expect(handler).toContain("return { success: false, error: 'failed_to_save_check_in' }");
+    expect(handler).toContain('services_json: services ? JSON.stringify(services) : undefined');
+    expect(handler.indexOf('database.save()')).toBeLessThan(handler.indexOf('this.posStore?.handleCheckIn(normalizedData)'));
+    expect(handler).toContain('return { success: true, bookingNumber, checkinId }');
   });
 });
 

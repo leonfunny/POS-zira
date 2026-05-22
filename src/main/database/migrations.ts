@@ -1221,4 +1221,25 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_forecast_order_draft_lines_variant ON forecast_order_draft_lines(variant_id);
     `,
   },
+  {
+    version: 33,
+    name: 'invoices_compound_order_index',
+    up: `
+      -- Invoice list query orders by (issue_date DESC, created_at DESC). The
+      -- existing single-column idx_inv_date forces a temp B-tree for the second
+      -- sort key. A compound index lets SQLite walk both keys without sorting.
+      CREATE INDEX IF NOT EXISTS idx_inv_date_created ON invoices(issue_date DESC, created_at DESC);
+    `,
+  },
+  {
+    version: 34,
+    name: 'customer_display_catalog_metadata',
+    up: `
+      ALTER TABLE categories ADD COLUMN customer_display_enabled INTEGER DEFAULT 1;
+      ALTER TABLE categories ADD COLUMN customer_display_section TEXT;
+      ALTER TABLE categories ADD COLUMN customer_display_sort_order INTEGER;
+      ALTER TABLE product_variants ADD COLUMN customer_display_enabled INTEGER DEFAULT 1;
+      ALTER TABLE product_variants ADD COLUMN customer_display_sort_order INTEGER;
+    `,
+  },
 ];

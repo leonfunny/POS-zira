@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveName } from '../../../../shared/catalog-names';
 import type { CartState } from '../../../hooks/usePosStore';
 import type { Language } from '../../../i18n/translations';
 import { formatDisplayCurrency } from '../customer-display-model';
@@ -12,6 +13,7 @@ interface RetailAssistedCartViewProps {
 
 export default function RetailAssistedCartView({ cart, t, language, paymentStatus }: RetailAssistedCartViewProps) {
   const rows = cart.items.slice(-8);
+  const hiddenItemCount = Math.max(0, cart.items.length - rows.length);
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-950">
@@ -23,6 +25,11 @@ export default function RetailAssistedCartView({ cart, t, language, paymentStatu
           <h1 className="mt-2 text-4xl font-semibold tracking-tight">
             {t('customer.retail.cartSubtitle')}
           </h1>
+          {hiddenItemCount > 0 && (
+            <div className="mt-3 inline-flex rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm">
+              +{hiddenItemCount} {t('customer.retail.moreItems')}
+            </div>
+          )}
         </header>
 
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -35,7 +42,7 @@ export default function RetailAssistedCartView({ cart, t, language, paymentStatu
               {rows.map((item) => (
                 <div key={item.id} className="grid grid-cols-[1fr_110px_180px] items-center gap-6 px-8 py-5">
                   <div className="min-w-0">
-                    <div className="truncate text-3xl font-semibold text-slate-950">{item.name}</div>
+                    <div className="truncate text-3xl font-semibold text-slate-950">{resolveName(item, language)}</div>
                     {item.sku && <div className="mt-1 truncate text-base text-slate-500">{item.sku}</div>}
                   </div>
                   <div className="text-right text-3xl font-semibold tabular-nums text-slate-700">x{item.quantity}</div>

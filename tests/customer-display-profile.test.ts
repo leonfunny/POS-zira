@@ -84,6 +84,26 @@ describe('customer display profile runtime wiring', () => {
     );
 
     expect(storeSource).toContain("posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] }");
+    expect(storeSource).toContain("customerDisplayRetailCatalogEnabled: { type: 'boolean', default: true }");
+    expect(storeSource).toContain("customerDisplayFoodMenuEnabled: { type: 'boolean', default: false }");
+  });
+
+  it('saves independent customer display retail and food menu toggles', () => {
+    const settingsSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/components/Settings.tsx'),
+      'utf8',
+    );
+    const appSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/windows/customer/CustomerApp.tsx'),
+      'utf8',
+    );
+
+    expect(settingsSource).toContain('customerDisplayRetailCatalogEnabled');
+    expect(settingsSource).toContain('customerDisplayFoodMenuEnabled');
+    expect(settingsSource).toContain('settings.customerDisplayRetailCatalog');
+    expect(settingsSource).toContain('settings.customerDisplayFoodMenu');
+    expect(appSource).toContain('config.customerDisplayRetailCatalogEnabled !== false');
+    expect(appSource).toContain('config.customerDisplayFoodMenuEnabled === true');
   });
 
   it('reloads customer display profile config when the customer window receives a refresh event', () => {

@@ -519,6 +519,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   customerDisplayProfileRef.current = customerDisplayProfile;
   const [customerDisplayMonitor, setCustomerDisplayMonitor] = useState(config?.customerDisplayMonitor ?? 0);
   const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useState(config?.customerDisplayForceKiosk ?? true);
+  const [customerDisplayRetailCatalogEnabled, setCustomerDisplayRetailCatalogEnabled] = useState(config?.customerDisplayRetailCatalogEnabled ?? true);
+  const [customerDisplayFoodMenuEnabled, setCustomerDisplayFoodMenuEnabled] = useState(config?.customerDisplayFoodMenuEnabled ?? false);
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
   const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
   const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
@@ -599,6 +601,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     customerDisplayProfile,
     customerDisplayMonitor,
     customerDisplayForceKiosk,
+    customerDisplayRetailCatalogEnabled,
+    customerDisplayFoodMenuEnabled,
     customerDisplayPromoFolder: promoFolder,
     customerDisplayPromoInterval: promoInterval,
     customerDisplayIdleTimeout: idleTimeout,
@@ -608,6 +612,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posEnabled, posMode, posLanguage,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
     customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
+    customerDisplayRetailCatalogEnabled, customerDisplayFoodMenuEnabled,
     promoFolder, promoInterval, idleTimeout,
   ]);
 
@@ -881,6 +886,8 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setCustomerDisplayProfile(nextProfile);
       setCustomerDisplayMonitor(config.customerDisplayMonitor ?? 0);
       setCustomerDisplayForceKiosk(config.customerDisplayForceKiosk ?? true);
+      setCustomerDisplayRetailCatalogEnabled(config.customerDisplayRetailCatalogEnabled ?? true);
+      setCustomerDisplayFoodMenuEnabled(config.customerDisplayFoodMenuEnabled ?? false);
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
@@ -3766,6 +3773,59 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 <p className="text-xs text-slate-500 mt-1">
                   {t('settings.customerDisplayProfileDesc')}
                 </p>
+              </div>
+            )}
+
+            {customerDisplayEnabled && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-3">
+                  <div className="text-sm font-medium text-slate-700">{t('settings.customerDisplayMenuSections')}</div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">{t('settings.customerDisplayMenuSectionsDesc')}</p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-4 rounded-md border border-slate-200 bg-white px-3 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-700">{t('settings.customerDisplayRetailCatalog')}</div>
+                      <div className="text-xs leading-5 text-slate-500">{t('settings.customerDisplayRetailCatalogDesc')}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerDisplayRetailCatalogEnabled(!customerDisplayRetailCatalogEnabled)}
+                      className={`relative h-7 w-14 shrink-0 rounded-full transition-colors ${
+                        customerDisplayRetailCatalogEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                      }`}
+                      aria-pressed={customerDisplayRetailCatalogEnabled}
+                    >
+                      <span
+                        className={`absolute left-1 top-1 h-5 w-5 transform rounded-full bg-white transition-transform ${
+                          customerDisplayRetailCatalogEnabled ? 'translate-x-7' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 rounded-md border border-slate-200 bg-white px-3 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-700">{t('settings.customerDisplayFoodMenu')}</div>
+                      <div className="text-xs leading-5 text-slate-500">{t('settings.customerDisplayFoodMenuDesc')}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerDisplayFoodMenuEnabled(!customerDisplayFoodMenuEnabled)}
+                      className={`relative h-7 w-14 shrink-0 rounded-full transition-colors ${
+                        customerDisplayFoodMenuEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                      }`}
+                      aria-pressed={customerDisplayFoodMenuEnabled}
+                    >
+                      <span
+                        className={`absolute left-1 top-1 h-5 w-5 transform rounded-full bg-white transition-transform ${
+                          customerDisplayFoodMenuEnabled ? 'translate-x-7' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 

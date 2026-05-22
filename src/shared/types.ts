@@ -353,6 +353,10 @@ export type CustomerDisplayProfile =
   | LiveCustomerDisplayProfile
   | ReservedCustomerDisplayProfile;
 
+export type CustomerDisplayCatalogSection =
+  | 'retail'
+  | 'food';
+
 // Agent configuration stored locally
 export interface AgentConfig {
   agentId?: string;
@@ -437,6 +441,8 @@ export interface AgentConfig {
   customerDisplayProfile?: CustomerDisplayProfile; // Live: retail_assisted, salon_checkin, promo_only. Reserved values are not selectable.
   customerDisplayMonitor?: number;     // Monitor index for customer display (0 = primary)
   customerDisplayForceKiosk?: boolean; // Force kiosk/fullscreen even on single monitor (default true). Esc + 3-finger swipe-down still exit.
+  customerDisplayRetailCatalogEnabled?: boolean; // Show sellable grocery/retail product categories on customer display.
+  customerDisplayFoodMenuEnabled?: boolean; // Show food/drink menu categories on customer display.
   customerDisplayPromoFolder?: string; // Local folder path for promo images
   customerDisplayPromoInterval?: number; // Carousel interval in ms (default 5000)
   customerDisplayIdleTimeout?: number;   // Idle timeout before promo in ms (default 120000)

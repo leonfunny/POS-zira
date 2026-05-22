@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { CustomerDisplayProfile } from '../../shared/types';
+import type { CustomerDisplayCatalogSection, CustomerDisplayProfile } from '../../shared/types';
 
 interface SelectedService {
   id: string;
@@ -63,7 +63,9 @@ interface DisplayState {
   serviceCategories?: Array<{
     id: string;
     name: string;
-    services: Array<{ id: string; name: string; price: number; duration: number; imageUrl?: string }>;
+    name_translations?: string | null;
+    section?: CustomerDisplayCatalogSection;
+    services: Array<{ id: string; name: string; name_translations?: string | null; price: number; duration: number; imageUrl?: string; saleUnit?: string | null }>;
   }>;
   customerRequests?: Array<{ id: string; serviceName: string; timestamp: number }>;
   lastCheckIn?: {

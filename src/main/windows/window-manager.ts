@@ -510,8 +510,14 @@ export class WindowManager {
 
   private setupIpcHandlers(): void {
     // Staff intentional close - bypasses the kiosk-restore lock
-    ipcMain.handle('display:close', () => {
+    ipcMain.handle('display:close', (event) => {
+      const senderWin = BrowserWindow.fromWebContents(event.sender);
       const customerWin = this.getWindow('customer');
+      if (!senderWin || !customerWin || senderWin !== customerWin) {
+        logger.warn('[WindowManager] Rejected display:close from non-customer window');
+        return { success: false, error: 'invalid_display_sender' };
+      }
+
       if (customerWin && !customerWin.isDestroyed()) {
         this.customerExitRequested = true;
         customerWin.destroy();
@@ -685,6 +691,7 @@ export class WindowManager {
     try { ipcMain.removeHandler('window:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:close failed:', err?.message); }
     try { ipcMain.removeHandler('window:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler window:list failed:', err?.message); }
     try { ipcMain.removeHandler('display:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:list failed:', err?.message); }
+    try { ipcMain.removeHandler('display:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:close failed:', err?.message); }
     try { ipcMain.removeHandler('self-checkout:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler self-checkout:close failed:', err?.message); }
     // Destroy windows
     for (const [_id, win] of this.windows) {

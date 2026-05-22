@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import CustomerDisplayShell from '../src/renderer/windows/customer/components/CustomerDisplayShell';
 import IdleView from '../src/renderer/windows/customer/views/IdleView';
+import CustomerCatalogView from '../src/renderer/windows/customer/views/CustomerCatalogView';
 import RetailAssistedIdleView from '../src/renderer/windows/customer/views/RetailAssistedIdleView';
 import RetailAssistedCartView from '../src/renderer/windows/customer/views/RetailAssistedCartView';
 import RetailAssistedThankYouView from '../src/renderer/windows/customer/views/RetailAssistedThankYouView';
@@ -83,6 +84,21 @@ describe('Customer display viewport contract', () => {
     expect(appSource.indexOf("displayProfile === 'promo_only'")).toBeLessThan(appSource.indexOf("displayMode === 'checkin'"));
   });
 
+  it('wraps every customer display route in the render error boundary', () => {
+    const appSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/windows/customer/CustomerApp.tsx'),
+      'utf8',
+    );
+
+    expect(appSource).toContain('function CustomerAppContent()');
+    expect(appSource).toContain('export default function CustomerApp()');
+    expect(appSource).toContain('<ErrorBoundary>');
+    expect(appSource).toContain('<CustomerAppContent />');
+    expect(appSource.indexOf('export default function CustomerApp()')).toBeGreaterThan(
+      appSource.indexOf('function CustomerAppContent()'),
+    );
+  });
+
   it('keeps promo_only routing off the retail assisted idle surface', () => {
     const appSource = fs.readFileSync(
       path.join(REPO_ROOT, 'src/renderer/windows/customer/CustomerApp.tsx'),
@@ -143,6 +159,7 @@ describe('Customer display viewport contract', () => {
       'customer.retail.paymentPrompt': 'Staff will take payment when ready',
       'customer.retail.paymentStatus': 'Payment status',
       'customer.retail.total': 'Total',
+      'customer.retail.moreItems': 'more items',
       'customer.discount': 'Discount',
       'customer.retail.idleSubtitle': 'Your items will appear here',
     }[key] || key);
@@ -169,6 +186,49 @@ describe('Customer display viewport contract', () => {
     expect(markup).not.toContain('Add to my visit');
   });
 
+  it('renders localized retail cart item names and reports hidden rows', () => {
+    const t = (key: string) => ({
+      'customer.retail.cartTitle': 'Twoje produkty',
+      'customer.retail.cartSubtitle': 'Obsługa doda kolejne produkty',
+      'customer.retail.paymentPrompt': 'Obsługa przyjmie płatność',
+      'customer.retail.paymentStatus': 'Status płatności',
+      'customer.retail.total': 'Razem',
+      'customer.retail.moreItems': 'więcej pozycji',
+      'customer.discount': 'Rabat',
+      'customer.retail.idleSubtitle': 'Twoje produkty pojawią się tutaj',
+    }[key] || key);
+
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: String(index + 1),
+      variantId: `v${index + 1}`,
+      name: index === 8 ? 'Canonical product' : `Item ${index + 1}`,
+      name_translations: index === 8 ? '{"pl":"Produkt po polsku"}' : null,
+      sku: `SKU-${index + 1}`,
+      price: 1000,
+      quantity: 1,
+      total: 1000,
+    }));
+
+    const markup = renderToStaticMarkup(
+      React.createElement(RetailAssistedCartView, {
+        t,
+        language: 'pl',
+        cart: {
+          items,
+          subtotal: 9000,
+          discount: 0,
+          tax: 0,
+          total: 9000,
+        },
+      }),
+    );
+
+    expect(markup).toContain('Produkt po polsku');
+    expect(markup).toContain('+1');
+    expect(markup).toContain('więcej pozycji');
+    expect(markup).not.toContain('Canonical product');
+  });
+
   it('renders retail assisted thank-you without salon booking copy', () => {
     const t = (key: string) => ({
       'customer.retail.thankYou': 'Thank you',
@@ -186,6 +246,52 @@ describe('Customer display viewport contract', () => {
     expect(markup).toContain('Your payment is complete');
     expect(markup).not.toContain('Book your next visit');
     expect(markup).not.toContain('Scan to book online');
+  });
+
+  it('renders customer catalog with separate retail and food sections', () => {
+    const t = (key: string) => ({
+      'customer.catalog.title': 'Menu and products',
+      'customer.catalog.subtitleBoth': 'Food, drinks, and goods',
+      'customer.catalog.retail': 'Goods',
+      'customer.catalog.food': 'Food & drinks',
+      'customer.catalog.items': 'items',
+      'customer.catalog.emptyTitle': 'No visible menu items',
+      'customer.catalog.emptyDesc': 'Ask staff to enable sections',
+    }[key] || key);
+
+    const markup = renderToStaticMarkup(
+      React.createElement(CustomerCatalogView, {
+        t,
+        language: 'pl',
+        businessName: 'Hybrid Shop',
+        onBack: () => undefined,
+        onLanguageChange: () => undefined,
+        categories: [
+          {
+            id: 'retail',
+            name: 'Groceries',
+            section: 'retail',
+            services: [
+              { id: 'milk', name: 'Milk', name_translations: '{"pl":"Mleko"}', price: 599, duration: 0, saleUnit: 'szt.' },
+            ],
+          },
+          {
+            id: 'food',
+            name: 'Napoje',
+            section: 'food',
+            services: [
+              { id: 'coffee', name: 'Coffee', name_translations: '{"pl":"Kawa"}', price: 1200, duration: 0 },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(markup).toContain('data-customer-display-catalog-section="retail"');
+    expect(markup).toContain('data-customer-display-catalog-section="food"');
+    expect(markup).toContain('Mleko');
+    expect(markup).toContain('Goods');
+    expect(markup).toContain('Food &amp; drinks');
   });
 
   it('includes Polish public copy for retail assisted display', () => {

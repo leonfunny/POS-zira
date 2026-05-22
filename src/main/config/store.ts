@@ -202,6 +202,8 @@ const store = new Store<AgentConfig>({
     // single-monitor setups. Set to false on dev machines to keep the old windowed
     // fallback so the screen isn't fully taken over. Esc and 3-finger swipe-down still exit.
     customerDisplayForceKiosk: { type: 'boolean', default: true },
+    customerDisplayRetailCatalogEnabled: { type: 'boolean', default: true },
+    customerDisplayFoodMenuEnabled: { type: 'boolean', default: false },
     customerDisplayPromoFolder: { type: 'string', default: '' },
     customerDisplayPromoInterval: { type: 'number', default: 5000 },
     customerDisplayIdleTimeout: { type: 'number', default: 120000 },

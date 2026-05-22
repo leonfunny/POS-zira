@@ -38,11 +38,15 @@ import type { PosAction, CartItem, PosState } from '../src/main/pos/pos-store';
 
 // Use dynamic import to ensure mocks are applied
 let PosStore: typeof import('../src/main/pos/pos-store').PosStore;
+let resolveCustomerDisplayCatalogSection: typeof import('../src/main/pos/pos-store').resolveCustomerDisplayCatalogSection;
+let isCustomerDisplayCatalogSectionEnabled: typeof import('../src/main/pos/pos-store').isCustomerDisplayCatalogSectionEnabled;
 beforeEach(async () => {
   vi.useFakeTimers();
   for (const key of Object.keys(mockConfig)) delete mockConfig[key];
   const mod = await import('../src/main/pos/pos-store');
   PosStore = mod.PosStore;
+  resolveCustomerDisplayCatalogSection = mod.resolveCustomerDisplayCatalogSection;
+  isCustomerDisplayCatalogSectionEnabled = mod.isCustomerDisplayCatalogSectionEnabled;
 });
 
 // Helper: create a sample cart item
@@ -341,6 +345,20 @@ describe('Display state transitions', () => {
     expect(store.getState().cart.items).toHaveLength(1);
     expect(store.getState().display.mode).toBe('cart');
     store.destroy();
+  });
+
+  it('classifies customer-display catalog categories into retail vs food sections', () => {
+    expect(resolveCustomerDisplayCatalogSection({ name: 'Napoje' })).toBe('food');
+    expect(resolveCustomerDisplayCatalogSection({ name: 'Đồ uống' })).toBe('food');
+    expect(resolveCustomerDisplayCatalogSection({ name: 'Grocery' })).toBe('retail');
+    expect(resolveCustomerDisplayCatalogSection({ name: 'Unknown shelf' })).toBe('retail');
+  });
+
+  it('uses independent customer-display toggles for retail goods and food menus', () => {
+    expect(isCustomerDisplayCatalogSectionEnabled('retail', { retailEnabled: true, foodEnabled: false })).toBe(true);
+    expect(isCustomerDisplayCatalogSectionEnabled('food', { retailEnabled: true, foodEnabled: false })).toBe(false);
+    expect(isCustomerDisplayCatalogSectionEnabled('retail', { retailEnabled: true, foodEnabled: true })).toBe(true);
+    expect(isCustomerDisplayCatalogSectionEnabled('food', { retailEnabled: true, foodEnabled: true })).toBe(true);
   });
 
   it('retail_assisted recovers stale checkin state when an item is added', () => {

@@ -4,7 +4,7 @@
  * Owns PosStore, PaymentController, ShiftController, and all POS IPC handlers.
  */
 
-import { ipcMain, dialog, shell, BrowserWindow, app } from 'electron';
+import { ipcMain, dialog, shell, BrowserWindow, app, type IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import { randomUUID } from 'crypto';
@@ -68,8 +68,10 @@ import type {
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
   SelectedService,
+  LiveCustomerDisplayProfile,
 } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
+import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { seedIfEmpty } from '../database/seed';
 import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
@@ -162,7 +164,7 @@ export class PosModule extends BaseModule {
     )?.cnt ?? 0;
     if (corruptedCount > 0) {
       database.run("UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE synced = 1 AND (backend_id IS NULL OR backend_id = '')");
-      database.save();
+      database.markDirty();
       logger.warn(`[PosModule] Reset ${corruptedCount} orders with missing backend_id for re-sync`);
     }
     // NOTE: shelved orders (synced = -1) are NOT auto-reset. They require an explicit
@@ -234,6 +236,29 @@ export class PosModule extends BaseModule {
     }
   }
 
+  private allowCustomerDisplayIpc(
+    event: IpcMainInvokeEvent,
+    channel: string,
+    requiredProfile?: LiveCustomerDisplayProfile,
+  ): boolean {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const customerWin = this.windowManager?.getWindow('customer');
+    if (!senderWin || !customerWin || senderWin !== customerWin) {
+      logger.warn(`[PosModule] Rejected ${channel} from non-customer window`);
+      return false;
+    }
+
+    if (requiredProfile) {
+      const profile = resolveCustomerDisplayProfile(getConfig());
+      if (profile !== requiredProfile) {
+        logger.warn(`[PosModule] Rejected ${channel} for profile=${profile}; required=${requiredProfile}`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   registerIpcHandlers(): void {
     // State & dispatch
     ipcMain.handle('pos:get-state', (e) => {
@@ -257,7 +282,11 @@ export class PosModule extends BaseModule {
     });
 
     // Customer display: service request
-    ipcMain.handle('display:request-service', (_e, serviceId: string) => {
+    ipcMain.handle('display:request-service', (e, serviceId: string) => {
+      if (!this.allowCustomerDisplayIpc(e, 'display:request-service', 'salon_checkin')) {
+        return { success: false, error: 'display_ipc_not_allowed' };
+      }
+
       this.posStore?.handleServiceRequest(serviceId);
       // Notify POS window
       const posWindow = this.windowManager?.getWindow('pos');
@@ -281,15 +310,23 @@ export class PosModule extends BaseModule {
     });
 
     // Customer display: check-in
-    ipcMain.handle('display:check-in', (_e, data: any) => {
-      const services = normalizeSelectedServices(data.services);
+    ipcMain.handle('display:check-in', async (e, data: any) => {
+      if (!this.allowCustomerDisplayIpc(e, 'display:check-in', 'salon_checkin')) {
+        return { success: false, error: 'display_ipc_not_allowed' };
+      }
+
+      const rawData = data && typeof data === 'object' ? data : {};
+      const customerName = typeof rawData.customerName === 'string' ? rawData.customerName.trim() : '';
+      if (!customerName) return { success: false, error: 'customer_name_required' };
+
+      const services = normalizeSelectedServices(rawData.services);
       const normalizedData = {
-        ...data,
+        ...rawData,
+        customerName,
         services,
-        serviceName: data.serviceName?.trim() || deriveLegacyServiceName(services),
+        serviceName: rawData.serviceName?.trim() || deriveLegacyServiceName(services),
       };
 
-      this.posStore?.handleCheckIn(normalizedData);
       // Persist to checkins table
       let bookingNumber: string | undefined;
       let checkinId: string | undefined;
@@ -307,8 +344,8 @@ export class PosModule extends BaseModule {
           booking_id: normalizedData.bookingId?.toString(),
           booking_source: normalizedData.bookingId ? 'booksy' : undefined,
           is_walkin: normalizedData.isWalkIn ? 1 : 0,
+          services_json: services ? JSON.stringify(services) : undefined,
         });
-        database.save();
 
         // Path B: write to sync log for outbound push
         try {
@@ -330,14 +367,22 @@ export class PosModule extends BaseModule {
             });
           }
         } catch (e) { logger.debug('[PosModule] Sync log write failed for check-in:', e); }
+        const flush = await database.save();
+        if (!flush.success) {
+          logger.error('[PosModule] Failed to flush check-in:', flush.error);
+          return { success: false, error: 'failed_to_save_check_in' };
+        }
       } catch (e) {
         logger.error('[PosModule] Failed to persist check-in:', e);
+        return { success: false, error: 'failed_to_save_check_in' };
       }
 
+      this.posStore?.handleCheckIn(normalizedData);
+
       // Add selected upsells to POS cart
-      if (data.upsellsAdded?.length && this.posStore) {
+      if (rawData.upsellsAdded?.length && this.posStore) {
         const upsellItems = this.posStore.getState().display?.upsellItems || [];
-        for (const upsellId of data.upsellsAdded) {
+        for (const upsellId of rawData.upsellsAdded) {
           const item = upsellItems.find((u: any) => u.id === upsellId);
           if (item) {
             this.posStore.dispatch({
@@ -380,7 +425,7 @@ export class PosModule extends BaseModule {
       if (posWindow && !posWindow.isDestroyed()) {
         posWindow.webContents.send('pos:customer-checkin', normalizedData);
       }
-      return { success: true };
+      return { success: true, bookingNumber, checkinId };
     });
 
     // Customer display: switch to browse services from checkin
@@ -790,7 +835,7 @@ export class PosModule extends BaseModule {
           }]);
           localVariantImportsRepo.create(variantId, draft.id, ean);
         });
-        database.save();
+        database.markDirty();
 
         logger.info(`[PosModule] Local import: draft ${draft.id} → variant ${variantId} (ean=${ean})`);
         notifyPosRenderers(this.container, 'pos:products-synced');
@@ -946,7 +991,7 @@ export class PosModule extends BaseModule {
           });
           if (localVariant) {
             productRepo.upsertMany([localVariant]);
-            database.save();
+            database.markDirty();
             notifyPosRenderers(this.container, 'pos:products-synced');
           }
 
@@ -983,7 +1028,7 @@ export class PosModule extends BaseModule {
             stockChanged = true;
           }
         }
-        database.save();
+        database.markDirty();
         if (stockChanged) {
           notifyPosRenderers(this.container, 'pos:products-synced');
         }
@@ -1166,7 +1211,7 @@ export class PosModule extends BaseModule {
         } else if (data?.type === 'void') {
           database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [orderId]);
         }
-        database.save();
+        database.markDirty();
         return { success: true, order: canonical, mutation: response.mutation ?? null };
       } catch (e: any) {
         logger.error(`[PosModule] Order mutation failed for ${orderId}: ${e.message}`);
@@ -1192,27 +1237,27 @@ export class PosModule extends BaseModule {
 
     // Hold orders
     ipcMain.handle('pos:hold:create', (_e, id: string, title: string, payload: any) => {
-      try { holdOrderRepo.create(id, title, payload); holdOrderRepo.prune(); database.save(); return { success: true }; }
+      try { holdOrderRepo.create(id, title, payload); holdOrderRepo.prune(); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('pos:hold:list', () => holdOrderRepo.list());
     ipcMain.handle('pos:hold:get', (_e, id: string) => holdOrderRepo.get(id));
-    ipcMain.handle('pos:hold:remove', (_e, id: string) => { holdOrderRepo.remove(id); database.save(); return { success: true }; });
+    ipcMain.handle('pos:hold:remove', (_e, id: string) => { holdOrderRepo.remove(id); database.markDirty(); return { success: true }; });
 
     // Quick keys
     ipcMain.handle('pos:quickkeys:list', (_e, mode?: string) => quickKeyLayoutRepo.list(mode));
     ipcMain.handle('pos:quickkeys:get', (_e, id: string) => quickKeyLayoutRepo.get(id));
     ipcMain.handle('pos:quickkeys:create', (_e, id: string, data: any) => {
-      try { quickKeyLayoutRepo.create(id, data); database.save(); return { success: true }; }
+      try { quickKeyLayoutRepo.create(id, data); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('pos:quickkeys:update', (_e, id: string, data: any) => {
-      try { quickKeyLayoutRepo.update(id, data); database.save(); return { success: true }; }
+      try { quickKeyLayoutRepo.update(id, data); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
-    ipcMain.handle('pos:quickkeys:remove', (_e, id: string) => { quickKeyLayoutRepo.remove(id); database.save(); return { success: true }; });
+    ipcMain.handle('pos:quickkeys:remove', (_e, id: string) => { quickKeyLayoutRepo.remove(id); database.markDirty(); return { success: true }; });
     ipcMain.handle('pos:quickkeys:assign', (_e, regId: string, mode: string, layoutId: string) => {
-      try { quickKeyLayoutRepo.assign(regId, mode, layoutId); database.save(); return { success: true }; }
+      try { quickKeyLayoutRepo.assign(regId, mode, layoutId); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('pos:quickkeys:getAssigned', (_e, regId: string, mode: string) => quickKeyLayoutRepo.getAssigned(regId, mode));
@@ -1221,38 +1266,42 @@ export class PosModule extends BaseModule {
     ipcMain.handle('checkin:getToday', () => checkinRepo.getToday());
     ipcMain.handle('checkin:getByDate', (_e, date: string) => checkinRepo.getByDate(date));
     ipcMain.handle('checkin:create', (_e, data: any) => {
-      try { checkinRepo.create(data); database.save(); return { success: true }; }
+      try { checkinRepo.create(data); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:updateStatus', (_e, id: string, status: string) => {
-      try { checkinRepo.updateStatus(id, status); database.save(); return { success: true }; }
+      try { checkinRepo.updateStatus(id, status); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:startService', (_e, id: string) => {
-      try { checkinRepo.startService(id); database.save(); return { success: true }; }
+      try { checkinRepo.startService(id); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:complete', (_e, id: string) => {
-      try { checkinRepo.complete(id); database.save(); return { success: true }; }
+      try { checkinRepo.complete(id); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:markNoShow', (_e, id: string) => {
-      try { checkinRepo.markNoShow(id); database.save(); return { success: true }; }
+      try { checkinRepo.markNoShow(id); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:searchPhone', (_e, phone: string) => checkinRepo.searchByPhone(phone));
     ipcMain.handle('checkin:addUpsells', (_e, id: string, upsells: string[]) => {
-      try { checkinRepo.addUpsells(id, JSON.stringify(upsells)); database.save(); return { success: true }; }
+      try { checkinRepo.addUpsells(id, JSON.stringify(upsells)); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:updateNotes', (_e, id: string, notes: string) => {
-      try { checkinRepo.updateNotes(id, notes); database.save(); return { success: true }; }
+      try { checkinRepo.updateNotes(id, notes); database.markDirty(); return { success: true }; }
       catch (e: any) { return { success: false, error: e.message }; }
     });
     ipcMain.handle('checkin:getStats', (_e, date?: string) => checkinRepo.getStats(date));
 
     // Customer display: phone search
-    ipcMain.handle('display:search-by-phone', (_e, phone: string) => {
+    ipcMain.handle('display:search-by-phone', (e, phone: string) => {
+      if (!this.allowCustomerDisplayIpc(e, 'display:search-by-phone', 'salon_checkin')) {
+        return { customers: [], bookings: [], error: 'display_ipc_not_allowed' };
+      }
+
       // Validate phone input: must be digits only, at least 3 characters
       const sanitized = (phone || '').replace(/\D/g, '');
       if (sanitized.length < 3) return { customers: [], bookings: [] };
@@ -1385,7 +1434,7 @@ export class PosModule extends BaseModule {
           );
           if (validation.mutationDetected) {
             lockRefundMutationLocally(orderId, order, validation, error, data.reason);
-            database.save();
+            database.markDirty();
             return {
               success: false,
               mutationDetected: true,
@@ -1406,7 +1455,7 @@ export class PosModule extends BaseModule {
         const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
         const refundReason = result.refundReason || data.reason || '';
         orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined);
-        database.save();
+        database.markDirty();
 
         // Print refund receipt
         let receiptPrinted = false;
@@ -1489,7 +1538,7 @@ export class PosModule extends BaseModule {
         });
 
         database.run('UPDATE orders SET customer_nip = ? WHERE id = ?', [nip, orderId]);
-        database.save();
+        database.markDirty();
 
         logger.info(`[PosModule] Invoice attached to order ${order.order_number} (NIP ${nip})`);
         return { success: true, order: result };
@@ -1580,7 +1629,7 @@ export class PosModule extends BaseModule {
         if (!token) return { success: false, error: 'Not authenticated' };
         await apiClient.cancelOrder(token, order.backend_id);
         database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [order.id]);
-        database.save();
+        database.markDirty();
         return { success: true };
       } catch (err: any) {
         return { success: false, error: err.message };
