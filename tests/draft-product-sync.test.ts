@@ -43,6 +43,10 @@ vi.mock('../src/main/database/database', () => ({
     get: databaseGetMock,
     run: databaseRunMock,
     save: databaseSaveMock,
+    // Production code now uses markDirty() instead of save() on the hot
+    // mutation path; the 5s auto-save loop handles flush. Tests that assert
+    // "persisted" semantics should treat both the same.
+    markDirty: databaseSaveMock,
     transaction: databaseTransactionMock,
   },
 }));

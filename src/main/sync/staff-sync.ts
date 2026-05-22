@@ -43,7 +43,7 @@ export class StaffSync {
     }));
 
     staffRepo.upsertMany(mapped);
-    database.save();
+    database.markDirty();
 
     logger.info(`[StaffSync] Pulled ${mapped.length} staff members from server`);
     return mapped.length;

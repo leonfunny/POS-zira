@@ -117,7 +117,7 @@ export const sellerSettingsRepo = {
       logger.info('[SellerSettingsRepo] Created seller settings');
     }
 
-    database.save();
+    database.markDirty();
     return this.get()!;
   },
 
@@ -133,7 +133,7 @@ export const sellerSettingsRepo = {
       WHERE id = ?`,
       [error, 'default'],
     );
-    database.save();
+    database.markDirty();
   },
 
   /**

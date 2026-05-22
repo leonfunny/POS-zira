@@ -36,6 +36,7 @@ vi.mock('../src/main/database/database', () => ({
   database: {
     run: vi.fn(),
     save: vi.fn(),
+    markDirty: vi.fn(),
     all: vi.fn(),
   },
 }));
@@ -228,7 +229,7 @@ describe('OrderSync.resetForRetry', () => {
       'UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE id = ?',
       ['order-1'],
     );
-    expect(database.save).toHaveBeenCalled();
+    expect(database.markDirty).toHaveBeenCalled();
   });
 
   it('does not reset an order unless it is shelved', () => {
@@ -238,6 +239,6 @@ describe('OrderSync.resetForRetry', () => {
 
     expect(result).toBe(false);
     expect(database.run).not.toHaveBeenCalled();
-    expect(database.save).not.toHaveBeenCalled();
+    expect(database.markDirty).not.toHaveBeenCalled();
   });
 });

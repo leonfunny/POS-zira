@@ -101,7 +101,7 @@ export const invoiceCustomerRepo = {
       ],
     );
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceCustomerRepo] Created customer: ${data.name} (${id})`);
     return this.getById(id)!;
   },
@@ -148,7 +148,7 @@ export const invoiceCustomerRepo = {
       fields.push("updated_at = datetime('now')");
       values.push(id);
       database.run(`UPDATE invoice_customers SET ${fields.join(', ')} WHERE id = ?`, values);
-      database.save();
+      database.markDirty();
       logger.info(`[InvoiceCustomerRepo] Updated customer: ${id}`);
     }
 
@@ -165,7 +165,7 @@ export const invoiceCustomerRepo = {
     }
 
     database.run("UPDATE invoice_customers SET is_active = 0, updated_at = datetime('now') WHERE id = ?", [id]);
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceCustomerRepo] Deleted (soft) customer: ${id}`);
   },
 

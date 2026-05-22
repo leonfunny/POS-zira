@@ -52,6 +52,7 @@ export interface OrderSyncSummary {
 
 export class OrderSync {
   private retryTimer: ReturnType<typeof setInterval> | null = null;
+  private retryJitterTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Upload all unsynced orders to backend.
@@ -106,7 +107,7 @@ export class OrderSync {
             'UPDATE orders SET sync_error = ? WHERE id = ?',
             [reason, order.id],
           );
-          database.save();
+          database.markDirty();
           logger.debug(`[OrderSync] Order ${order.id} deferred — variant ${unresolved.variant_id} not yet on server`);
           continue;
         }
@@ -117,7 +118,7 @@ export class OrderSync {
           'UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?',
           [order.id],
         );
-        database.save();
+        database.markDirty();
 
         // Skip orders with no items (can't sync empty orders)
         if (items.length === 0) {
@@ -211,7 +212,7 @@ export class OrderSync {
 
         orderRepo.markSynced(order.id, backendId, backendOrderNumber);
         database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
-        database.save();
+        database.markDirty();
         summary.synced++;
         summary.results.push({ orderId: order.id, orderNumber: backendOrderNumber ?? order.order_number, status: 'synced', backendId });
         logger.info(`[OrderSync] Synced order ${order.order_number} → backend ${backendId}`);
@@ -227,7 +228,7 @@ export class OrderSync {
         if (classified.kind === 'business') {
           // Business-rule rejection — don't retry. Shelve immediately.
           database.run('UPDATE orders SET synced = -1, sync_error = ? WHERE id = ?', [errMsg, order.id]);
-          database.save();
+          database.markDirty();
           summary.failed++;
           summary.results.push({
             orderId: order.id, orderNumber: order.order_number,
@@ -245,7 +246,7 @@ export class OrderSync {
           // Transient error — revert to pending (0) for retry
           orderRepo.markSyncFailed(order.id);
           database.run('UPDATE orders SET sync_error = ? WHERE id = ?', [errMsg, order.id]);
-          database.save();
+          database.markDirty();
           summary.failed++;
           summary.results.push({
             orderId: order.id, orderNumber: order.order_number,
@@ -275,7 +276,7 @@ export class OrderSync {
       'UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE id = ?',
       [orderId],
     );
-    database.save();
+    database.markDirty();
     logger.info(`[OrderSync] Reset order ${orderId} for manual retry`);
     return true;
   }
@@ -292,31 +293,44 @@ export class OrderSync {
     database.run(
       "UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE synced = -1 AND backend_id IS NULL AND sync_error LIKE 'Insufficient stock%'",
     );
-    database.save();
+    database.markDirty();
     logger.info(`[OrderSync] Reset ${rows.length} stock-failed orders for retry`);
     return rows.length;
   }
 
   /**
-   * Start periodic sync (every 30s when online)
+   * Start periodic sync (every 30s when online). Adds a 0-5s startup jitter
+   * so this timer doesn't tick at the same instant as the other sync workers
+   * (product, sync-log push/pull) — otherwise every multiple of 30s all four
+   * fire together, stall the event loop, and renderer IPC feels laggy.
    */
   startPeriodicSync(): void {
-    if (this.retryTimer) return; // Already running
+    if (this.retryTimer || this.retryJitterTimer) return; // Already running
 
-    logger.info('[OrderSync] Starting periodic sync (30s interval)');
-    this.retryTimer = setInterval(async () => {
-      try {
-        await this.syncPendingOrders();
-      } catch (err) {
-        logger.debug(`[OrderSync] Periodic sync error: ${err}`);
-      }
-    }, 30000);
+    const jitter = process.env.VITEST ? 0 : Math.floor(Math.random() * 5000);
+    logger.info(`[OrderSync] Starting periodic sync (30s interval, jitter ${jitter}ms)`);
+    this.retryJitterTimer = setTimeout(() => {
+      this.retryJitterTimer = null;
+      this.retryTimer = setInterval(async () => {
+        try {
+          await this.syncPendingOrders();
+        } catch (err) {
+          logger.debug(`[OrderSync] Periodic sync error: ${err}`);
+        }
+      }, 30000);
+    }, jitter);
   }
 
   /**
    * Stop periodic sync
    */
   stop(): void {
+    // Cancel the pending jitter setTimeout too so a stop during the jitter
+    // window doesn't leave a timer queued that re-arms the interval later.
+    if (this.retryJitterTimer) {
+      clearTimeout(this.retryJitterTimer);
+      this.retryJitterTimer = null;
+    }
     if (this.retryTimer) {
       clearInterval(this.retryTimer);
       this.retryTimer = null;

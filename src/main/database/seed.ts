@@ -126,5 +126,8 @@ export function seedIfEmpty(): void {
     logger.info(`[Seed] Seeded ${SEED_STAFF.length} salon staff`);
   }
 
-  database.save();
+  // 5s auto-save loop persists the seeded rows. Awaiting save() here would
+  // block app startup behind a multi-megabyte disk write while the renderer
+  // is waiting for the main window.
+  database.markDirty();
 }

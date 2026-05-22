@@ -102,7 +102,7 @@ export interface LocalBackupServiceDeps {
   backupDir: string;
   userDataDir: string;
   now: () => Date;
-  flushDatabase: () => BackupFlushResult;
+  flushDatabase: () => Promise<BackupFlushResult> | BackupFlushResult;
   getConfig: () => BackupConfig;
   setConfig: (patch: Partial<BackupConfig>) => void;
   validateDatabaseFile?: (path: string) => DatabaseValidationResult | Promise<DatabaseValidationResult>;
@@ -204,7 +204,7 @@ export class LocalBackupService {
 
   async runBackupNow(reason: BackupRunReason = 'manual'): Promise<BackupRunResult> {
     const createdAt = this.deps.now().toISOString();
-    const flush = this.deps.flushDatabase();
+    const flush = await this.deps.flushDatabase();
 
     if (!flush.success || !flush.dbPath) {
       const error = flush.error || 'Database flush failed before backup';

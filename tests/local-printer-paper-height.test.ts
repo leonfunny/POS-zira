@@ -10,6 +10,7 @@ vi.mock('../src/main/database/database', () => ({
     all: vi.fn(),
     transaction: (fn: () => void) => fn(),
     save: vi.fn(),
+    markDirty: vi.fn(),
   },
 }));
 
@@ -99,6 +100,6 @@ describe('local printer mirror paper dimensions', () => {
 
     expect(insertSql).toContain('is_online = excluded.is_online');
     expect(staleSql).toContain('SET is_enabled = 0, is_online = 0');
-    expect(database.save).toHaveBeenCalled();
+    expect(database.markDirty).toHaveBeenCalled();
   });
 });

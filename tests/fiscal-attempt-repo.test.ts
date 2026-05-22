@@ -5,6 +5,7 @@ vi.mock('../src/main/database/database', () => ({
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
+    markDirty: vi.fn(),
   },
 }));
 
@@ -26,7 +27,7 @@ describe('fiscalAttemptRepo', () => {
       expect.stringContaining("WHERE status = 'SENT'"),
       [JSON.stringify({ reason: 'App restarted with fiscal attempt left in SENT state' })],
     );
-    expect(database.save).toHaveBeenCalledTimes(1);
+    expect(database.markDirty).toHaveBeenCalledTimes(1);
   });
 
   it('does not write during startup recovery when no SENT attempts exist', () => {
@@ -36,7 +37,7 @@ describe('fiscalAttemptRepo', () => {
 
     expect(count).toBe(0);
     expect(database.run).not.toHaveBeenCalled();
-    expect(database.save).not.toHaveBeenCalled();
+    expect(database.markDirty).not.toHaveBeenCalled();
   });
 
   it('does not treat pre-open ReceiptBegin failures as blocking unknown attempts', () => {

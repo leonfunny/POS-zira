@@ -4,7 +4,7 @@ import { join } from 'path';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import logger from '../logger';
 import { migrations } from './migrations';
-import { atomicWriteFileSync } from './atomic-write';
+import { atomicWriteFile, atomicWriteFileSync } from './atomic-write';
 import type { BackupFlushResult } from './backup-service';
 
 class Database {
@@ -46,10 +46,11 @@ class Database {
 
     this.runMigrations();
 
-    // Auto-save every 5 seconds if dirty
+    // Auto-save every 5 seconds if dirty. Skip when a save is already in
+    // flight so overlapping writes don't queue up.
     this.saveInterval = setInterval(() => {
-      if (this.dirty) {
-        this.save();
+      if (this.dirty && !this.saving) {
+        void this.save();
       }
     }, 5000);
   }
@@ -57,7 +58,17 @@ class Database {
   private consecutiveFailures = 0;
   private saving = false;
 
-  save(): BackupFlushResult {
+  /**
+   * Flag the DB as dirty so the 5s auto-save loop will flush it. O(1) and
+   * never touches disk — repos should call this on hot mutation paths instead
+   * of {@link save}, so a single user action that triggers many small writes
+   * doesn't fan out into N synchronous full-DB flushes that stall IPC.
+   */
+  markDirty(): void {
+    this.dirty = true;
+  }
+
+  async save(): Promise<BackupFlushResult> {
     if (!this.db) {
       return { success: false, dbPath: this.dbPath || undefined, error: 'Database not initialized' };
     }
@@ -68,7 +79,7 @@ class Database {
 
     try {
       const data = this.db.export();
-      atomicWriteFileSync(this.dbPath, Buffer.from(data));
+      await atomicWriteFile(this.dbPath, Buffer.from(data));
       this.dirty = false;
       if (this.consecutiveFailures > 0) {
         logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
@@ -103,7 +114,30 @@ class Database {
     }
   }
 
-  flushToDiskForBackup(): BackupFlushResult {
+  /**
+   * Synchronous flush — only for shutdown where the event loop is about to
+   * exit and an async save can't reliably complete. Repos must not call this.
+   */
+  saveSync(): BackupFlushResult {
+    if (!this.db) {
+      return { success: false, dbPath: this.dbPath || undefined, error: 'Database not initialized' };
+    }
+    try {
+      const data = this.db.export();
+      atomicWriteFileSync(this.dbPath, Buffer.from(data));
+      this.dirty = false;
+      return { success: true, dbPath: this.dbPath };
+    } catch (error) {
+      logger.error('[DB] saveSync failed:', error);
+      return {
+        success: false,
+        dbPath: this.dbPath || undefined,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async flushToDiskForBackup(): Promise<BackupFlushResult> {
     return this.save();
   }
 
@@ -174,7 +208,7 @@ class Database {
       clearInterval(this.saveInterval);
       this.saveInterval = null;
     }
-    this.save(); // Final save
+    this.saveSync(); // Final save (sync — event loop is about to exit)
     this.db?.close();
     this.db = null;
     logger.info('[DB] Database closed');
@@ -276,7 +310,9 @@ class Database {
     });
 
     this.dirty = true;
-    this.save();
+    // Fire-and-forget — auto-save loop will pick up the dirty flag within 5s.
+    // Awaiting here would force callers to be async unnecessarily.
+    void this.save();
     logger.info('[DB] Salon data cleared successfully');
   }
 

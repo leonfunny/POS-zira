@@ -125,7 +125,7 @@ export const localPrinterRepo = {
         );
       }
     });
-    database.save();
+    database.markDirty();
   },
 
   getById(id: string): LocalPrinterRow | null {
@@ -158,6 +158,6 @@ export const localPrinterRepo = {
       `UPDATE local_printers SET last_used_at = ?, updated_at = ? WHERE id = ?`,
       [now, now, id],
     );
-    database.save();
+    database.markDirty();
   },
 };

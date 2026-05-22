@@ -49,7 +49,9 @@ const MODE_ORDER: Record<string, number> = {
 
 export class SyncLogService {
   private pullTimer: ReturnType<typeof setInterval> | null = null;
+  private pullJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private pushTimer: ReturnType<typeof setInterval> | null = null;
+  private pushJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private agentSource: string;
 
   constructor() {
@@ -236,7 +238,7 @@ export class SyncLogService {
         return count;
       });
 
-      database.save();
+      database.markDirty();
       totalApplied += applied;
       after = syncLogRepo.getLastServerSeq();
 
@@ -286,14 +288,14 @@ export class SyncLogService {
 
         if (ready.length === 0) {
           syncLogRepo.revertPushingToPending();
-          database.save();
+          database.markDirty();
           logger.debug('[SyncLog] Pending entries are waiting for local variant reconciliation');
           break;
         }
 
         const ids = ready.map(e => e.entry.id);
         syncLogRepo.markPushing(ids);
-        database.save();
+        database.markDirty();
 
         const pushEntries = ready.map(x => x.pushEntry);
 
@@ -302,7 +304,7 @@ export class SyncLogService {
         if (result === null) {
           // Server doesn't support push yet — revert to pending
           syncLogRepo.revertPushingToPending();
-          database.save();
+          database.markDirty();
           logger.warn('[SyncLog] Push endpoint returned null — reverting to pending');
           break;
         }
@@ -380,17 +382,23 @@ export class SyncLogService {
             }
           }
         });
-        database.save();
+        database.markDirty();
 
         if (ready.length < pending.length) {
           logger.debug(`[SyncLog] Deferred ${pending.length - ready.length} entries waiting for local variant reconciliation`);
           break;
         }
 
+        // Yield the event loop between batches so renderer IPC and other
+        // sync workers waiting on sql.js can run. Without this, a large push
+        // (hundreds of pending entries) holds the main thread through every
+        // batch and clicks on the UI stall until the loop exits.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
       } catch (err: any) {
         // Network error — revert to pending for retry
         syncLogRepo.revertPushingToPending();
-        database.save();
+        database.markDirty();
         logger.warn(`[SyncLog] Push failed: ${err.message} — entries reverted to pending`);
         break;
       }
@@ -520,7 +528,7 @@ export class SyncLogService {
     });
 
     syncLogRepo.setLastServerSeq(entry.seq);
-    database.save();
+    database.markDirty();
 
     logger.debug(`[SyncLog] Applied real-time entry: ${entry.entity_type}/${entry.event} seq=${entry.seq}`);
   }
@@ -571,35 +579,55 @@ export class SyncLogService {
   // ─── Lifecycle ────────────────────────────────────────────
 
   /**
-   * Start periodic pull (15s interval).
+   * Start periodic pull (15s interval) with a 0-5s startup jitter so this
+   * timer doesn't tick at the same moment as push/product/order sync.
    */
   startPeriodicPull(): void {
-    if (this.pullTimer) return;
-    this.pullTimer = setInterval(async () => {
-      try { await this.pullFromServer(); } catch (err: any) {
-        logger.debug(`[SyncLog] Periodic pull error: ${err.message}`);
-      }
-    }, 15_000);
-    logger.info('[SyncLog] Started periodic pull (15s interval)');
+    if (this.pullTimer || this.pullJitterTimer) return;
+    const jitter = process.env.VITEST ? 0 : Math.floor(Math.random() * 5000);
+    this.pullJitterTimer = setTimeout(() => {
+      this.pullJitterTimer = null;
+      this.pullTimer = setInterval(async () => {
+        try { await this.pullFromServer(); } catch (err: any) {
+          logger.debug(`[SyncLog] Periodic pull error: ${err.message}`);
+        }
+      }, 15_000);
+    }, jitter);
+    logger.info(`[SyncLog] Started periodic pull (15s interval, jitter ${jitter}ms)`);
   }
 
   /**
-   * Start periodic push (10s interval).
+   * Start periodic push (10s interval) with a 0-5s startup jitter so this
+   * timer doesn't tick at the same moment as pull/product/order sync.
    */
   startPeriodicPush(): void {
-    if (this.pushTimer) return;
-    this.pushTimer = setInterval(async () => {
-      try { await this.pushToServer(); } catch (err: any) {
-        logger.debug(`[SyncLog] Periodic push error: ${err.message}`);
-      }
-    }, 10_000);
-    logger.info('[SyncLog] Started periodic push (10s interval)');
+    if (this.pushTimer || this.pushJitterTimer) return;
+    const jitter = process.env.VITEST ? 0 : Math.floor(Math.random() * 5000);
+    this.pushJitterTimer = setTimeout(() => {
+      this.pushJitterTimer = null;
+      this.pushTimer = setInterval(async () => {
+        try { await this.pushToServer(); } catch (err: any) {
+          logger.debug(`[SyncLog] Periodic push error: ${err.message}`);
+        }
+      }, 10_000);
+    }, jitter);
+    logger.info(`[SyncLog] Started periodic push (10s interval, jitter ${jitter}ms)`);
   }
 
   /**
    * Stop all timers.
    */
   stop(): void {
+    // Cancel jitter setTimeouts too so a stop during the jitter window
+    // doesn't leave the timeout queued, which would re-arm the interval.
+    if (this.pullJitterTimer) {
+      clearTimeout(this.pullJitterTimer);
+      this.pullJitterTimer = null;
+    }
+    if (this.pushJitterTimer) {
+      clearTimeout(this.pushJitterTimer);
+      this.pushJitterTimer = null;
+    }
     if (this.pullTimer) {
       clearInterval(this.pullTimer);
       this.pullTimer = null;

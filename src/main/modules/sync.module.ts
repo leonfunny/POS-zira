@@ -59,6 +59,7 @@ export class SyncModule extends BaseModule {
   // tick re-uses the same network call) and a lightweight backoff so a
   // failing backend isn't hit every 30s.
   private _productPollTimer: ReturnType<typeof setInterval> | null = null;
+  private _productPollJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private _productSyncInFlight: Promise<ProductSyncResult> | null = null;
   // Backoff schedule (ms) on consecutive failures: 60s, 120s, 300s cap.
   private static readonly PRODUCT_BACKOFF_MS = [60_000, 120_000, 300_000];
@@ -663,18 +664,34 @@ export class SyncModule extends BaseModule {
    * interval to exercise the timing.
    */
   startPeriodicProductSync(intervalMs = 30_000): void {
-    if (this._productPollTimer) return;
-    this._productPollTimer = setInterval(() => {
-      // Swallow rejections — runProductSync resolves with { success: false }
-      // for every failure mode, but defend in depth.
-      this.runProductSync().catch((err) => {
-        logger.debug(`[SyncModule] Periodic product sync threw: ${err?.message ?? err}`);
-      });
-    }, intervalMs);
-    logger.info(`[SyncModule] Started periodic product sync (${intervalMs / 1000}s interval)`);
+    if (this._productPollTimer || this._productPollJitterTimer) return;
+    // Random 0-5s startup jitter prevents this timer from aligning with the
+    // other sync workers — otherwise every multiple of 30s, ProductSync,
+    // OrderSync, sync-log push/pull all fire together and the event loop
+    // stalls long enough for users to notice IPC lag. Vitest sets the VITEST
+    // env so timer-cadence tests stay deterministic.
+    const jitter = process.env.VITEST ? 0 : Math.floor(Math.random() * Math.min(intervalMs, 5000));
+    this._productPollJitterTimer = setTimeout(() => {
+      this._productPollJitterTimer = null;
+      this._productPollTimer = setInterval(() => {
+        // Swallow rejections — runProductSync resolves with { success: false }
+        // for every failure mode, but defend in depth.
+        this.runProductSync().catch((err) => {
+          logger.debug(`[SyncModule] Periodic product sync threw: ${err?.message ?? err}`);
+        });
+      }, intervalMs);
+    }, jitter);
+    logger.info(`[SyncModule] Started periodic product sync (${intervalMs / 1000}s interval, jitter ${jitter}ms)`);
   }
 
   stopPeriodicProductSync(): void {
+    // Cancel the pending jitter setTimeout too — otherwise stop() called
+    // during the jitter window leaves the timeout queued, which then arms
+    // the interval after stop returns and breaks single-flight tests.
+    if (this._productPollJitterTimer) {
+      clearTimeout(this._productPollJitterTimer);
+      this._productPollJitterTimer = null;
+    }
     if (this._productPollTimer) {
       clearInterval(this._productPollTimer);
       this._productPollTimer = null;

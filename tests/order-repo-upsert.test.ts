@@ -5,6 +5,7 @@ vi.mock('../src/main/database/database', () => ({
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
+    markDirty: vi.fn(),
     transaction: vi.fn((fn: () => void) => fn()),
   },
 }));

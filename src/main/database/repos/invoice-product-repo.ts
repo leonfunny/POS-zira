@@ -90,7 +90,7 @@ export const invoiceProductRepo = {
       ],
     );
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceProductRepo] Created product: ${data.name} (${id})`);
     return this.getById(id)!;
   },
@@ -133,7 +133,7 @@ export const invoiceProductRepo = {
       fields.push("updated_at = datetime('now')");
       values.push(id);
       database.run(`UPDATE accounting_products SET ${fields.join(', ')} WHERE id = ?`, values);
-      database.save();
+      database.markDirty();
       logger.info(`[InvoiceProductRepo] Updated product: ${id}`);
     }
 
@@ -150,7 +150,7 @@ export const invoiceProductRepo = {
     }
 
     database.run("UPDATE accounting_products SET is_active = 0, updated_at = datetime('now') WHERE id = ?", [id]);
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceProductRepo] Deleted (soft) product: ${id}`);
   },
 
@@ -164,6 +164,6 @@ export const invoiceProductRepo = {
        WHERE id = ?`,
       [quantityChange, id],
     );
-    database.save();
+    database.markDirty();
   },
 };

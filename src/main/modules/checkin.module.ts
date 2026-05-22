@@ -49,7 +49,7 @@ export class CheckinModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.SALON_CUSTOMER_CREATE, (_e, data: any) => {
       try {
         const customer = salonCustomerRepo.upsertByPhone(data);
-        database.save();
+        database.markDirty();
 
         // Path B: write to sync log for outbound push
         try {
@@ -82,7 +82,7 @@ export class CheckinModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.SALON_CUSTOMER_UPDATE, (_e, id: string, data: any) => {
       try {
         salonCustomerRepo.update(id, data);
-        database.save();
+        database.markDirty();
         return { success: true };
       } catch (e: any) {
         return { success: false, error: e.message };
@@ -120,7 +120,7 @@ export class CheckinModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.SERVICE_POPULARITY_REFRESH, () => {
       try {
         servicePopularityRepo.refresh();
-        database.save();
+        database.markDirty();
         return { success: true };
       } catch (e: any) {
         return { success: false, error: e.message };
@@ -152,7 +152,7 @@ export class CheckinModule extends BaseModule {
         // Refresh popularity
         servicePopularityRepo.refresh();
 
-        database.save();
+        database.markDirty();
 
         // Path B: write to sync log for outbound push
         try {

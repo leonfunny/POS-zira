@@ -63,7 +63,7 @@ export const invoicePaymentRepo = {
       ],
     );
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoicePaymentRepo] Created payment: ${data.amount} grosze for invoice ${data.invoice_id}`);
     return this.getById(id)!;
   },
@@ -78,7 +78,7 @@ export const invoicePaymentRepo = {
     }
 
     database.run('DELETE FROM invoice_payments WHERE id = ?', [id]);
-    database.save();
+    database.markDirty();
     logger.info(`[InvoicePaymentRepo] Deleted payment: ${id}`);
   },
 

@@ -95,7 +95,7 @@ export class ProductSync {
         [syncTimestamp],
       );
     });
-    database.save();
+    database.markDirty();
 
     logger.info(
       `[ProductSync] Full sync: ${data.products.length} products, ${data.categories.length} categories (nextSince=${data.nextSince ?? 'local'})`,
@@ -175,7 +175,7 @@ export class ProductSync {
         [syncTimestamp],
       );
     });
-    database.save();
+    database.markDirty();
 
     // Delta succeeded — reset the flag (backend may have been updated)
     this.deltaUnsupported = false;
@@ -248,7 +248,7 @@ export class ProductSync {
       }
     }
 
-    if (changed) database.save();
+    if (changed) database.markDirty();
     return reconciled;
   }
 

@@ -73,7 +73,7 @@ function markResolved(id: string, status: FiscalAttemptStatus, errorCode?: strin
      WHERE id = ?`,
     [status, errorCode ?? null, serialize(result), id],
   );
-  database.save();
+  database.markDirty();
 }
 
 export const fiscalAttemptRepo: FiscalAttemptJournal & {
@@ -131,7 +131,7 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
         'PENDING',
       ],
     );
-    database.save();
+    database.markDirty();
     return database.get<FiscalAttemptRow>('SELECT * FROM fiscal_attempts WHERE id = ?', [id])!;
   },
 
@@ -142,7 +142,7 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
        WHERE id = ?`,
       [id],
     );
-    database.save();
+    database.markDirty();
   },
 
   markSuccess(id: string, result?: unknown): void {
@@ -176,7 +176,7 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
          WHERE status = 'SENT'`,
         [JSON.stringify({ reason: 'App restarted with fiscal attempt left in SENT state' })],
       );
-      database.save();
+      database.markDirty();
     }
     return count;
   },

@@ -16,6 +16,7 @@ vi.mock('../src/main/database/database', () => ({
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(() => { state.saveCount++; }),
+    markDirty: vi.fn(() => { state.saveCount++; }),
     transaction: vi.fn((fn: () => void) => {
       const beforeBookings = new Map(state.bookings);
       const beforeLogs = [...state.logs];

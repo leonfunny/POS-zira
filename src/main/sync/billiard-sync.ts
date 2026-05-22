@@ -111,7 +111,7 @@ export class BilliardSync {
       "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('billiard_last_sync', ?, datetime('now'))",
       [new Date().toISOString()],
     );
-    database.save();
+    database.markDirty();
 
     logger.info(`[BilliardSync] Full sync done: ${resources} resources, ${floors} floors, ${combos} combos`);
     return { resources, floors, combos };
@@ -150,7 +150,7 @@ export class BilliardSync {
         });
       }
 
-      database.save();
+      database.markDirty();
       this.notifyRenderer('dashboard');
     } catch (err) {
       logger.debug(`[BilliardSync] Dashboard refresh failed: ${err}`);
@@ -209,7 +209,7 @@ export class BilliardSync {
     // Optimistic local update so UI reflects the change immediately
     this.applyOptimisticUpdate(op, path, body);
 
-    database.save();
+    database.markDirty();
 
     const pending = billiardMutationRepo.countPending();
     logger.info(`[BilliardSync] Mutation queued (offline): ${op} → queue #${queueId}, ${pending} pending`);
@@ -467,7 +467,7 @@ export class BilliardSync {
       logger.info(`[BilliardSync] Cleaned up ${tempSessions.length} temp offline session(s)`);
     }
 
-    database.save();
+    database.markDirty();
 
     // Force dashboard refresh after replay
     await this.refreshDashboard().catch((e) => { logger.debug('[BilliardSync] post-replay refresh failed:', e?.message); });

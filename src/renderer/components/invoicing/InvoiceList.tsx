@@ -23,9 +23,17 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  // Debounced search — the actual query input. Lags `search` by 300 ms so
+  // typing in the search box does NOT fire one SQL query per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('ALL');
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(handle);
+  }, [search]);
   const [error, setError] = useState<string | null>(null);
   const [cancelModal, setCancelModal] = useState<{ invoiceId: string } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -35,7 +43,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
     setLoading(true);
     try {
       const filter: InvoiceListFilter = {
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         status: statusFilter !== 'ALL' ? statusFilter as InvoiceStatus : undefined,
         type: typeFilter !== 'ALL' ? typeFilter as InvoiceType : undefined,
         limit: 50,
@@ -55,7 +63,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, typeFilter]);
+  }, [debouncedSearch, statusFilter, typeFilter]);
 
   useEffect(() => {
     loadInvoices();

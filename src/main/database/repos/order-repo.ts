@@ -131,7 +131,7 @@ export const orderRepo = {
     }); // End transaction
 
     // Flush to disk immediately — financial data must not be lost on crash
-    database.save();
+    database.markDirty();
 
     logger.info(`[OrderRepo] Created order ${finalOrderNumber} (${order.id}) with ${items.length} items, mode=${order.mode}`);
     return order.id;
@@ -185,7 +185,7 @@ export const orderRepo = {
       database.run('DELETE FROM orders WHERE id = ?', [id]);
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[OrderRepo] Deleted local unsynced order ${order.order_number || id} (${id}); restocked ${restocked} unit(s)`);
     return { deleted: true, restocked };
   },
@@ -322,7 +322,7 @@ export const orderRepo = {
       );
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[OrderRepo] Updated local unsynced order ${order.order_number || id} (${id})`);
     return { updated: true, stockChanged };
   },
@@ -487,7 +487,7 @@ export const orderRepo = {
       }
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[OrderRepo] Mirrored server order ${dbRow.id} (${items.length} items)`);
     return { inserted: true, localOrderId: dbRow.id };
   },

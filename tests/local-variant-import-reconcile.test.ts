@@ -32,6 +32,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
 vi.mock('../src/main/database/database', () => ({
   database: {
     save: vi.fn(),
+    markDirty: vi.fn(),
   },
 }));
 

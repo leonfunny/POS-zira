@@ -23,6 +23,7 @@ vi.mock('../src/main/database/repos/staff-repo', () => ({
 vi.mock('../src/main/database/database', () => ({
   database: {
     save: vi.fn(),
+    markDirty: vi.fn(),
     transaction: vi.fn((fn: () => void) => {
       txState.inTransaction = true;
       try {
@@ -97,6 +98,6 @@ describe('StaffSync.pullStaff', () => {
       }),
     ]);
     expect(database.transaction).not.toHaveBeenCalled();
-    expect(database.save).toHaveBeenCalled();
+    expect(database.markDirty).toHaveBeenCalled();
   });
 });

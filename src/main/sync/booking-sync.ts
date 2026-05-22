@@ -187,7 +187,7 @@ export function writeBookingCreated(
 
   // Persist sql.js in-memory DB to disk so a crash before the next push
   // cycle still keeps the booking + log entry in sync.
-  database.save();
+  database.markDirty();
 
   return bookingId;
 }
@@ -233,7 +233,7 @@ export function writeBookingStatusChanged(
     );
   });
 
-  database.save();
+  database.markDirty();
 }
 
 /**
@@ -294,7 +294,7 @@ export function writeBookingUpdated(
     );
   });
 
-  database.save();
+  database.markDirty();
 }
 
 // ─── Startup repair: orphan local bookings ──────────────────────────────
@@ -474,7 +474,7 @@ export function repairOrphanBookings(syncLogService: SyncLogService): OrphanRepa
   }
 
   if (result.enqueued > 0) {
-    database.save();
+    database.markDirty();
   }
 
   return result;

@@ -49,7 +49,7 @@ export class ShiftController {
       'INSERT INTO shifts (id, staff_id, staff_name, opening_cash) VALUES (?, ?, ?, ?)',
       [shiftId, staffId, staffName, openingCash],
     );
-    database.save();
+    database.markDirty();
 
     // Async sync to backend (non-blocking)
     this.syncShiftOpen(shiftId, staffId, openingCash);
@@ -145,7 +145,7 @@ export class ShiftController {
       "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ? WHERE id = ?",
       [closingCash, totalSales, orders.length, shiftId],
     );
-    database.save();
+    database.markDirty();
 
     const report: ShiftReport = {
       shiftId,
@@ -241,12 +241,12 @@ export class ShiftController {
           result.shiftId,
           shift.id,
         ]);
-        database.save();
+        database.markDirty();
         logger.info(`[Shift] Retry: synced shift open ${shift.id}`);
       } catch (err: any) {
         const errMsg = (err.message || String(err)).substring(0, 500);
         database.run('UPDATE shifts SET sync_error = ? WHERE id = ?', [errMsg, shift.id]);
-        database.save();
+        database.markDirty();
         logger.warn(`[Shift] Retry failed for shift open ${shift.id} (attempt ${shift.sync_attempts + 1}/${MAX_ATTEMPTS}): ${errMsg}`);
       }
     }
@@ -281,7 +281,7 @@ export class ShiftController {
         result.shiftId,
         shiftId,
       ]);
-      database.save();
+      database.markDirty();
     } catch (err) {
       logger.warn(`[Shift] Failed to sync shift open ${shiftId}, will retry on reconnect: ${err}`);
     }

@@ -28,7 +28,12 @@ const TARGET_PROCESSES = [
 
 const REGISTRY_PATH = 'HKCU:\\SOFTWARE\\Microsoft\\TabletTip\\1.7';
 const REGISTRY_VALUE_NAME = 'EnableDesktopModeAutoInvoke';
-const POLL_INTERVAL_MS = 500;
+// The registry flag set in disableAutoInvoke() already stops Windows from
+// auto-popping the touch keyboard on focus. The poll is a defense-in-depth
+// safety net for code paths the flag misses, so it can run far less often
+// than the original 500 ms — spawning `taskkill` 120 times/minute was
+// burning CPU and contending with renderer IPC.
+const POLL_INTERVAL_MS = 5000;
 
 let pollTimer: NodeJS.Timeout | null = null;
 let previousAutoInvokeValue: number | null | undefined = undefined; // undefined = not captured, null = key did not exist

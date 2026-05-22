@@ -90,7 +90,7 @@ export class DraftProductSync {
         [cursor],
       );
     });
-    database.save();
+    database.markDirty();
 
     logger.info(`[DraftProductSync] Full sync: ${rows.length}/${data.drafts.length} drafts accepted (nextSince=${data.nextSince ?? 'local'})`);
     return { count: rows.length };
@@ -137,7 +137,7 @@ export class DraftProductSync {
         [cursor],
       );
     });
-    database.save();
+    database.markDirty();
 
     this.deltaUnsupported = false;
     logger.info(`[DraftProductSync] Delta sync: ${rows.length}/${data.drafts.length} updated accepted, ${data.deletedIds.length} deleted (nextSince=${data.nextSince ?? 'local'})`);
@@ -155,13 +155,13 @@ export class DraftProductSync {
         [row.updated_at ?? new Date().toISOString()],
       );
     });
-    database.save();
+    database.markDirty();
     logger.info(`[DraftProductSync] Applied socket update for draft ${row.id}`);
   }
 
   applyDelete(id: string): void {
     draftProductRepo.softDeleteByIds([id]);
-    database.save();
+    database.markDirty();
     logger.info(`[DraftProductSync] Socket-deleted draft ${id}`);
   }
 }

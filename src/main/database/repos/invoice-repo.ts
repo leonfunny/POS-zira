@@ -198,12 +198,14 @@ export const invoiceRepo = {
     }
 
     if (filter.dateFrom) {
-      conditions.push('date(issue_date) >= date(?)');
+      // Compare ISO strings directly so SQLite uses idx_inv_date. Wrapping
+      // `issue_date` in date() disables the index and falls back to a scan.
+      conditions.push('issue_date >= ?');
       params.push(filter.dateFrom);
     }
 
     if (filter.dateTo) {
-      conditions.push('date(issue_date) <= date(?)');
+      conditions.push('issue_date <= ?');
       params.push(filter.dateTo);
     }
 
@@ -359,7 +361,7 @@ export const invoiceRepo = {
       }
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Created invoice: ${invoiceNumber} (${invoiceId}), type=${data.type}`);
     return this.getById(invoiceId)!;
   },
@@ -460,7 +462,7 @@ export const invoiceRepo = {
       }
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Updated invoice: ${id}`);
     return this.getById(id)!;
   },
@@ -482,7 +484,7 @@ export const invoiceRepo = {
       "UPDATE invoices SET status = 'ISSUED', updated_at = datetime('now') WHERE id = ?",
       [id],
     );
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Issued invoice: ${id}`);
     return this.getById(id)!.invoice;
   },
@@ -514,7 +516,7 @@ export const invoiceRepo = {
        WHERE id = ?`,
       [cancelledBy ?? null, reason, id],
     );
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Cancelled invoice: ${id}, reason: ${reason}`);
     return this.getById(id)!.invoice;
   },
@@ -538,7 +540,7 @@ export const invoiceRepo = {
        WHERE id = ?`,
       [id],
     );
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Marked invoice as paid: ${id}`);
     return this.getById(id)!.invoice;
   },
@@ -590,7 +592,7 @@ export const invoiceRepo = {
       );
     });
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Added payment to invoice: ${invoiceId}, amount=${amount}`);
     return this.getById(invoiceId)!.invoice;
   },
@@ -689,7 +691,7 @@ export const invoiceRepo = {
       "UPDATE invoices SET correction_data = ?, updated_at = datetime('now') WHERE id = ?",
       [JSON.stringify(correctionData), correction.invoice.id],
     );
-    database.save();
+    database.markDirty();
 
     logger.info(`[InvoiceRepo] Created correction invoice for ${originalInvoiceId}: ${correction.invoice.id}`);
     return this.getById(correction.invoice.id)!;
@@ -758,7 +760,7 @@ export const invoiceRepo = {
       [proformaId, vatInvoice.invoice.id],
     );
 
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Converted proforma ${proformaId} to VAT invoice ${vatInvoice.invoice.id}`);
     return this.getById(vatInvoice.invoice.id)!;
   },
@@ -780,7 +782,7 @@ export const invoiceRepo = {
       database.run('DELETE FROM invoice_items WHERE invoice_id = ?', [id]);
       database.run('DELETE FROM invoices WHERE id = ?', [id]);
     });
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Deleted invoice: ${id}`);
   },
 
@@ -792,7 +794,7 @@ export const invoiceRepo = {
       "UPDATE invoices SET printed = 1, printed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
       [id],
     );
-    database.save();
+    database.markDirty();
   },
 
   /**
@@ -812,7 +814,7 @@ export const invoiceRepo = {
       "UPDATE invoices SET synced = 1, backend_id = ?, updated_at = datetime('now') WHERE id = ?",
       [backendId, id],
     );
-    database.save();
+    database.markDirty();
   },
 
   /**
@@ -831,11 +833,13 @@ export const invoiceRepo = {
     const params: any[] = [];
 
     if (dateFrom) {
-      dateFilter += ' AND date(issue_date) >= date(?)';
+      // ISO strings sort lexicographically — direct comparison lets SQLite
+      // use idx_inv_date instead of scanning every row.
+      dateFilter += ' AND issue_date >= ?';
       params.push(dateFrom);
     }
     if (dateTo) {
-      dateFilter += ' AND date(issue_date) <= date(?)';
+      dateFilter += ' AND issue_date <= ?';
       params.push(dateTo);
     }
 
@@ -888,7 +892,7 @@ export const invoiceRepo = {
       WHERE id = ?`,
       [status, ksefNumber, status, error, retryIncrement, id],
     );
-    database.save();
+    database.markDirty();
     logger.info(`[InvoiceRepo] Updated KSeF status for ${id}: ${status}${ksefNumber ? ` (${ksefNumber})` : ''}`);
   },
 
