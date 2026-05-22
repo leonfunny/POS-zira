@@ -56,9 +56,12 @@ class Database {
    *
    * Returns the loaded database when sane, or null when the buffer was
    * quarantined (caller should create a fresh empty DB on top of the
-   * now-renamed path). Probe uses `sqlite_master` because every valid
-   * SQLite file — even an empty one — has that table; touching it forces
-   * sql.js to read the schema root page and surface page corruption.
+   * now-renamed path). Probe uses `PRAGMA quick_check` — SQLite walks
+   * every page and verifies btree linkage. An earlier version probed
+   * only `SELECT count(*) FROM sqlite_master` (schema root page) and
+   * passed clean on a file whose product/booking pages were corrupt,
+   * letting the app run with a poisoned database. quick_check on a 6MB
+   * file runs in tens of milliseconds and catches that.
    */
   static tryLoadOrQuarantine(
     SQL: { Database: new (data?: Buffer) => SqlJsDatabase },
@@ -72,10 +75,18 @@ class Database {
     let candidate: SqlJsDatabase | null = null;
     try {
       candidate = new SQL.Database(buffer);
-      // sqlite_master probe — touches the schema root page so any
-      // page-level corruption raises here instead of inside the first
-      // user query (e.g. AuthModule.clearSalonData transaction).
-      candidate.run('SELECT count(*) FROM sqlite_master');
+      // PRAGMA quick_check returns a single row with the literal 'ok' on
+      // a clean database. Any other value (e.g. "*** in database main ***
+      // Page 47: btree ...") is an integrity error and we must NOT use
+      // this database — let the caller recreate empty and resync from
+      // backend. quick_check skips cross-table index/value validation
+      // (slower integrity_check does that), but catches every page-level
+      // corruption we've seen in the wild on Windows POS terminals.
+      const result = candidate.exec('PRAGMA quick_check');
+      const row = result?.[0]?.values?.[0]?.[0];
+      if (row !== 'ok') {
+        throw new Error(`quick_check returned: ${String(row).slice(0, 200)}`);
+      }
       return candidate;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
