@@ -86,6 +86,28 @@ import {
 } from '../sync/booking-sync';
 import logger from '../logger';
 
+function parseOrderPaymentTenders(order: any): Array<{ method: string; amount: number }> {
+  if (!order?.payment_tenders) return [];
+  try {
+    const tenders = JSON.parse(order.payment_tenders);
+    if (!Array.isArray(tenders)) return [];
+    return tenders.filter((t: any) => typeof t?.method === 'string' && typeof t?.amount === 'number');
+  } catch {
+    return [];
+  }
+}
+
+function isSplitPaymentOrder(order: any): boolean {
+  return order?.payment_method === 'SPLIT' || parseOrderPaymentTenders(order).length > 1;
+}
+
+function orderMatchesPaymentFilter(order: any, paymentMethod?: string): boolean {
+  if (!paymentMethod) return true;
+  const isSplit = isSplitPaymentOrder(order);
+  if (paymentMethod === 'SPLIT') return isSplit;
+  return !isSplit && order?.payment_method === paymentMethod;
+}
+
 function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
   const candidates: number[] = [];
   const lines = data.lines ?? [];
@@ -1095,7 +1117,7 @@ export class PosModule extends BaseModule {
       // 1000 cap — single-day POS rarely exceeds 500 orders.
       const wide = orderRepo.getByDateRange(filters.from, filters.to, 1000, 0);
       let orders = wide.orders;
-      if (filters.paymentMethod) orders = orders.filter(o => o.payment_method === filters.paymentMethod);
+      if (filters.paymentMethod) orders = orders.filter(o => orderMatchesPaymentFilter(o, filters.paymentMethod));
       if (filters.staffName) orders = orders.filter(o => o.staff_name === filters.staffName);
       const total = orders.length;
       const offset = (page - 1) * limit;

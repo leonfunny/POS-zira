@@ -62,6 +62,23 @@ export function normalizeRefundLinesJson(refundedLines: unknown): string | null 
   return JSON.stringify(out);
 }
 
+export function normalizePaymentTendersJson(tenders: unknown): string | null {
+  if (!Array.isArray(tenders) || tenders.length === 0) return null;
+  const out = tenders
+    .map((t: any) => {
+      const method = typeof t?.method === 'string' ? t.method : null;
+      const amount = toGrosze(t?.amount);
+      if (!method || amount <= 0) return null;
+      const tender: { method: string; amount: number; reference?: string } = { method, amount };
+      if (t.reference != null && String(t.reference).length > 0) {
+        tender.reference = String(t.reference);
+      }
+      return tender;
+    })
+    .filter((t): t is { method: string; amount: number; reference?: string } => Boolean(t));
+  return out.length > 0 ? JSON.stringify(out) : null;
+}
+
 export function adaptServerOrder(s: any): any {
   if (s.subtotal === undefined) warnOnce('subtotal', s);
   if (s.discountAmount === undefined) warnOnce('discountAmount', s);
@@ -110,7 +127,7 @@ export function adaptServerOrder(s: any): any {
     customer_id: s.customerId ?? null,
     customer_nip: s.customerNip ?? null,
     customer_name: s.customerName ?? null,
-    payment_tenders: null,
+    payment_tenders: normalizePaymentTendersJson(s.tenders),
     sync_error: null,
     sync_attempts: 0,
     _origin: 'server' as const,

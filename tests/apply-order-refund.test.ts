@@ -451,4 +451,48 @@ describe('applyOrder refund normalisation', () => {
     expect(syncErrorUpdate, 'expected refund sync_error lock').toBeDefined();
     expect((syncErrorUpdate![1] as unknown[])[0]).toContain('refundAmount/refundedLines');
   });
+
+  it('mirrors a missing split-payment order with local tender JSON', () => {
+    vi.mocked(orderRepo.getById).mockReturnValue(null as any);
+    vi.mocked(database.get).mockReturnValue(undefined as any);
+
+    applyEntry(
+      entry({
+        id: 'local-order-1',
+        status: 'PAID',
+        subtotal: '45.37',
+        discountAmount: '0.00',
+        taxAmount: '2.27',
+        total: '47.64',
+        paidAmount: '47.64',
+        paymentMethod: 'SPLIT',
+        posMode: 'retail',
+        createdAt: '2026-05-22T12:02:08.000Z',
+        tenders: [
+          { method: 'CASH', amount: 20 },
+          { method: 'CARD', amount: '27.64' },
+        ],
+        items: [
+          {
+            id: 'item-1',
+            productName: 'Test item',
+            variantSku: 'SKU-1',
+            unitPrice: '47.64',
+            totalPrice: '47.64',
+            taxRate: '5.00',
+            packQuantity: 1,
+          },
+        ],
+      }),
+    );
+
+    expect(orderRepo.upsertFromServer).toHaveBeenCalledOnce();
+    const [adapted, adaptedItems] = vi.mocked(orderRepo.upsertFromServer).mock.calls[0];
+    expect(adapted.payment_method).toBe('SPLIT');
+    expect(JSON.parse(adapted.payment_tenders)).toEqual([
+      { method: 'CASH', amount: 2000 },
+      { method: 'CARD', amount: 2764 },
+    ]);
+    expect(adaptedItems).toHaveLength(1);
+  });
 });
