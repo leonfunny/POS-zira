@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Printer, RefreshCw, Search } from 'lucide-react';
 import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
+import { compareOrdersByDisplayTimeDesc } from './pos/order-history-time';
 import rlog from '../utils/logger';
 
 interface OrdersTabProps {
@@ -26,6 +27,9 @@ interface OrderRow {
   refund_amount?: number;
   refunded_at?: string | null;
   created_at: string;
+  backend_id?: string | null;
+  synced?: number;
+  _origin?: 'server';
 }
 
 interface OrderItemRow {
@@ -48,7 +52,8 @@ type PeriodKey = 'today' | 'week' | 'month' | 'custom';
 type ReprintFeedback = { orderId: string; ok: boolean; text: string } | null;
 
 const PAGE_SIZE = 25;
-const PAYMENT_METHODS = ['', 'CASH', 'CARD', 'BLIK', 'TRANSFER', 'INVOICE'];
+const ORDER_FETCH_LIMIT = 1000;
+const PAYMENT_METHODS = ['', 'CASH', 'CARD', 'BLIK', 'TRANSFER', 'INVOICE', 'SPLIT'];
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -99,6 +104,54 @@ function paymentLabelText(method: string | null | undefined, t: (k: string) => s
   return tOr(t, `pos.payment.${method.toLowerCase()}`, method);
 }
 
+function parseTenders(order: OrderRow): Array<{ method: string; amount: number }> {
+  if (!order.payment_tenders) return [];
+  try {
+    const tenders = JSON.parse(order.payment_tenders);
+    if (!Array.isArray(tenders)) return [];
+    return tenders.filter((t: any) => typeof t?.method === 'string' && typeof t?.amount === 'number');
+  } catch {
+    return [];
+  }
+}
+
+function isSplitOrder(order: OrderRow): boolean {
+  return order.payment_method === 'SPLIT' || parseTenders(order).length > 1;
+}
+
+function paymentSummaryText(order: OrderRow, t: (k: string) => string): string {
+  const tenders = parseTenders(order);
+  if (tenders.length > 1) {
+    return tenders
+      .map((tender) => `${paymentLabelText(tender.method, t)} ${(tender.amount / 100).toFixed(2)}`)
+      .join(' + ');
+  }
+  if (order.payment_method === 'SPLIT') return 'Split';
+  return paymentLabelText(order.payment_method, t);
+}
+
+function orderMatchesPayment(order: OrderRow, method: string): boolean {
+  if (!method) return true;
+  const split = isSplitOrder(order);
+  if (method === 'SPLIT') return split;
+  return !split && order.payment_method === method;
+}
+
+function orderWithinRange(order: OrderRow, from: string, to: string): boolean {
+  const created = order.created_at?.slice(0, 10);
+  return Boolean(created && created >= from && created <= to);
+}
+
+function mergeOrders(localOrders: OrderRow[], serverOrders: OrderRow[]): OrderRow[] {
+  const byId = new Map<string, OrderRow>();
+  for (const order of serverOrders) byId.set(order.id, order);
+  for (const order of localOrders) {
+    if (order.backend_id) byId.delete(order.backend_id);
+    byId.set(order.id, order);
+  }
+  return Array.from(byId.values()).sort(compareOrdersByDisplayTimeDesc);
+}
+
 function statusBadgeClass(status: string, refundedAt?: string | null): string {
   if (refundedAt) return 'bg-rose-100 text-rose-700 border-rose-200';
   switch (status) {
@@ -123,18 +176,18 @@ export default function OrdersTab({ language }: OrdersTabProps) {
   const [page, setPage] = useState(1);
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrderDetailResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [reprintBusyId, setReprintBusyId] = useState<string | null>(null);
   const [reprintFeedback, setReprintFeedback] = useState<ReprintFeedback>(null);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const displayedOrders = useMemo(() => {
+  const searchedOrders = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return orders;
     return orders.filter((order) => (
@@ -144,37 +197,79 @@ export default function OrdersTab({ language }: OrdersTabProps) {
       || order.id.toLowerCase().includes(needle)
     ));
   }, [orders, search]);
+  const totalPages = Math.max(1, Math.ceil(searchedOrders.length / PAGE_SIZE));
+  const displayedOrders = useMemo(() => {
+    const offset = (page - 1) * PAGE_SIZE;
+    return searchedOrders.slice(offset, offset + PAGE_SIZE);
+  }, [page, searchedOrders]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     const range = rangeForPeriod(period, customFrom, customTo);
     try {
-      const result = await window.electronAPI.pos.orders.getHistory({
-        from: range.from,
-        to: range.to,
-        paymentMethod: paymentMethod || undefined,
-        staffName: staffName.trim() || undefined,
-        page,
-        limit: PAGE_SIZE,
-      } as any);
-      const rows = (result?.orders || []) as OrderRow[];
-      setOrders(rows);
-      setTotal(result?.total ?? rows.length);
+      const serverPeriod = period === 'custom' ? 'all' : period;
+      const [localResult, serverResult] = await Promise.allSettled([
+        window.electronAPI.pos.orders.getHistory({
+          from: range.from,
+          to: range.to,
+          page: 1,
+          limit: ORDER_FETCH_LIMIT,
+        } as any),
+        window.electronAPI.pos.orders.getServerList({
+          period: serverPeriod,
+          page: 1,
+          limit: ORDER_FETCH_LIMIT,
+        } as any),
+      ]);
+
+      const localRows = localResult.status === 'fulfilled'
+        ? ((localResult.value?.orders || []) as OrderRow[])
+        : [];
+      let serverRows: OrderRow[] = [];
+      let nextItemsMap: Record<string, OrderItemRow[]> = {};
+      let nextSource: 'local+server' | 'local-only' | 'server-unreachable' = 'local-only';
+
+      if (serverResult.status === 'fulfilled') {
+        const value = serverResult.value;
+        if (value?.source === 'server') {
+          serverRows = (value.orders || []) as OrderRow[];
+          nextItemsMap = (value.items || {}) as Record<string, OrderItemRow[]>;
+          nextSource = 'local+server';
+        } else if (value?.source === 'network-error') {
+          nextSource = 'server-unreachable';
+        }
+      } else {
+        nextSource = 'server-unreachable';
+      }
+
+      const merged = mergeOrders(localRows, serverRows)
+        .filter((order) => order.status !== 'DRAFT' && order.status !== 'POS-DRA')
+        .filter((order) => orderWithinRange(order, range.from, range.to))
+        .filter((order) => orderMatchesPayment(order, paymentMethod))
+        .filter((order) => !staffName.trim() || order.staff_name === staffName.trim());
+
+      setOrders(merged);
+      setServerItemsMap(nextItemsMap);
+      setDataSource(nextSource);
     } catch (err: any) {
       rlog.warn('[OrdersTab] getHistory failed:', err);
       setError(err?.message || 'Failed to load orders');
       setOrders([]);
-      setTotal(0);
+      setServerItemsMap({});
+      setDataSource('server-unreachable');
     } finally {
       setLoading(false);
     }
-  }, [period, customFrom, customTo, paymentMethod, staffName, page]);
+  }, [period, customFrom, customTo, paymentMethod, staffName]);
 
   useEffect(() => { void load(); }, [load]);
 
   // Reset to page 1 whenever filters change
   useEffect(() => { setPage(1); }, [period, customFrom, customTo, paymentMethod, staffName, search]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const pageTotalGrosze = useMemo(() => displayedOrders.reduce((sum, o) => sum + (o.total || 0), 0), [displayedOrders]);
   const pageCount = displayedOrders.length;
@@ -188,6 +283,14 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     setExpandedId(orderId);
     setDetail(null);
     setDetailLoading(true);
+    const order = orders.find((o) => o.id === orderId);
+    const serverItems = serverItemsMap[orderId];
+    if (order && serverItems?.length) {
+      setDetail({ order, items: serverItems });
+      setDetailLoading(false);
+      return;
+    }
+
     try {
       const result = await window.electronAPI.pos.orders.getDetail(orderId);
       if (result) setDetail(result as OrderDetailResult);
@@ -196,14 +299,25 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     } finally {
       setDetailLoading(false);
     }
-  }, [expandedId]);
+  }, [expandedId, orders, serverItemsMap]);
 
-  const handleReprint = useCallback(async (orderId: string) => {
+  const handleReprint = useCallback(async (order: OrderRow) => {
+    const orderId = order.id;
     if (reprintBusyId) return;
     setReprintBusyId(orderId);
     setReprintFeedback(null);
     try {
-      const result = await window.electronAPI.pos.payment.reprintReceipt(orderId);
+      let printableOrderId = orderId;
+      if (order._origin === 'server') {
+        const kind: 'cash' | 'invoiced' = order.customer_nip ? 'invoiced' : 'cash';
+        const mirrored = await window.electronAPI.pos.orders.mirrorFromServer(order.id, kind);
+        if (!mirrored?.success || !mirrored.localOrderId) {
+          throw new Error(mirrored?.error || 'Could not mirror server order before printing');
+        }
+        printableOrderId = mirrored.localOrderId;
+      }
+
+      const result = await window.electronAPI.pos.payment.reprintReceipt(printableOrderId);
       const ok = !!result?.receiptPrinted;
       setReprintFeedback({
         orderId,
@@ -231,6 +345,19 @@ export default function OrdersTab({ language }: OrdersTabProps) {
         <div>
           <h1 className="text-xl font-semibold text-slate-950">{tOr(t, 'orders.title', 'Đơn hàng')}</h1>
           <p className="text-sm text-slate-500">{tOr(t, 'orders.subtitle', 'Danh sách đơn hàng đã bán từ POS')}</p>
+          <p className={`mt-1 text-xs font-semibold ${
+            dataSource === 'local+server'
+              ? 'text-emerald-600'
+              : dataSource === 'server-unreachable'
+                ? 'text-amber-600'
+                : 'text-slate-400'
+          }`}>
+            {dataSource === 'local+server'
+              ? 'Local + Server'
+              : dataSource === 'server-unreachable'
+                ? 'Server unreachable - showing local data'
+                : 'Local only'}
+          </p>
         </div>
         <button
           type="button"
@@ -375,7 +502,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                       <span className="truncate text-slate-700">
                         {order.customer_name || (order.customer_nip ? `NIP: ${order.customer_nip}` : '-')}
                       </span>
-                      <span className="text-slate-700">{paymentLabelText(order.payment_method, t)}</span>
+                      <span className="truncate text-slate-700">{paymentSummaryText(order, t)}</span>
                       <span className="truncate text-slate-700">{order.staff_name || '-'}</span>
                       <span className="text-right font-semibold tabular-nums text-slate-950">{formatMoney(order.total, currency)}</span>
                       <span>
@@ -389,7 +516,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                       >
                         <button
                           type="button"
-                          onClick={() => void handleReprint(order.id)}
+                          onClick={() => void handleReprint(order)}
                           disabled={isReprintBusy}
                           className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                           title={tOr(t, 'orders.reprint', 'In lại')}
@@ -485,7 +612,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
 
         <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2 text-sm">
           <div className="text-slate-600">
-            {pageCount} / {total} {tOr(t, 'orders.summary', 'đơn — tổng trang này')}: <span className="font-semibold text-slate-950">{formatMoney(pageTotalGrosze, currency)}</span>
+            {pageCount} / {searchedOrders.length} {tOr(t, 'orders.summary', 'đơn — tổng trang này')}: <span className="font-semibold text-slate-950">{formatMoney(pageTotalGrosze, currency)}</span>
           </div>
           <div className="flex items-center gap-2">
             <button
