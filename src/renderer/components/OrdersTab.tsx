@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Printer, RefreshCw, Search } from 'lucide-react';
 import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
-import { compareOrdersByDisplayTimeDesc } from './pos/order-history-time';
+import { compareOrdersByDisplayTimeDesc, parseOrderTimestampMs } from './pos/order-history-time';
 import rlog from '../utils/logger';
 
 interface OrdersTabProps {
@@ -82,14 +82,14 @@ function rangeForPeriod(period: PeriodKey, customFrom: string, customTo: string)
 
 function formatTime(iso: string): string {
   try {
-    const d = new Date(iso);
+    const d = new Date(parseOrderTimestampMs(iso));
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   } catch { return ''; }
 }
 
 function formatDateTime(iso: string): string {
   try {
-    const d = new Date(iso);
+    const d = new Date(parseOrderTimestampMs(iso));
     const date = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
     return `${date} ${formatTime(iso)}`;
   } catch { return iso; }
