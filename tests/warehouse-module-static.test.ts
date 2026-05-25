@@ -19,14 +19,20 @@ describe('Warehouse / Magazyn module contract', () => {
     expect(warehouseTab).toContain('const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;');
     expect(warehouseTab).toContain('const ensureWarehouseBackendReady = (): boolean => {');
     expect(warehouseTab).toContain('if (!ensureWarehouseBackendReady()) return null;');
+    expect(warehouseTab).toContain("tOr(t, 'warehouse.contractorRequired'");
     expect(warehouseTab.match(/disabled={backendActionDisabled}/g)).toHaveLength(2);
     expect(warehouseTab.match(/title={backendActionTitle}/g)).toHaveLength(2);
     expect(translations).toContain("'warehouse.backendChecking'");
     expect(translations).toContain("'warehouse.contractUnsupported'");
     expect(translations).toContain("'warehouse.documentUnsupported'");
+    expect(translations).toContain("'warehouse.contractorRequired'");
+    expect(translations).toContain("'warehouse.unitCost'");
   });
 
   it('routes document and inventory mutations to the backend instead of local stock writes', () => {
+    expect(warehouseTab).toContain('parseMoneyToGrosze(event.target.value)');
+    expect(warehouseTab).toContain('window.electronAPI.warehouse.documents.setLines(created.id, payload.lines || [])');
+    expect(warehouseTab).toContain('window.electronAPI.warehouse.inventory.setLines(created.id, buildInventoryLines())');
     expect(warehouseModule).toContain('IPC_CHANNELS.WAREHOUSE_CAPABILITIES');
     expect(apiClient).toContain("async getWarehouseCapabilities(token: string)");
     expect(apiClient).toContain("this.warehouseRequest(token, 'GET', '/capabilities')");

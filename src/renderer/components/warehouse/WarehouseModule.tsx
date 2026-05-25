@@ -76,6 +76,17 @@ function formatMoney(amountGrosze: number, currency: string): string {
   return `${((Number(amountGrosze) || 0) / 100).toFixed(2)} ${currency}`;
 }
 
+function formatMoneyInput(amountGrosze: number): string {
+  const value = (Number(amountGrosze) || 0) / 100;
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function parseMoneyToGrosze(value: string): number {
+  const amount = Number(value.replace(',', '.'));
+  return Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100)) : 0;
+}
+
 function formatQty(value: number): string {
   if (!Number.isFinite(value)) return '0';
   return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
@@ -166,8 +177,19 @@ const WarehouseLineRow = React.memo(function WarehouseLineRow({
         <div className="truncate font-mono">{line.barcode || '-'}</div>
         <div className="truncate font-mono text-slate-400">{line.sku || '-'}</div>
       </td>
-      <td className="border-b border-slate-100 px-3 py-3 text-sm tabular-nums text-slate-700">
-        {formatMoney(Math.abs(delta) * line.unitValueGrosze, currency)}
+      <td className="border-b border-slate-100 px-3 py-3">
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={formatMoneyInput(line.unitValueGrosze)}
+          onChange={(event) => onUpdate(line.id, { unitValueGrosze: parseMoneyToGrosze(event.target.value) })}
+          className="h-10 w-full rounded-md border border-slate-300 px-2 text-sm font-semibold tabular-nums text-slate-950 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          inputMode="decimal"
+        />
+        <div className="mt-1 truncate text-xs tabular-nums text-slate-500">
+          {formatMoney(Math.abs(delta) * line.unitValueGrosze, currency)}
+        </div>
       </td>
       <td className="border-b border-slate-100 px-2 py-3">
         <button
@@ -451,6 +473,10 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
       setError(tOr(t, 'warehouse.warehouseRequired', 'Warehouse is required.'));
       return false;
     }
+    if ((docType === 'PZ' || docType === 'WZ') && !contractorName.trim()) {
+      setError(tOr(t, 'warehouse.contractorRequired', 'Contractor/receiver is required for PZ/WZ.'));
+      return false;
+    }
     if (docType === 'MM') {
       if (!targetWarehouseCode.trim()) {
         setError(tOr(t, 'warehouse.targetRequired', 'Target warehouse is required for MM.'));
@@ -546,10 +572,21 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
     try {
       if (docType === 'INW') {
         let result;
+        let createdNumber: string | null = null;
         if (draftId && draftKind === 'inventory') {
           result = await window.electronAPI.warehouse.inventory.setLines(draftId, buildInventoryLines());
         } else {
-          result = await window.electronAPI.warehouse.inventory.create(buildInventoryPayload());
+          const createResult = await window.electronAPI.warehouse.inventory.create(buildInventoryPayload());
+          if (!createResult.success || !createResult.data?.id) {
+            handleBackendFailure(createResult);
+            return null;
+          }
+          const created = createResult.data as WarehouseInventoryCount;
+          createdNumber = created.number || null;
+          setDraftId(created.id);
+          setDraftNumber(createdNumber);
+          setDraftKind('inventory');
+          result = await window.electronAPI.warehouse.inventory.setLines(created.id, buildInventoryLines());
         }
         if (!result.success || !result.data?.id) {
           handleBackendFailure(result);
@@ -557,7 +594,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
         }
         const count = result.data as WarehouseInventoryCount;
         setDraftId(count.id);
-        setDraftNumber(count.number || null);
+        setDraftNumber(count.number || createdNumber || draftNumber || null);
         setDraftKind('inventory');
         setBackendStatus('ready');
         setBackendMessage(tOr(t, 'warehouse.draftSaved', 'Draft saved on backend.'));
@@ -566,6 +603,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
 
       const payload = buildDocumentPayload();
       let result;
+      let createdNumber: string | null = null;
       if (draftId && draftKind === 'document') {
         const updateResult = await window.electronAPI.warehouse.documents.update(draftId, {
           warehouseId: payload.warehouseId,
@@ -584,7 +622,17 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
         }
         result = await window.electronAPI.warehouse.documents.setLines(draftId, payload.lines || []);
       } else {
-        result = await window.electronAPI.warehouse.documents.create(payload);
+        const createResult = await window.electronAPI.warehouse.documents.create(payload);
+        if (!createResult.success || !createResult.data?.id) {
+          handleBackendFailure(createResult);
+          return null;
+        }
+        const created = createResult.data as WarehouseDocument;
+        createdNumber = created.number || null;
+        setDraftId(created.id);
+        setDraftNumber(createdNumber);
+        setDraftKind('document');
+        result = await window.electronAPI.warehouse.documents.setLines(created.id, payload.lines || []);
       }
 
       if (!result.success || !result.data?.id) {
@@ -594,7 +642,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
 
       const document = result.data as WarehouseDocument;
       setDraftId(document.id);
-      setDraftNumber(document.number || null);
+      setDraftNumber(document.number || createdNumber || draftNumber || null);
       setDraftKind('document');
       setBackendStatus('ready');
       setBackendMessage(tOr(t, 'warehouse.draftSaved', 'Draft saved on backend.'));
@@ -859,7 +907,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
                     <th className="w-[13%] border-b border-slate-200 px-3 py-3">{docType === 'INW' ? tOr(t, 'warehouse.counted', 'Counted') : tOr(t, 'warehouse.qty', 'Qty')}</th>
                     <th className="w-[12%] border-b border-slate-200 px-3 py-3">{tOr(t, 'warehouse.delta', 'Delta')}</th>
                     <th className="w-[16%] border-b border-slate-200 px-3 py-3">{tOr(t, 'warehouse.code', 'Code')}</th>
-                    <th className="w-[10%] border-b border-slate-200 px-3 py-3">{tOr(t, 'warehouse.value', 'Value')}</th>
+                    <th className="w-[10%] border-b border-slate-200 px-3 py-3">{tOr(t, 'warehouse.unitCost', 'Unit cost')}</th>
                     <th className="w-[52px] border-b border-slate-200 px-2 py-3"></th>
                   </tr>
                 </thead>
