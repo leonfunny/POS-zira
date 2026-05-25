@@ -209,6 +209,13 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const currency = tOr(t, 'pos.currency', 'zl');
   const removeLineLabel = tOr(t, 'warehouse.remove', 'Remove');
   const selectedType = DOC_TYPES.find((item) => item.type === docType) || DOC_TYPES[0];
+  const canUseWarehouseBackend = backendStatus === 'ready';
+  const backendActionTitle = !canUseWarehouseBackend
+    ? backendStatus === 'unknown'
+      ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
+      : tOr(t, 'warehouse.backendRequiredShort', 'Backend required')
+    : undefined;
+  const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;
 
   // O(1) lookup by id OR code — findWarehouse used to do .find() on every call,
   // and the module calls it 3-4 times per render (label, select fallback, summary).
@@ -410,6 +417,14 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
     return true;
   };
 
+  const ensureWarehouseBackendReady = (): boolean => {
+    if (canUseWarehouseBackend) return true;
+    const message = backendActionTitle || tOr(t, 'warehouse.backendRequiredShort', 'Backend required');
+    setError(message);
+    setBackendMessage(message);
+    return false;
+  };
+
   const buildDocumentLines = (): WarehouseDocumentLineInput[] => lines.map((line) => ({
     productVariantId: line.variantId,
     sku: line.sku,
@@ -474,6 +489,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
 
   const saveDraft = async (): Promise<{ id: string; kind: 'document' | 'inventory' } | null> => {
     if (!validateDocument()) return null;
+    if (!ensureWarehouseBackendReady()) return null;
     setSaving(true);
     setError(null);
     setBackendMessage(null);
@@ -701,7 +717,9 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
             <span>
               {backendMessage || (
                 backendStatus === 'ready'
-                  ? tOr(t, 'warehouse.backendReady', 'Backend warehouse contract is available. Posting will be done on the server.')
+                  ? tOr(t, 'warehouse.backendReady', 'Warehouse backend responded. Drafts and posting will be sent to the server.')
+                  : backendStatus === 'unknown'
+                    ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
                   : tOr(t, 'warehouse.backendRequired', 'Posting and official print require backend warehouse-document support. This draft does not change stock.')
               )}
             </span>
@@ -844,8 +862,9 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
             <button
               type="button"
               onClick={() => void saveDraft()}
-              disabled={saving || posting || lines.length === 0}
+              disabled={backendActionDisabled}
               className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md border border-brand-200 bg-white px-4 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={backendActionTitle}
             >
               <Save size={18} />
               {saving ? tOr(t, 'warehouse.saving', 'Saving...') : tOr(t, 'warehouse.saveDraft', 'Save draft')}
@@ -853,9 +872,9 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
             <button
               type="button"
               onClick={() => void postDocument()}
-              disabled={saving || posting || lines.length === 0}
+              disabled={backendActionDisabled}
               className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              title={backendStatus === 'unavailable' ? tOr(t, 'warehouse.backendRequiredShort', 'Backend required') : undefined}
+              title={backendActionTitle}
             >
               <FileText size={18} />
               {posting ? tOr(t, 'warehouse.posting', 'Posting...') : tOr(t, 'warehouse.postDocument', 'Post document')}
