@@ -80,6 +80,7 @@ import type {
   SalonCustomer,
   ServiceRecommendation,
   CustomerServiceHistory,
+  WarehouseCapabilities,
   WarehouseDocument,
   WarehouseDocumentCreateInput,
   WarehouseDocumentLineInput,
@@ -605,6 +606,7 @@ interface ElectronAPI {
 
   // Warehouse / Magazyn
   warehouse: {
+    capabilities: () => Promise<IpcResult<WarehouseCapabilities>>;
     warehouses: {
       list: () => Promise<IpcResult<{ warehouses: WarehouseInfo[] }>>;
     };

@@ -13,8 +13,9 @@ const translations = readSource('../src/renderer/i18n/translations.ts');
 
 describe('Warehouse / Magazyn module contract', () => {
   it('keeps stock-changing warehouse actions fail-closed behind backend availability', () => {
-    expect(warehouseTab).toContain('const DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY = false;');
-    expect(warehouseTab).toContain("const canUseWarehouseBackend = backendStatus === 'ready' && DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY;");
+    expect(warehouseTab).toContain('warehouseCapabilities');
+    expect(warehouseTab).toContain('supportedDocumentTypes');
+    expect(warehouseTab).toContain("const canUseWarehouseBackend = backendStatus === 'ready' && isSelectedTypeSupported;");
     expect(warehouseTab).toContain('const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;');
     expect(warehouseTab).toContain('const ensureWarehouseBackendReady = (): boolean => {');
     expect(warehouseTab).toContain('if (!ensureWarehouseBackendReady()) return null;');
@@ -22,9 +23,13 @@ describe('Warehouse / Magazyn module contract', () => {
     expect(warehouseTab.match(/title={backendActionTitle}/g)).toHaveLength(2);
     expect(translations).toContain("'warehouse.backendChecking'");
     expect(translations).toContain("'warehouse.contractUnsupported'");
+    expect(translations).toContain("'warehouse.documentUnsupported'");
   });
 
   it('routes document and inventory mutations to the backend instead of local stock writes', () => {
+    expect(warehouseModule).toContain('IPC_CHANNELS.WAREHOUSE_CAPABILITIES');
+    expect(apiClient).toContain("async getWarehouseCapabilities(token: string)");
+    expect(apiClient).toContain("this.warehouseRequest(token, 'GET', '/capabilities')");
     expect(warehouseModule).toContain('Official posting, numbering, stock movements');
     expect(warehouseModule).toContain('apiClient.createWarehouseDocument(token, payload)');
     expect(warehouseModule).toContain('apiClient.postWarehouseDocument(token, id)');

@@ -18,6 +18,7 @@ import {
   ServerPrinterMapping,
   TelegramLoginTokenResponse,
   TelegramLoginTokenStatus,
+  WarehouseCapabilities,
   WarehouseDocument,
   WarehouseDocumentCreateInput,
   WarehouseDocumentLineInput,
@@ -481,6 +482,12 @@ export class ApiClient {
     if (!data) return null;
     const warehouses = Array.isArray(data) ? data : data.warehouses ?? data.items ?? data.data ?? [];
     return { warehouses };
+  }
+
+  async getWarehouseCapabilities(token: string): Promise<WarehouseCapabilities | null> {
+    const data: any = await this.warehouseRequest(token, 'GET', '/capabilities');
+    if (!data) return null;
+    return (data.capabilities ?? data) as WarehouseCapabilities;
   }
 
   async listWarehouseDocuments(

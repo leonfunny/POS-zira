@@ -553,6 +553,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Warehouse / Magazyn
   warehouse: {
+    capabilities: () => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_CAPABILITIES),
     warehouses: {
       list: () => ipcRenderer.invoke(IPC_CHANNELS.WAREHOUSE_WAREHOUSES_LIST),
     },

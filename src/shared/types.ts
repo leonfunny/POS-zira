@@ -981,6 +981,7 @@ export const IPC_CHANNELS = {
   POS_ORDER_SYNCED: 'pos:order-synced',
 
   // Warehouse / Magazyn
+  WAREHOUSE_CAPABILITIES: 'warehouse:capabilities',
   WAREHOUSE_WAREHOUSES_LIST: 'warehouse:warehouses:list',
   WAREHOUSE_DOCUMENTS_LIST: 'warehouse:documents:list',
   WAREHOUSE_DOCUMENTS_GET: 'warehouse:documents:get',
@@ -2149,6 +2150,25 @@ export interface InvoicePrintOptions {
 
 export type WarehouseDocumentType = 'PZ' | 'WZ' | 'RW' | 'PW' | 'MM' | 'INW';
 export type WarehouseDocumentStatus = 'DRAFT' | 'POSTED' | 'CANCELLED';
+export type WarehouseStockDocumentType = Exclude<WarehouseDocumentType, 'INW'>;
+
+export interface WarehouseCapabilities {
+  version: number;
+  canListWarehouses: boolean;
+  canCreateDocument: boolean;
+  canUpdateDocument: boolean;
+  canSetDocumentLines: boolean;
+  canPostDocument: boolean;
+  canCancelDocument: boolean;
+  canPrintDocument: boolean;
+  canCreateInventoryCount: boolean;
+  canSetInventoryLines: boolean;
+  canReconcileInventory: boolean;
+  canPostInventory: boolean;
+  canPrintInventory: boolean;
+  supportedDocumentTypes: WarehouseStockDocumentType[];
+  unsupportedDocumentTypes: WarehouseStockDocumentType[];
+}
 
 export interface WarehouseInfo {
   id: string;

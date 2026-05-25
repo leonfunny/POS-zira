@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type {
+  WarehouseCapabilities,
   WarehouseDocument,
   WarehouseDocumentCreateInput,
   WarehouseDocumentLineInput,
@@ -60,10 +61,6 @@ const DOC_TYPES: Array<{
   { type: 'MM', label: 'MM', tone: 'violet', icon: <ArrowRightLeft size={18} /> },
   { type: 'INW', label: 'Spis', tone: 'slate', icon: <ClipboardCheck size={18} /> },
 ];
-
-// Live backend currently exposes accounting-specific PZ/WZ/MM routes, not the
-// generic warehouse document API this desktop screen was built against.
-const DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY = false;
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -196,6 +193,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const [error, setError] = useState<string | null>(null);
   const [backendMessage, setBackendMessage] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'ready' | 'unavailable'>('unknown');
+  const [warehouseCapabilities, setWarehouseCapabilities] = useState<WarehouseCapabilities | null>(null);
   const [barcode, setBarcode] = useState('');
   const [scanQuantity, setScanQuantity] = useState(1);
   const [warehouseCode, setWarehouseCode] = useState('MAIN');
@@ -213,13 +211,32 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const currency = tOr(t, 'pos.currency', 'zl');
   const removeLineLabel = tOr(t, 'warehouse.remove', 'Remove');
   const selectedType = DOC_TYPES.find((item) => item.type === docType) || DOC_TYPES[0];
-  const canUseWarehouseBackend = backendStatus === 'ready' && DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY;
+  const isDocTypeAvailable = useCallback((type: WarehouseDocType): boolean => {
+    if (!warehouseCapabilities) return true;
+    if (type === 'INW') return warehouseCapabilities.canCreateInventoryCount;
+    return warehouseCapabilities.supportedDocumentTypes?.includes(type) === true;
+  }, [warehouseCapabilities]);
+  const isSelectedTypeSupported = useMemo(() => {
+    if (!warehouseCapabilities) return false;
+    if (docType === 'INW') {
+      return warehouseCapabilities.canCreateInventoryCount
+        && warehouseCapabilities.canSetInventoryLines
+        && warehouseCapabilities.canPostInventory;
+    }
+    return warehouseCapabilities.supportedDocumentTypes?.includes(docType)
+      && warehouseCapabilities.canCreateDocument
+      && warehouseCapabilities.canSetDocumentLines
+      && warehouseCapabilities.canPostDocument;
+  }, [docType, warehouseCapabilities]);
+  const canUseWarehouseBackend = backendStatus === 'ready' && isSelectedTypeSupported;
   const backendActionTitle = !canUseWarehouseBackend
     ? backendStatus === 'unknown'
       ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
       : backendStatus === 'ready'
-        ? tOr(t, 'warehouse.contractUnsupportedShort', 'Document contract pending')
-      : tOr(t, 'warehouse.backendRequiredShort', 'Backend required')
+        ? warehouseCapabilities
+          ? tOr(t, 'warehouse.documentUnsupportedShort', 'Document type unsupported')
+          : tOr(t, 'warehouse.contractUnsupportedShort', 'Document contract pending')
+        : tOr(t, 'warehouse.backendRequiredShort', 'Backend required')
     : undefined;
   const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;
 
@@ -265,18 +282,20 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   };
 
   const loadWarehouses = async () => {
-    const api = window.electronAPI?.warehouse?.warehouses;
-    if (!api?.list) {
+    const warehousesApi = window.electronAPI?.warehouse?.warehouses;
+    if (!warehousesApi?.list) {
       setBackendStatus('unavailable');
       setBackendMessage(tOr(t, 'warehouse.backendUnavailable', 'Warehouse backend is not available in this build.'));
+      setWarehouseCapabilities(null);
       return;
     }
 
     try {
-      const result = await api.list();
+      const result = await warehousesApi.list();
       if (!result.success || !result.data?.warehouses?.length) {
         setBackendStatus('unavailable');
         setBackendMessage(result.error || tOr(t, 'warehouse.backendUnavailable', 'Warehouse backend is not available yet.'));
+        setWarehouseCapabilities(null);
         return;
       }
 
@@ -289,10 +308,28 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
       if (preferred && (warehouseCode === 'MAIN' || !warehouseCode.trim())) {
         setWarehouseCode(preferred.id || preferred.code);
       }
+
+      const capabilitiesApi = window.electronAPI?.warehouse?.capabilities;
+      if (!capabilitiesApi) {
+        setWarehouseCapabilities(null);
+        setBackendMessage(tOr(t, 'warehouse.contractUnsupported', 'Warehouse list is available, but desktop document posting is paused until the app supports the live accounting routes.'));
+        return;
+      }
+
+      const capabilitiesResult = await capabilitiesApi();
+      if (!capabilitiesResult.success || !capabilitiesResult.data) {
+        setWarehouseCapabilities(null);
+        setBackendMessage(tOr(t, 'warehouse.contractUnsupported', 'Warehouse list is available, but desktop document posting is paused until the app supports the live accounting routes.'));
+        return;
+      }
+
+      setWarehouseCapabilities(capabilitiesResult.data);
+      setBackendMessage(null);
     } catch (err: any) {
       rlog.warn('[WarehouseModule] failed to load warehouses', err?.message || err);
       setBackendStatus('unavailable');
       setBackendMessage(err?.message || tOr(t, 'warehouse.backendUnavailable', 'Warehouse backend is not available yet.'));
+      setWarehouseCapabilities(null);
     }
   };
 
@@ -306,6 +343,12 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   useEffect(() => {
     scanRef.current?.focus();
   }, [docType]);
+
+  useEffect(() => {
+    if (!warehouseCapabilities || isDocTypeAvailable(docType)) return;
+    const fallback = DOC_TYPES.find((item) => isDocTypeAvailable(item.type));
+    if (fallback) setDocType(fallback.type);
+  }, [docType, isDocTypeAvailable, warehouseCapabilities]);
 
   useEffect(() => {
     setDraftId(null);
@@ -618,16 +661,19 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
           <div className="flex flex-wrap gap-2">
             {DOC_TYPES.map((item) => {
               const active = item.type === docType;
+              const available = isDocTypeAvailable(item.type);
               return (
                 <button
                   key={item.type}
                   type="button"
-                  onClick={() => setDocType(item.type)}
+                  onClick={() => { if (available) setDocType(item.type); }}
+                  disabled={!available}
+                  title={!available ? tOr(t, 'warehouse.documentUnsupportedShort', 'Document type unsupported') : undefined}
                   className={`inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition ${
                     active
                       ? 'border-brand-600 bg-brand-50 text-brand-700'
                       : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   {item.icon}
                   {item.label}
@@ -714,7 +760,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
         </div>
 
         <div className={`rounded-md border p-3 text-sm ${
-          backendStatus === 'ready'
+          canUseWarehouseBackend
             ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
             : 'border-amber-200 bg-amber-50 text-amber-800'
         }`}>
@@ -723,9 +769,11 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
             <span>
               {backendMessage || (
                 backendStatus === 'ready'
-                  ? DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY
+                  ? warehouseCapabilities && isSelectedTypeSupported
                     ? tOr(t, 'warehouse.backendReady', 'Warehouse backend responded. Drafts and posting will be sent to the server.')
-                    : tOr(t, 'warehouse.contractUnsupported', 'Warehouse list is available, but desktop document posting is paused until the app supports the live accounting routes.')
+                    : warehouseCapabilities
+                      ? tOr(t, 'warehouse.documentUnsupported', 'This document type is not enabled by the warehouse backend.')
+                      : tOr(t, 'warehouse.contractUnsupported', 'Warehouse list is available, but desktop document posting is paused until the app supports the live accounting routes.')
                   : backendStatus === 'unknown'
                     ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
                   : tOr(t, 'warehouse.backendRequired', 'Posting and official print require backend warehouse-document support. This draft does not change stock.')

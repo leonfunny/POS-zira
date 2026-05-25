@@ -16,6 +16,7 @@ import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import logger from '../logger';
 import {
   IPC_CHANNELS,
+  type WarehouseCapabilities,
   type WarehouseDocument,
   type WarehouseDocumentCreateInput,
   type WarehouseDocumentLineInput,
@@ -49,6 +50,12 @@ export class WarehouseModule extends BaseModule {
   }
 
   registerIpcHandlers(): void {
+    ipcMain.handle(IPC_CHANNELS.WAREHOUSE_CAPABILITIES, async () =>
+      this.withAuth<WarehouseCapabilities>('get warehouse capabilities', (token) =>
+        apiClient.getWarehouseCapabilities(token),
+      ),
+    );
+
     ipcMain.handle(IPC_CHANNELS.WAREHOUSE_WAREHOUSES_LIST, async () =>
       this.withAuth('list warehouses', (token) => apiClient.listWarehouses(token)),
     );
