@@ -151,9 +151,14 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(printer.openDrawer).not.toHaveBeenCalled();
   });
 
-  it('printReceiptAndOpenDrawer opens the local drawer when the shared route handled the receipt', async () => {
+  it('printReceiptAndOpenDrawer asks the shared POS receipt route to open the remote drawer', async () => {
     const printer = makeFakePrinter({});
-    const sharedReceiptPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'printer-remote-1' }));
+    const sharedReceiptPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: true,
+      printerId: 'printer-remote-1',
+      drawerOpenRequested: true,
+    }));
     const ctl = buildController(printer, sharedReceiptPrinter);
 
     const result = await ctl.printReceiptAndOpenDrawer('order-1');
@@ -161,8 +166,25 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(result).toEqual({ receiptPrinted: true, drawerOpened: true, error: undefined });
     expect(sharedReceiptPrinter).toHaveBeenCalledWith(
       expect.objectContaining({ orderId: 'order-1', orderNumber: 'POS-20260505-0001' }),
-      expect.objectContaining({ referenceType: 'POS_RECEIPT', referenceId: 'order-1', source: 'pos' }),
+      expect.objectContaining({ referenceType: 'POS_RECEIPT', referenceId: 'order-1', source: 'pos', openDrawer: true }),
     );
+    expect(printer.openDrawer).not.toHaveBeenCalled();
+    expect(printer.printReceipt).not.toHaveBeenCalled();
+  });
+
+  it('printReceiptAndOpenDrawer keeps the local drawer fallback when backend lacks remote drawer support', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: true,
+      printerId: 'printer-remote-1',
+      drawerOpenRequested: false,
+    }));
+    const ctl = buildController(printer, sharedReceiptPrinter);
+
+    const result = await ctl.printReceiptAndOpenDrawer('order-1');
+
+    expect(result).toEqual({ receiptPrinted: true, drawerOpened: true, error: undefined });
     expect(printer.openDrawer).toHaveBeenCalledTimes(1);
     expect(printer.printReceipt).not.toHaveBeenCalled();
   });

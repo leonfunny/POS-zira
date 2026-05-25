@@ -17,6 +17,7 @@ export interface SharedReceiptPrintMeta {
   referenceType?: string;
   referenceId?: string;
   source?: string;
+  openDrawer?: boolean;
 }
 
 export interface SharedReceiptPrintResult {
@@ -25,7 +26,16 @@ export interface SharedReceiptPrintResult {
   printerId?: string;
   jobId?: string;
   sent?: boolean;
+  drawerOpenRequested?: boolean;
   error?: string;
+}
+
+function isUnsupportedDrawerIntentError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return (
+    /openDrawer|cashDrawer|drawer/i.test(message) &&
+    /\b400\b|property .* should not exist|unexpected property|unknown property|whitelist|not allowed|validation/i.test(message)
+  );
 }
 
 export async function submitSharedReceiptPrint(
@@ -57,18 +67,30 @@ export async function submitSharedReceiptPrint(
   if (!printerId) return { handled: false, printed: false };
 
   try {
-    const result = await client.createPrintJob(token, {
+    const body = {
       jobType: PrintJobType.RECEIPT,
       printerType: PrinterType.RECEIPT,
       printerId,
       payload: receiptData,
       referenceType: meta.referenceType || 'RECEIPT',
       referenceId: meta.referenceId || receiptData.orderId || receiptData.orderNumber || null,
-    });
+      ...(meta.openDrawer ? { openDrawer: true } : {}),
+    };
+    let drawerOpenRequested = !!meta.openDrawer;
+    let result;
+    try {
+      result = await client.createPrintJob(token, body);
+    } catch (err) {
+      if (!meta.openDrawer || !isUnsupportedDrawerIntentError(err)) throw err;
+      logger.warn('[SharedReceiptPrinter] Backend does not accept openDrawer yet; retrying receipt job without drawer intent');
+      drawerOpenRequested = false;
+      const { openDrawer: _unsupported, ...retryBody } = body;
+      result = await client.createPrintJob(token, retryBody);
+    }
     const jobId = (result.jobId || result.id) as string | undefined;
     const sent = result.sent !== false;
     logger.info(`[SharedReceiptPrinter] ${meta.source || 'receipt'} routed to shared printer ${printerId}${jobId ? ` as job ${jobId}` : ''}`);
-    return { handled: true, printed: sent, sent, printerId, jobId };
+    return { handled: true, printed: sent, sent, printerId, jobId, drawerOpenRequested };
   } catch (err: any) {
     logger.error(`[SharedReceiptPrinter] Shared receipt print failed for printer ${printerId}: ${err?.message || err}`);
     return { handled: true, printed: false, printerId, error: err?.message || String(err) };

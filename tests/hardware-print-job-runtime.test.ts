@@ -52,6 +52,7 @@ vi.mock('../src/main/hardware/elzab/elzab-driver', () => ({
 vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
   class ThermalDriver {
     printReceipt = vi.fn();
+    openDrawer = vi.fn();
     constructor() {
       mock.thermalInstances.push(this);
     }
@@ -105,6 +106,7 @@ describe('HardwareModule print job runtime guards', () => {
       protocol: 'WINDOWS',
       is_enabled: 1,
       windows_printer_name: 'Xprinter XP-80T',
+      supports_cash_drawer: 1,
     };
     const config: PrinterConfig = {
       enabled: true,
@@ -113,6 +115,7 @@ describe('HardwareModule print job runtime guards', () => {
       windowsPrinter: 'Xprinter XP-80T',
       paperWidth: 80,
       charsPerLine: 48,
+      supportsCashDrawer: true,
     };
 
     mock.getEnabled.mockReturnValue([row]);
@@ -153,6 +156,43 @@ describe('HardwareModule print job runtime guards', () => {
     expect(mock.thermalInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'PRINTING');
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'COMPLETED');
+    expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
+  });
+
+  it('opens the cash drawer after a successful routed POS receipt when requested', async () => {
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    container.getOptional.mockReturnValue(socket);
+    const receipt: ReceiptData = {
+      orderId: 'order-1',
+      orderNumber: 'POS-1',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-cash',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      referenceType: 'POS_RECEIPT',
+      payload: receipt,
+      openDrawer: true,
+    });
+
+    expect(mock.thermalInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
+    expect(mock.thermalInstances[0].openDrawer).toHaveBeenCalledTimes(1);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-cash', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
   });
 });

@@ -86,6 +86,66 @@ describe('submitSharedReceiptPrint', () => {
     );
   });
 
+  it('adds openDrawer only when the caller explicitly requests a remote drawer pulse', async () => {
+    listPrinterAssignments.mockResolvedValue({
+      assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
+    });
+    createPrintJob.mockResolvedValue({ jobId: 'job-1', sent: true });
+
+    const result = await submitSharedReceiptPrint(receiptData, {
+      referenceType: 'POS_RECEIPT',
+      referenceId: 'order-1',
+      source: 'pos',
+      openDrawer: true,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      drawerOpenRequested: true,
+    });
+    expect(createPrintJob).toHaveBeenCalledWith(
+      'jwt-token',
+      expect.objectContaining({
+        referenceType: 'POS_RECEIPT',
+        openDrawer: true,
+      }),
+    );
+  });
+
+  it('retries without openDrawer when the backend has not deployed the drawer field yet', async () => {
+    listPrinterAssignments.mockResolvedValue({
+      assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
+    });
+    createPrintJob
+      .mockRejectedValueOnce(new Error('HTTP 400: property openDrawer should not exist'))
+      .mockResolvedValueOnce({ jobId: 'job-1', sent: true });
+
+    const result = await submitSharedReceiptPrint(receiptData, {
+      referenceType: 'POS_RECEIPT',
+      referenceId: 'order-1',
+      source: 'pos',
+      openDrawer: true,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      drawerOpenRequested: false,
+    });
+    expect(createPrintJob).toHaveBeenCalledTimes(2);
+    expect(createPrintJob).toHaveBeenNthCalledWith(
+      1,
+      'jwt-token',
+      expect.objectContaining({ openDrawer: true }),
+    );
+    expect(createPrintJob).toHaveBeenNthCalledWith(
+      2,
+      'jwt-token',
+      expect.not.objectContaining({ openDrawer: expect.anything() }),
+    );
+  });
+
   it('falls back to local printing when no shared receipt assignment exists', async () => {
     listPrinterAssignments.mockResolvedValue({ assignments: [] });
     const result = await submitSharedReceiptPrint(receiptData);

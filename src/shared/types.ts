@@ -580,6 +580,7 @@ export interface PrintJobEvent {
   payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData;
   referenceType: string | null;
   referenceId: string | null;
+  openDrawer?: boolean;
   createdAt: string;
 }
 
@@ -590,6 +591,7 @@ export interface CreatePrintJobRequest {
   payload: PrintJobEvent['payload'];
   referenceType?: string | null;
   referenceId?: string | null;
+  openDrawer?: boolean;
 }
 
 export interface CreatePrintJobResponse {

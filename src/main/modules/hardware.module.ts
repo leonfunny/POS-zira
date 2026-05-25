@@ -2041,6 +2041,19 @@ export class HardwareModule extends BaseModule {
           } else {
             await targetPrinter.printReceipt(receiptPayload);
           }
+          const openDrawerRequested = !fiscal && printerType === PrinterType.RECEIPT && Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
+          if (openDrawerRequested) {
+            if (printerConfig?.supportsCashDrawer) {
+              try {
+                await targetPrinter.openDrawer();
+                logger.info(`[HardwareModule] Job ${job.jobId}: cash drawer opened after receipt print`);
+              } catch (drawerError: any) {
+                logger.error(`[HardwareModule] Job ${job.jobId}: receipt printed but cash drawer open failed: ${drawerError?.message || drawerError}`);
+              }
+            } else {
+              logger.warn(`[HardwareModule] Job ${job.jobId}: openDrawer requested but printer does not advertise cash drawer support`);
+            }
+          }
         }
 
         socket?.sendJobStatus(job.jobId, 'COMPLETED');

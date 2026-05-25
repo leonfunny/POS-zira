@@ -33,8 +33,8 @@ type PrinterDriver = {
 type GetPrinter = (type: string) => PrinterDriver | null;
 type SharedReceiptPrinter = (
   data: ReceiptData,
-  meta: { referenceType?: string; referenceId?: string; source?: string },
-) => Promise<{ handled: boolean; printed: boolean; printerId?: string; error?: string }>;
+  meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
+) => Promise<{ handled: boolean; printed: boolean; printerId?: string; drawerOpenRequested?: boolean; error?: string }>;
 
 type PrintReceiptOptions = {
   throwOnFailure?: boolean;
@@ -91,10 +91,10 @@ export class PaymentController {
 
   private async routeSharedReceipt(
     receiptData: ReceiptData,
-    meta: { referenceType?: string; referenceId?: string; source?: string },
+    meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
     successMessage: string,
     failureMessage: string,
-  ): Promise<{ handled: boolean; printed: boolean; printerId?: string; error?: string } | null> {
+  ): Promise<{ handled: boolean; printed: boolean; printerId?: string; drawerOpenRequested?: boolean; error?: string } | null> {
     if (!this.sharedReceiptPrinter) return null;
 
     try {
@@ -251,12 +251,14 @@ export class PaymentController {
 
     const shared = await this.routeSharedReceipt(
       receiptData,
-      { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos' },
+      { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos', openDrawer: true },
       successMessage,
       failureMessage,
     );
     if (shared) {
-      const drawerOpened = await this.openCashDrawer();
+      const drawerOpened = shared.printed
+        ? (shared.drawerOpenRequested ? true : await this.openCashDrawer())
+        : false;
       return {
         receiptPrinted: shared.printed,
         drawerOpened,
