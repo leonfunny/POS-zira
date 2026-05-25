@@ -11,6 +11,11 @@ const warehouseModule = readSource('../src/main/modules/warehouse.module.ts');
 const apiClient = readSource('../src/main/network/api-client.ts');
 const translations = readSource('../src/renderer/i18n/translations.ts');
 
+function translationBlock(lang: string): string {
+  const match = translations.match(new RegExp(`\\n  ${lang}: \\{([\\s\\S]*?)(?=\\n  [a-z]{2}: \\{|\\n\\};)`));
+  return match?.[1] || '';
+}
+
 describe('Warehouse / Magazyn module contract', () => {
   it('keeps stock-changing warehouse actions fail-closed behind backend availability', () => {
     expect(warehouseTab).toContain('warehouseCapabilities');
@@ -27,6 +32,9 @@ describe('Warehouse / Magazyn module contract', () => {
     expect(translations).toContain("'warehouse.documentUnsupported'");
     expect(translations).toContain("'warehouse.contractorRequired'");
     expect(translations).toContain("'warehouse.unitCost'");
+    expect(translations).toContain("'warehouse.sourceDocPlaceholder'");
+    expect(translations).toContain("'warehouse.docType.INW'");
+    expect(translations).toContain("'warehouse.effect.PZ'");
   });
 
   it('routes document and inventory mutations to the backend instead of local stock writes', () => {
@@ -45,5 +53,27 @@ describe('Warehouse / Magazyn module contract', () => {
     expect(warehouseModule).not.toContain('productRepo');
     expect(warehouseModule).not.toContain('UPDATE product_variants');
     expect(warehouseModule).not.toContain('in_stock =');
+  });
+
+  it('keeps warehouse labels localized instead of hard-coded in Polish or English', () => {
+    expect(warehouseTab).toContain("labelKey: 'warehouse.docType.INW'");
+    expect(warehouseTab).toContain("effectKey: 'warehouse.effect.PZ'");
+    expect(warehouseTab).not.toContain("label: 'Spis'");
+    expect(warehouseTab).not.toContain('function documentEffectLabel');
+    for (const lang of ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl']) {
+      const block = translationBlock(lang);
+      for (const key of [
+        'warehouse.title',
+        'warehouse.subtitle',
+        'warehouse.sourceDocPlaceholder',
+        'warehouse.docType.INW',
+        'warehouse.effect.PZ',
+        'warehouse.effect.WZ',
+        'warehouse.effect.MM',
+        'warehouse.contractorRequired',
+      ]) {
+        expect(block, `${lang} missing ${key}`).toContain(`'${key}'`);
+      }
+    }
   });
 });

@@ -50,16 +50,17 @@ interface DraftLine {
 
 const DOC_TYPES: Array<{
   type: WarehouseDocType;
-  label: string;
+  labelKey: string;
+  effectKey: string;
   tone: string;
   icon: React.ReactNode;
 }> = [
-  { type: 'PZ', label: 'PZ', tone: 'emerald', icon: <ArrowDownLeft size={18} /> },
-  { type: 'WZ', label: 'WZ', tone: 'rose', icon: <ArrowUpRight size={18} /> },
-  { type: 'RW', label: 'RW', tone: 'amber', icon: <ArrowUpRight size={18} /> },
-  { type: 'PW', label: 'PW', tone: 'sky', icon: <ArrowDownLeft size={18} /> },
-  { type: 'MM', label: 'MM', tone: 'violet', icon: <ArrowRightLeft size={18} /> },
-  { type: 'INW', label: 'Spis', tone: 'slate', icon: <ClipboardCheck size={18} /> },
+  { type: 'PZ', labelKey: 'warehouse.docType.PZ', effectKey: 'warehouse.effect.PZ', tone: 'emerald', icon: <ArrowDownLeft size={18} /> },
+  { type: 'WZ', labelKey: 'warehouse.docType.WZ', effectKey: 'warehouse.effect.WZ', tone: 'rose', icon: <ArrowUpRight size={18} /> },
+  { type: 'RW', labelKey: 'warehouse.docType.RW', effectKey: 'warehouse.effect.RW', tone: 'amber', icon: <ArrowUpRight size={18} /> },
+  { type: 'PW', labelKey: 'warehouse.docType.PW', effectKey: 'warehouse.effect.PW', tone: 'sky', icon: <ArrowDownLeft size={18} /> },
+  { type: 'MM', labelKey: 'warehouse.docType.MM', effectKey: 'warehouse.effect.MM', tone: 'violet', icon: <ArrowRightLeft size={18} /> },
+  { type: 'INW', labelKey: 'warehouse.docType.INW', effectKey: 'warehouse.effect.INW', tone: 'slate', icon: <ClipboardCheck size={18} /> },
 ];
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -113,15 +114,6 @@ function lineDelta(type: WarehouseDocType, line: DraftLine): number {
   if (type === 'WZ' || type === 'RW') return -line.quantity;
   if (type === 'MM') return line.quantity;
   return line.countedQuantity - line.bookStock;
-}
-
-function documentEffectLabel(type: WarehouseDocType): string {
-  if (type === 'PZ') return '+ stock';
-  if (type === 'PW') return '+ internal';
-  if (type === 'WZ') return '- external';
-  if (type === 'RW') return '- internal';
-  if (type === 'MM') return 'transfer';
-  return 'count';
 }
 
 interface WarehouseLineRowProps {
@@ -233,6 +225,8 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const currency = tOr(t, 'pos.currency', 'zl');
   const removeLineLabel = tOr(t, 'warehouse.remove', 'Remove');
   const selectedType = DOC_TYPES.find((item) => item.type === docType) || DOC_TYPES[0];
+  const selectedTypeLabel = tOr(t, selectedType.labelKey, selectedType.type);
+  const selectedEffectLabel = tOr(t, selectedType.effectKey, selectedType.type);
   const isDocTypeAvailable = useCallback((type: WarehouseDocType): boolean => {
     if (!warehouseCapabilities) return true;
     if (type === 'INW') return warehouseCapabilities.canCreateInventoryCount;
@@ -724,7 +718,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
                   } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   {item.icon}
-                  {item.label}
+                  {tOr(t, item.labelKey, item.type)}
                 </button>
               );
             })}
@@ -735,7 +729,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">{tOr(t, 'warehouse.type', 'Type')}</span>
               <div className="flex h-11 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-900">
                 {selectedType.icon}
-                {docType} · {documentEffectLabel(docType)}
+                {selectedTypeLabel} · {selectedEffectLabel}
               </div>
             </label>
             <label className="block">
@@ -792,7 +786,7 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
                   value={sourceDocumentNo}
                   onChange={(event) => setSourceDocumentNo(event.target.value)}
                   className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  placeholder="FV / WZ / note"
+                  placeholder={tOr(t, 'warehouse.sourceDocPlaceholder', 'Invoice / WZ / note')}
                 />
               </label>
             )}
