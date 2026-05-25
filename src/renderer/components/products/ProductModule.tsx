@@ -31,6 +31,31 @@ function hasAnyAdminCapability(capabilities: ProductAdminCapabilities | null): b
     || capabilities.canUpdateCategory;
 }
 
+function adminCapabilitySummary(t: (key: string) => string, capabilities: ProductAdminCapabilities | null): string {
+  if (!capabilities) return '';
+  const enabled: string[] = [];
+  const disabled: string[] = [];
+
+  if (capabilities.canCreateProduct) enabled.push(tOr(t, 'products.admin.capability.createProduct', 'create products'));
+  else disabled.push(tOr(t, 'products.admin.capability.createProduct', 'create products'));
+
+  if (capabilities.canUpdateProduct) enabled.push(tOr(t, 'products.admin.capability.updateProduct', 'edit products'));
+  if (capabilities.canDeactivateProduct) enabled.push(tOr(t, 'products.admin.capability.deactivateProduct', 'stop selling'));
+
+  if (capabilities.canAdjustStock) enabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
+  else disabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
+
+  if (capabilities.canCreateCategory || capabilities.canUpdateCategory) {
+    enabled.push(tOr(t, 'products.admin.capability.categories', 'categories'));
+  }
+
+  if (enabled.length === 0) return '';
+  const enabledText = `${tOr(t, 'products.admin.enabled', 'Enabled')}: ${enabled.join(', ')}`;
+  return disabled.length > 0
+    ? `${enabledText}. ${tOr(t, 'products.admin.disabled', 'Disabled')}: ${disabled.join(', ')}`
+    : enabledText;
+}
+
 export default function ProductModule({ language }: ProductModuleProps) {
   const { t } = useTranslation(language);
   const {
@@ -62,11 +87,13 @@ export default function ProductModule({ language }: ProductModuleProps) {
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
+  const catalogProductCount = allProducts.length - draftCount;
   const noPriceCount = useMemo(() => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length, [allProducts]);
   const visibleProducts = useMemo(() => products.slice(0, PRODUCT_TABLE_RENDER_LIMIT), [products]);
   const productRowsTruncated = visibleProducts.length < products.length;
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
+  const adminSummary = adminCapabilitySummary(t, adminCapabilities);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -130,14 +157,17 @@ export default function ProductModule({ language }: ProductModuleProps) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs text-slate-600">
-          <span className="rounded-md border border-slate-200 bg-white px-3 py-2">
-            {products.length} / {allProducts.length}
+          <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
+            <span className="font-semibold text-slate-950">{products.length}</span> {tOr(t, 'products.count.visible', 'visible')}
+          </span>
+          <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
+            <span className="font-semibold text-slate-950">{catalogProductCount}</span> {tOr(t, 'products.count.catalog', 'POS products')}
           </span>
           <span className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-violet-700">
-            {draftCount} {tOr(t, 'products.filters.drafts', 'Drafts')}
+            <span className="font-semibold">{draftCount}</span> {tOr(t, 'products.filters.drafts', 'Drafts')}
           </span>
           <span className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
-            {noPriceCount} {tOr(t, 'products.filters.noPrice', 'No price')}
+            <span className="font-semibold">{noPriceCount}</span> {tOr(t, 'products.filters.noPrice', 'No price')}
           </span>
         </div>
       </header>
@@ -197,7 +227,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
         {adminCapabilitiesLoading
           ? tOr(t, 'products.admin.checking', 'Checking product admin backend...')
           : adminBackendReady
-            ? tOr(t, 'products.admin.ready', 'Product admin backend is available')
+            ? adminSummary || tOr(t, 'products.admin.ready', 'Product admin backend is available')
             : `${tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}${adminCapabilityError ? `: ${adminCapabilityError}` : ''}`}
       </div>
 

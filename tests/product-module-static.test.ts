@@ -148,6 +148,23 @@ describe('Product module implementation contract', () => {
     expect(useProducts).toContain('onDraftProductsSynced');
   });
 
+  it('labels mixed catalog and draft counts explicitly', () => {
+    expect(moduleSource).toContain('const catalogProductCount = allProducts.length - draftCount;');
+    expect(moduleSource).toContain("products.count.visible");
+    expect(moduleSource).toContain("products.count.catalog");
+    expect(moduleSource).toContain('{catalogProductCount}');
+    expect(moduleSource).toContain('{draftCount}');
+  });
+
+  it('summarizes partial product-admin capabilities instead of only saying available', () => {
+    expect(moduleSource).toContain('function adminCapabilitySummary');
+    expect(moduleSource).toContain('products.admin.enabled');
+    expect(moduleSource).toContain('products.admin.disabled');
+    expect(moduleSource).toContain('products.admin.capability.createProduct');
+    expect(moduleSource).toContain('products.admin.capability.adjustStock');
+    expect(moduleSource).toContain('adminSummary || tOr(t,');
+  });
+
   it('uses existing barcode draft import flow instead of local-only product creation', () => {
     expect(addFlow).toContain('pos.products.getByBarcode');
     expect(addFlow).toContain('pos.draftProducts.getByBarcode');
