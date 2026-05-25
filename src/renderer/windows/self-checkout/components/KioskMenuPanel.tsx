@@ -44,10 +44,6 @@ export default function KioskMenuPanel({
   onCallStaff,
 }: KioskMenuPanelProps) {
   const t = getScStrings(lang);
-  const catalogLoadingText =
-    lang === 'pl' ? 'Ładowanie produktów...' :
-    lang === 'vi' ? 'Đang tải sản phẩm...' :
-    'Loading products...';
 
   return (
     <div className="sc-surface sc-category-panel flex min-h-0 flex-1 flex-col overflow-hidden p-4">
@@ -69,7 +65,7 @@ export default function KioskMenuPanel({
           <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-8 text-center">
             <Loader2 size={58} className="mb-4 animate-spin text-[var(--sc-primary-deep)]" />
             <div className="text-xl font-black text-[var(--sc-ink)]">
-              {catalogLoadingText}
+              {t.catalogLoading}
             </div>
           </div>
         ) : products.length === 0 ? (

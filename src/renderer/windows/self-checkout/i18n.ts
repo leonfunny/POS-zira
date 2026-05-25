@@ -17,6 +17,9 @@ interface ScStrings {
   total: string;
   demoMode: string;
   productionMode: string;
+  kioskName: string;
+  barcodeScannerLabel: string;
+  catalogLoading: string;
   // Cart / scan
   scanPrompt: string;
   scanHint: string;
@@ -140,6 +143,9 @@ const PL: ScStrings = {
   total: 'Razem',
   demoMode: 'Tryb demo',
   productionMode: 'Tryb produkcyjny',
+  kioskName: 'Kasa samoobsługowa',
+  barcodeScannerLabel: 'Skaner kodów kreskowych',
+  catalogLoading: 'Ładowanie produktów...',
   scanPrompt: 'Zeskanuj produkt',
   scanHint: 'Skaner doda produkt do koszyka automatycznie',
   manualEntry: 'Wprowadź kod',
@@ -252,6 +258,9 @@ const EN: ScStrings = {
   total: 'Total',
   demoMode: 'Demo mode',
   productionMode: 'Production mode',
+  kioskName: 'Self-checkout',
+  barcodeScannerLabel: 'Barcode scanner',
+  catalogLoading: 'Loading products...',
   scanPrompt: 'Scan a product',
   scanHint: 'The scanner adds the product automatically',
   manualEntry: 'Enter code',
@@ -364,6 +373,9 @@ const VI: ScStrings = {
   total: 'Tổng',
   demoMode: 'Chế độ demo',
   productionMode: 'Chế độ thật',
+  kioskName: 'Quầy tự thanh toán',
+  barcodeScannerLabel: 'Máy quét mã vạch',
+  catalogLoading: 'Đang tải sản phẩm...',
   scanPrompt: 'Quét sản phẩm',
   scanHint: 'Máy quét sẽ tự thêm sản phẩm vào giỏ',
   manualEntry: 'Nhập mã',

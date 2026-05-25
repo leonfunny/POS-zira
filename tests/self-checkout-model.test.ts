@@ -138,7 +138,25 @@ describe('self-checkout runtime model', () => {
     expect(scanSource).not.toContain('Scanner is the ONLY path');
     expect(i18nSource).toContain("paymentNotice: 'Płatność z obsługą'");
     expect(i18nSource).toContain("grocery: 'Sklep'");
+    expect(i18nSource).toContain("kioskName: 'Kasa samoobsługowa'");
+    expect(i18nSource).toContain("catalogLoading: 'Ładowanie produktów...'");
     expect(i18nSource).toContain("paymentNotice: 'Thanh toán có nhân viên hỗ trợ'");
     expect(i18nSource).toContain("grocery: 'Cửa hàng'");
+    expect(i18nSource).toContain("kioskName: 'Quầy tự thanh toán'");
+    expect(i18nSource).toContain("catalogLoading: 'Đang tải sản phẩm...'");
+  });
+
+  it('keeps kiosk chrome and loading labels in the self-checkout i18n table', () => {
+    const welcomeSource = readSource('src/renderer/windows/self-checkout/screens/WelcomeScreen.tsx');
+    const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
+    const menuSource = readSource('src/renderer/windows/self-checkout/components/KioskMenuPanel.tsx');
+
+    expect(welcomeSource).toContain('aria-label={t.barcodeScannerLabel}');
+    expect(scanSource).toContain('aria-label={t.barcodeScannerLabel}');
+    expect(welcomeSource).toContain('{t.kioskName}');
+    expect(scanSource).toContain('{t.kioskName}');
+    expect(menuSource).toContain('{t.catalogLoading}');
+    expect(menuSource).not.toContain("lang === 'pl'");
+    expect(menuSource).not.toContain("lang === 'vi'");
   });
 });

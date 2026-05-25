@@ -274,7 +274,7 @@ export default function ScanScreen({
         onKeyDown={handleScannerInputKeyDown}
         inputMode="none"
         data-scanner-capture="true"
-        aria-label="Barcode scanner"
+        aria-label={t.barcodeScannerLabel}
         tabIndex={-1}
         className="pointer-events-none fixed h-px w-px opacity-0"
       />
@@ -288,7 +288,7 @@ export default function ScanScreen({
               Zira AI
             </div>
             <div className="text-sm font-semibold text-[var(--sc-muted)]">
-              Self-checkout
+              {t.kioskName}
             </div>
           </div>
         </div>

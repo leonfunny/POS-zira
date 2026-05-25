@@ -455,7 +455,7 @@ export interface AgentConfig {
   selfCheckoutTerminalId?: string;       // Stable ID generated on first launch
   selfCheckoutKioskUserId?: string;      // Dedicated staff user for kiosk sales
   selfCheckoutMode?: 'demo' | 'production'; // Demo allows mocked terminal/fiscal flow; production must pass readiness gates.
-  selfCheckoutFakePaymentEnabled?: boolean; // Test only: bypass terminal but still create/sync/print production checkout.
+  selfCheckoutFakePaymentEnabled?: boolean; // Reserved legacy flag; production checkout ignores it until readiness gates are implemented.
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
 

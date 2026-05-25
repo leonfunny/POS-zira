@@ -21,8 +21,6 @@ const REQUIRED_KEYS = [
   'selfCheckout.openDemo',
   'selfCheckout.settings',
   'selfCheckout.runtimeMode',
-  'selfCheckout.fakePayment',
-  'selfCheckout.fakePaymentHelp',
   'selfCheckout.defaultLanguage',
   'selfCheckout.displayMonitor',
   'selfCheckout.idleTimeout',
@@ -52,6 +50,8 @@ describe('SelfCheckoutTab i18n', () => {
     expect(source).toContain('state={paymentRuntimeState}');
     expect(source).toContain('blocked={paymentRuntimeBlocked}');
     expect(source).not.toContain("state={mode === 'demo' ? t('selfCheckout.demoOnly') : fakePayment ?");
+    expect(source).not.toContain('selfCheckoutFakePaymentEnabled');
+    expect(source).not.toContain('setFakePayment');
   });
 
   it('does not render the main operator labels as hardcoded English', () => {

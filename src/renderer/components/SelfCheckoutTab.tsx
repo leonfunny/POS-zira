@@ -47,7 +47,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
 
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
-  const [fakePayment, setFakePayment] = useState(false);
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
@@ -59,7 +58,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     const c = config as any;
     setKioskLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
-    setFakePayment(Boolean(c.selfCheckoutFakePaymentEnabled));
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
   }, [config]);
@@ -112,7 +110,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
       await persist({
         selfCheckoutEnabled: true,
         selfCheckoutMode: mode,
-        selfCheckoutFakePaymentEnabled: fakePayment,
         selfCheckoutLanguage: kioskLanguage,
         selfCheckoutMonitor: monitor,
         selfCheckoutIdleTimeoutMs: idleTimeoutMs,
@@ -322,28 +319,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               <option value="en">English (EN)</option>
               <option value="vi">Tiếng Việt (VI)</option>
             </select>
-          </SettingField>
-
-          <SettingField
-            icon={<AlertTriangle size={17} />}
-            label={t('selfCheckout.fakePayment')}
-            help={t('selfCheckout.fakePaymentHelp')}
-          >
-            <div className="flex min-h-[44px] items-center justify-between gap-4 rounded-lg border border-[var(--sand-300)] bg-white px-3">
-              <span className="text-sm font-bold text-[var(--ink)]">
-                {fakePayment ? t('selfCheckout.fakePaymentOn') : t('selfCheckout.fakePaymentOff')}
-              </span>
-              <input
-                type="checkbox"
-                checked={fakePayment}
-                onChange={(e) => {
-                  const v = e.target.checked;
-                  setFakePayment(v);
-                  persist({ selfCheckoutFakePaymentEnabled: v });
-                }}
-                className="h-5 w-5 accent-[var(--primary)]"
-              />
-            </div>
           </SettingField>
 
           <SettingField
