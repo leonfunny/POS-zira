@@ -961,11 +961,13 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
               type="button"
               onClick={() => void saveDraft()}
               disabled={backendActionDisabled}
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md border border-brand-200 bg-white px-4 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-12 w-full shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 bg-slate-50 px-4 text-sm font-semibold leading-none text-slate-700 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
               title={backendActionTitle}
             >
-              <Save size={18} />
-              {saving ? tOr(t, 'warehouse.saving', 'Saving...') : tOr(t, 'warehouse.saveDraft', 'Save draft')}
+              <Save size={18} className="shrink-0" />
+              <span className="min-w-0 truncate">
+                {saving ? tOr(t, 'warehouse.saving', 'Saving...') : tOr(t, 'warehouse.saveDraft', 'Save draft')}
+              </span>
             </button>
             <button
               type="button"
