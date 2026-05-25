@@ -1051,9 +1051,14 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      const message = typeof data === 'object'
-        ? data?.message || data?.error || `HTTP ${response.status}`
-        : raw || `HTTP ${response.status}`;
+      const envelopeError = data && typeof data === 'object' && data.error && typeof data.error === 'object'
+        ? data.error
+        : null;
+      const message = envelopeError?.message
+        || (typeof data === 'object' ? data?.message : null)
+        || (typeof data === 'object' && typeof data?.error === 'string' ? data.error : null)
+        || raw
+        || `HTTP ${response.status}`;
       const error = new Error(message) as Error & {
         status?: number;
         code?: string;
@@ -1063,9 +1068,9 @@ export class ApiClient {
       };
       error.status = response.status;
       if (data && typeof data === 'object') {
-        error.code = data.code;
-        error.field = data.field;
-        error.details = data.details;
+        error.code = data.code ?? envelopeError?.code;
+        error.field = data.field ?? envelopeError?.field;
+        error.details = data.details ?? envelopeError?.details;
         error.serverBody = data;
       }
       throw error;

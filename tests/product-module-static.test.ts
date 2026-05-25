@@ -23,8 +23,14 @@ const electronDts = readSource('../src/shared/electron.d.ts');
 const hardwareModule = readSource('../src/main/modules/hardware.module.ts');
 const posModule = readSource('../src/main/modules/pos.module.ts');
 const apiClient = readSource('../src/main/network/api-client.ts');
+const translations = readSource('../src/renderer/i18n/translations.ts');
 const serverContract = readSource('../docs/server-change-requests/2026-05-20-product-module-mutations.md');
 const openApiContract = readSource('../docs/server-change-requests/2026-05-20-product-admin.openapi.yaml');
+
+function translationBlock(lang: string): string {
+  const match = translations.match(new RegExp(`\\n  ${lang}: \\{([\\s\\S]*?)(?=\\n  [a-z]{2}: \\{|\\n\\};)`));
+  return match?.[1] || '';
+}
 
 describe('Product module implementation contract', () => {
   it('wires the Products tab through shared types, app routing, and sidebar', () => {
@@ -54,6 +60,8 @@ describe('Product module implementation contract', () => {
     expect(sharedTypes).toContain('export interface ProductAdminCapabilities');
     expect(apiClient).toContain('/api/v1/warehouse/product-admin/capabilities');
     expect(apiClient).toContain('getProductAdminCapabilities(token: string)');
+    expect(apiClient).toContain('envelopeError?.message');
+    expect(apiClient).toContain('data.code ?? envelopeError?.code');
     expect(posModule).toContain('ipcMain.handle(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES');
     expect(posModule).toContain('emptyProductAdminCapabilities()');
     expect(posModule).toContain('apiClient.getProductAdminCapabilities(token)');
@@ -156,6 +164,21 @@ describe('Product module implementation contract', () => {
     expect(toolbar).toContain('products.syncTitle');
     expect(toolbar).toContain('products.refreshLocal');
     expect(useProducts).toContain('window.setTimeout(() => setSyncOkAt(null), 4500)');
+  });
+
+  it('keeps the Products tab Vietnamese labels accented and render-limit copy translated', () => {
+    const vi = translationBlock('vi');
+    expect(vi).toContain("'sidebar.products': 'Sản phẩm'");
+    expect(vi).toContain("'products.title': 'Sản phẩm'");
+    expect(vi).toContain("'products.searchPlaceholder': 'Tìm theo tên, mã vạch hoặc SKU...'");
+    expect(vi).toContain("'products.category.title': 'Quản lý danh mục'");
+    expect(vi).toContain("'products.renderLimit': 'Đang hiển thị trước'");
+
+    for (const lang of ['en', 'vi', 'pl']) {
+      const block = translationBlock(lang);
+      expect(block, `${lang} missing render-limit label`).toContain("'products.renderLimit'");
+      expect(block, `${lang} missing render-limit hint`).toContain("'products.renderLimitHint'");
+    }
   });
 
   it('labels mixed catalog and draft counts explicitly', () => {
