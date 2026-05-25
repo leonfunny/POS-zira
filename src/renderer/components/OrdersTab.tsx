@@ -104,6 +104,12 @@ function paymentLabelText(method: string | null | undefined, t: (k: string) => s
   return tOr(t, `pos.payment.${method.toLowerCase()}`, method);
 }
 
+function dataSourceLabel(source: 'local+server' | 'local-only' | 'server-unreachable', t: (k: string) => string): string {
+  if (source === 'local+server') return tOr(t, 'orders.source.localServer', 'Local + Server');
+  if (source === 'server-unreachable') return tOr(t, 'orders.source.serverUnreachable', 'Server unreachable - showing local data');
+  return tOr(t, 'orders.source.localOnly', 'Local only');
+}
+
 function parseTenders(order: OrderRow): Array<{ method: string; amount: number }> {
   if (!order.payment_tenders) return [];
   try {
@@ -126,7 +132,7 @@ function paymentSummaryText(order: OrderRow, t: (k: string) => string): string {
       .map((tender) => `${paymentLabelText(tender.method, t)} ${(tender.amount / 100).toFixed(2)}`)
       .join(' + ');
   }
-  if (order.payment_method === 'SPLIT') return 'Split';
+  if (order.payment_method === 'SPLIT') return paymentLabelText('SPLIT', t);
   return paymentLabelText(order.payment_method, t);
 }
 
@@ -254,7 +260,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
       setDataSource(nextSource);
     } catch (err: any) {
       rlog.warn('[OrdersTab] getHistory failed:', err);
-      setError(err?.message || 'Failed to load orders');
+      setError(err?.message || tOr(t, 'orders.loadFailed', 'Failed to load orders'));
       setOrders([]);
       setServerItemsMap({});
       setDataSource('server-unreachable');
@@ -312,7 +318,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
         const kind: 'cash' | 'invoiced' = order.customer_nip ? 'invoiced' : 'cash';
         const mirrored = await window.electronAPI.pos.orders.mirrorFromServer(order.id, kind);
         if (!mirrored?.success || !mirrored.localOrderId) {
-          throw new Error(mirrored?.error || 'Could not mirror server order before printing');
+          throw new Error(mirrored?.error || tOr(t, 'orders.mirrorFailed', 'Could not mirror server order before printing'));
         }
         printableOrderId = mirrored.localOrderId;
       }
@@ -352,11 +358,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                 ? 'text-amber-600'
                 : 'text-slate-400'
           }`}>
-            {dataSource === 'local+server'
-              ? 'Local + Server'
-              : dataSource === 'server-unreachable'
-                ? 'Server unreachable - showing local data'
-                : 'Local only'}
+            {dataSourceLabel(dataSource, t)}
           </p>
         </div>
         <button
