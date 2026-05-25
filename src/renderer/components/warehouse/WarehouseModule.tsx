@@ -61,6 +61,10 @@ const DOC_TYPES: Array<{
   { type: 'INW', label: 'Spis', tone: 'slate', icon: <ClipboardCheck size={18} /> },
 ];
 
+// Live backend currently exposes accounting-specific PZ/WZ/MM routes, not the
+// generic warehouse document API this desktop screen was built against.
+const DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY = false;
+
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
@@ -209,10 +213,12 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
   const currency = tOr(t, 'pos.currency', 'zl');
   const removeLineLabel = tOr(t, 'warehouse.remove', 'Remove');
   const selectedType = DOC_TYPES.find((item) => item.type === docType) || DOC_TYPES[0];
-  const canUseWarehouseBackend = backendStatus === 'ready';
+  const canUseWarehouseBackend = backendStatus === 'ready' && DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY;
   const backendActionTitle = !canUseWarehouseBackend
     ? backendStatus === 'unknown'
       ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
+      : backendStatus === 'ready'
+        ? tOr(t, 'warehouse.contractUnsupportedShort', 'Document contract pending')
       : tOr(t, 'warehouse.backendRequiredShort', 'Backend required')
     : undefined;
   const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;
@@ -717,7 +723,9 @@ export default function WarehouseModule({ language }: WarehouseModuleProps) {
             <span>
               {backendMessage || (
                 backendStatus === 'ready'
-                  ? tOr(t, 'warehouse.backendReady', 'Warehouse backend responded. Drafts and posting will be sent to the server.')
+                  ? DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY
+                    ? tOr(t, 'warehouse.backendReady', 'Warehouse backend responded. Drafts and posting will be sent to the server.')
+                    : tOr(t, 'warehouse.contractUnsupported', 'Warehouse list is available, but desktop document posting is paused until the app supports the live accounting routes.')
                   : backendStatus === 'unknown'
                     ? tOr(t, 'warehouse.backendChecking', 'Checking warehouse backend...')
                   : tOr(t, 'warehouse.backendRequired', 'Posting and official print require backend warehouse-document support. This draft does not change stock.')

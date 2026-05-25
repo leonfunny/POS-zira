@@ -13,13 +13,15 @@ const translations = readSource('../src/renderer/i18n/translations.ts');
 
 describe('Warehouse / Magazyn module contract', () => {
   it('keeps stock-changing warehouse actions fail-closed behind backend availability', () => {
-    expect(warehouseTab).toContain("const canUseWarehouseBackend = backendStatus === 'ready';");
+    expect(warehouseTab).toContain('const DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY = false;');
+    expect(warehouseTab).toContain("const canUseWarehouseBackend = backendStatus === 'ready' && DESKTOP_WAREHOUSE_DOCUMENT_CONTRACT_READY;");
     expect(warehouseTab).toContain('const backendActionDisabled = !canUseWarehouseBackend || saving || posting || lines.length === 0;');
     expect(warehouseTab).toContain('const ensureWarehouseBackendReady = (): boolean => {');
     expect(warehouseTab).toContain('if (!ensureWarehouseBackendReady()) return null;');
     expect(warehouseTab.match(/disabled={backendActionDisabled}/g)).toHaveLength(2);
     expect(warehouseTab.match(/title={backendActionTitle}/g)).toHaveLength(2);
     expect(translations).toContain("'warehouse.backendChecking'");
+    expect(translations).toContain("'warehouse.contractUnsupported'");
   });
 
   it('routes document and inventory mutations to the backend instead of local stock writes', () => {
