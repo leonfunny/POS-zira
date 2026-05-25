@@ -1,10 +1,10 @@
-// Scan + cart screen for the hybrid customer kiosk. Barcode scan remains the
-// fastest path, while the category/menu browser is the fallback for kitchen
-// items and products without a practical barcode.
+// Scan + cart screen for the customer kiosk. Retail is scan-first and hides
+// product photo browsing; the menu/kitchen profile keeps category browsing.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Hand } from 'lucide-react';
+import { Hand, Keyboard, Search } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
+import type { SelfCheckoutProfile } from '../self-checkout-model';
 import { ScCartItem } from '../useScCart';
 import type {
   CatalogCategory,
@@ -49,6 +49,7 @@ function playScanBeep(kind: 'ok' | 'fail'): void {
 
 interface ScanScreenProps {
   lang: ScLanguage;
+  profile: SelfCheckoutProfile;
   cartItems: ScCartItem[];
   totalGrosze: number;
   onScan: (ean: string) => Promise<unknown> | unknown;
@@ -73,6 +74,7 @@ interface ScanScreenProps {
 
 export default function ScanScreen({
   lang,
+  profile,
   cartItems,
   totalGrosze,
   onScan,
@@ -95,6 +97,7 @@ export default function ScanScreen({
   toast,
 }: ScanScreenProps) {
   const t = getScStrings(lang);
+  const menuProfile = profile === 'menu_kitchen';
   const searchOpenRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchRequestSeq = useRef(0);
@@ -321,22 +324,30 @@ export default function ScanScreen({
             onScanQuantityChange={onScanQuantityChange}
             onOpenSearch={openSearch}
             toast={toast}
-            compact={cartItems.length > 0}
+            compact={menuProfile && cartItems.length > 0}
           />
 
-          <KioskMenuPanel
-            lang={lang}
-            activeDepartment={activeDepartment}
-            activeCategoryId={activeCategoryId}
-            categories={visibleCategories}
-            products={visibleProducts}
-            catalogLoading={catalogLoading}
-            onDepartmentChange={handleDepartmentChange}
-            onCategorySelect={setActiveCategoryId}
-            onAddProduct={(product) => void handleAddCatalogProduct(product)}
-            onOpenSearch={openSearch}
-            onCallStaff={onCallStaff}
-          />
+          {menuProfile ? (
+            <KioskMenuPanel
+              lang={lang}
+              activeDepartment={activeDepartment}
+              activeCategoryId={activeCategoryId}
+              categories={visibleCategories}
+              products={visibleProducts}
+              catalogLoading={catalogLoading}
+              showDepartmentTabs={false}
+              onDepartmentChange={handleDepartmentChange}
+              onCategorySelect={setActiveCategoryId}
+              onAddProduct={(product) => void handleAddCatalogProduct(product)}
+              onOpenSearch={openSearch}
+              onCallStaff={onCallStaff}
+            />
+          ) : (
+            <RetailScanOnlyPanel
+              lang={lang}
+              onOpenSearch={openSearch}
+            />
+          )}
         </section>
 
         <CartPanel
@@ -367,6 +378,50 @@ export default function ScanScreen({
           onCallStaff={onCallStaff}
         />
       )}
+    </div>
+  );
+}
+
+interface RetailScanOnlyPanelProps {
+  lang: ScLanguage;
+  onOpenSearch: () => void;
+}
+
+function RetailScanOnlyPanel({
+  lang,
+  onOpenSearch,
+}: RetailScanOnlyPanelProps) {
+  const t = getScStrings(lang);
+
+  return (
+    <div className="sc-surface flex min-h-[220px] flex-1 flex-col justify-between gap-5 p-5">
+      <div className="grid gap-4">
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          className="sc-secondary-action sc-focusable flex min-h-[118px] items-center gap-4 px-5 text-left"
+        >
+          <Keyboard size={34} className="shrink-0 text-[var(--sc-primary-deep)]" />
+          <span className="min-w-0">
+            <span className="block text-2xl font-black text-[var(--sc-ink)]">
+              {t.manualEntry}
+            </span>
+            <span className="mt-1 block text-base font-semibold text-[var(--sc-muted)]">
+              {t.manualEntryHint}
+            </span>
+          </span>
+        </button>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-5">
+        <div className="flex items-center gap-3 text-xl font-black text-[var(--sc-ink)]">
+          <Search size={26} className="text-[var(--sc-primary-deep)]" />
+          {t.retailScanOnlyTitle}
+        </div>
+        <p className="mt-2 text-lg font-semibold leading-7 text-[var(--sc-muted)]">
+          {t.retailScanOnlyBody}
+        </p>
+      </div>
     </div>
   );
 }

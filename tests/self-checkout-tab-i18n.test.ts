@@ -20,6 +20,10 @@ const REQUIRED_KEYS = [
   'selfCheckout.productionClosed',
   'selfCheckout.openDemo',
   'selfCheckout.settings',
+  'selfCheckout.profile',
+  'selfCheckout.profileHelp',
+  'selfCheckout.profile.retailScan',
+  'selfCheckout.profile.menuKitchen',
   'selfCheckout.runtimeMode',
   'selfCheckout.defaultLanguage',
   'selfCheckout.displayMonitor',
@@ -40,6 +44,9 @@ describe('SelfCheckoutTab i18n', () => {
     expect(source).toContain("const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl')");
     expect(source).toContain('setKioskLanguage((c.selfCheckoutLanguage as ScLang) ??');
     expect(source).toContain('selfCheckoutLanguage: kioskLanguage');
+    expect(source).toContain("const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan')");
+    expect(source).toContain('setProfile(resolveSelfCheckoutProfile(c.selfCheckoutProfile))');
+    expect(source).toContain('selfCheckoutProfile: profile');
     expect(source).toContain('value={kioskLanguage}');
     expect(source).toContain('setKioskLanguage(v)');
   });
@@ -61,6 +68,7 @@ describe('SelfCheckoutTab i18n', () => {
       'Demo kiosk is available',
       'Open demo self-checkout',
       'Kiosk settings',
+      'Kiosk profile',
       'Runtime mode',
       'Default language',
       'Display monitor',

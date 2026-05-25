@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   resolveSelfCheckoutPaymentProfile,
+  resolveSelfCheckoutProfile,
   resolveSelfCheckoutMode,
   resolveSelfCheckoutRuntime,
 } from '../src/renderer/windows/self-checkout/self-checkout-model';
@@ -16,6 +17,13 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutMode('demo')).toBe('demo');
     expect(resolveSelfCheckoutMode('production')).toBe('production');
     expect(resolveSelfCheckoutMode('bogus')).toBe('demo');
+  });
+
+  it('defaults unknown kiosk profiles to retail scan mode', () => {
+    expect(resolveSelfCheckoutProfile(undefined)).toBe('retail_scan');
+    expect(resolveSelfCheckoutProfile('retail_scan')).toBe('retail_scan');
+    expect(resolveSelfCheckoutProfile('menu_kitchen')).toBe('menu_kitchen');
+    expect(resolveSelfCheckoutProfile('grocery_kitchen_mix')).toBe('retail_scan');
   });
 
   it('keeps production mode fail-closed until unattended contracts exist', () => {
@@ -134,23 +142,32 @@ describe('self-checkout runtime model', () => {
     const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
     const i18nSource = readSource('src/renderer/windows/self-checkout/i18n.ts');
 
-    expect(scanSource).toContain('hybrid customer kiosk');
+    expect(scanSource).toContain('Retail is scan-first');
     expect(scanSource).not.toContain('Scanner is the ONLY path');
     expect(i18nSource).toContain("paymentNotice: 'Płatność z obsługą'");
     expect(i18nSource).toContain("grocery: 'Sklep'");
+    expect(i18nSource).toContain("manualEntry: 'Wpisz kod kreskowy'");
     expect(i18nSource).toContain("kioskName: 'Kasa samoobsługowa'");
     expect(i18nSource).toContain("catalogLoading: 'Ładowanie produktów...'");
     expect(i18nSource).toContain("paymentNotice: 'Thanh toán có nhân viên hỗ trợ'");
     expect(i18nSource).toContain("grocery: 'Cửa hàng'");
+    expect(i18nSource).toContain("manualEntry: 'Nhập mã vạch'");
     expect(i18nSource).toContain("kioskName: 'Quầy tự thanh toán'");
     expect(i18nSource).toContain("catalogLoading: 'Đang tải sản phẩm...'");
   });
 
-  it('keeps kiosk chrome and loading labels in the self-checkout i18n table', () => {
+  it('keeps kiosk chrome, profile split, and loading labels in the self-checkout i18n table', () => {
     const welcomeSource = readSource('src/renderer/windows/self-checkout/screens/WelcomeScreen.tsx');
     const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
     const menuSource = readSource('src/renderer/windows/self-checkout/components/KioskMenuPanel.tsx');
 
+    expect(welcomeSource).toContain("profile === 'menu_kitchen'");
+    expect(scanSource).toContain("profile === 'menu_kitchen'");
+    expect(scanSource).toContain('{menuProfile ? (');
+    expect(scanSource).toContain('<RetailScanOnlyPanel');
+    expect(scanSource).toContain('<KioskMenuPanel');
+    expect(scanSource).toContain('showDepartmentTabs={false}');
+    expect(menuSource).toContain('showDepartmentTabs = true');
     expect(welcomeSource).toContain('aria-label={t.barcodeScannerLabel}');
     expect(scanSource).toContain('aria-label={t.barcodeScannerLabel}');
     expect(welcomeSource).toContain('{t.kioskName}');

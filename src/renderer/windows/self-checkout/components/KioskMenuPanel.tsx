@@ -23,6 +23,7 @@ interface KioskMenuPanelProps {
   categories: CatalogCategory[];
   products: SearchProduct[];
   catalogLoading: boolean;
+  showDepartmentTabs?: boolean;
   onDepartmentChange: (department: CatalogDepartment) => void;
   onCategorySelect: (categoryId: string | null) => void;
   onAddProduct: (product: SearchProduct) => void;
@@ -37,6 +38,7 @@ export default function KioskMenuPanel({
   categories,
   products,
   catalogLoading,
+  showDepartmentTabs = true,
   onDepartmentChange,
   onCategorySelect,
   onAddProduct,
@@ -47,11 +49,13 @@ export default function KioskMenuPanel({
 
   return (
     <div className="sc-surface sc-category-panel flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-      <DepartmentTabs
-        lang={lang}
-        activeDepartment={activeDepartment}
-        onChange={onDepartmentChange}
-      />
+      {showDepartmentTabs && (
+        <DepartmentTabs
+          lang={lang}
+          activeDepartment={activeDepartment}
+          onChange={onDepartmentChange}
+        />
+      )}
 
       <CategoryChips
         lang={lang}

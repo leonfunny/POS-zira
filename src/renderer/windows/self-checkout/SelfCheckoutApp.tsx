@@ -11,6 +11,8 @@ import { resolveName } from '../../../shared/catalog-names';
 import {
   SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
+  SelfCheckoutProfile,
+  resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
 import { useScreenState } from './screen-state';
@@ -66,6 +68,7 @@ export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
+  const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [paymentProfile, setPaymentProfile] = useState<SelfCheckoutPaymentProfile>('assistedDemo');
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
@@ -158,6 +161,7 @@ export default function SelfCheckoutApp() {
 
         const runtime = resolveSelfCheckoutRuntime(config);
         setMode(runtime.mode);
+        setProfile(resolveSelfCheckoutProfile(config?.selfCheckoutProfile));
         setPaymentProfile(runtime.paymentProfile);
         setUnavailableReasons(runtime.unavailableReasons);
         if (runtime.unavailableReasons.length > 0) {
@@ -406,11 +410,11 @@ export default function SelfCheckoutApp() {
 
   const handleWelcomeScan = useCallback(
     async (ean: string) => {
-      setInitialDepartment('grocery');
+      setInitialDepartment(profile === 'menu_kitchen' ? 'kitchen' : 'grocery');
       goTo('shopping');
       await handleScan(ean);
     },
-    [goTo, handleScan],
+    [goTo, handleScan, profile],
   );
 
   const handleAbandonConfirm = useCallback(() => {
@@ -559,9 +563,10 @@ export default function SelfCheckoutApp() {
     return (
       <WelcomeScreen
         lang={lang}
+        profile={profile}
         onLangChange={handleLangChange}
         onStart={(department = 'grocery') => {
-          setInitialDepartment(department);
+          setInitialDepartment(profile === 'menu_kitchen' ? 'kitchen' : department);
           goTo('shopping');
         }}
         onScanStart={handleWelcomeScan}
@@ -575,6 +580,7 @@ export default function SelfCheckoutApp() {
       <>
         <ScanScreen
           lang={lang}
+          profile={profile}
           cartItems={cart.cart.items}
           totalGrosze={cart.cart.totalGrosze}
           onScan={handleScan}

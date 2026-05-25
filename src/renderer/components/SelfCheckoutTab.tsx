@@ -17,6 +17,8 @@ import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
 import {
   SelfCheckoutMode,
+  SelfCheckoutProfile,
+  resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from '../windows/self-checkout/self-checkout-model';
 import rlog from '../utils/logger';
@@ -47,6 +49,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
 
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
+  const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
@@ -58,6 +61,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     const c = config as any;
     setKioskLanguage((c.selfCheckoutLanguage as ScLang) ?? 'pl');
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
+    setProfile(resolveSelfCheckoutProfile(c.selfCheckoutProfile));
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
   }, [config]);
@@ -110,6 +114,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
       await persist({
         selfCheckoutEnabled: true,
         selfCheckoutMode: mode,
+        selfCheckoutProfile: profile,
         selfCheckoutLanguage: kioskLanguage,
         selfCheckoutMonitor: monitor,
         selfCheckoutIdleTimeoutMs: idleTimeoutMs,
@@ -282,6 +287,25 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
+          <SettingField
+            icon={<ScanBarcode size={17} />}
+            label={t('selfCheckout.profile')}
+            help={t('selfCheckout.profileHelp')}
+          >
+            <select
+              value={profile}
+              onChange={(e) => {
+                const v = resolveSelfCheckoutProfile(e.target.value);
+                setProfile(v);
+                persist({ selfCheckoutProfile: v });
+              }}
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            >
+              <option value="retail_scan">{t('selfCheckout.profile.retailScan')}</option>
+              <option value="menu_kitchen">{t('selfCheckout.profile.menuKitchen')}</option>
+            </select>
+          </SettingField>
+
           <SettingField
             icon={<AlertTriangle size={17} />}
             label={t('selfCheckout.runtimeMode')}

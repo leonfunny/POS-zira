@@ -7,6 +7,8 @@ interface ScStrings {
   welcomeTitle: string;
   welcomeSubtitle: string;
   startButton: string;
+  kitchenStartButton: string;
+  kitchenWelcomeSubtitle: string;
   paymentNotice: string;
   closedTitle: string;
   closedSubtitle: string;
@@ -24,7 +26,10 @@ interface ScStrings {
   scanPrompt: string;
   scanHint: string;
   manualEntry: string;
+  manualEntryHint: string;
   manualSearch: string;
+  retailScanOnlyTitle: string;
+  retailScanOnlyBody: string;
   grocery: string;
   kitchen: string;
   allCategories: string;
@@ -134,6 +139,8 @@ const PL: ScStrings = {
   welcomeTitle: 'KASA OTWARTA',
   welcomeSubtitle: 'Zeskanuj produkt lub rozpocznij zakupy',
   startButton: 'Rozpocznij zakupy',
+  kitchenStartButton: 'Zamów z menu',
+  kitchenWelcomeSubtitle: 'Wybierz pozycje z menu albo zeskanuj kod',
   paymentNotice: 'Płatność z obsługą',
   closedTitle: 'Ta kasa jest zamknięta',
   closedSubtitle: 'Poproś obsługę lub skorzystaj z innej kasy.',
@@ -148,8 +155,11 @@ const PL: ScStrings = {
   catalogLoading: 'Ładowanie produktów...',
   scanPrompt: 'Zeskanuj produkt',
   scanHint: 'Skaner doda produkt do koszyka automatycznie',
-  manualEntry: 'Wprowadź kod',
+  manualEntry: 'Wpisz kod kreskowy',
+  manualEntryHint: 'EAN, SKU albo nazwa produktu',
   manualSearch: 'Szukaj',
+  retailScanOnlyTitle: 'Tryb sklepu: skanowanie kodów',
+  retailScanOnlyBody: 'Lista zdjęć produktów jest ukryta w tym profilu. Gdy etykieta jest nieczytelna, wpisz EAN, SKU albo nazwę produktu.',
   grocery: 'Sklep',
   kitchen: 'Kuchnia',
   allCategories: 'Wszystkie',
@@ -249,6 +259,8 @@ const EN: ScStrings = {
   welcomeTitle: 'CHECKOUT OPEN',
   welcomeSubtitle: 'Scan a product or start shopping',
   startButton: 'Start shopping',
+  kitchenStartButton: 'Order from menu',
+  kitchenWelcomeSubtitle: 'Choose menu items or scan a code',
   paymentNotice: 'Assisted payment',
   closedTitle: 'This checkout is closed',
   closedSubtitle: 'Please ask staff or use another checkout.',
@@ -263,8 +275,11 @@ const EN: ScStrings = {
   catalogLoading: 'Loading products...',
   scanPrompt: 'Scan a product',
   scanHint: 'The scanner adds the product automatically',
-  manualEntry: 'Enter code',
+  manualEntry: 'Enter barcode',
+  manualEntryHint: 'EAN, SKU, or product name',
   manualSearch: 'Search',
+  retailScanOnlyTitle: 'Shop profile: barcode scanning',
+  retailScanOnlyBody: 'Product photo browsing is hidden in this profile. If the label is hard to read, enter the EAN, SKU, or product name.',
   grocery: 'Grocery',
   kitchen: 'Kitchen',
   allCategories: 'All',
@@ -364,6 +379,8 @@ const VI: ScStrings = {
   welcomeTitle: 'QUẦY ĐANG MỞ',
   welcomeSubtitle: 'Quét sản phẩm hoặc bắt đầu mua sắm',
   startButton: 'Bắt đầu mua sắm',
+  kitchenStartButton: 'Đặt món từ menu',
+  kitchenWelcomeSubtitle: 'Chọn món trong menu hoặc quét mã',
   paymentNotice: 'Thanh toán có nhân viên hỗ trợ',
   closedTitle: 'Quầy này đang đóng',
   closedSubtitle: 'Vui lòng hỏi nhân viên hoặc dùng quầy khác.',
@@ -378,8 +395,11 @@ const VI: ScStrings = {
   catalogLoading: 'Đang tải sản phẩm...',
   scanPrompt: 'Quét sản phẩm',
   scanHint: 'Máy quét sẽ tự thêm sản phẩm vào giỏ',
-  manualEntry: 'Nhập mã',
+  manualEntry: 'Nhập mã vạch',
+  manualEntryHint: 'EAN, SKU hoặc tên sản phẩm',
   manualSearch: 'Tìm',
+  retailScanOnlyTitle: 'Hồ sơ cửa hàng: quét mã',
+  retailScanOnlyBody: 'Danh sách ảnh sản phẩm được ẩn trong hồ sơ này. Nếu nhãn khó đọc, hãy nhập EAN, SKU hoặc tên sản phẩm.',
   grocery: 'Cửa hàng',
   kitchen: 'Nhà bếp',
   allCategories: 'Tất cả',

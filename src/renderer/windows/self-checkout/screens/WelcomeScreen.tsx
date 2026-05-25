@@ -4,12 +4,14 @@ import React from 'react';
 import { ChefHat, CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
+import type { SelfCheckoutProfile } from '../self-checkout-model';
 import { useScannerCapture } from '../useScannerCapture';
 
 type CatalogDepartment = 'grocery' | 'kitchen';
 
 interface WelcomeScreenProps {
   lang: ScLanguage;
+  profile: SelfCheckoutProfile;
   onLangChange: (lang: ScLanguage) => void;
   onStart: (department?: CatalogDepartment) => void;
   onScanStart: (ean: string) => Promise<void> | void;
@@ -18,12 +20,14 @@ interface WelcomeScreenProps {
 
 export default function WelcomeScreen({
   lang,
+  profile,
   onLangChange,
   onStart,
   onScanStart,
   onCallStaff,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
+  const menuProfile = profile === 'menu_kitchen';
   const { scannerInputRef, handleScannerInputKeyDown } = useScannerCapture({
     onScan: onScanStart,
   });
@@ -65,27 +69,19 @@ export default function WelcomeScreen({
               {t.welcomeTitle}
             </div>
             <h1 className="max-w-4xl text-6xl font-black leading-[1.03] text-[var(--sc-ink)]">
-              {t.startButton}
+              {menuProfile ? t.kitchenStartButton : t.startButton}
             </h1>
             <p className="mt-6 max-w-2xl text-3xl font-semibold leading-snug text-[var(--sc-muted)]">
-              {t.welcomeSubtitle}
+              {menuProfile ? t.kitchenWelcomeSubtitle : t.welcomeSubtitle}
             </p>
-            <div className="mt-12 grid max-w-3xl grid-cols-2 gap-5">
+            <div className="mt-12 max-w-3xl">
               <button
                 type="button"
-                onClick={() => onStart('grocery')}
-                className="sc-action sc-focusable flex min-h-[150px] flex-col items-center justify-center gap-4 px-10 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.22)]"
+                onClick={() => onStart(menuProfile ? 'kitchen' : 'grocery')}
+                className="sc-action sc-focusable flex min-h-[150px] w-full flex-col items-center justify-center gap-4 px-10 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.22)]"
               >
-                <ShoppingBasket size={52} />
-                {t.grocery}
-              </button>
-              <button
-                type="button"
-                onClick={() => onStart('kitchen')}
-                className="sc-secondary-action sc-focusable flex min-h-[150px] flex-col items-center justify-center gap-4 px-10 text-4xl font-black"
-              >
-                <ChefHat size={52} />
-                {t.kitchen}
+                {menuProfile ? <ChefHat size={52} /> : <ShoppingBasket size={52} />}
+                {menuProfile ? t.kitchenStartButton : t.startButton}
               </button>
             </div>
           </div>

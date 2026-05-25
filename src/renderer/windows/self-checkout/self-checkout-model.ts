@@ -1,6 +1,7 @@
 import type { AgentConfig } from '../../../shared/types';
 
 export type SelfCheckoutMode = 'demo' | 'production';
+export type SelfCheckoutProfile = 'retail_scan' | 'menu_kitchen';
 export type SelfCheckoutPaymentProfile =
   | 'assistedDemo'
   | 'terminalProduction'
@@ -20,6 +21,10 @@ export const SELF_CHECKOUT_PRODUCTION_BLOCKERS: string[] = [
 
 export function resolveSelfCheckoutMode(value: unknown): SelfCheckoutMode {
   return value === 'production' ? 'production' : 'demo';
+}
+
+export function resolveSelfCheckoutProfile(value: unknown): SelfCheckoutProfile {
+  return value === 'menu_kitchen' ? 'menu_kitchen' : 'retail_scan';
 }
 
 export function resolveSelfCheckoutPaymentProfile(

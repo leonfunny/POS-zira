@@ -159,6 +159,7 @@ async function createPage(browser, options = {}) {
     config: {
       selfCheckoutLanguage: options.lang || 'en',
       selfCheckoutMode: options.mode || 'demo',
+      selfCheckoutProfile: options.profile || 'retail_scan',
       selfCheckoutIdleTimeoutMs: 90000,
     },
   });
@@ -196,9 +197,9 @@ async function assertNoOverflow(page, label) {
 }
 
 async function runKitchenMenuFlow(browser) {
-  const { context, page } = await createPage(browser);
+  const { context, page } = await createPage(browser, { profile: 'menu_kitchen' });
 
-  await page.getByRole('button', { name: /^kitchen$/i }).click();
+  await page.getByRole('button', { name: /order from menu/i }).click();
   await page.waitForSelector(`text=${KITCHEN_PRODUCT.name}`);
   assert(await page.getByRole('button', { name: /sold out spring rolls/i }).isDisabled(), 'sold-out menu product is disabled');
   assert(await page.getByRole('button', { name: /no price tea/i }).isDisabled(), 'no-price menu product is disabled');
@@ -320,7 +321,7 @@ async function runEmptyCartAndProductionChecks(browser) {
   {
     const { context, page } = await createPage(browser);
     assert(await languageButtonCount(page) === 3, 'welcome exposes PL/EN/VI');
-    await page.getByRole('button', { name: /^grocery$/i }).click();
+    await page.getByRole('button', { name: /start shopping/i }).click();
     await page.waitForSelector('text=Scan a product');
     assert(await languageButtonCount(page) === 3, 'shopping exposes PL/EN/VI');
     const payDisabled = await page.getByRole('button', { name: /^pay$/i }).isDisabled();
@@ -333,7 +334,7 @@ async function runEmptyCartAndProductionChecks(browser) {
     const { context, page } = await createPage(browser, { mode: 'production' });
     await page.waitForSelector('text=This checkout is closed');
     assert(await languageButtonCount(page) === 3, 'production unavailable exposes PL/EN/VI');
-    assert(await page.getByRole('button', { name: /^grocery$/i }).count() === 0, 'production unavailable hides shopping CTA');
+    assert(await page.getByRole('button', { name: /start shopping/i }).count() === 0, 'production unavailable hides shopping CTA');
     assert(await page.getByText('Payment terminal is unavailable.').count() > 0, 'production shows terminal blocker');
     assert(await page.getByText('Fiscal printer is unavailable.').count() > 0, 'production shows fiscal blocker');
     assert(await page.getByText('Order creation readiness is not confirmed yet.').count() > 0, 'production shows order blocker');
@@ -387,7 +388,7 @@ async function runPrimaryBLIKFlow(browser) {
 async function runCardTerminalFlow(browser) {
   const { context, page } = await createPage(browser);
 
-  await page.getByRole('button', { name: /^grocery$/i }).click();
+  await page.getByRole('button', { name: /start shopping/i }).click();
   await page.waitForSelector('text=Scan a product');
   await emitBarcode(page);
   await page.waitForSelector(`text=${PRODUCT.name}`);
@@ -430,7 +431,7 @@ async function runCompactViewportChecks(browser) {
 async function runAbandonAndStaffChecks(browser) {
   {
     const { context, page } = await createPage(browser);
-    await page.getByRole('button', { name: /^grocery$/i }).click();
+    await page.getByRole('button', { name: /start shopping/i }).click();
     await page.waitForSelector('text=Scan a product');
     await emitBarcode(page);
     await page.waitForSelector(`text=${PRODUCT.name}`);
@@ -444,7 +445,7 @@ async function runAbandonAndStaffChecks(browser) {
 
   {
     const { context, page } = await createPage(browser);
-    await page.getByRole('button', { name: /^grocery$/i }).click();
+    await page.getByRole('button', { name: /start shopping/i }).click();
     await page.waitForSelector('text=Scan a product');
     await page.getByRole('button', { name: /call staff/i }).click();
     await page.waitForSelector('text=Staff called');

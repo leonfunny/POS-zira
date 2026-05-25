@@ -225,6 +225,7 @@ const store = new Store<AgentConfig>({
      */
     selfCheckoutKioskUserId: { type: 'string', default: '' },
     selfCheckoutMode: { type: 'string', enum: ['demo', 'production'], default: 'demo' },
+    selfCheckoutProfile: { type: 'string', enum: ['retail_scan', 'menu_kitchen'], default: 'retail_scan' },
     selfCheckoutFakePaymentEnabled: { type: 'boolean', default: false },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },
