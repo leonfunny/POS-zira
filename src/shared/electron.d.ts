@@ -679,7 +679,21 @@ interface ElectronAPI {
       cancel: (orderId: string) => Promise<{ success: boolean; error?: string }>;
       retrySync: (orderId: string) => Promise<{ success: boolean; result?: any; summary?: any; error?: string }>;
       repairStockFailures: () => Promise<{ success: boolean; resetCount?: number; summary?: any; error?: string }>;
-      getServerList: (params: { period: string; paymentStatus?: string; page?: number; limit?: number }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
+      getServerList: (params: {
+        period?: string;
+        from?: string;
+        to?: string;
+        customerId?: string;
+        staffId?: string;
+        staffName?: string;
+        search?: string;
+        paymentMethod?: string;
+        paymentStatus?: string;
+        status?: string;
+        requiresInvoice?: boolean;
+        page?: number;
+        limit?: number;
+      }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
       getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') => Promise<{ success: boolean; localOrderId?: string; error?: string; wasSplit?: boolean }>;
     };

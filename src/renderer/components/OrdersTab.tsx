@@ -23,6 +23,7 @@ interface OrderRow {
   staff_name: string | null;
   customer_name?: string | null;
   customer_nip?: string | null;
+  requires_invoice?: boolean;
   payment_tenders?: string | null;
   refund_amount?: number;
   refunded_at?: string | null;
@@ -52,7 +53,8 @@ type PeriodKey = 'today' | 'week' | 'month' | 'custom';
 type ReprintFeedback = { orderId: string; ok: boolean; text: string } | null;
 
 const PAGE_SIZE = 25;
-const ORDER_FETCH_LIMIT = 1000;
+const LOCAL_ORDER_FETCH_LIMIT = 1000;
+const SERVER_ORDER_FETCH_LIMIT = 200;
 const PAYMENT_METHODS = ['', 'CASH', 'CARD', 'BLIK', 'TRANSFER', 'INVOICE', 'SPLIT'];
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -125,6 +127,11 @@ function isSplitOrder(order: OrderRow): boolean {
   return order.payment_method === 'SPLIT' || parseTenders(order).length > 1;
 }
 
+function normalizePaymentMethod(method: string | null | undefined): string | null {
+  if (!method) return null;
+  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
+}
+
 function paymentSummaryText(order: OrderRow, t: (k: string) => string): string {
   const tenders = parseTenders(order);
   if (tenders.length > 1) {
@@ -140,7 +147,21 @@ function orderMatchesPayment(order: OrderRow, method: string): boolean {
   if (!method) return true;
   const split = isSplitOrder(order);
   if (method === 'SPLIT') return split;
-  return !split && order.payment_method === method;
+  if (method === 'INVOICE') return Boolean(order.requires_invoice || order.customer_nip);
+  return !split && normalizePaymentMethod(order.payment_method) === normalizePaymentMethod(method);
+}
+
+function orderMatchesStaff(order: OrderRow, staffName: string): boolean {
+  const needle = staffName.trim().toLowerCase();
+  if (!needle) return true;
+  return (order.staff_name || '').toLowerCase().includes(needle);
+}
+
+function serverPaymentFilter(method: string): { paymentMethod?: string; requiresInvoice?: boolean } {
+  if (method === 'TRANSFER') return { paymentMethod: 'BANK_TRANSFER' };
+  if (method === 'INVOICE') return { requiresInvoice: true };
+  if (method) return { paymentMethod: method };
+  return {};
 }
 
 function orderWithinRange(order: OrderRow, from: string, to: string): boolean {
@@ -214,19 +235,25 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     setError(null);
     const range = rangeForPeriod(period, customFrom, customTo);
     try {
-      const serverPeriod = period === 'custom' ? 'all' : period;
+      const trimmedSearch = search.trim();
+      const trimmedStaffName = staffName.trim();
+      const serverFilters = {
+        from: range.from,
+        to: range.to,
+        ...serverPaymentFilter(paymentMethod),
+        ...(trimmedSearch ? { search: trimmedSearch } : {}),
+        ...(trimmedStaffName ? { staffName: trimmedStaffName } : {}),
+        page: 1,
+        limit: SERVER_ORDER_FETCH_LIMIT,
+      };
       const [localResult, serverResult] = await Promise.allSettled([
         window.electronAPI.pos.orders.getHistory({
           from: range.from,
           to: range.to,
           page: 1,
-          limit: ORDER_FETCH_LIMIT,
+          limit: LOCAL_ORDER_FETCH_LIMIT,
         } as any),
-        window.electronAPI.pos.orders.getServerList({
-          period: serverPeriod,
-          page: 1,
-          limit: ORDER_FETCH_LIMIT,
-        } as any),
+        window.electronAPI.pos.orders.getServerList(serverFilters as any),
       ]);
 
       const localRows = localResult.status === 'fulfilled'
@@ -253,7 +280,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
         .filter((order) => order.status !== 'DRAFT' && order.status !== 'POS-DRA')
         .filter((order) => orderWithinRange(order, range.from, range.to))
         .filter((order) => orderMatchesPayment(order, paymentMethod))
-        .filter((order) => !staffName.trim() || order.staff_name === staffName.trim());
+        .filter((order) => orderMatchesStaff(order, staffName));
 
       setOrders(merged);
       setServerItemsMap(nextItemsMap);
@@ -267,7 +294,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [period, customFrom, customTo, paymentMethod, staffName]);
+  }, [period, customFrom, customTo, paymentMethod, staffName, search]);
 
   useEffect(() => { void load(); }, [load]);
 

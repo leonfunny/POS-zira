@@ -43,6 +43,22 @@ import {
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
+
+export interface ServerOrderListParams {
+  period?: string;
+  from?: string;
+  to?: string;
+  customerId?: string;
+  staffId?: string;
+  staffName?: string;
+  search?: string;
+  paymentMethod?: string;
+  paymentStatus?: string;
+  status?: string;
+  requiresInvoice?: boolean;
+  page?: number;
+  limit?: number;
+}
 import { refreshAccessToken, AuthRefreshNetworkError } from './auth-refresh';
 
 // Default timeout for API requests (30 seconds)
@@ -1705,11 +1721,19 @@ export class ApiClient {
    */
   async getServerOrders(
     token: string,
-    params: { period?: string; paymentStatus?: string; requiresInvoice?: boolean; page?: number; limit?: number },
+    params: ServerOrderListParams,
   ): Promise<{ orders: any[]; total: number; page: number; limit: number }> {
     const qs = new URLSearchParams();
     if (params.period) qs.set('period', params.period);
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
+    if (params.customerId) qs.set('customerId', params.customerId);
+    if (params.staffId) qs.set('staffId', params.staffId);
+    if (params.staffName) qs.set('staffName', params.staffName);
+    if (params.search) qs.set('search', params.search);
+    if (params.paymentMethod) qs.set('paymentMethod', params.paymentMethod);
     if (params.paymentStatus) qs.set('paymentStatus', params.paymentStatus);
+    if (params.status) qs.set('status', params.status);
     if (params.requiresInvoice !== undefined) qs.set('requiresInvoice', String(params.requiresInvoice));
     qs.set('page', String(params.page ?? 1));
     qs.set('limit', String(params.limit ?? 20));

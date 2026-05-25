@@ -127,6 +127,7 @@ export function adaptServerOrder(s: any): any {
     customer_id: s.customerId ?? null,
     customer_nip: s.customerNip ?? null,
     customer_name: s.customerName ?? null,
+    requires_invoice: Boolean(s.requiresInvoice),
     payment_tenders: normalizePaymentTendersJson(s.tenders),
     sync_error: null,
     sync_attempts: 0,
@@ -135,15 +136,18 @@ export function adaptServerOrder(s: any): any {
 }
 
 export function adaptServerOrderItem(item: any, orderId: string): any {
+  const rawQuantity = item.totalUnits ?? item.packQuantity ?? item.quantity ?? 1;
+  const quantity = typeof rawQuantity === 'number' ? rawQuantity : parseFloat(String(rawQuantity)) || 1;
+  const price = toGrosze(item.unitPrice);
   return {
     id: item.id ?? `${orderId}-${item.variantId ?? String(Math.random()).slice(2, 10)}`,
     order_id: orderId,
     variant_id: item.variantId ?? null,
     name: item.productName ?? '',
-    sku: item.variantSku ?? null,
-    price: toGrosze(item.unitPrice),
-    quantity: item.packQuantity ?? 1,
-    total: toGrosze(item.totalPrice),
+    sku: item.variantSku ?? item.productSku ?? null,
+    price,
+    quantity,
+    total: item.totalPrice == null ? Math.round(price * quantity) : toGrosze(item.totalPrice),
     vat_rate: toVatRate(item.taxRate, 23),
   };
 }

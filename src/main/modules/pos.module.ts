@@ -46,7 +46,7 @@ import { serviceRepo } from '../database/repos/service-repo';
 import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
-import { apiClient } from '../network/api-client';
+import { apiClient, type ServerOrderListParams } from '../network/api-client';
 import {
   getConfig,
   getSecureAuthToken,
@@ -101,11 +101,17 @@ function isSplitPaymentOrder(order: any): boolean {
   return order?.payment_method === 'SPLIT' || parseOrderPaymentTenders(order).length > 1;
 }
 
+function normalizeOrderPaymentMethod(method: string | null | undefined): string | null {
+  if (!method) return null;
+  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
+}
+
 function orderMatchesPaymentFilter(order: any, paymentMethod?: string): boolean {
   if (!paymentMethod) return true;
   const isSplit = isSplitPaymentOrder(order);
   if (paymentMethod === 'SPLIT') return isSplit;
-  return !isSplit && order?.payment_method === paymentMethod;
+  if (paymentMethod === 'INVOICE') return Boolean(order?.requires_invoice || order?.customer_nip);
+  return !isSplit && normalizeOrderPaymentMethod(order?.payment_method) === normalizeOrderPaymentMethod(paymentMethod);
 }
 
 function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
@@ -1118,7 +1124,10 @@ export class PosModule extends BaseModule {
       const wide = orderRepo.getByDateRange(filters.from, filters.to, 1000, 0);
       let orders = wide.orders;
       if (filters.paymentMethod) orders = orders.filter(o => orderMatchesPaymentFilter(o, filters.paymentMethod));
-      if (filters.staffName) orders = orders.filter(o => o.staff_name === filters.staffName);
+      if (filters.staffName) {
+        const staffNeedle = filters.staffName.trim().toLowerCase();
+        orders = orders.filter(o => (o.staff_name || '').toLowerCase().includes(staffNeedle));
+      }
       const total = orders.length;
       const offset = (page - 1) * limit;
       return { orders: orders.slice(offset, offset + limit), total, page, limit };
@@ -1658,7 +1667,7 @@ export class PosModule extends BaseModule {
       }
     });
 
-    ipcMain.handle('pos:orders:getServerList', async (_e, params: { period?: string; paymentStatus?: string; page?: number; limit?: number }) => {
+    ipcMain.handle('pos:orders:getServerList', async (_e, params: ServerOrderListParams) => {
       const serverUrl = getConfig().serverUrl;
       if (!serverUrl) {
         return { orders: [], items: {}, total: 0, page: 1, limit: params.limit ?? 20, source: 'unconfigured' };
