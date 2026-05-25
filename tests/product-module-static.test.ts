@@ -126,6 +126,10 @@ describe('Product module implementation contract', () => {
     expect(drawer).toContain('onManageCategories={onManageCategories}');
     expect(editForm).toContain('canManageCategories');
     expect(editForm).toContain('onManageCategories');
+    expect(moduleSource).toContain('localCategoryCount={categories.length}');
+    expect(categoryManager).toContain('localCategoryCount');
+    expect(categoryManager).toContain('products.category.backendHelp');
+    expect(categoryManager).toContain('products.category.emptyAdmin');
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.listCategories');
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.createCategory');
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.updateCategory');
@@ -146,6 +150,12 @@ describe('Product module implementation contract', () => {
     expect(useProducts).toContain('onCatalogUpdated');
     expect(useProducts).toContain('onStockUpdated');
     expect(useProducts).toContain('onDraftProductsSynced');
+  });
+
+  it('distinguishes backend sync from local reload and auto-clears sync success', () => {
+    expect(toolbar).toContain('products.syncTitle');
+    expect(toolbar).toContain('products.refreshLocal');
+    expect(useProducts).toContain('window.setTimeout(() => setSyncOkAt(null), 4500)');
   });
 
   it('labels mixed catalog and draft counts explicitly', () => {

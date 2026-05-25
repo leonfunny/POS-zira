@@ -297,6 +297,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
           t={t}
           canCreateCategory={adminCapabilities?.canCreateCategory === true}
           canUpdateCategory={adminCapabilities?.canUpdateCategory === true}
+          localCategoryCount={categories.length}
           onClose={() => setCategoryManagerOpen(false)}
           onChanged={refresh}
         />

@@ -158,6 +158,12 @@ export function useProducts(language: string): UseProductsResult {
   }, [refresh]);
 
   useEffect(() => {
+    if (!syncOkAt) return;
+    const timeout = window.setTimeout(() => setSyncOkAt(null), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [syncOkAt]);
+
+  useEffect(() => {
     const reload = () => { void refresh(true); };
     const unsubProducts = window.electronAPI.pos.sync.onProductsSynced(reload);
     const unsubCatalog = window.electronAPI.pos.sync.onCatalogUpdated(reload);

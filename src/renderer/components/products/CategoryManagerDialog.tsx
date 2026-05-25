@@ -7,6 +7,7 @@ interface CategoryManagerDialogProps {
   t: (key: string) => string;
   canCreateCategory: boolean;
   canUpdateCategory: boolean;
+  localCategoryCount: number;
   onClose: () => void;
   onChanged: () => Promise<void> | void;
 }
@@ -152,6 +153,7 @@ export default function CategoryManagerDialog({
   t,
   canCreateCategory,
   canUpdateCategory,
+  localCategoryCount,
   onClose,
   onChanged,
 }: CategoryManagerDialogProps) {
@@ -262,6 +264,15 @@ export default function CategoryManagerDialog({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+            <div>{tOr(t, 'products.category.backendHelp', 'Categories here are loaded from Product Admin backend. Create/save sends changes to backend; the product filter updates after catalog sync.')}</div>
+            {localCategoryCount > 0 ? (
+              <div className="mt-1 text-xs text-sky-700">
+                {localCategoryCount} {tOr(t, 'products.category.localCount', 'categories are currently in the local POS catalog filter.')}
+              </div>
+            ) : null}
+          </div>
+
           {canCreateCategory ? (
             <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 text-xs font-semibold uppercase text-slate-500">
@@ -324,11 +335,11 @@ export default function CategoryManagerDialog({
 
           {loading && categories.length === 0 ? (
             <div className="rounded-md border border-slate-200 p-6 text-center text-sm text-slate-500">
-              {tOr(t, 'products.loading', 'Loading products...')}
+              {tOr(t, 'products.category.loading', 'Loading categories...')}
             </div>
           ) : categories.length === 0 ? (
             <div className="rounded-md border border-slate-200 p-6 text-center text-sm text-slate-500">
-              {tOr(t, 'products.category.empty', 'No categories found')}
+              {tOr(t, 'products.category.emptyAdmin', 'No backend categories returned. Create the first category here if category management should start now.')}
             </div>
           ) : (
             <div className="space-y-2">

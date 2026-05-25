@@ -104,6 +104,7 @@ export default function ProductToolbar({
           onClick={onSync}
           disabled={syncing}
           className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
         >
           <RefreshCw size={17} className={syncing ? 'animate-spin' : ''} />
           {syncing ? tOr(t, 'products.syncing', 'Syncing...') : tOr(t, 'products.sync', 'Sync')}
@@ -114,7 +115,8 @@ export default function ProductToolbar({
           onClick={onRefresh}
           disabled={loading}
           className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-          title={tOr(t, 'orders.refresh', 'Refresh')}
+          title={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
+          aria-label={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
         >
           <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />
         </button>
