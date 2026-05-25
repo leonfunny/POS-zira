@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
   Hand,
   Image as ImageIcon,
@@ -7,6 +7,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
+import TouchKeyboard from '../../../components/shared/TouchKeyboard';
 import { resolveName } from '../../../../shared/catalog-names';
 import { getProductAvailability } from '../catalog-model';
 import type { ScLanguage } from '../i18n';
@@ -44,6 +45,38 @@ export default function SearchDialog({
   onCallStaff,
 }: SearchDialogProps) {
   const t = getScStrings(lang);
+  const draftQueryRef = useRef(query);
+
+  useEffect(() => {
+    draftQueryRef.current = query;
+  }, [query]);
+
+  const focusInputSoon = useCallback(() => {
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }, [inputRef]);
+
+  const setDraftQuery = useCallback((nextQuery: string) => {
+    draftQueryRef.current = nextQuery;
+    onQueryChange(nextQuery);
+    focusInputSoon();
+  }, [focusInputSoon, onQueryChange]);
+
+  const handleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setDraftQuery(event.target.value);
+  }, [setDraftQuery]);
+
+  const handleKeyboardKey = useCallback((key: string) => {
+    setDraftQuery(`${draftQueryRef.current}${key}`);
+  }, [setDraftQuery]);
+
+  const handleKeyboardBackspace = useCallback(() => {
+    setDraftQuery(draftQueryRef.current.slice(0, -1));
+  }, [setDraftQuery]);
+
+  const handleKeyboardDone = useCallback(() => {
+    if (draftQueryRef.current.trim()) onSubmit();
+    focusInputSoon();
+  }, [focusInputSoon, onSubmit]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
@@ -51,7 +84,7 @@ export default function SearchDialog({
         role="dialog"
         aria-modal="true"
         aria-label={t.searchProducts}
-        className="sc-surface flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden bg-white"
+        className="sc-surface flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden bg-white"
       >
         <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5 py-4">
           <div className="flex items-center gap-3">
@@ -81,11 +114,11 @@ export default function SearchDialog({
             <input
               ref={inputRef}
               value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
+              onChange={handleInputChange}
               placeholder={t.searchPlaceholder}
               className="sc-focusable h-16 min-w-0 rounded-2xl border-2 border-[var(--sc-border)] bg-white px-5 text-2xl font-bold text-[var(--sc-ink)] outline-none"
               autoComplete="off"
-              inputMode="search"
+              inputMode="none"
             />
             <button
               type="submit"
@@ -98,7 +131,7 @@ export default function SearchDialog({
           </div>
         </form>
 
-        <div className="min-h-[260px] flex-1 overflow-y-auto p-5">
+        <div className="min-h-[140px] flex-1 overflow-y-auto p-5">
           <div className="mb-3 text-base font-black uppercase tracking-wide text-[var(--sc-muted)]">
             {t.searchResults}
           </div>
@@ -187,6 +220,15 @@ export default function SearchDialog({
               })}
             </ul>
           )}
+        </div>
+        <div data-self-checkout-touch-keyboard="true">
+          <TouchKeyboard
+            visible
+            mode="full"
+            onKey={handleKeyboardKey}
+            onBackspace={handleKeyboardBackspace}
+            onDone={handleKeyboardDone}
+          />
         </div>
       </div>
     </div>

@@ -394,12 +394,15 @@ function RetailScanOnlyPanel({
   const t = getScStrings(lang);
 
   return (
-    <div className="sc-surface flex min-h-[220px] flex-1 flex-col justify-between gap-5 p-5">
+    <div
+      data-self-checkout-retail-panel="true"
+      className="sc-surface flex min-h-0 flex-1 flex-col gap-4 p-4 xl:p-5"
+    >
       <div className="grid gap-4">
         <button
           type="button"
           onClick={onOpenSearch}
-          className="sc-secondary-action sc-focusable flex min-h-[118px] items-center gap-4 px-5 text-left"
+          className="sc-secondary-action sc-focusable flex min-h-[104px] items-center gap-4 px-5 text-left"
         >
           <Keyboard size={34} className="shrink-0 text-[var(--sc-primary-deep)]" />
           <span className="min-w-0">
@@ -413,12 +416,15 @@ function RetailScanOnlyPanel({
         </button>
       </div>
 
-      <div className="rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-5">
-        <div className="flex items-center gap-3 text-xl font-black text-[var(--sc-ink)]">
-          <Search size={26} className="text-[var(--sc-primary-deep)]" />
-          {t.retailScanOnlyTitle}
+      <div
+        data-self-checkout-retail-copy="true"
+        className="rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4 xl:p-5"
+      >
+        <div className="flex items-start gap-3 text-lg font-black leading-snug text-[var(--sc-ink)] xl:text-xl">
+          <Search size={26} className="mt-0.5 shrink-0 text-[var(--sc-primary-deep)]" />
+          <span className="min-w-0">{t.retailScanOnlyTitle}</span>
         </div>
-        <p className="mt-2 text-lg font-semibold leading-7 text-[var(--sc-muted)]">
+        <p className="mt-2 text-base font-semibold leading-6 text-[var(--sc-muted)] xl:text-lg xl:leading-7">
           {t.retailScanOnlyBody}
         </p>
       </div>

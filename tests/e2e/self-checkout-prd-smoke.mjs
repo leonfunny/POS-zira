@@ -196,6 +196,36 @@ async function assertNoOverflow(page, label) {
   assert(metrics.scrollHeight <= metrics.clientHeight, `${label}: vertical overflow`);
 }
 
+async function assertElementContained(page, parentSelector, childSelector, label) {
+  const metrics = await page.evaluate(({ parentSelector, childSelector }) => {
+    const parent = document.querySelector(parentSelector);
+    const child = document.querySelector(childSelector);
+    if (!parent || !child) return { exists: false };
+    const parentRect = parent.getBoundingClientRect();
+    const childRect = child.getBoundingClientRect();
+    return {
+      exists: true,
+      childTop: childRect.top,
+      childRight: childRect.right,
+      childBottom: childRect.bottom,
+      childLeft: childRect.left,
+      parentTop: parentRect.top,
+      parentRight: parentRect.right,
+      parentBottom: parentRect.bottom,
+      parentLeft: parentRect.left,
+    };
+  }, { parentSelector, childSelector });
+
+  assert(metrics.exists, `${label}: element is missing`);
+  assert(
+    metrics.childTop >= metrics.parentTop - 1
+      && metrics.childLeft >= metrics.parentLeft - 1
+      && metrics.childRight <= metrics.parentRight + 1
+      && metrics.childBottom <= metrics.parentBottom + 1,
+    `${label}: child is outside parent bounds`,
+  );
+}
+
 async function runKitchenMenuFlow(browser) {
   const { context, page } = await createPage(browser, { profile: 'menu_kitchen' });
 
@@ -204,6 +234,11 @@ async function runKitchenMenuFlow(browser) {
   assert(await page.getByRole('button', { name: /sold out spring rolls/i }).isDisabled(), 'sold-out menu product is disabled');
   assert(await page.getByRole('button', { name: /no price tea/i }).isDisabled(), 'no-price menu product is disabled');
   await page.getByRole('button', { name: /^search$/i }).click();
+  await page.waitForSelector('[data-self-checkout-touch-keyboard="true"]');
+  assert(
+    await page.locator('[data-self-checkout-touch-keyboard="true"] button').count() >= 20,
+    'search dialog exposes a full touch keyboard',
+  );
   await page.getByPlaceholder(/EAN, SKU/i).fill('not-real-product');
   await page.waitForSelector('text=No product found');
   assert(await page.getByRole('button', { name: /call staff/i }).count() > 0, 'search no-result can call staff');
@@ -327,6 +362,20 @@ async function runEmptyCartAndProductionChecks(browser) {
     const payDisabled = await page.getByRole('button', { name: /^pay$/i }).isDisabled();
     assert(payDisabled, 'empty cart cannot open payment');
     await assertNoOverflow(page, 'empty shopping');
+    await context.close();
+  }
+
+  {
+    const { context, page } = await createPage(browser, { lang: 'pl' });
+    await page.getByRole('button').filter({ hasText: /Rozpocznij/ }).click();
+    await page.waitForSelector('text=Tryb sklepu');
+    await assertNoOverflow(page, 'polish retail shopping');
+    await assertElementContained(
+      page,
+      '[data-self-checkout-retail-panel="true"]',
+      '[data-self-checkout-retail-copy="true"]',
+      'polish retail guidance card',
+    );
     await context.close();
   }
 
@@ -479,6 +528,8 @@ async function main() {
       'scanner starts shopping and adds product',
       'kitchen menu product adds to cart without barcode',
       'sold-out and no-price menu products are disabled',
+      'search modal exposes a touch keyboard',
+      'polish retail guidance stays inside its panel',
       'search no-result offers recovery actions',
       'empty cart payment disabled',
       'product quantity changes total',

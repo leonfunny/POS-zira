@@ -147,6 +147,8 @@ describe('self-checkout runtime model', () => {
     expect(i18nSource).toContain("paymentNotice: 'Płatność z obsługą'");
     expect(i18nSource).toContain("grocery: 'Sklep'");
     expect(i18nSource).toContain("manualEntry: 'Wpisz kod kreskowy'");
+    expect(i18nSource).toContain("retailScanOnlyTitle: 'Tryb sklepu'");
+    expect(i18nSource).toContain("retailScanOnlyBody: 'Skanuj kod kreskowy.");
     expect(i18nSource).toContain("kioskName: 'Kasa samoobsługowa'");
     expect(i18nSource).toContain("catalogLoading: 'Ładowanie produktów...'");
     expect(i18nSource).toContain("paymentNotice: 'Thanh toán có nhân viên hỗ trợ'");
@@ -160,14 +162,21 @@ describe('self-checkout runtime model', () => {
     const welcomeSource = readSource('src/renderer/windows/self-checkout/screens/WelcomeScreen.tsx');
     const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
     const menuSource = readSource('src/renderer/windows/self-checkout/components/KioskMenuPanel.tsx');
+    const searchSource = readSource('src/renderer/windows/self-checkout/components/SearchDialog.tsx');
 
     expect(welcomeSource).toContain("profile === 'menu_kitchen'");
     expect(scanSource).toContain("profile === 'menu_kitchen'");
     expect(scanSource).toContain('{menuProfile ? (');
     expect(scanSource).toContain('<RetailScanOnlyPanel');
     expect(scanSource).toContain('<KioskMenuPanel');
+    expect(scanSource).toContain('data-self-checkout-retail-panel="true"');
+    expect(scanSource).toContain('data-self-checkout-retail-copy="true"');
     expect(scanSource).toContain('showDepartmentTabs={false}');
     expect(menuSource).toContain('showDepartmentTabs = true');
+    expect(searchSource).toContain('TouchKeyboard');
+    expect(searchSource).toContain('inputMode="none"');
+    expect(searchSource).toContain('mode="full"');
+    expect(searchSource).toContain('data-self-checkout-touch-keyboard="true"');
     expect(welcomeSource).toContain('aria-label={t.barcodeScannerLabel}');
     expect(scanSource).toContain('aria-label={t.barcodeScannerLabel}');
     expect(welcomeSource).toContain('{t.kioskName}');
