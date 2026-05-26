@@ -100,6 +100,8 @@ describe('submitSharedFiscalPrint', () => {
         printerId: 'fiscal-printer-1',
         referenceType: 'POS_FISCAL_RECEIPT',
         referenceId: 'order-1',
+        waitForCompletion: true,
+        timeoutMs: 60000,
         payload: receiptData,
       }),
     );

@@ -593,6 +593,8 @@ export interface CreatePrintJobRequest {
   referenceType?: string | null;
   referenceId?: string | null;
   openDrawer?: boolean;
+  waitForCompletion?: boolean;
+  timeoutMs?: number;
 }
 
 export interface CreatePrintJobResponse {
@@ -601,6 +603,7 @@ export interface CreatePrintJobResponse {
   sent?: boolean;
   status?: string;
   message?: string;
+  errorMessage?: string;
   printerId?: string | null;
   [key: string]: unknown;
 }

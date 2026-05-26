@@ -11,6 +11,7 @@ import logger from '../logger';
 
 const SHARED_FISCAL_ROLE: SalonPrinterRole = 'FISCAL_RECEIPT';
 const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
+const FISCAL_JOB_TIMEOUT_MS = 60_000;
 
 let fiscalEndpointUnavailableUntil = 0;
 
@@ -145,6 +146,8 @@ export async function submitSharedFiscalPrint(
     jobType: PrintJobType.RECEIPT,
     printerType: PrinterType.FISCAL,
     printerId: route.printerId,
+    waitForCompletion: true,
+    timeoutMs: FISCAL_JOB_TIMEOUT_MS,
     referenceType: meta.referenceType || 'POS_FISCAL_RECEIPT',
     referenceId: meta.referenceId || receiptData.orderId || receiptData.orderNumber || null,
     payload: receiptData,
@@ -165,8 +168,9 @@ export async function submitSharedFiscalPrint(
     }
 
     const finalFailure = status === 'FAILED' || status === 'TIMEOUT' || status === 'CANCELLED';
+    const responseMessage = result.errorMessage || result.message;
     const error = finalFailure
-      ? `Shared fiscal print ${status.toLowerCase()}${result.message ? `: ${result.message}` : ''}`
+      ? `Shared fiscal print ${status.toLowerCase()}${responseMessage ? `: ${responseMessage}` : ''}`
       : 'Backend did not return final COMPLETED status for fiscal receipt job';
     logger.error(`[SharedFiscalPrinter] ${error}${jobId ? ` (${jobId})` : ''}`);
     return { handled: true, printed: false, printerId: route.printerId, jobId, status, error };
