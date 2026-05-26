@@ -295,16 +295,21 @@ export class ShiftController {
     const token = getSecureAuthToken();
     if (!token) return;
 
-    const shift = database.get<{ backend_id: string | null }>(
-      'SELECT backend_id FROM shifts WHERE id = ?',
+    const shift = database.get<{ backend_id: string | null; staff_id: string | null; staff_name: string | null }>(
+      'SELECT backend_id, staff_id, staff_name FROM shifts WHERE id = ?',
       [shiftId],
     );
     if (!shift?.backend_id) {
+      if (!shift) return;
       try {
         const activeShift = await apiClient.getActiveShift(token);
-        if (activeShift?.id) {
+        const sameShiftId = activeShift?.id === shiftId;
+        const sameStaffId = !!activeShift?.staffId && !!shift.staff_id && activeShift.staffId === shift.staff_id;
+        if (activeShift?.id && (sameShiftId || sameStaffId)) {
           await apiClient.closePosShift(token, activeShift.id, { closingCash });
           logger.info(`[Shift] Closed server active shift ${activeShift.id} while closing unsynced local shift ${shiftId}`);
+        } else if (activeShift?.id) {
+          logger.warn(`[Shift] Skipped closing server active shift ${activeShift.id} while closing unsynced local shift ${shiftId}: no shift id/staff id match`);
         }
       } catch (err: any) {
         logger.warn(`[Shift] Failed to close server active shift for unsynced local shift ${shiftId}: ${err?.message ?? err}`);

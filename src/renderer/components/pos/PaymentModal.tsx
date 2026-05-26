@@ -462,7 +462,7 @@ export default function PaymentModal({
     setReceiptRecovery(null);
 
     try {
-      if (!shiftId || !staffName?.trim()) {
+      if (!shiftId || !staffId || !staffName?.trim()) {
         setError(tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.'));
         setSaving(false);
         return;
@@ -485,7 +485,7 @@ export default function PaymentModal({
     }
   };
 
-  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffName?.trim() && (
+  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffId && !!staffName?.trim() && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );

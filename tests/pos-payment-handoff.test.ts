@@ -7,6 +7,9 @@ const ROOT = path.resolve(__dirname, '..');
 const CART = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/Cart.tsx'), 'utf8');
 const NUMPAD_CONTROLLER = fs.readFileSync(path.join(ROOT, 'src/renderer/hooks/usePOSNumpadController.ts'), 'utf8');
 const RETAIL_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/retail/RetailTemplate.tsx'), 'utf8');
+const SALON_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/salon/SalonTemplate.tsx'), 'utf8');
+const B2B_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/b2b/B2BTemplate.tsx'), 'utf8');
+const RESTAURANT_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/restaurant/RestaurantTemplate.tsx'), 'utf8');
 const PAYMENT_MODAL = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/PaymentModal.tsx'), 'utf8');
 const POS_MODULE = fs.readFileSync(path.join(ROOT, 'src/main/modules/pos.module.ts'), 'utf8');
 const SHIFT_CONTROLLER = fs.readFileSync(path.join(ROOT, 'src/main/pos/shift-controller.ts'), 'utf8');
@@ -51,13 +54,27 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(RETAIL_TEMPLATE).toContain('missingShiftStaff');
     expect(RETAIL_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
     expect(CART).toContain('shiftBlockReason');
-    expect(PAYMENT_MODAL).toContain('if (!shiftId || !staffName?.trim())');
+    expect(PAYMENT_MODAL).toContain('if (!shiftId || !staffId || !staffName?.trim())');
     expect(POS_MODULE).toContain('Cannot create POS order without an active shift staff');
+  });
+
+  it('keeps non-retail payment surfaces behind the same shift staff gate', () => {
+    expect(SALON_TEMPLATE).toContain('shiftPaymentOpen');
+    expect(SALON_TEMPLATE).toContain('!session.staffId || !session.staffName?.trim()');
+    expect(B2B_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
+    expect(RESTAURANT_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
+  });
+
+  it('requires POS orders to belong to a local open shift', () => {
+    expect(POS_MODULE).toContain('Cannot create POS order without a local active shift');
+    expect(POS_MODULE).toContain('WHERE id = ? AND closed_at IS NULL');
+    expect(POS_MODULE).toContain('Materialized server shift');
   });
 
   it('lets a cashier close a server ghost shift before reopening cleanly', () => {
     expect(POS_MODULE).toContain('Closed server ghost shift');
     expect(SHIFT_CONTROLLER).toContain('getActiveShift(token)');
     expect(SHIFT_CONTROLLER).toContain('closing unsynced local shift');
+    expect(SHIFT_CONTROLLER).toContain('Skipped closing server active shift');
   });
 });

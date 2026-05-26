@@ -45,6 +45,15 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
 
   const cart = state.cart;
   const openTables = tables.filter((t) => t.status !== 'free');
+  const tOr = useCallback((key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  }, [t]);
+  const missingShiftStaff = session.isOpen && (!session.staffId || !session.staffName?.trim());
+  const shiftPaymentOpen = session.isOpen && !missingShiftStaff;
+  const shiftBlockedMessage = missingShiftStaff
+    ? tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.')
+    : undefined;
 
   // Load tables from SQLite
   useEffect(() => {
@@ -134,10 +143,10 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
   }, [activeTableId, dispatch, refreshTables]);
 
   const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
-    if (!activeTableId) return;
+    if (!activeTableId || !shiftPaymentOpen) return;
     setPaymentPrefillCashGrosze(prefillCashGrosze);
     setShowPayment(true);
-  }, [activeTableId]);
+  }, [activeTableId, shiftPaymentOpen]);
 
   const handleClosePayment = useCallback(() => {
     setShowPayment(false);
@@ -267,6 +276,8 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
             dispatch={dispatch}
             onPay={handleOpenPayment}
             t={t}
+            shiftOpen={shiftPaymentOpen}
+            shiftBlockReason={shiftBlockedMessage}
             renderItemExtra={(item: CartItem) => (
               item.course ? (
                 <span className="text-xs text-amber-400 ml-1">

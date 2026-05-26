@@ -252,6 +252,28 @@ export class PosModule extends BaseModule {
       const serverShift = await apiClient.getActiveShift(token);
       if (serverShift && !localShiftId) {
         logger.warn(`[PosModule] Server has active shift ${serverShift.id} but local DB has none — restoring`);
+        const existingShift = database.get<{ id: string; closed_at: string | null }>(
+          'SELECT id, closed_at FROM shifts WHERE id = ?',
+          [serverShift.id],
+        );
+        if (!existingShift) {
+          database.run(
+            `INSERT INTO shifts (id, staff_id, staff_name, opened_at, opening_cash, synced, backend_id)
+             VALUES (?, ?, ?, ?, ?, 1, ?)`,
+            [
+              serverShift.id,
+              serverShift.staffId ?? null,
+              serverShift.staffName ?? null,
+              serverShift.openedAt || new Date().toISOString(),
+              Number(serverShift.openingCash) || 0,
+              serverShift.id,
+            ],
+          );
+          database.markDirty();
+          logger.info(`[PosModule] Materialized server shift ${serverShift.id} in local DB`);
+        } else if (existingShift.closed_at) {
+          logger.warn(`[PosModule] Server shift ${serverShift.id} is active but local row is closed — payments will stay blocked until shift is closed/reopened`);
+        }
         this.posStore?.dispatch({
           type: 'session/open',
           payload: { shiftId: serverShift.id, staffId: serverShift.staffId, staffName: serverShift.staffName, openedAt: serverShift.openedAt },
@@ -1055,19 +1077,39 @@ export class PosModule extends BaseModule {
             'SELECT id, staff_id, staff_name FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
           );
           const staffMissing = !String(normalizedOrder.staff_name || '').trim();
+          const staffIdMissing = !String(normalizedOrder.staff_id || '').trim();
           const shiftMissing = !normalizedOrder.shift_id;
-          const staffIdMissing = !normalizedOrder.staff_id;
           if (activeShift && (staffMissing || shiftMissing || staffIdMissing)) {
             normalizedOrder.shift_id = activeShift.id;
             normalizedOrder.staff_id = activeShift.staff_id;
             normalizedOrder.staff_name = activeShift.staff_name;
           }
-          if (!normalizedOrder.shift_id || !String(normalizedOrder.staff_name || '').trim()) {
+          const requestedShiftId = String(normalizedOrder.shift_id || '').trim();
+          if (!requestedShiftId || !String(normalizedOrder.staff_id || '').trim() || !String(normalizedOrder.staff_name || '').trim()) {
             return {
               success: false,
               error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
             };
           }
+          const orderShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
+            'SELECT id, staff_id, staff_name FROM shifts WHERE id = ? AND closed_at IS NULL',
+            [requestedShiftId],
+          );
+          if (!orderShift) {
+            return {
+              success: false,
+              error: 'Cannot create POS order without a local active shift. Close and reopen the shift before payment.',
+            };
+          }
+          if (!String(orderShift.staff_id || '').trim() || !String(orderShift.staff_name || '').trim()) {
+            return {
+              success: false,
+              error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
+            };
+          }
+          normalizedOrder.shift_id = orderShift.id;
+          normalizedOrder.staff_id = orderShift.staff_id;
+          normalizedOrder.staff_name = orderShift.staff_name;
         }
 
         const id = orderRepo.create(normalizedOrder, items);
@@ -1821,7 +1863,7 @@ export class PosModule extends BaseModule {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
 
         // Check shift exists in DB — if not, clear the ghost session and return gracefully
-        const shiftExists = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ?', [data.shiftId]);
+        const shiftExists = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ? AND closed_at IS NULL', [data.shiftId]);
         if (!shiftExists) {
           logger.warn(`[PosModule] Ghost shift ${data.shiftId.substring(0, 8)} — not in DB, clearing session`);
           try {

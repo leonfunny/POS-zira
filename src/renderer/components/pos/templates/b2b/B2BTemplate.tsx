@@ -39,6 +39,15 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
 
   const cart = state.cart;
   const canSell = !!selectedCustomer;
+  const tOr = useCallback((key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  }, [t]);
+  const missingShiftStaff = session.isOpen && (!session.staffId || !session.staffName?.trim());
+  const shiftPaymentOpen = session.isOpen && !missingShiftStaff;
+  const shiftBlockedMessage = missingShiftStaff
+    ? tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.')
+    : undefined;
 
   // Load customers
   useEffect(() => {
@@ -133,10 +142,10 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
       setShowCustomerPrompt(true);
       return;
     }
-    if (cart.items.length === 0) return;
+    if (cart.items.length === 0 || !shiftPaymentOpen) return;
     setPaymentPrefillCashGrosze(prefillCashGrosze);
     setShowPayment(true);
-  }, [cart.items.length, selectedCustomer]);
+  }, [cart.items.length, selectedCustomer, shiftPaymentOpen]);
 
   const handleClosePayment = useCallback(() => {
     setShowPayment(false);
@@ -226,6 +235,8 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
             dispatch={dispatch}
             onPay={handleOpenPayment}
             t={t}
+            shiftOpen={shiftPaymentOpen}
+            shiftBlockReason={shiftBlockedMessage}
           />
           {/* Invoice credit warning */}
           {selectedCustomer && !canPayInvoice && cart.total > 0 && (

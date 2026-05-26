@@ -48,6 +48,15 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   const cart = state.cart;
   const tip = state.tip ?? 0;
   const currency = t('pos.currency');
+  const tOr = useCallback((key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  }, [t]);
+  const missingShiftStaff = session.isOpen && (!session.staffId || !session.staffName?.trim());
+  const shiftPaymentOpen = session.isOpen && !missingShiftStaff;
+  const shiftBlockedMessage = missingShiftStaff
+    ? tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.')
+    : t('pos.shift.openRequired') || 'Open a shift to accept payments';
 
   // Load staff and categories once
   useEffect(() => {
@@ -389,17 +398,17 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
 
           {/* PAY button */}
           <div className="px-4 pb-4 pt-1 shrink-0">
-            {!session.isOpen && (
+            {!shiftPaymentOpen && (
               <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-amber-50 border border-amber-200 rounded-xl">
                 <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                 </svg>
-                <p className="text-xs text-amber-700 font-medium">{t('pos.shift.openRequired') || 'Open a shift to accept payments'}</p>
+                <p className="text-xs text-amber-700 font-medium">{shiftBlockedMessage}</p>
               </div>
             )}
             <button
-              onClick={() => cart.items.length > 0 && session.isOpen && setShowPayment(true)}
-              disabled={cart.items.length === 0 || !session.isOpen}
+              onClick={() => cart.items.length > 0 && shiftPaymentOpen && setShowPayment(true)}
+              disabled={cart.items.length === 0 || !shiftPaymentOpen}
               className="w-full py-4 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg tracking-wide transition-colors shadow-sm touch-manipulation cursor-pointer"
             >
               {t('pos.pay') || 'PAY'}
