@@ -76,6 +76,10 @@ export async function submitSharedReceiptPrint(
       referenceId: meta.referenceId || receiptData.orderId || receiptData.orderNumber || null,
       ...(meta.openDrawer ? { openDrawer: true } : {}),
     };
+    logger.info(
+      `[SharedReceiptPrinter] creating ${body.referenceType || 'RECEIPT'} job for printer ${printerId} ` +
+      `openDrawer=${meta.openDrawer ? 'true' : 'false'} paymentMethod=${String(receiptData.payment?.method || 'none')}`,
+    );
     let drawerOpenRequested = !!meta.openDrawer;
     let result;
     try {

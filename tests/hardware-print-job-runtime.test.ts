@@ -195,4 +195,39 @@ describe('HardwareModule print job runtime guards', () => {
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-cash', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
   });
+
+  it('opens the cash drawer for legacy routed POS cash receipts even when openDrawer is missing', async () => {
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    container.getOptional.mockReturnValue(socket);
+    const receipt: ReceiptData = {
+      orderId: 'order-legacy-cash',
+      orderNumber: 'POS-2',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-legacy-cash',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      referenceType: 'POS_RECEIPT',
+      payload: receipt,
+    });
+
+    expect(mock.thermalInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
+    expect(mock.thermalInstances[0].openDrawer).toHaveBeenCalledTimes(1);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-legacy-cash', 'COMPLETED');
+  });
 });

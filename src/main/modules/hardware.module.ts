@@ -2033,6 +2033,27 @@ export class HardwareModule extends BaseModule {
           } else throw new Error('Reports require Thermal printer');
         } else {
           const receiptPayload = job.payload as ReceiptData;
+          const referenceType = String(job.referenceType || '');
+          const paymentMethod = String(receiptPayload.payment?.method || '').toUpperCase();
+          const explicitDrawerRequest = Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
+          const inferredPosCashDrawerRequest = (
+            !explicitDrawerRequest &&
+            referenceType === 'POS_RECEIPT' &&
+            paymentMethod === 'CASH' &&
+            !(receiptPayload as any).isReprint &&
+            !(receiptPayload as any).isRefund
+          );
+          const openDrawerRequested = (
+            !fiscal &&
+            printerType === PrinterType.RECEIPT &&
+            (explicitDrawerRequest || inferredPosCashDrawerRequest)
+          );
+          logger.info(
+            `[HardwareModule] Job ${job.jobId}: receipt job metadata referenceType=${referenceType || 'none'} ` +
+            `paymentMethod=${paymentMethod || 'none'} openDrawer=${explicitDrawerRequest ? 'true' : 'false'} ` +
+            `inferredPosCashDrawer=${inferredPosCashDrawerRequest ? 'true' : 'false'} ` +
+            `supportsCashDrawer=${printerConfig?.supportsCashDrawer ? 'true' : 'false'}`,
+          );
           if (isElzabDriver(targetPrinter)) {
             await targetPrinter.printReceipt({
               ...receiptPayload,
@@ -2041,7 +2062,6 @@ export class HardwareModule extends BaseModule {
           } else {
             await targetPrinter.printReceipt(receiptPayload);
           }
-          const openDrawerRequested = !fiscal && printerType === PrinterType.RECEIPT && Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
           if (openDrawerRequested) {
             if (printerConfig?.supportsCashDrawer) {
               try {
