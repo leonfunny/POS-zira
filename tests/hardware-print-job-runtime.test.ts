@@ -14,6 +14,8 @@ const mock = vi.hoisted(() => ({
   getById: vi.fn(),
   markOnline: vi.fn(),
   markUsed: vi.fn(),
+  posnetConnects: false,
+  posnetInstances: [] as any[],
   rowToPrinterConfig: vi.fn(),
   thermalInstances: [] as any[],
 }));
@@ -68,10 +70,14 @@ vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
 
 vi.mock('../src/main/hardware/posnet/posnet-driver', () => {
   class PosnetDriver {
-    connect = vi.fn(async () => false);
-    disconnect = vi.fn();
-    isConnected = vi.fn(() => false);
     printReceipt = vi.fn();
+    openDrawer = vi.fn();
+    connect = vi.fn(async () => mock.posnetConnects);
+    disconnect = vi.fn();
+    isConnected = vi.fn(() => mock.posnetConnects);
+    constructor() {
+      mock.posnetInstances.push(this);
+    }
   }
   return { PosnetDriver };
 });
@@ -97,6 +103,8 @@ describe('HardwareModule print job runtime guards', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mock.thermalInstances.length = 0;
+    mock.posnetInstances.length = 0;
+    mock.posnetConnects = false;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
 
     const row = {
@@ -263,5 +271,67 @@ describe('HardwareModule print job runtime guards', () => {
     expect(mock.thermalInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
     expect(mock.thermalInstances[0].openDrawer).not.toHaveBeenCalled();
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-non-pos-cash', 'COMPLETED');
+  });
+
+  it('routes a FISCAL receipt job by printerId and never opens the cash drawer', async () => {
+    mock.posnetConnects = true;
+    const fiscalRow = {
+      id: 'fiscal-printer-1',
+      printer_type: PrinterType.FISCAL,
+      display_name: 'posnet thermal hd',
+      protocol: 'POSNET',
+      is_enabled: 1,
+      address: 'COM4',
+      supports_cash_drawer: 1,
+    };
+    const fiscalConfig: PrinterConfig = {
+      enabled: true,
+      protocol: 'POSNET',
+      serverPrinterId: 'fiscal-printer-1',
+      port: 'COM4',
+      paperWidth: 80,
+      charsPerLine: 48,
+      supportsCashDrawer: true,
+    };
+    mock.getEnabled.mockReturnValue([fiscalRow]);
+    mock.getAll.mockReturnValue([fiscalRow]);
+    mock.getById.mockImplementation((id: string) => (id === 'fiscal-printer-1' ? fiscalRow : null));
+    mock.rowToPrinterConfig.mockReturnValue(fiscalConfig);
+
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    container.getOptional.mockReturnValue(socket);
+    const receipt: ReceiptData = {
+      orderId: 'order-fiscal-1',
+      orderNumber: 'POS-3',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CARD', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-fiscal',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.FISCAL,
+      printerId: 'fiscal-printer-1',
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: 'order-fiscal-1',
+      payload: receipt,
+      openDrawer: true,
+    });
+
+    expect(mock.posnetInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
+    expect(mock.posnetInstances[0].openDrawer).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-fiscal', 'COMPLETED');
+    expect(mock.markUsed).toHaveBeenCalledWith('fiscal-printer-1');
   });
 });

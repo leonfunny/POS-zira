@@ -35,6 +35,11 @@ type SharedReceiptPrinter = (
   data: ReceiptData,
   meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
 ) => Promise<{ handled: boolean; printed: boolean; printerId?: string; drawerOpenRequested?: boolean; error?: string }>;
+type SharedFiscalPrinter = (
+  data: ReceiptData,
+  meta: { referenceType?: string; referenceId?: string; source?: string },
+) => Promise<{ handled: boolean; printed: boolean; printerId?: string; jobId?: string; error?: string }>;
+type SharedFiscalStatusProvider = () => Promise<{ configured: boolean; connected: boolean; printerId?: string; error?: string }>;
 
 type PrintReceiptOptions = {
   throwOnFailure?: boolean;
@@ -49,6 +54,8 @@ export class PaymentController {
     private getSellerAddress?: () => string | undefined,
     private getSellerNip?: () => string | undefined,
     private sharedReceiptPrinter?: SharedReceiptPrinter,
+    private sharedFiscalPrinter?: SharedFiscalPrinter,
+    private sharedFiscalStatus?: SharedFiscalStatusProvider,
   ) {}
 
   /**
@@ -147,10 +154,23 @@ export class PaymentController {
     }
   }
 
-  hasFiscalPrinter(): { configured: boolean; connected: boolean } {
+  async hasFiscalPrinter(): Promise<{ configured: boolean; connected: boolean }> {
     const printer = this.getPrinter(PrinterType.FISCAL);
-    if (!printer) return { configured: false, connected: false };
-    return { configured: true, connected: !!printer.isConnected?.() };
+    if (printer) return { configured: true, connected: !!printer.isConnected?.() };
+
+    if (!this.sharedFiscalStatus) return { configured: false, connected: false };
+    try {
+      const remote = await this.sharedFiscalStatus();
+      if (remote.configured) {
+        logger.info(`[Payment] Remote fiscal route ready${remote.printerId ? ` via ${remote.printerId}` : ''}`);
+      } else if (remote.error) {
+        logger.warn(`[Payment] Remote fiscal route unavailable: ${remote.error}`);
+      }
+      return { configured: !!remote.configured, connected: !!remote.connected };
+    } catch (err: any) {
+      logger.warn(`[Payment] Remote fiscal availability check failed; fiscal route disabled: ${err?.message || err}`);
+      return { configured: false, connected: false };
+    }
   }
 
   private buildSaleReceiptData(orderId: string): ReceiptData | null {
@@ -315,9 +335,9 @@ export class PaymentController {
 
   /**
    * Print the fiscal receipt for a completed order on the FISCAL printer
-   * (POSNET or ELZAB). Always local — never routed through the shared
-   * network receipt printer. Caller is expected to have asked the cashier
-   * (CASH flow) or fired it automatically (CARD/BLIK/TRANSFER flow).
+   * (POSNET or ELZAB). Local fiscal hardware wins; POS instances without
+   * fiscal hardware may route only through the dedicated blocking fiscal
+   * backend job. Never fall back to the thermal receipt route.
    */
   async printFiscalReceipt(orderId: string): Promise<boolean> {
     const receiptData = this.buildSaleReceiptData(orderId);
@@ -326,15 +346,43 @@ export class PaymentController {
       return false;
     }
     const orderNumberLabel = receiptData.orderNumber;
-    return this.printReceiptData(
-      receiptData,
-      { referenceType: 'POS_FISCAL_RECEIPT', referenceId: orderId, source: 'pos' },
-      `[Payment] Fiscal receipt printed for order ${orderNumberLabel}`,
-      '[Payment] Fiscal receipt print failed',
-      '[Payment] No fiscal printer connected, skipping fiscal print',
-      PrinterType.FISCAL,
-      { throwOnFailure: true },
-    );
+    const successMessage = `[Payment] Fiscal receipt printed for order ${orderNumberLabel}`;
+    const failureMessage = '[Payment] Fiscal receipt print failed';
+    const missingPrinterMessage = '[Payment] No fiscal printer connected or remote fiscal route configured';
+    const meta = { referenceType: 'POS_FISCAL_RECEIPT', referenceId: orderId, source: 'pos' };
+
+    const printer = this.getPrinter(PrinterType.FISCAL);
+    if (printer) {
+      if (!printer.isConnected()) {
+        logger.warn(missingPrinterMessage);
+        throw new Error(missingPrinterMessage);
+      }
+
+      try {
+        await printer.printReceipt(receiptData);
+        logger.info(successMessage);
+        return true;
+      } catch (err) {
+        logger.error(`${failureMessage}: ${err}`);
+        throw new Error(this.describePrintFailure(err, failureMessage));
+      }
+    }
+
+    if (this.sharedFiscalPrinter) {
+      const shared = await this.sharedFiscalPrinter(receiptData, meta);
+      if (shared.handled) {
+        if (shared.printed) {
+          logger.info(`${successMessage} via shared fiscal printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
+          return true;
+        }
+        const error = shared.error || 'Remote fiscal printer did not confirm final print completion';
+        logger.error(`${failureMessage}: ${error}`);
+        throw new Error(error);
+      }
+    }
+
+    logger.warn(missingPrinterMessage);
+    throw new Error(missingPrinterMessage);
   }
 
   /**

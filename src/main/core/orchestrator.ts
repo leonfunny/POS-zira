@@ -317,6 +317,10 @@ export class AgentOrchestrator implements TrayManagerHost {
         jobType: job.jobType,
         printerType: job.printerType,
         printerId: job.printerId,
+        referenceType: job.referenceType ?? null,
+        referenceId: job.referenceId ?? null,
+        openDrawer: job.openDrawer,
+        createdAt: job.createdAt,
         payload: job.payload,
       });
     });

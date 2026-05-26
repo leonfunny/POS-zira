@@ -171,6 +171,7 @@ export enum PrintJobStatus {
   PRINTING = 'PRINTING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  TIMEOUT = 'TIMEOUT',
   CANCELLED = 'CANCELLED',
 }
 

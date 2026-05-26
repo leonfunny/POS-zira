@@ -17,6 +17,7 @@ import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
+import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
 import {
   buildRefundMutationError,
@@ -173,6 +174,8 @@ export class PosModule extends BaseModule {
       () => getConfig().receiptSellerAddress,
       () => getConfig().receiptSellerNip,
       submitSharedReceiptPrint,
+      submitSharedFiscalPrint,
+      getSharedFiscalPrinterStatus,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,
@@ -1436,7 +1439,7 @@ export class PosModule extends BaseModule {
     });
 
     ipcMain.handle('pos:has-fiscal-printer', async () => {
-      const status = this.paymentController?.hasFiscalPrinter?.() ?? { configured: false, connected: false };
+      const status = await (this.paymentController?.hasFiscalPrinter?.() ?? Promise.resolve({ configured: false, connected: false }));
       return { success: true, ...status };
     });
 

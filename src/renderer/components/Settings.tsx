@@ -111,8 +111,8 @@ const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[] = [
     role: 'FISCAL_RECEIPT',
     printerType: 'FISCAL',
     title: 'Fiscal receipts',
-    description: 'Requires a blocking backend job result before POS 2 can use POS 1 fiscal hardware.',
-    enabled: false,
+    description: 'POS fiscal receipts can route to a ready fiscal printer owned by another online POS.',
+    enabled: true,
     blocking: true,
   },
   {
@@ -1197,11 +1197,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   };
 
-  const handleAssignSharedPrinter = async (printerId: string) => {
-    setSharedPrinterSavingId(printerId);
+  const handleAssignSharedPrinter = async (printerId: string, role: SalonPrinterRole = SELF_CHECKOUT_RECEIPT_ROLE) => {
+    setSharedPrinterSavingId(`${role}:${printerId}`);
     setSharedPrintersError(null);
     try {
-      await window.electronAPI.printAgentPrinters.upsertAssignment(SELF_CHECKOUT_RECEIPT_ROLE, printerId);
+      await window.electronAPI.printAgentPrinters.upsertAssignment(role, printerId);
       await loadSharedPrinterRouting();
     } catch (err: any) {
       setSharedPrintersError(err?.message || 'Failed to save shared printer assignment');
@@ -1210,11 +1210,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   };
 
-  const handleClearSharedPrinter = async () => {
-    setSharedPrinterSavingId('clear');
+  const handleClearSharedPrinter = async (role: SalonPrinterRole = SELF_CHECKOUT_RECEIPT_ROLE) => {
+    setSharedPrinterSavingId(`${role}:clear`);
     setSharedPrintersError(null);
     try {
-      await window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE);
+      await window.electronAPI.printAgentPrinters.deleteAssignment(role);
       await loadSharedPrinterRouting();
     } catch (err: any) {
       setSharedPrintersError(err?.message || 'Failed to stop shared printer assignment');
@@ -2793,10 +2793,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     <button
                       type="button"
                       onClick={() => handleClearSharedPrinter()}
-                      disabled={sharedPrinterSavingId === 'clear'}
+                      disabled={sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:clear`}
                       className="min-h-10 px-3 py-2 border border-red-200 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                     >
-                      {sharedPrinterSavingId === 'clear' ? 'Stopping...' : 'Stop sharing'}
+                      {sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:clear` ? 'Stopping...' : 'Stop sharing'}
                     </button>
                   )}
                 </div>
@@ -2902,10 +2902,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                               <button
                                 type="button"
                                 onClick={() => handleClearSharedPrinter()}
-                                disabled={sharedPrinterSavingId === 'clear'}
+                                disabled={sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:clear`}
                                 className="min-h-10 px-3 py-2 rounded-lg border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                               >
-                                {sharedPrinterSavingId === 'clear' ? 'Stopping...' : 'Stop sharing'}
+                                {sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:clear` ? 'Stopping...' : 'Stop sharing'}
                               </button>
                             ) : (
                               <div className="min-h-10 px-3 py-2 rounded-lg bg-slate-100 text-sm font-medium text-slate-500">
@@ -2916,14 +2916,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                             <button
                               type="button"
                               onClick={() => handleAssignSharedPrinter(printer.id)}
-                              disabled={!canUseThisPrinter || sharedPrinterSavingId === printer.id}
+                              disabled={!canUseThisPrinter || sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:${printer.id}`}
                               className={`min-h-10 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                                 canUseThisPrinter
                                   ? 'bg-brand-600 text-white hover:bg-brand-700'
                                   : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                               }`}
                             >
-                              {sharedPrinterSavingId === printer.id
+                              {sharedPrinterSavingId === `${SELF_CHECKOUT_RECEIPT_ROLE}:${printer.id}`
                                 ? 'Saving...'
                                 : 'Use for self-checkout'}
                             </button>
@@ -2962,9 +2962,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                       || salonPrinters.find((printer) => printer.id === assignment.printerId)
                       || null
                     : null;
-                  const candidates = salonInventoryPrinters
-                    .filter((printer) => isServerPrinterType(printer, route.printerType))
-                    .filter(hasServerPrinterTarget);
+                  const routeCandidates = salonInventoryPrinters
+                    .filter((printer) => isServerPrinterType(printer, route.printerType));
+                  const candidates = route.role === 'FISCAL_RECEIPT'
+                    ? routeCandidates.filter(isSalonPrinterRouteReady)
+                    : routeCandidates.filter(hasServerPrinterTarget);
+                  const showRouteActions = route.role !== SELF_CHECKOUT_RECEIPT_ROLE;
+                  const clearSaving = sharedPrinterSavingId === `${route.role}:clear`;
 
                   return (
                     <div key={route.role} className="rounded-lg border border-slate-200 px-3 py-3">
@@ -2978,19 +2982,33 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                         </span>
                       </div>
                       {selectedPrinter && (
-                        <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                          Selected: <span className="font-medium text-slate-800">{getServerPrinterName(selectedPrinter)}</span> - {getServerPrinterOwnerLabel(selectedPrinter)}
+                        <div className="mt-3 flex flex-col gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            Selected: <span className="font-medium text-slate-800">{getServerPrinterName(selectedPrinter)}</span> - {getServerPrinterOwnerLabel(selectedPrinter)}
+                          </div>
+                          {showRouteActions && (
+                            <button
+                              type="button"
+                              onClick={() => handleClearSharedPrinter(route.role)}
+                              disabled={clearSaving}
+                              className="min-h-8 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {clearSaving ? 'Clearing...' : 'Clear route'}
+                            </button>
+                          )}
                         </div>
                       )}
                       <div className="mt-3 space-y-2">
                         {candidates.length === 0 && (
                           <div className="rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
-                            {sharedPrintersLoading ? 'Loading printers...' : `No configured ${route.printerType} printers found`}
+                            {sharedPrintersLoading ? 'Loading printers...' : `No ${route.role === 'FISCAL_RECEIPT' ? 'ready' : 'configured'} ${route.printerType} printers found`}
                           </div>
                         )}
                         {candidates.slice(0, 4).map((printer) => {
                           const state = getSalonPrinterRouteState(printer);
                           const selected = assignment?.printerId === printer.id;
+                          const canUseThisPrinter = isSalonPrinterRouteReady(printer);
+                          const saving = sharedPrinterSavingId === `${route.role}:${printer.id}`;
                           return (
                             <div key={`${route.role}-${printer.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
                               <div className="min-w-0">
@@ -3004,6 +3022,20 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                                   <span className="rounded-full bg-brand-100 px-2 py-1 text-[11px] font-medium text-brand-700">Selected</span>
                                 )}
                                 <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${state.className}`}>{state.label}</span>
+                                {showRouteActions && !selected && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAssignSharedPrinter(printer.id, route.role)}
+                                    disabled={!canUseThisPrinter || saving}
+                                    className={`min-h-8 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                                      canUseThisPrinter
+                                        ? 'bg-brand-600 text-white hover:bg-brand-700'
+                                        : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                                    }`}
+                                  >
+                                    {saving ? 'Saving...' : 'Use'}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           );

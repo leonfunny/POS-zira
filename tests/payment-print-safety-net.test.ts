@@ -65,6 +65,8 @@ function makeFakePrinter(opts: {
 function buildController(
   printer: ReturnType<typeof makeFakePrinter> | null,
   sharedReceiptPrinter?: any,
+  sharedFiscalPrinter?: any,
+  sharedFiscalStatus?: any,
 ) {
   return new PaymentController(
     (_type: string) => printer as any,
@@ -74,6 +76,8 @@ function buildController(
     () => 'ul. Marszałkowska 1',
     () => '5220052349',
     sharedReceiptPrinter,
+    sharedFiscalPrinter,
+    sharedFiscalStatus,
   );
 }
 
@@ -232,9 +236,52 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(printer.printReceipt).not.toHaveBeenCalled();
   });
 
-  it('keeps fiscal receipts on the local FISCAL printer and never uses the shared receipt route', async () => {
+  it('routes fiscal receipts through the remote fiscal backend job when no local fiscal printer exists', async () => {
+    const sharedFiscalPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: true,
+      printerId: 'remote-fiscal-1',
+      jobId: 'job-1',
+    }));
+    const ctl = buildController(null, undefined, sharedFiscalPrinter);
+
+    await expect(ctl.printFiscalReceipt('order-1')).resolves.toBe(true);
+
+    expect(sharedFiscalPrinter).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-1', orderNumber: 'POS-20260505-0001' }),
+      expect.objectContaining({ referenceType: 'POS_FISCAL_RECEIPT', referenceId: 'order-1', source: 'pos' }),
+    );
+  });
+
+  it('surfaces remote fiscal failure instead of treating job delivery as printed', async () => {
+    const sharedFiscalPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: false,
+      printerId: 'remote-fiscal-1',
+      error: 'Backend did not return final COMPLETED status for fiscal receipt job',
+    }));
+    const ctl = buildController(null, undefined, sharedFiscalPrinter);
+
+    await expect(ctl.printFiscalReceipt('order-1')).rejects.toThrow('final COMPLETED');
+  });
+
+  it('reports remote fiscal availability when the backend exposes a ready fiscal route', async () => {
+    const sharedFiscalStatus = vi.fn(async () => ({
+      configured: true,
+      connected: true,
+      printerId: 'remote-fiscal-1',
+    }));
+    const ctl = buildController(null, undefined, undefined, sharedFiscalStatus);
+
+    await expect(ctl.hasFiscalPrinter()).resolves.toEqual({ configured: true, connected: true });
+    expect(sharedFiscalStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps fiscal receipts on the local FISCAL printer and never uses remote routes', async () => {
     const fiscalPrinter = makeFakePrinter({});
     const sharedReceiptPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'remote-fiscal' }));
+    const sharedFiscalPrinter = vi.fn(async () => ({ handled: true, printed: true, printerId: 'remote-fiscal' }));
+    const sharedFiscalStatus = vi.fn(async () => ({ configured: true, connected: true, printerId: 'remote-fiscal' }));
     const getPrinter = vi.fn((type: string) => (
       type === PrinterType.FISCAL ? fiscalPrinter as any : null
     ));
@@ -246,12 +293,16 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
       () => 'ul. MarszaÅ‚kowska 1',
       () => '5220052349',
       sharedReceiptPrinter,
+      sharedFiscalPrinter,
+      sharedFiscalStatus,
     );
 
     await expect(ctl.printFiscalReceipt('order-1')).resolves.toBe(true);
 
     expect(getPrinter).toHaveBeenCalledWith(PrinterType.FISCAL);
     expect(sharedReceiptPrinter).not.toHaveBeenCalled();
+    expect(sharedFiscalPrinter).not.toHaveBeenCalled();
+    expect(sharedFiscalStatus).not.toHaveBeenCalled();
     expect(fiscalPrinter.printReceipt).toHaveBeenCalledTimes(1);
   });
 

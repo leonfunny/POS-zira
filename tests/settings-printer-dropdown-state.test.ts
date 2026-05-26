@@ -120,6 +120,9 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).toContain('Self-checkout receipt printing');
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
     expect(settingsSource).toContain('const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[]');
+    expect(settingsSource).toContain("role: 'FISCAL_RECEIPT'");
+    expect(settingsSource).toContain('route.role === \'FISCAL_RECEIPT\'');
+    expect(settingsSource).toContain('handleAssignSharedPrinter(printer.id, route.role)');
     expect(sharedTypesSource).toContain("| 'FISCAL_RECEIPT'");
     expect(sharedTypesSource).toContain("| 'POS_RECEIPT'");
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList({');
@@ -127,8 +130,8 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).toContain('role: SELF_CHECKOUT_RECEIPT_ROLE');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList()');
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.assignmentsList()');
-    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.upsertAssignment(SELF_CHECKOUT_RECEIPT_ROLE, printerId)');
-    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.deleteAssignment(SELF_CHECKOUT_RECEIPT_ROLE)');
+    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.upsertAssignment(role, printerId)');
+    expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.deleteAssignment(role)');
     expect(settingsSource).toContain('sharedReceiptOwnedByThisPos');
     expect(settingsSource).toContain('isSalonPrinterRouteReady(printer)');
     expect(settingsSource).toContain('Stop sharing');

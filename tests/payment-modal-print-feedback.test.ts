@@ -229,4 +229,14 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
     expect(source).toContain('handleRetryReceipt');
     expect(source).toContain('handleContinueWithoutReceipt');
   });
+
+  it('does not skip non-cash fiscal printing once hasFiscalPrinter reports a configured route', () => {
+    expect(source).toContain("const autoPrintFiscal = !hasCash && method !== 'INVOICE';");
+    const fiscalBranch = source.slice(
+      source.indexOf('if (autoPrintFiscal)'),
+      source.indexOf('const outcome = deriveReceiptOutcome'),
+    );
+    expect(fiscalBranch).toContain('if (!hasFiscalPrinter)');
+    expect(fiscalBranch).toContain('window.electronAPI.pos.payment.printFiscalReceipt(orderId)');
+  });
 });
