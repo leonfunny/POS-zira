@@ -85,6 +85,10 @@ export default function PaymentModal({
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const tOr = (key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -458,6 +462,12 @@ export default function PaymentModal({
     setReceiptRecovery(null);
 
     try {
+      if (!shiftId || !staffName?.trim()) {
+        setError(tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.'));
+        setSaving(false);
+        return;
+      }
+
       const orderId = crypto.randomUUID();
 
       if (splitMode) {
@@ -475,16 +485,12 @@ export default function PaymentModal({
     }
   };
 
-  const canComplete = !receiptRecovery && !saving && (
+  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffName?.trim() && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );
 
   const currency = t('pos.currency') || 'zl';
-  const tOr = (key: string, fallback: string) => {
-    const value = t(key);
-    return value !== key ? value : fallback;
-  };
   const money = (amount: number) => `${(amount / 100).toFixed(2)} ${currency}`;
   const methodLabel = (pm: PaymentMethod) => t(`pos.payment.${pm.toLowerCase()}`) || pm;
   const activeMethodLabel = splitMode ? tOr('pos.split.toggle', 'Split') : methodLabel(method);

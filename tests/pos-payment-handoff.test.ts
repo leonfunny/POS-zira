@@ -8,6 +8,8 @@ const CART = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/Cart.t
 const NUMPAD_CONTROLLER = fs.readFileSync(path.join(ROOT, 'src/renderer/hooks/usePOSNumpadController.ts'), 'utf8');
 const RETAIL_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/retail/RetailTemplate.tsx'), 'utf8');
 const PAYMENT_MODAL = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/PaymentModal.tsx'), 'utf8');
+const POS_MODULE = fs.readFileSync(path.join(ROOT, 'src/main/modules/pos.module.ts'), 'utf8');
+const SHIFT_CONTROLLER = fs.readFileSync(path.join(ROOT, 'src/main/pos/shift-controller.ts'), 'utf8');
 
 describe('POS cash handoff helpers', () => {
   it('formats embedded-numpad cash into the modal input shape', () => {
@@ -43,5 +45,19 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
   it('hydrates PaymentModal cash state from the initial cash draft', () => {
     expect(PAYMENT_MODAL).toContain('initialCashAmountGrosze');
     expect(PAYMENT_MODAL).toContain('formatInitialCashAmount(initialCashAmountGrosze)');
+  });
+
+  it('blocks payments when a restored shift has no staff name', () => {
+    expect(RETAIL_TEMPLATE).toContain('missingShiftStaff');
+    expect(RETAIL_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
+    expect(CART).toContain('shiftBlockReason');
+    expect(PAYMENT_MODAL).toContain('if (!shiftId || !staffName?.trim())');
+    expect(POS_MODULE).toContain('Cannot create POS order without an active shift staff');
+  });
+
+  it('lets a cashier close a server ghost shift before reopening cleanly', () => {
+    expect(POS_MODULE).toContain('Closed server ghost shift');
+    expect(SHIFT_CONTROLLER).toContain('getActiveShift(token)');
+    expect(SHIFT_CONTROLLER).toContain('closing unsynced local shift');
   });
 });

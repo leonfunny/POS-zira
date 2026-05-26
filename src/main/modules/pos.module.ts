@@ -1048,7 +1048,29 @@ export class PosModule extends BaseModule {
     // Orders
     ipcMain.handle('pos:orders:create', (_e, order, items) => {
       try {
-        const id = orderRepo.create(order, items);
+        const normalizedOrder = { ...(order || {}) };
+        const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
+        if (isPosOrder) {
+          const activeShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
+            'SELECT id, staff_id, staff_name FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+          );
+          const staffMissing = !String(normalizedOrder.staff_name || '').trim();
+          const shiftMissing = !normalizedOrder.shift_id;
+          const staffIdMissing = !normalizedOrder.staff_id;
+          if (activeShift && (staffMissing || shiftMissing || staffIdMissing)) {
+            normalizedOrder.shift_id = activeShift.id;
+            normalizedOrder.staff_id = activeShift.staff_id;
+            normalizedOrder.staff_name = activeShift.staff_name;
+          }
+          if (!normalizedOrder.shift_id || !String(normalizedOrder.staff_name || '').trim()) {
+            return {
+              success: false,
+              error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
+            };
+          }
+        }
+
+        const id = orderRepo.create(normalizedOrder, items);
         let stockChanged = false;
         for (const item of items) {
           if (item.variant_id && item.quantity > 0) {
@@ -1069,7 +1091,7 @@ export class PosModule extends BaseModule {
             const dto: Record<string, any> = {
               id,
               priceType: 'brutto',
-              requiresInvoice: !!order.customer_nip,
+              requiresInvoice: !!normalizedOrder.customer_nip,
               items: (items || []).filter((i: any) => i.variant_id || i.id).map((i: any) => ({
                 productId: i.variant_id || i.id,
                 variantId: i.variant_id || i.id,
@@ -1078,26 +1100,26 @@ export class PosModule extends BaseModule {
                 ...(typeof i.price === 'number' && Number.isFinite(i.price) ? { customPrice: i.price / 100 } : {}),
               })),
             };
-            if (order.payment_tenders) {
+            if (normalizedOrder.payment_tenders) {
               try {
-                const tenders = JSON.parse(order.payment_tenders) as Array<{ method: string; amount: number }>;
+                const tenders = JSON.parse(normalizedOrder.payment_tenders) as Array<{ method: string; amount: number }>;
                 if (tenders.length > 0) dto.tenders = tenders.map((t: any) => ({ method: PM[t.method] || t.method, amount: t.amount / 100 }));
               } catch { /* single method fallback below */ }
             }
-            if (order.payment_method) dto.paymentMethod = PM[order.payment_method] || 'CASH';
-            if (order.staff_id) dto.staffId = order.staff_id;
-            if (order.staff_name) dto.staffName = order.staff_name;
-            if (order.shift_id) dto.shiftId = order.shift_id;
-            if (order.customer_id) dto.customerId = order.customer_id;
-            if (order.customer_nip) dto.customerNip = order.customer_nip;
-            if (order.customer_name) dto.customerName = order.customer_name;
-            if (order.source) dto.source = order.source;
-            if (order.order_type) dto.orderType = order.order_type;
-            if (order.mode) dto.mode = order.mode;
-            if (order.discount > 0) dto.discountAmount = order.discount / 100;
-            if (order.payment_amount > 0) dto.paymentAmount = order.payment_amount / 100;
-            if (order.change_amount > 0) dto.changeAmount = order.change_amount / 100;
-            if (order.tip && order.tip > 0) dto.tip = order.tip / 100;
+            if (normalizedOrder.payment_method) dto.paymentMethod = PM[normalizedOrder.payment_method] || 'CASH';
+            if (normalizedOrder.staff_id) dto.staffId = normalizedOrder.staff_id;
+            if (normalizedOrder.staff_name) dto.staffName = normalizedOrder.staff_name;
+            if (normalizedOrder.shift_id) dto.shiftId = normalizedOrder.shift_id;
+            if (normalizedOrder.customer_id) dto.customerId = normalizedOrder.customer_id;
+            if (normalizedOrder.customer_nip) dto.customerNip = normalizedOrder.customer_nip;
+            if (normalizedOrder.customer_name) dto.customerName = normalizedOrder.customer_name;
+            if (normalizedOrder.source) dto.source = normalizedOrder.source;
+            if (normalizedOrder.order_type) dto.orderType = normalizedOrder.order_type;
+            if (normalizedOrder.mode) dto.mode = normalizedOrder.mode;
+            if (normalizedOrder.discount > 0) dto.discountAmount = normalizedOrder.discount / 100;
+            if (normalizedOrder.payment_amount > 0) dto.paymentAmount = normalizedOrder.payment_amount / 100;
+            if (normalizedOrder.change_amount > 0) dto.changeAmount = normalizedOrder.change_amount / 100;
+            if (normalizedOrder.tip && normalizedOrder.tip > 0) dto.tip = normalizedOrder.tip / 100;
             syncLog.writeLocalEntry('order', id, 'created', dto);
           }
         } catch (e) { logger.debug('[PosModule] Sync log write failed for order:', e); }
@@ -1802,6 +1824,15 @@ export class PosModule extends BaseModule {
         const shiftExists = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ?', [data.shiftId]);
         if (!shiftExists) {
           logger.warn(`[PosModule] Ghost shift ${data.shiftId.substring(0, 8)} — not in DB, clearing session`);
+          try {
+            const token = getSecureAuthToken();
+            if (token) {
+              await apiClient.closePosShift(token, data.shiftId, { closingCash: data.closingCash });
+              logger.info(`[PosModule] Closed server ghost shift ${data.shiftId.substring(0, 8)}`);
+            }
+          } catch (err: any) {
+            logger.warn(`[PosModule] Failed to close server ghost shift ${data.shiftId.substring(0, 8)}: ${err?.message ?? err}`);
+          }
           this.posStore?.dispatch({ type: 'session/close' });
           return { success: true, report: null };
         }

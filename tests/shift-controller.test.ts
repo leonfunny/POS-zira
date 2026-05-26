@@ -19,6 +19,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
 vi.mock('../src/main/network/api-client', () => ({
   apiClient: {
     closePosShift: vi.fn(),
+    getActiveShift: vi.fn(),
     openPosShift: vi.fn(),
   },
 }));

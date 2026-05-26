@@ -10,6 +10,7 @@ interface CartProps {
   onPay: (prefillCashGrosze?: number) => void;
   t: (key: string) => string;
   shiftOpen?: boolean;
+  shiftBlockReason?: string;
   renderItemExtra?: (item: CartItem) => React.ReactNode;
   /** Operator UI language — forwarded to CartItemRow for display-only name resolution. */
   lang?: string;
@@ -113,6 +114,7 @@ export default function Cart({
   onPay,
   t,
   shiftOpen = true,
+  shiftBlockReason,
   renderItemExtra,
   lang,
   heldCartsCount = 0,
@@ -185,6 +187,7 @@ export default function Cart({
 
   const isDiscountActive = controller.target.kind === 'discount';
   const hasItems = cart.items.length > 0;
+  const shiftWarning = shiftBlockReason || tOr('pos.shift.openRequired', 'Open a shift to accept payments');
   const subtotalStr = `${(cart.subtotal / 100).toFixed(2)} ${currency}`;
   const totalStr = (cart.total / 100).toFixed(2);
 
@@ -387,7 +390,7 @@ export default function Cart({
               <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
               </svg>
-              <p className="text-xs text-amber-900 font-bold leading-snug">{tOr('pos.shift.openRequired', 'Open a shift to accept payments')}</p>
+              <p className="text-xs text-amber-900 font-bold leading-snug">{shiftWarning}</p>
             </div>
           )}
 
@@ -410,7 +413,7 @@ export default function Cart({
             <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
-            {tOr('pos.shift.openRequired', 'Open a shift to accept payments')}
+            {shiftWarning}
           </p>
         </div>
       )}

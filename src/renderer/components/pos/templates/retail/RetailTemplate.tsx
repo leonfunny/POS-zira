@@ -260,6 +260,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   // button is for "I just edited a price on web and want it now" UX.
   // pos:products-synced from main triggers the existing reload effect, so
   // success path doesn't need to re-fetch here.
+  const missingShiftStaff = session.isOpen && !session.staffName?.trim();
+  const shiftPaymentOpen = session.isOpen && !missingShiftStaff;
+  const shiftBlockedMessage = missingShiftStaff
+    ? tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.')
+    : undefined;
+
   const handleManualSync = useCallback(async () => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -683,7 +689,8 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             dispatch={dispatch}
             onPay={handleOpenPayment}
             t={t}
-            shiftOpen={session.isOpen}
+            shiftOpen={shiftPaymentOpen}
+            shiftBlockReason={shiftBlockedMessage}
             lang={lang}
             heldCartsCount={heldCarts.length}
             onHold={cart.items.length > 0 ? handleHoldCart : undefined}

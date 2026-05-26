@@ -299,7 +299,18 @@ export class ShiftController {
       'SELECT backend_id FROM shifts WHERE id = ?',
       [shiftId],
     );
-    if (!shift?.backend_id) return;
+    if (!shift?.backend_id) {
+      try {
+        const activeShift = await apiClient.getActiveShift(token);
+        if (activeShift?.id) {
+          await apiClient.closePosShift(token, activeShift.id, { closingCash });
+          logger.info(`[Shift] Closed server active shift ${activeShift.id} while closing unsynced local shift ${shiftId}`);
+        }
+      } catch (err: any) {
+        logger.warn(`[Shift] Failed to close server active shift for unsynced local shift ${shiftId}: ${err?.message ?? err}`);
+      }
+      return;
+    }
 
     try {
       await apiClient.closePosShift(token, shift.backend_id, { closingCash });
