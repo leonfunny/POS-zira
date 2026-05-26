@@ -230,4 +230,38 @@ describe('HardwareModule print job runtime guards', () => {
     expect(mock.thermalInstances[0].openDrawer).toHaveBeenCalledTimes(1);
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-legacy-cash', 'COMPLETED');
   });
+
+  it('does not infer drawer intent for non-POS cash receipts without openDrawer', async () => {
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    container.getOptional.mockReturnValue(socket);
+    const receipt: ReceiptData = {
+      orderId: 'billiard-session-1',
+      orderNumber: 'BILL-1',
+      items: [{ name: 'Table', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-non-pos-cash',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      payload: receipt,
+    });
+
+    expect(mock.thermalInstances[0].printReceipt).toHaveBeenCalledWith(receipt);
+    expect(mock.thermalInstances[0].openDrawer).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-non-pos-cash', 'COMPLETED');
+  });
 });

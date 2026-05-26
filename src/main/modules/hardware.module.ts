@@ -2034,11 +2034,13 @@ export class HardwareModule extends BaseModule {
         } else {
           const receiptPayload = job.payload as ReceiptData;
           const referenceType = String(job.referenceType || '');
+          const orderNumber = String(receiptPayload.orderNumber || '');
           const paymentMethod = String(receiptPayload.payment?.method || '').toUpperCase();
           const explicitDrawerRequest = Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
+          const looksLikePosOrderCopy = referenceType === 'POS_RECEIPT' || /^POS[-\d]/i.test(orderNumber);
           const inferredPosCashDrawerRequest = (
             !explicitDrawerRequest &&
-            referenceType === 'POS_RECEIPT' &&
+            looksLikePosOrderCopy &&
             paymentMethod === 'CASH' &&
             !(receiptPayload as any).isReprint &&
             !(receiptPayload as any).isRefund
@@ -2050,7 +2052,8 @@ export class HardwareModule extends BaseModule {
           );
           logger.info(
             `[HardwareModule] Job ${job.jobId}: receipt job metadata referenceType=${referenceType || 'none'} ` +
-            `paymentMethod=${paymentMethod || 'none'} openDrawer=${explicitDrawerRequest ? 'true' : 'false'} ` +
+            `orderNumber=${orderNumber || 'none'} paymentMethod=${paymentMethod || 'none'} ` +
+            `openDrawer=${explicitDrawerRequest ? 'true' : 'false'} ` +
             `inferredPosCashDrawer=${inferredPosCashDrawerRequest ? 'true' : 'false'} ` +
             `supportsCashDrawer=${printerConfig?.supportsCashDrawer ? 'true' : 'false'}`,
           );
