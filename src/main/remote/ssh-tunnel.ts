@@ -31,7 +31,7 @@ import {
 import { getConfigValue } from '../config/store';
 
 // Server connection details
-const SSH_SERVER_HOST = '159.195.47.45';
+const SSH_SERVER_HOST = '37.60.231.45';
 const SSH_SERVER_PORT = 2222;
 const SSH_SERVER_USER = 'paul';
 
