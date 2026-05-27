@@ -40,6 +40,9 @@ interface OrderItemRow {
   sku: string | null;
   price: number;
   quantity: number;
+  sale_quantity?: number | null;
+  sale_unit?: string | null;
+  sell_by?: string | null;
   total: number;
   vat_rate: number;
 }

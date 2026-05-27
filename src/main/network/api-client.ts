@@ -1370,6 +1370,7 @@ export class ApiClient {
         is_on_sale: item.isOnSale ?? item.is_on_sale ? 1 : 0,
         thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,
         sale_unit: item.saleUnit ?? item.sale_unit ?? item.template?.baseUnit ?? item.template?.base_unit ?? null,
+        sell_by: item.sellBy ?? item.sell_by ?? item.template?.sellBy ?? item.template?.sell_by ?? 'PIECE',
         name_translations: encodeTranslations(translationSource),
       };
     });

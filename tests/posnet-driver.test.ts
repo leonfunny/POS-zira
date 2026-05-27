@@ -152,6 +152,35 @@ describe('PosnetDriver port mutex integration', () => {
     const driver = new PosnetDriver('COM6', 9600, 'POSNET');
     await expect(driver.printTest()).rejects.toThrow('Printer not connected');
   });
+
+  it('printReceipt() uses stored line total for decimal weighted lines', async () => {
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET');
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await driver.printReceipt({
+      orderId: 'order-weight-1',
+      orderNumber: 'POS-W1',
+      items: [
+        {
+          name: 'Rieng cu',
+          quantity: 0.238,
+          unit: 'kg',
+          unitPrice: 8000,
+          totalPrice: 1904,
+          vatRate: 5,
+        },
+      ],
+      payment: { method: 'CARD', amount: 1904 },
+      subtotal: 1904,
+      total: 1904,
+    });
+
+    const frames = sendSpy.mock.calls[0][0];
+    expect(frames).toContainEqual(['trline', 'naRieng cu', 'vt2', 'pr8000', 'il0.238']);
+    expect(frames).toContainEqual(['trpayment', 'ty2', 'wa1904']);
+    expect(frames).toContainEqual(['trend', 'to1904']);
+  });
 });
 
 describe('PosnetDriver diagnostic codes', () => {

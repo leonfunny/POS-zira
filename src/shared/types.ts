@@ -2364,6 +2364,7 @@ export interface ProductAdminVariant {
   availableQty: number;
   isActive: boolean;
   saleUnit?: string | null;
+  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
   imageUrl?: string | null;
   thumbnailUrl?: string | null;
   updatedAt: string;

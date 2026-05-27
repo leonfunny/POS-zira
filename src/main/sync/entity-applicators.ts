@@ -121,6 +121,7 @@ function applyProduct(entry: SyncLogEntry): boolean {
     is_on_sale: p.is_on_sale ?? (p.isOnSale ? 1 : 0),
     thumbnail_url: p.thumbnail_url ?? p.thumbnailUrl ?? null,
     sale_unit: p.sale_unit ?? p.saleUnit ?? null,
+    sell_by: p.sell_by ?? p.sellBy ?? 'PIECE',
     name_translations: productTranslations,
     customer_display_enabled: resolveDisplayEnabled(p, existing?.customer_display_enabled ?? 1),
     customer_display_sort_order: resolveNullableInteger(

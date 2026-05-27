@@ -6,6 +6,7 @@
  */
 
 import logger from '../logger';
+import { calculateLineTotalGrosze, normalizeSaleUnit, normalizeSellBy, resolveSaleQuantity } from '../../shared/pos-sale';
 
 const _warnedFields = new Set<string>();
 
@@ -53,7 +54,8 @@ export function normalizeRefundLinesJson(refundedLines: unknown): string | null 
     quantity:
       typeof l.quantity === 'number'
         ? l.quantity
-        : parseInt(String(l.quantity), 10) || 1,
+        : parseFloat(String(l.quantity)) || 1,
+    unit: l.unit ?? l.saleUnit ?? l.sale_unit ?? undefined,
     unitPrice: toGrosze(l.unitPrice),
     refundAmount: toGrosze(l.refundAmount),
     vatRate: toVatRate(l.taxRate, 23),
@@ -136,8 +138,18 @@ export function adaptServerOrder(s: any): any {
 }
 
 export function adaptServerOrderItem(item: any, orderId: string): any {
-  const rawQuantity = item.totalUnits ?? item.packQuantity ?? item.quantity ?? 1;
-  const quantity = typeof rawQuantity === 'number' ? rawQuantity : parseFloat(String(rawQuantity)) || 1;
+  const sellBy = normalizeSellBy(item.sellBy ?? item.sell_by);
+  const rawQuantity = sellBy === 'WEIGHT'
+    ? item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1
+    : item.totalUnits ?? item.packQuantity ?? item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? 1;
+  const quantity = resolveSaleQuantity({
+    quantity: typeof rawQuantity === 'number' ? rawQuantity : parseFloat(String(rawQuantity)) || 1,
+    sellBy,
+  });
+  const saleUnit = normalizeSaleUnit({
+    saleUnit: item.saleUnit ?? item.sale_unit ?? item.unit,
+    sellBy,
+  });
   const price = toGrosze(item.unitPrice);
   return {
     id: item.id ?? `${orderId}-${item.variantId ?? String(Math.random()).slice(2, 10)}`,
@@ -147,7 +159,10 @@ export function adaptServerOrderItem(item: any, orderId: string): any {
     sku: item.variantSku ?? item.productSku ?? null,
     price,
     quantity,
-    total: item.totalPrice == null ? Math.round(price * quantity) : toGrosze(item.totalPrice),
+    sale_quantity: quantity,
+    sale_unit: saleUnit,
+    sell_by: sellBy,
+    total: item.totalPrice == null ? calculateLineTotalGrosze(price, quantity, sellBy) : toGrosze(item.totalPrice),
     vat_rate: toVatRate(item.taxRate, 23),
   };
 }

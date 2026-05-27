@@ -63,7 +63,7 @@ export function getRemainingRefundableItems<T extends RefundQuantityItem>(
       if (!lineMatchesItem(line, item)) return sum;
       const qty = typeof line.quantity === 'number'
         ? line.quantity
-        : parseInt(String(line.quantity ?? ''), 10) || 0;
+        : parseFloat(String(line.quantity ?? '')) || 0;
       return sum + qty;
     }, 0);
     return {

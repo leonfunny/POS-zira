@@ -81,10 +81,10 @@ describe('Orders tab localization and contract', () => {
     expect(electronDts).toContain('requiresInvoice?: boolean;');
   });
 
-  it('adapts inline server order item quantities from totalUnits', () => {
-    expect(orderAdapter).toContain('item.totalUnits ?? item.packQuantity ?? item.quantity ?? 1');
+  it('adapts inline server order item quantities from weighted-aware fields', () => {
+    expect(orderAdapter).toContain('item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1');
     expect(orderAdapter).toContain('item.variantSku ?? item.productSku ?? null');
-    expect(orderAdapter).toContain('item.totalPrice == null ? Math.round(price * quantity) : toGrosze(item.totalPrice)');
+    expect(orderAdapter).toContain('calculateLineTotalGrosze(price, quantity, sellBy)');
     expect(orderAdapter).toContain('requires_invoice: Boolean(s.requiresInvoice)');
   });
 });

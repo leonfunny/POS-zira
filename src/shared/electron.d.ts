@@ -123,6 +123,7 @@ interface PosProduct {
   is_on_sale: number;
   thumbnail_url: string | null;
   sale_unit: string | null;
+  sell_by?: 'PIECE' | 'WEIGHT' | string | null;
   updated_at: string | null;
 }
 
@@ -175,6 +176,9 @@ interface PosOrderItemRow {
   sku: string | null;
   price: number;
   quantity: number;
+  sale_quantity?: number | null;
+  sale_unit?: string | null;
+  sell_by?: string | null;
   total: number;
   vat_rate: number;
 }
@@ -669,7 +673,7 @@ interface ElectronAPI {
         refundRequestId?: string;
         reason?: string;
         amount?: number;
-        lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
+        lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unit?: string; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
         manualAdjustmentAmount?: number;
       }) => Promise<{ success: boolean; receiptPrinted?: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string; mutationDetected?: boolean; requiresRefresh?: boolean; overRefund?: boolean; backendSummary?: any; error?: string }>;
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;

@@ -1,5 +1,6 @@
 import { database } from '../database';
 import logger from '../../logger';
+import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../../pos/order-line-contract';
 
 export interface OrderRow {
   id: string;
@@ -48,6 +49,9 @@ export interface OrderItemRow {
   sku: string | null;
   price: number;
   quantity: number;
+  sale_quantity?: number | null;
+  sale_unit?: string | null;
+  sell_by?: string | null;
   total: number;
   vat_rate: number;
   // Mode-specific fields (v2)
@@ -64,6 +68,9 @@ export interface OrderMutationItemInput {
   sku?: string | null;
   price: number;
   quantity: number;
+  sale_quantity?: number | null;
+  sale_unit?: string | null;
+  sell_by?: string | null;
   vat_rate: number;
   staff_id?: string | null;
   staff_name?: string | null;
@@ -118,11 +125,12 @@ export const orderRepo = {
 
       for (const item of items) {
         database.run(
-          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
-            item.price, item.quantity, item.total, item.vat_rate ?? 23,
+            item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
+            item.total, item.vat_rate ?? 23,
             item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
           ],
         );
@@ -205,7 +213,8 @@ export const orderRepo = {
 
     const currentItems = orderRepo.getItemsByOrderId(id);
     const nextItems = input.items?.map((item) => {
-      const quantity = Math.max(0, Math.round(Number(item.quantity) || 0));
+      const sellBy = getLineSellBy(item);
+      const quantity = getLineSaleQuantity({ ...item, sell_by: sellBy });
       const price = Math.max(0, Math.round(Number(item.price) || 0));
       return {
         id: item.id,
@@ -215,7 +224,10 @@ export const orderRepo = {
         sku: item.sku ?? null,
         price,
         quantity,
-        total: price * quantity,
+        sale_quantity: quantity,
+        sale_unit: getLineSaleUnit({ ...item, sell_by: sellBy }),
+        sell_by: sellBy,
+        total: getLineTotalGrosze({ ...item, price, quantity, sale_quantity: quantity, sell_by: sellBy }),
         vat_rate: Number.isFinite(Number(item.vat_rate)) ? Number(item.vat_rate) : 23,
         staff_id: item.staff_id ?? null,
         staff_name: item.staff_name ?? null,
@@ -270,10 +282,11 @@ export const orderRepo = {
             stockChanged = true;
           }
           database.run(
-            `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               item.id, id, item.variant_id, item.name, item.sku, item.price, item.quantity,
+              item.sale_quantity, item.sale_unit, item.sell_by,
               item.total, item.vat_rate, item.staff_id, item.staff_name, item.notes, item.course,
             ],
           );
@@ -291,13 +304,7 @@ export const orderRepo = {
         id,
         priceType: 'brutto',
         requiresInvoice: !!order.customer_nip,
-        items: (nextItems ?? currentItems).filter((i: any) => i.variant_id || i.id).map((i: any) => ({
-          productId: i.variant_id || i.id,
-          variantId: i.variant_id || i.id,
-          ...(i.sku ? { variantSku: i.sku } : {}),
-          packQuantity: Math.max(1, Math.round(i.quantity || 1)),
-          ...(typeof i.price === 'number' && Number.isFinite(i.price) ? { customPrice: i.price / 100 } : {}),
-        })),
+        items: (nextItems ?? currentItems).filter((i: any) => i.variant_id || i.id).map((i: any) => buildBackendOrderItem(i)),
         paymentMethod: paymentMethod === 'TRANSFER' || paymentMethod === 'INVOICE' ? 'BANK_TRANSFER' : (paymentMethod || 'CASH'),
         tenders: paymentMethod ? [{ method: paymentMethod === 'TRANSFER' || paymentMethod === 'INVOICE' ? 'BANK_TRANSFER' : paymentMethod, amount: paymentAmount / 100 }] : undefined,
         staffId: order.staff_id ?? undefined,
@@ -371,7 +378,7 @@ export const orderRepo = {
   /**
    * Mark an order as refunded (full or partial).
    */
-  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}>): void {
+  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string}>): void {
     const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
     database.run(
       "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now'), refund_lines = ? WHERE id = ?",
@@ -476,11 +483,12 @@ export const orderRepo = {
 
       for (const item of items) {
         database.run(
-          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, total, vat_rate, staff_id, staff_name, notes, course)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
-            item.price, item.quantity, item.total, item.vat_rate ?? 23,
+            item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
+            item.total, item.vat_rate ?? 23,
             item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
           ],
         );

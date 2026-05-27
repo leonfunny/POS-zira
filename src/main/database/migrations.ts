@@ -1242,4 +1242,14 @@ export const migrations: Migration[] = [
       ALTER TABLE product_variants ADD COLUMN customer_display_sort_order INTEGER;
     `,
   },
+  {
+    version: 35,
+    name: 'weighted_fresh_food_pos_contract',
+    up: `
+      ALTER TABLE product_variants ADD COLUMN sell_by TEXT NOT NULL DEFAULT 'PIECE';
+      ALTER TABLE order_items ADD COLUMN sale_quantity REAL;
+      ALTER TABLE order_items ADD COLUMN sale_unit TEXT;
+      ALTER TABLE order_items ADD COLUMN sell_by TEXT NOT NULL DEFAULT 'PIECE';
+    `,
+  },
 ];

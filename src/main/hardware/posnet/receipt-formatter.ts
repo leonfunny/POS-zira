@@ -51,6 +51,7 @@ interface PosnetLineItem {
   name: string;      // Max 40 chars
   quantity: number;  // Decimal (3 places)
   price: number;     // In grosze (1/100 PLN)
+  total: number;     // In grosze (1/100 PLN)
   vat: string;       // A, B, C, D, E
 }
 
@@ -87,6 +88,7 @@ export class ReceiptFormatter {
       name: this.sanitizeName(item.name, 40),
       quantity: item.quantity,
       price: item.unitPrice, // Already in grosze
+      total: item.totalPrice, // Already in grosze
       vat: this.mapVatRate(item.vatRate),
     };
   }

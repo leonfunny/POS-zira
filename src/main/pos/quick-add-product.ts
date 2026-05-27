@@ -52,6 +52,7 @@ export function toQuickAddVariantRow(
     is_on_sale: variant.isOnSale ? 1 : (variant.is_on_sale ?? 0),
     thumbnail_url: variant.thumbnailUrl ?? variant.thumbnail_url ?? null,
     sale_unit: variant.saleUnit ?? variant.sale_unit ?? product?.weightUnit ?? product?.weight_unit ?? null,
+    sell_by: variant.sellBy ?? variant.sell_by ?? product?.sellBy ?? product?.sell_by ?? 'PIECE',
     name_translations: encodeNameTranslations(translationSource),
   };
 }

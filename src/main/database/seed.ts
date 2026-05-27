@@ -14,7 +14,7 @@ const SEED_CATEGORIES: CategoryRow[] = [
 ];
 
 // Helper to add enriched field defaults to seed products
-const seedProduct = (p: Omit<ProductVariantRow, 'available_qty' | 'price_gross' | 'price_net' | 'vat_amount' | 'is_on_sale' | 'thumbnail_url' | 'sale_unit'>): ProductVariantRow => ({
+const seedProduct = (p: Omit<ProductVariantRow, 'available_qty' | 'price_gross' | 'price_net' | 'vat_amount' | 'is_on_sale' | 'thumbnail_url' | 'sale_unit' | 'sell_by'>): ProductVariantRow => ({
   ...p,
   available_qty: p.in_stock,
   price_gross: p.retail_price,
@@ -23,6 +23,7 @@ const seedProduct = (p: Omit<ProductVariantRow, 'available_qty' | 'price_gross' 
   is_on_sale: 0,
   thumbnail_url: null,
   sale_unit: 'szt.',
+  sell_by: 'PIECE',
 });
 
 const SEED_PRODUCTS: ProductVariantRow[] = ([

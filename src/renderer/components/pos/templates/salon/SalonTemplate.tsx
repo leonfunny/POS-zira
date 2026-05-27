@@ -126,6 +126,8 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
           price: product.retail_price,
           quantity: 1,
           total: product.retail_price,
+          saleUnit: product.sale_unit ?? null,
+          sellBy: product.sell_by ?? 'PIECE',
           imageUrl: product.image_url || undefined,
           vatRate: product.vat_rate,
         },

@@ -441,11 +441,12 @@ export class PosnetDriver {
     let total = 0;
     for (const item of formattedData.items) {
       const price = Math.max(1, item.price); // price in grosze, min 1
+      const lineTotal = Math.max(0, Math.round(item.total || 0));
       const qty = item.quantity > 0 ? item.quantity.toFixed(3) : '1.000';
       // Map VAT letter to index: A=0, B=1, C=2, D=3, E=4
       const vatIndex = { A: 0, B: 1, C: 2, D: 3, E: 4 }[item.vat] ?? 0;
       frames.push(['trline', `na${item.name}`, `vt${vatIndex}`, `pr${price}`, `il${qty}`]);
-      total += price;
+      total += lineTotal;
     }
 
     // Payment (optional for non-fiscal but good practice)

@@ -16,7 +16,6 @@ export function appendDigit(buf: string, digit: string): string {
 }
 
 export function appendDecimal(buf: string, mode: NumpadMode): string {
-  if (mode === 'qty') return buf;
   if (buf.includes('.')) return buf;
   if (buf.length === 0) return '0.';
   if (buf.length >= MAX_BUFFER_LEN) return buf;
@@ -46,6 +45,12 @@ export function parseBufferGrosze(buf: string): number {
 export function parseBufferInt(buf: string): number {
   if (!buf) return 0;
   const n = parseInt(buf, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function parseBufferQuantity(buf: string): number {
+  if (!buf) return 0;
+  const n = parseFloat(buf);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
@@ -110,7 +115,7 @@ export function usePOSNumpadController({
 
     if (currentTarget.kind === 'cartItem') {
       if (currentTarget.field === 'qty') {
-        const qty = parseBufferInt(currentBuffer);
+        const qty = parseBufferQuantity(currentBuffer);
         if (qty > 0) dispatch({ type: 'cart/updateQuantity', payload: { id: currentTarget.itemId, quantity: qty } });
       } else {
         const price = parseBufferGrosze(currentBuffer);

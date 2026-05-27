@@ -16,6 +16,7 @@ import {
   getRefundBreakdownLines,
   type RefundBreakdownLine,
 } from './refund-breakdown';
+import { calculateLineTotalGrosze, formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
 
 interface OrderRow {
   id: string;
@@ -52,6 +53,9 @@ interface OrderItemRow {
   sku: string | null;
   price: number;
   quantity: number;
+  sale_quantity?: number | null;
+  sale_unit?: string | null;
+  sell_by?: string | null;
   total: number;
   vat_rate: number;
 }
@@ -344,8 +348,9 @@ function RefundPanel({
       sku: item.sku ?? undefined,
       name: item.name,
       quantity: selectedQtys[item.id],
+      unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
       unitPrice: item.price,
-      refundAmount: item.price * selectedQtys[item.id],
+      refundAmount: calculateLineTotalGrosze(item.price, selectedQtys[item.id], normalizeSellBy(item.sell_by)),
       restock,
       vatRate: item.vat_rate,
     }));
@@ -398,8 +403,9 @@ function RefundPanel({
           sku: item.sku ?? undefined,
           name: item.name,
           quantity: item.maxQty,
+          unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
           unitPrice: item.price,
-          refundAmount: item.price * item.maxQty,
+          refundAmount: calculateLineTotalGrosze(item.price, item.maxQty, normalizeSellBy(item.sell_by)),
           restock,
           vatRate: item.vat_rate,
         }));
@@ -578,27 +584,40 @@ function RefundPanel({
           <div className="text-xs font-bold uppercase tracking-wide text-slate-600">Select items to refund</div>
           {refundableItems.map(item => {
             const qty = selectedQtys[item.id] ?? 0;
+            const sellBy = normalizeSellBy(item.sell_by);
+            const unit = normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy });
             return (
               <div key={item.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold text-slate-900 truncate">{item.name}</div>
-                  <div className="text-xs text-slate-500">{formatMoney(item.price, currency)} x {item.maxQty}</div>
+                  <div className="text-xs text-slate-500">
+                    {formatMoney(item.price, currency)} x {formatSaleQuantity(item.maxQty, sellBy)} {unit}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
-                    disabled={qty <= 0}
-                    className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
-                    -
-                  </button>
-                  <span className="w-8 text-center text-sm font-extrabold tabular-nums">{qty}</span>
-                  <button onClick={() => setItemQty(item.id, qty + 1, item.maxQty)}
-                    disabled={qty >= item.maxQty}
-                    className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
-                    +
-                  </button>
-                </div>
+                {sellBy === 'WEIGHT' ? (
+                  <input
+                    value={qty > 0 ? formatSaleQuantity(qty, sellBy) : ''}
+                    onChange={(e) => setItemQty(item.id, parseFloat(e.target.value.replace(',', '.')) || 0, item.maxQty)}
+                    inputMode="decimal"
+                    className="h-9 w-20 rounded-md border border-slate-300 bg-white px-2 text-right text-sm font-extrabold tabular-nums text-slate-900"
+                  />
+                ) : (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
+                      disabled={qty <= 0}
+                      className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                      -
+                    </button>
+                    <span className="w-8 text-center text-sm font-extrabold tabular-nums">{qty}</span>
+                    <button onClick={() => setItemQty(item.id, qty + 1, item.maxQty)}
+                      disabled={qty >= item.maxQty}
+                      className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                      +
+                    </button>
+                  </div>
+                )}
                 <div className="text-sm font-bold tabular-nums text-slate-900 w-20 text-right">
-                  {qty > 0 ? formatMoney(item.price * qty, currency) : '-'}
+                  {qty > 0 ? formatMoney(calculateLineTotalGrosze(item.price, qty, sellBy), currency) : '-'}
                 </div>
               </div>
             );
@@ -1001,7 +1020,10 @@ function OrderMutationPanel({
       name: item.name,
       sku: item.sku,
       price: parseMoneyInput(item.priceText),
-      quantity: Math.max(0, Math.round(parseFloat(item.quantityText.replace(',', '.')) || 0)),
+      quantity: Math.max(0, parseFloat(item.quantityText.replace(',', '.')) || 0),
+      sale_quantity: Math.max(0, parseFloat(item.quantityText.replace(',', '.')) || 0),
+      sale_unit: item.sale_unit ?? null,
+      sell_by: item.sell_by ?? 'PIECE',
       vat_rate: item.vat_rate,
     })).filter((item) => item.quantity > 0),
   });
@@ -1091,7 +1113,7 @@ function OrderMutationPanel({
                   <input
                     value={item.quantityText}
                     onChange={(e) => setDraftItems((prev) => prev.map((row, i) => i === index ? { ...row, quantityText: e.target.value } : row))}
-                    inputMode="numeric"
+                    inputMode={normalizeSellBy(item.sell_by) === 'WEIGHT' ? 'decimal' : 'numeric'}
                     disabled={isFinal || busy !== null}
                     className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100"
                   />
@@ -1111,7 +1133,7 @@ function OrderMutationPanel({
           ))}
         </div>
         <div className="mt-2 text-right text-xs font-bold text-slate-500">
-          Draft total: {formatMoney(draftItems.reduce((sum, item) => sum + parseMoneyInput(item.priceText) * (parseFloat(item.quantityText.replace(',', '.')) || 0), 0), currency)}
+          Draft total: {formatMoney(draftItems.reduce((sum, item) => sum + calculateLineTotalGrosze(parseMoneyInput(item.priceText), parseFloat(item.quantityText.replace(',', '.')) || 0, normalizeSellBy(item.sell_by)), 0), currency)}
         </div>
         <button
           onClick={saveItems}
@@ -1539,7 +1561,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                         <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
                       </div>
                       <div className="text-right">
-                        <div className="text-sm font-bold tabular-nums text-slate-700">{item.quantity}</div>
+                        <div className="text-sm font-bold tabular-nums text-slate-700">
+                          {formatSaleQuantity(item.quantity, normalizeSellBy(item.sell_by))}
+                          {item.sale_unit ? ` ${item.sale_unit}` : ''}
+                        </div>
                         {hasItemRefund && refundInfo && (
                           <div className="mt-1 inline-flex whitespace-nowrap rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[11px] font-bold text-amber-800">
                             {refundInfo.refundedQty} refunded - {refundInfo.remainingQty} remaining

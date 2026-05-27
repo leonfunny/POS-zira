@@ -4,6 +4,7 @@ import { orderRepo } from '../database/repos/order-repo';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
+import { buildBackendOrderItem } from '../pos/order-line-contract';
 import logger from '../logger';
 
 /** Max sync attempts for transient (network/5xx) failures before shelving. */
@@ -138,13 +139,7 @@ export class OrderSync {
             .map((item) => {
               const localId = item.variant_id || item.id;
               const serverVariantId = localVariantImportsRepo.getServerVariantId(localId) ?? localId;
-              return {
-                productId: serverVariantId,
-                variantId: serverVariantId,
-                ...(item.sku ? { variantSku: item.sku } : {}),
-                packQuantity: Math.max(1, Math.round(item.quantity || 1)),
-                ...(typeof item.price === 'number' && Number.isFinite(item.price) ? { customPrice: item.price / 100 } : {}),
-              };
+              return buildBackendOrderItem(item, () => serverVariantId);
             }),
         };
 

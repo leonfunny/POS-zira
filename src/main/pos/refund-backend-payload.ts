@@ -5,6 +5,7 @@ export interface RefundIpcLine {
   sku?: string;
   name?: string;
   quantity: number;
+  unit?: string;
   unitPrice: number;
   refundAmount: number;
   restock: boolean;
@@ -24,6 +25,7 @@ export interface LocalRefundLine {
   variantId?: string;
   name: string;
   quantity: number;
+  unit?: string;
   unitPrice: number;
   refundAmount: number;
   vatRate?: number;
@@ -247,6 +249,7 @@ export function toRefundBackendPayload(data: RefundIpcPayload): Record<string, a
     sku: l.sku,
     name: l.name,
     quantity: l.quantity,
+    ...(l.unit ? { unit: l.unit, saleUnit: l.unit } : {}),
     unitPrice: l.unitPrice / 100,
     refundAmount: l.refundAmount / 100,
     restock: l.restock,

@@ -10,6 +10,7 @@ import type {
   SelectedService,
 } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
+import { calculateLineTotalGrosze, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
 
 // === State interfaces ===
 
@@ -20,6 +21,8 @@ export interface CartItem {
   sku: string;
   price: number;       // grosze
   quantity: number;
+  saleUnit?: string | null;
+  sellBy?: SellBy | string | null;
   total: number;        // grosze
   imageUrl?: string;
   // Mode-specific (all optional, backward-compatible)
@@ -71,6 +74,7 @@ export interface ServiceCategory {
     duration: number;
     imageUrl?: string;
     saleUnit?: string | null;
+    sellBy?: SellBy | string | null;
   }>;
 }
 
@@ -292,6 +296,19 @@ function recalcCart(cart: CartState): CartState {
   return { ...cart, subtotal, discount, tax, total };
 }
 
+function normalizedCartItem(item: CartItem): CartItem {
+  const sellBy = normalizeSellBy(item.sellBy);
+  const quantity = roundSaleQuantity(Number(item.quantity) || 0, sellBy);
+  const saleUnit = normalizeSaleUnit({ saleUnit: item.saleUnit, sellBy });
+  return {
+    ...item,
+    quantity,
+    saleUnit,
+    sellBy,
+    total: calculateLineTotalGrosze(item.price, quantity, sellBy),
+  };
+}
+
 interface PosReducerOptions {
   customerDisplayProfile?: LiveCustomerDisplayProfile;
 }
@@ -305,7 +322,7 @@ function posReducer(
     case 'cart/addItem': {
       // Merge only if same variant AND same staff AND same course
       // (salon mode: different staff = separate entry; restaurant: different course = separate entry)
-      const p = action.payload;
+      const p = normalizedCartItem(action.payload);
       const existing = state.cart.items.find(
         (i) => i.variantId === p.variantId
           && (i.staffId ?? null) === (p.staffId ?? null)
@@ -315,7 +332,7 @@ function posReducer(
       if (existing) {
         items = state.cart.items.map((i) =>
           i.id === existing.id
-            ? { ...i, quantity: i.quantity + p.quantity, total: (i.quantity + p.quantity) * i.price }
+            ? normalizedCartItem({ ...i, quantity: i.quantity + p.quantity })
             : i,
         );
       } else {
@@ -345,7 +362,7 @@ function posReducer(
     case 'cart/updateQuantity': {
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
-          ? { ...i, quantity: action.payload.quantity, total: action.payload.quantity * i.price }
+          ? normalizedCartItem({ ...i, quantity: action.payload.quantity })
           : i,
       ).filter((i) => i.quantity > 0);
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
@@ -390,7 +407,7 @@ function posReducer(
       const newPrice = Math.max(0, action.payload.price);
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
-          ? { ...i, price: newPrice, total: newPrice * i.quantity }
+          ? normalizedCartItem({ ...i, price: newPrice })
           : i,
       );
       return { ...state, cart: recalcCart({ ...state.cart, items }) };
@@ -729,6 +746,7 @@ export class PosStore {
                 duration: p.duration ?? 0,
                 imageUrl: p.thumbnail_url || p.image_url || undefined,
                 saleUnit: p.sale_unit ?? null,
+                sellBy: p.sell_by ?? 'PIECE',
               })),
           };
         })

@@ -20,7 +20,7 @@ export interface ReceiptWithDrawerResult {
 export interface RefundReceiptOverride {
   amount: number;
   reason?: string;
-  lines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}>;
+  lines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string}>;
 }
 
 type PrinterDriver = {
@@ -193,7 +193,7 @@ export class PaymentController {
           totalPrice: i.total,
           vatRate: i.vat_rate,
           sku: i.sku || undefined,
-          unit: product?.sale_unit || undefined,
+          unit: i.sale_unit || product?.sale_unit || undefined,
         };
       }),
       payment: {
@@ -412,7 +412,7 @@ export class PaymentController {
           totalPrice: i.total,
           vatRate: i.vat_rate,
           sku: i.sku || undefined,
-          unit: product?.sale_unit || undefined,
+          unit: i.sale_unit || product?.sale_unit || undefined,
         };
       }),
       payment: {
@@ -503,7 +503,7 @@ export class PaymentController {
     let receiptItems: ReceiptData['items'];
     let refundSubtotal: number;
 
-    let storedLines: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string}> | null = null;
+    let storedLines: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string}> | null = null;
     if (refundOverride?.lines) {
       storedLines = refundOverride.lines;
     } else if (order.refund_lines) {
@@ -518,6 +518,7 @@ export class PaymentController {
         totalPrice: l.refundAmount,
         vatRate: l.vatRate ?? 23,
         sku: l.sku || undefined,
+        unit: l.unit || undefined,
       }));
       refundSubtotal = storedLines.reduce((s, l) => s + l.refundAmount, 0);
     } else {
@@ -531,7 +532,7 @@ export class PaymentController {
           totalPrice: i.total,
           vatRate: i.vat_rate,
           sku: i.sku || undefined,
-          unit: product?.sale_unit || undefined,
+          unit: i.sale_unit || product?.sale_unit || undefined,
         };
       });
       refundSubtotal = refundAmount;

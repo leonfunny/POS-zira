@@ -99,6 +99,24 @@ describe('Cart operations', () => {
     store.destroy();
   });
 
+  it('keeps weighted quantities decimal and totals by kg price', () => {
+    const store = new PosStore();
+    store.dispatch({
+      type: 'cart/addItem',
+      payload: sampleItem({
+        price: 8000,
+        quantity: 0.238,
+        saleUnit: 'kg',
+        sellBy: 'WEIGHT',
+      }),
+    });
+    const state = store.getState();
+    expect(state.cart.items[0].quantity).toBe(0.238);
+    expect(state.cart.items[0].total).toBe(1904);
+    expect(state.cart.total).toBe(1904);
+    store.destroy();
+  });
+
   it('does NOT merge items with different staff (salon mode)', () => {
     const store = new PosStore();
     store.dispatch({

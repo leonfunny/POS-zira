@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CustomerDisplayCatalogSection, CustomerDisplayProfile } from '../../shared/types';
+import type { SellBy } from '../../shared/pos-sale';
 
 interface SelectedService {
   id: string;
@@ -15,6 +16,8 @@ interface CartItem {
   sku: string;
   price: number;
   quantity: number;
+  saleUnit?: string | null;
+  sellBy?: SellBy | string | null;
   total: number;
   imageUrl?: string;
   // Mode-specific
@@ -65,7 +68,7 @@ interface DisplayState {
     name: string;
     name_translations?: string | null;
     section?: CustomerDisplayCatalogSection;
-    services: Array<{ id: string; name: string; name_translations?: string | null; price: number; duration: number; imageUrl?: string; saleUnit?: string | null }>;
+    services: Array<{ id: string; name: string; name_translations?: string | null; price: number; duration: number; imageUrl?: string; saleUnit?: string | null; sellBy?: SellBy | string | null }>;
   }>;
   customerRequests?: Array<{ id: string; serviceName: string; timestamp: number }>;
   lastCheckIn?: {

@@ -16,6 +16,7 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController } from '../pos/payment-controller';
+import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../pos/order-line-contract';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
@@ -884,6 +885,7 @@ export class PosModule extends BaseModule {
             is_on_sale: 0,
             thumbnail_url: draft.image_url,
             sale_unit: null,
+            sell_by: 'PIECE',
             name_translations: null,
           }]);
           localVariantImportsRepo.create(variantId, draft.id, ean);
@@ -1115,9 +1117,33 @@ export class PosModule extends BaseModule {
           normalizedOrder.staff_name = orderShift.staff_name;
         }
 
-        const id = orderRepo.create(normalizedOrder, items);
+        const normalizedItems = (items || []).map((item: any) => {
+          const product = item.variant_id ? productRepo.getById(item.variant_id) : null;
+          const sell_by = getLineSellBy({
+            ...item,
+            sell_by: item.sell_by ?? item.sellBy ?? product?.sell_by ?? 'PIECE',
+          });
+          const sale_quantity = getLineSaleQuantity({ ...item, sell_by });
+          const sale_unit = getLineSaleUnit({
+            ...item,
+            sell_by,
+            sale_unit: item.sale_unit ?? item.saleUnit ?? product?.sale_unit ?? null,
+          });
+          const price = Math.max(0, Math.round(Number(item.price) || 0));
+          return {
+            ...item,
+            price,
+            quantity: sale_quantity,
+            sale_quantity,
+            sale_unit,
+            sell_by,
+            total: getLineTotalGrosze({ ...item, price, quantity: sale_quantity, sale_quantity, sell_by }),
+          };
+        });
+
+        const id = orderRepo.create(normalizedOrder, normalizedItems);
         let stockChanged = false;
-        for (const item of items) {
+        for (const item of normalizedItems) {
           if (item.variant_id && item.quantity > 0) {
             productRepo.decrementStock(item.variant_id, item.quantity);
             stockChanged = true;
@@ -1137,13 +1163,7 @@ export class PosModule extends BaseModule {
               id,
               priceType: 'brutto',
               requiresInvoice: !!normalizedOrder.customer_nip,
-              items: (items || []).filter((i: any) => i.variant_id || i.id).map((i: any) => ({
-                productId: i.variant_id || i.id,
-                variantId: i.variant_id || i.id,
-                ...(i.sku ? { variantSku: i.sku } : {}),
-                packQuantity: Math.max(1, Math.round(i.quantity || 1)),
-                ...(typeof i.price === 'number' && Number.isFinite(i.price) ? { customPrice: i.price / 100 } : {}),
-              })),
+              items: (normalizedItems || []).filter((i: any) => i.variant_id || i.id).map((i: any) => buildBackendOrderItem(i)),
             };
             if (normalizedOrder.payment_tenders) {
               try {

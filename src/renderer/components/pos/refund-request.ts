@@ -5,6 +5,7 @@ export interface RefundLineInput {
   sku?: string;
   name?: string;
   quantity: number;
+  unit?: string;
   unitPrice: number;
   refundAmount: number;
   restock: boolean;

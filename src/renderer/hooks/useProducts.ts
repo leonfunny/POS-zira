@@ -8,6 +8,7 @@ export type ProductSyncErrorCode = 'no-auth' | 'failed' | null;
 
 export interface ProductListItem extends Product {
   sale_unit?: string | null;
+  sell_by?: 'PIECE' | 'WEIGHT' | string | null;
   _draftStatus?: string | null;
 }
 

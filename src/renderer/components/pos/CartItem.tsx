@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
+import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
 
 interface CartItemProps {
   item: CartItemType;
@@ -29,7 +30,11 @@ export default function CartItemRow({
   lang,
 }: CartItemProps) {
   const currency = t?.('pos.currency') ?? 'PLN';
-  const perUnit = t?.('pos.perUnit') ?? '/pc';
+  const sellBy = normalizeSellBy(item.sellBy);
+  const saleUnit = normalizeSaleUnit({ saleUnit: item.saleUnit, sellBy });
+  const perUnit = sellBy === 'WEIGHT'
+    ? `/${saleUnit}`
+    : (item.saleUnit ? `/${item.saleUnit}` : (t?.('pos.perUnit') ?? '/pc'));
   const tOr = (key: string, fallback: string) => {
     if (!t) return fallback;
     const v = t(key);
@@ -45,7 +50,9 @@ export default function CartItemRow({
     setEditingNotes(false);
   };
 
-  const qtyDisplay = activeField === 'qty' && activeBuffer ? activeBuffer : String(item.quantity);
+  const qtyDisplay = activeField === 'qty' && activeBuffer
+    ? activeBuffer
+    : formatSaleQuantity(item.quantity, sellBy);
   const priceDisplay = activeField === 'price' && activeBuffer
     ? activeBuffer
     : (item.price / 100).toFixed(2);
@@ -116,35 +123,41 @@ export default function CartItemRow({
         </div>
 
         <div className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden shrink-0">
-          <button
-            type="button"
-            onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
-            disabled={item.quantity <= 1}
-            aria-label="Decrease quantity"
-            className={`w-10 h-10 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
-              item.quantity <= 1
-                ? 'text-slate-300 cursor-not-allowed'
-                : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
-            }`}
-          >−</button>
+          {sellBy !== 'WEIGHT' && (
+            <button
+              type="button"
+              onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
+              disabled={item.quantity <= 1}
+              aria-label="Decrease quantity"
+              className={`w-10 h-10 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
+                item.quantity <= 1
+                  ? 'text-slate-300 cursor-not-allowed'
+                  : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
+              }`}
+            >-</button>
+          )}
           <button
             type="button"
             onClick={() => onSelectField?.(item.id, 'qty')}
             title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
-            className={`h-10 min-w-12 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors border-x ${
+            className={`h-10 min-w-12 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
+              sellBy === 'WEIGHT' ? '' : 'border-x'
+            } ${
               qtyHighlight
                 ? 'bg-brand-100 text-brand-900 border-brand-400'
                 : 'bg-white text-slate-950 hover:text-brand-700 hover:bg-brand-50 border-slate-300'
             }`}
           >
-            {qtyDisplay}
+            {qtyDisplay}{sellBy === 'WEIGHT' ? ` ${saleUnit}` : ''}
           </button>
-          <button
-            type="button"
-            onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-            aria-label="Increase quantity"
-            className="w-10 h-10 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
-          >+</button>
+          {sellBy !== 'WEIGHT' && (
+            <button
+              type="button"
+              onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+              aria-label="Increase quantity"
+              className="w-10 h-10 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
+            >+</button>
+          )}
         </div>
       </div>
 
