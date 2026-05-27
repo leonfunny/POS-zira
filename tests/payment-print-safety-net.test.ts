@@ -156,14 +156,13 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
   });
 
   it('printReceiptAndOpenDrawer asks the shared POS receipt route to open the remote drawer', async () => {
-    const printer = makeFakePrinter({});
     const sharedReceiptPrinter = vi.fn(async () => ({
       handled: true,
       printed: true,
       printerId: 'printer-remote-1',
       drawerOpenRequested: true,
     }));
-    const ctl = buildController(printer, sharedReceiptPrinter);
+    const ctl = buildController(null, sharedReceiptPrinter);
 
     const result = await ctl.printReceiptAndOpenDrawer('order-1');
 
@@ -172,25 +171,38 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
       expect.objectContaining({ orderId: 'order-1', orderNumber: 'POS-20260505-0001' }),
       expect.objectContaining({ referenceType: 'POS_RECEIPT', referenceId: 'order-1', source: 'pos', openDrawer: true }),
     );
-    expect(printer.openDrawer).not.toHaveBeenCalled();
-    expect(printer.printReceipt).not.toHaveBeenCalled();
   });
 
-  it('printReceiptAndOpenDrawer keeps the local drawer fallback when backend lacks remote drawer support', async () => {
-    const printer = makeFakePrinter({});
+  it('printReceiptAndOpenDrawer reports drawer not opened when remote backend lacks drawer support and no local printer exists', async () => {
     const sharedReceiptPrinter = vi.fn(async () => ({
       handled: true,
       printed: true,
       printerId: 'printer-remote-1',
       drawerOpenRequested: false,
     }));
+    const ctl = buildController(null, sharedReceiptPrinter);
+
+    const result = await ctl.printReceiptAndOpenDrawer('order-1');
+
+    expect(result).toEqual({ receiptPrinted: true, drawerOpened: false, error: undefined });
+  });
+
+  it('printReceiptAndOpenDrawer uses the local printer directly even when the shared route would be offline', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: false,
+      printerId: 'printer-remote-1',
+      error: 'Printer is offline',
+    }));
     const ctl = buildController(printer, sharedReceiptPrinter);
 
     const result = await ctl.printReceiptAndOpenDrawer('order-1');
 
-    expect(result).toEqual({ receiptPrinted: true, drawerOpened: true, error: undefined });
+    expect(result).toEqual({ receiptPrinted: true, drawerOpened: true });
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
     expect(printer.openDrawer).toHaveBeenCalledTimes(1);
-    expect(printer.printReceipt).not.toHaveBeenCalled();
+    expect(sharedReceiptPrinter).not.toHaveBeenCalled();
   });
 
   it('completeCardPayment returns success=true with receiptPrinted=false when print rejects', async () => {
@@ -213,16 +225,17 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     );
   });
 
-  it('falls back to the local printer when no shared receipt assignment exists', async () => {
+  it('prints with the local printer without consulting shared receipt routing when local hardware is ready', async () => {
     const printer = makeFakePrinter({});
     const sharedReceiptPrinter = vi.fn(async () => ({ handled: false, printed: false }));
     const ctl = buildController(printer, sharedReceiptPrinter);
     const result = await ctl.completeCardPayment('order-1');
     expect(result.receiptPrinted).toBe(true);
     expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+    expect(sharedReceiptPrinter).not.toHaveBeenCalled();
   });
 
-  it('does not print a second local receipt when the shared route handled the job but failed', async () => {
+  it('uses the local printer directly even when the shared route would fail', async () => {
     const printer = makeFakePrinter({});
     const sharedReceiptPrinter = vi.fn(async () => ({
       handled: true,
@@ -232,8 +245,9 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     }));
     const ctl = buildController(printer, sharedReceiptPrinter);
     const result = await ctl.completeCardPayment('order-1');
-    expect(result.receiptPrinted).toBe(false);
-    expect(printer.printReceipt).not.toHaveBeenCalled();
+    expect(result.receiptPrinted).toBe(true);
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+    expect(sharedReceiptPrinter).not.toHaveBeenCalled();
   });
 
   it('routes fiscal receipts through the remote fiscal backend job when no local fiscal printer exists', async () => {
@@ -338,6 +352,23 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
 
     await expect(ctl.reprintReceipt('order-1')).resolves.toBe(true);
 
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+    expect(printer.openDrawer).not.toHaveBeenCalled();
+  });
+
+  it('reprintReceipt uses the local printer directly when local hardware is ready', async () => {
+    const printer = makeFakePrinter({});
+    const sharedReceiptPrinter = vi.fn(async () => ({
+      handled: true,
+      printed: false,
+      printerId: 'printer-remote-1',
+      error: 'Printer is offline',
+    }));
+    const ctl = buildController(printer, sharedReceiptPrinter);
+
+    await expect(ctl.reprintReceipt('order-1')).resolves.toBe(true);
+
+    expect(sharedReceiptPrinter).not.toHaveBeenCalled();
     expect(printer.printReceipt).toHaveBeenCalledTimes(1);
     expect(printer.openDrawer).not.toHaveBeenCalled();
   });

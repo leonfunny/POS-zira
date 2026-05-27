@@ -55,6 +55,7 @@ import { app } from 'electron';
 import logger from '../logger';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
+type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
 
@@ -76,6 +77,7 @@ function shouldRenderInfoLabelViaWindows(config?: PrinterConfig | null): boolean
  *  which briefly blocks the main process. Keep this high enough that UI clicks
  *  don't visibly lag every cycle. */
 const HEALTH_CHECK_INTERVAL = 90_000;
+const PRINTER_CONNECT_TIMEOUT_MS = 12_000;
 
 /** Health check backoff multipliers: after N consecutive failures, skip N×interval checks.
  *  Index = min(failCount, length-1). E.g. [1,2,4,10] → 90s, 180s, 360s, 900s */
@@ -1305,6 +1307,32 @@ export class HardwareModule extends BaseModule {
     return false;
   }
 
+  private sortPrinterRowsForConnect(rows: LocalPrinterRow[]): LocalPrinterRow[] {
+    const priority = (row: LocalPrinterRow) => {
+      const type = (row.printer_type || PrinterType.RECEIPT) as PrinterType;
+      if (type === PrinterType.RECEIPT) return 0;
+      if (type === PrinterType.FISCAL) return 1;
+      if (type === PrinterType.LABEL) return 2;
+      return 3;
+    };
+    return [...rows].sort((a, b) => priority(a) - priority(b));
+  }
+
+  private async connectPrinterWithTimeout(driver: PrinterDriver, label: string): Promise<boolean> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timedOut = new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => {
+          logger.warn(`[HardwareModule] ${label}: connect timed out after ${PRINTER_CONNECT_TIMEOUT_MS}ms; continuing with other printers`);
+          resolve(false);
+        }, PRINTER_CONNECT_TIMEOUT_MS);
+      });
+      return await Promise.race([driver.connect(), timedOut]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
   async reinitializePrinter(): Promise<void> {
     // One-time migration: split merged RECEIPT config into FISCAL + RECEIPT
     const preConfig = getConfig();
@@ -1357,7 +1385,7 @@ export class HardwareModule extends BaseModule {
     const multiPrinterMode = this.isMultiPrinterModeEnabled(config);
 
     if (multiPrinterMode) {
-      const localRows = localPrinterRepo.getEnabled();
+      const localRows = this.sortPrinterRowsForConnect(localPrinterRepo.getEnabled());
       const registeredPrinterIds = new Set<string>();
 
       for (const row of localRows) {
@@ -1388,7 +1416,7 @@ export class HardwareModule extends BaseModule {
         registeredPrinterIds.add(row.id);
 
         try {
-          const ok = await driver.connect();
+          const ok = await this.connectPrinterWithTimeout(driver, row.display_name || row.id);
           localPrinterRepo.markOnline(row.id, ok);
           if (!ok) {
             initErrors.push(`${row.display_name || row.id}: failed to connect`);
@@ -1415,7 +1443,7 @@ export class HardwareModule extends BaseModule {
           this.printers[pt] = driver;
           if (pc.serverPrinterId) this.printersById[pc.serverPrinterId] = driver;
           try {
-            const ok = await driver.connect();
+            const ok = await this.connectPrinterWithTimeout(driver, pt);
             if (ok) {
               // P4.2: If connect() auto-migrated to a different identifier
               // (e.g. POSNET found on a different COM port), persist the change
@@ -1440,14 +1468,14 @@ export class HardwareModule extends BaseModule {
       this.receiptPrinter = this.createPrinterFromConfig(config.receiptPrinter, 'Receipt Printer' as any);
       if (this.receiptPrinter) {
         try {
-          const ok = await this.receiptPrinter.connect();
+          const ok = await this.connectPrinterWithTimeout(this.receiptPrinter, 'Receipt');
           if (!ok) initErrors.push('Receipt: failed to connect');
         } catch (e: any) { initErrors.push(`Receipt: ${e.message}`); }
       }
       this.labelPrinter = this.createPrinterFromConfig(config.labelPrinter, 'Label Printer' as any);
       if (this.labelPrinter) {
         try {
-          const ok = await this.labelPrinter.connect();
+          const ok = await this.connectPrinterWithTimeout(this.labelPrinter, 'Label');
           if (!ok) initErrors.push('Label: failed to connect');
         } catch (e: any) { initErrors.push(`Label: ${e.message}`); }
       }
@@ -1457,7 +1485,7 @@ export class HardwareModule extends BaseModule {
       this.printerDriver = this.createPrinterDriverLegacy();
       if (this.printerDriver) {
         try {
-          const ok = await this.printerDriver.connect();
+          const ok = await this.connectPrinterWithTimeout(this.printerDriver, 'Default printer');
           if (!ok) initErrors.push('Default printer: failed to connect');
         } catch (e: any) { initErrors.push(`Default: ${e.message}`); }
       }
