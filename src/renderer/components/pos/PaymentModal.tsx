@@ -88,11 +88,24 @@ export default function PaymentModal({
   const [customerNip, setCustomerNip] = useState(() =>
     String(extraOrderFields?.customer_nip ?? '').replace(/\D/g, '').slice(0, 10),
   );
+  const [nipPadOpen, setNipPadOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
   };
+
+  // Polish NIP shown grouped (XXX-XXX-XX-XX) so the cashier can read the 10
+  // digits back at a glance.
+  const formatNip = (value: string) => {
+    const d = value.replace(/\D/g, '').slice(0, 10);
+    return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 8), d.slice(8, 10)]
+      .filter(Boolean)
+      .join('-');
+  };
+  const appendNipDigit = (digit: string) =>
+    setCustomerNip((prev) => (prev + digit).replace(/\D/g, '').slice(0, 10));
+  const backspaceNip = () => setCustomerNip((prev) => prev.slice(0, -1));
 
   useEffect(() => {
     let cancelled = false;
@@ -743,26 +756,95 @@ export default function PaymentModal({
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <label className="block" htmlFor="payment-customer-nip">
-                  <span className="block text-sm font-semibold text-slate-900">
+                <div className="flex items-center justify-between gap-2">
+                  <span id="payment-customer-nip-label" className="text-sm font-semibold text-slate-900">
                     {tOr('pos.payment.customerNipLabel', 'Buyer NIP (optional)')}
                   </span>
-                  <input
-                    id="payment-customer-nip"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={10}
-                    value={customerNip}
-                    onChange={(e) => setCustomerNip(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    placeholder={tOr('pos.payment.customerNipPlaceholder', '10 digits')}
-                    aria-invalid={!customerNipValid}
-                    className={`mt-2 h-12 w-full rounded-md border bg-white px-3 text-lg font-semibold tracking-widest text-slate-950 focus:outline-none focus:ring-2 ${
-                      customerNipValid
-                        ? 'border-slate-300 focus:ring-brand-500'
-                        : 'border-red-300 focus:ring-red-500'
-                    }`}
-                  />
-                </label>
+                  <span className={`text-xs font-bold tabular-nums ${customerNipValid ? 'text-slate-400' : 'text-red-600'}`}>
+                    {customerNip.length}/10
+                  </span>
+                </div>
+
+                {/* Opt out of the shared on-screen keyboard (data-keyboard="false");
+                    it otherwise pops up at the bottom over the modal and hides this
+                    field. Touch entry is driven by the inline numpad below, so the
+                    digits stay visible the whole time. */}
+                <input
+                  id="payment-customer-nip"
+                  type="text"
+                  inputMode="numeric"
+                  data-keyboard="false"
+                  maxLength={10}
+                  value={customerNip}
+                  onChange={(e) => setCustomerNip(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  onFocus={() => setNipPadOpen(true)}
+                  onClick={() => setNipPadOpen(true)}
+                  placeholder={tOr('pos.payment.customerNipPlaceholder', 'Tap to enter 10 digits')}
+                  aria-invalid={!customerNipValid}
+                  aria-labelledby="payment-customer-nip-label"
+                  className={`mt-2 h-12 w-full rounded-md border bg-white px-3 text-xl font-semibold tracking-[0.2em] text-slate-950 focus:outline-none focus:ring-2 ${
+                    customerNipValid
+                      ? 'border-slate-300 focus:ring-brand-500'
+                      : 'border-red-300 focus:ring-red-500'
+                  }`}
+                />
+
+                {customerNip.length > 0 && (
+                  <p className="mt-1 text-sm font-semibold tabular-nums tracking-wider text-slate-500">
+                    {formatNip(customerNip)}
+                  </p>
+                )}
+
+                {nipPadOpen && (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => appendNipDigit(k)}
+                          className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          {k}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={backspaceNip}
+                        aria-label={tOr('pos.payment.nipBackspace', 'Delete')}
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200 active:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => appendNipDigit('0')}
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        0
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNipPadOpen(false)}
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        {tOr('pos.payment.nipDone', 'Done')}
+                      </button>
+                    </div>
+                    {customerNip.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setCustomerNip('')}
+                        className="mt-1.5 w-full rounded-md py-1 text-xs font-semibold text-slate-500 transition-colors hover:text-red-700"
+                      >
+                        {tOr('pos.payment.nipClear', 'Clear')}
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <p className={`mt-2 text-xs font-semibold ${customerNipValid ? 'text-slate-500' : 'text-red-700'}`}>
                   {customerNipValid
                     ? tOr('pos.payment.customerNipHint', 'Add before payment if the customer needs NIP on the receipt or invoice.')
