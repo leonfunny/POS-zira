@@ -18,6 +18,7 @@ import QuickAddCameraModal, {
   QuickAddFinalizeInput,
   QuickAddPreparedResult,
 } from './QuickAddCameraModal';
+import { formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -204,6 +205,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // Resolve translator above the barcode callback so it can localize the
   // "Sold out" toast string for scanned items.
   const t = getTranslation(language);
+  const tOr = useCallback((key: string, fallback: string) => {
+    const translated = t(key);
+    return translated && translated !== key ? translated : fallback;
+  }, [t]);
 
   /**
    * Open the scan-import modal for an EAN that's not in the local catalog.
@@ -379,23 +384,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
               showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
             } else {
-              dispatch({
-                type: 'cart/addItem',
-                payload: {
-                  id: crypto.randomUUID(),
-                  variantId: product.id,
-                  name: product.name,
-                  sku: product.sku || '',
-                  price: product.retail_price,
-                  quantity: 1,
-                  total: product.retail_price,
-                  saleUnit: product.sale_unit ?? null,
-                  sellBy: product.sell_by ?? 'PIECE',
-                  imageUrl: product.image_url || undefined,
-                  vatRate: product.vat_rate,
-                  name_translations: product.name_translations ?? null,
-                },
+              const result = await resolveRetailCartItem(product, {
+                scaleEnabled: config?.scale?.enabled === true,
+                scalePort: config?.scale?.port,
+                readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
               });
+              if (!result.ok) {
+                showScanToast(formatRetailSaleError(result.error, tOr), 'err');
+                return;
+              }
+              dispatch({ type: 'cart/addItem', payload: result.item });
               showScanToast(`+ ${displayName}`, 'ok');
             }
           } else {
@@ -410,7 +408,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, dispatch, showScanToast, language, t, openScanImport]);
+  }, [barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, showScanToast, language, t, tOr, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {

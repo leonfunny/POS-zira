@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
+import { normalizeSellBy } from '../../../shared/pos-sale';
 import type { ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -34,6 +35,11 @@ function parseMoneyToGrosze(value: string): number | null {
   return Math.round(parsed * 100);
 }
 
+function looksLikeFreshScaleCategory(category: Category | undefined): boolean {
+  const raw = `${category?.name || ''} ${category?.name_translations || ''}`.toLowerCase();
+  return /\bscale\b|\bfresh\b|tươi|tuoi|đồ tươi|do tuoi/.test(raw);
+}
+
 export default function ProductEditForm({
   product,
   categories,
@@ -51,6 +57,7 @@ export default function ProductEditForm({
   const [barcode, setBarcode] = useState(product.barcode || '');
   const [sku, setSku] = useState(product.sku || '');
   const [categoryId, setCategoryId] = useState(product.category_id || '');
+  const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(normalizeSellBy(product.sell_by));
   const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
   const [busy, setBusy] = useState(false);
@@ -63,6 +70,7 @@ export default function ProductEditForm({
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
     setCategoryId(product.category_id || '');
+    setSellBy(normalizeSellBy(product.sell_by));
     setSaleUnit(product.sale_unit || '');
     setImageUrl(product.image_url || '');
     setBusy(false);
@@ -82,9 +90,10 @@ export default function ProductEditForm({
     || barcode !== (product.barcode || '')
     || sku !== (product.sku || '')
     || categoryId !== (product.category_id || '')
+    || sellBy !== normalizeSellBy(product.sell_by)
     || saleUnit !== (product.sale_unit || '')
     || imageUrl !== (product.image_url || '')
-  ), [barcode, categoryId, imageUrl, name, priceGross, product, saleUnit, sku, vatRate]);
+  ), [barcode, categoryId, imageUrl, name, priceGross, product, saleUnit, sellBy, sku, vatRate]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -115,6 +124,7 @@ export default function ProductEditForm({
       priceGrossGrosze,
       vatRate: Number(vatRate),
       categoryId: categoryId || null,
+      sellBy,
       saleUnit: saleUnit.trim() || null,
       imageUrl: imageUrl.trim() || null,
       isActive: product.is_active !== 0,
@@ -168,7 +178,9 @@ export default function ProductEditForm({
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.priceGross', 'Gross price')}
+              {sellBy === 'WEIGHT'
+                ? tOr(t, 'products.drawer.priceGrossPerKg', 'Gross price per kg')
+                : tOr(t, 'products.drawer.priceGross', 'Gross price')}
             </span>
             <input
               inputMode="decimal"
@@ -223,7 +235,15 @@ export default function ProductEditForm({
             <div className="flex gap-2">
               <select
                 value={categoryId}
-                onChange={(event) => setCategoryId(event.target.value)}
+                onChange={(event) => {
+                  const nextCategoryId = event.target.value;
+                  setCategoryId(nextCategoryId);
+                  const nextCategory = categories.find((category) => category.id === nextCategoryId);
+                  if (looksLikeFreshScaleCategory(nextCategory)) {
+                    setSellBy('WEIGHT');
+                    setSaleUnit('kg');
+                  }
+                }}
                 className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
                 <option value="">{tOr(t, 'products.allCategories', 'All categories')}</option>
@@ -246,6 +266,29 @@ export default function ProductEditForm({
           </label>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.drawer.sellBy', 'Sell by')}
+            </span>
+            <select
+              value={sellBy}
+              onChange={(event) => {
+                const nextSellBy = normalizeSellBy(event.target.value);
+                setSellBy(nextSellBy);
+                if (nextSellBy === 'WEIGHT') setSaleUnit('kg');
+                if (nextSellBy === 'PIECE' && (!saleUnit.trim() || saleUnit.trim().toLowerCase() === 'kg')) {
+                  setSaleUnit('szt');
+                }
+              }}
+              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+            >
+              <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Piece')}</option>
+              <option value="WEIGHT">{tOr(t, 'products.drawer.sellByWeight', 'Weight / kg')}</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
             </span>
             <input
@@ -254,6 +297,11 @@ export default function ProductEditForm({
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
           </label>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            {sellBy === 'WEIGHT'
+              ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
+              : tOr(t, 'products.drawer.pieceHint', 'Normal products keep the existing piece-based flow.')}
+          </div>
         </div>
 
         <label className="block">

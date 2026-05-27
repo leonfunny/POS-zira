@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Scale } from 'lucide-react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
 import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
@@ -9,6 +10,9 @@ interface CartItemProps {
   onRemove: (id: string) => void;
   onSetNotes?: (id: string, notes: string) => void;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
+  onReadScale?: (item: CartItemType) => void;
+  scaleBusy?: boolean;
+  scaleError?: string | null;
   activeField?: 'qty' | 'price' | null;
   activeBuffer?: string;
   t?: (key: string) => string;
@@ -24,6 +28,9 @@ export default function CartItemRow({
   onRemove,
   onSetNotes,
   onSelectField,
+  onReadScale,
+  scaleBusy,
+  scaleError,
   activeField,
   activeBuffer,
   t,
@@ -122,44 +129,64 @@ export default function CartItemRow({
           )}
         </div>
 
-        <div className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden shrink-0">
-          {sellBy !== 'WEIGHT' && (
+        <div className="flex items-center gap-1.5 shrink-0">
+          {sellBy === 'WEIGHT' && onReadScale && (
             <button
               type="button"
-              onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
-              disabled={item.quantity <= 1}
-              aria-label="Decrease quantity"
-              className={`w-10 h-10 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
-                item.quantity <= 1
-                  ? 'text-slate-300 cursor-not-allowed'
-                  : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
+              onClick={() => onReadScale(item)}
+              disabled={scaleBusy}
+              title={scaleBusy ? tOr('pos.scale.reading', 'Reading scale') : tOr('pos.scale.read', 'Read scale')}
+              aria-label={tOr('pos.scale.read', 'Read scale')}
+              className="w-10 h-10 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            >
+              <Scale size={18} strokeWidth={2.4} />
+            </button>
+          )}
+          <div className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden">
+            {sellBy !== 'WEIGHT' && (
+              <button
+                type="button"
+                onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
+                disabled={item.quantity <= 1}
+                aria-label="Decrease quantity"
+                className={`w-10 h-10 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
+                  item.quantity <= 1
+                    ? 'text-slate-300 cursor-not-allowed'
+                    : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
+                }`}
+              >-</button>
+            )}
+            <button
+              type="button"
+              onClick={() => onSelectField?.(item.id, 'qty')}
+              title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
+              className={`h-10 min-w-12 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
+                sellBy === 'WEIGHT' ? '' : 'border-x'
+              } ${
+                qtyHighlight
+                  ? 'bg-brand-100 text-brand-900 border-brand-400'
+                  : 'bg-white text-slate-950 hover:text-brand-700 hover:bg-brand-50 border-slate-300'
               }`}
-            >-</button>
-          )}
-          <button
-            type="button"
-            onClick={() => onSelectField?.(item.id, 'qty')}
-            title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
-            className={`h-10 min-w-12 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
-              sellBy === 'WEIGHT' ? '' : 'border-x'
-            } ${
-              qtyHighlight
-                ? 'bg-brand-100 text-brand-900 border-brand-400'
-                : 'bg-white text-slate-950 hover:text-brand-700 hover:bg-brand-50 border-slate-300'
-            }`}
-          >
-            {qtyDisplay}{sellBy === 'WEIGHT' ? ` ${saleUnit}` : ''}
-          </button>
-          {sellBy !== 'WEIGHT' && (
-            <button
-              type="button"
-              onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-              aria-label="Increase quantity"
-              className="w-10 h-10 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
-            >+</button>
-          )}
+            >
+              {qtyDisplay}{sellBy === 'WEIGHT' ? ` ${saleUnit}` : ''}
+            </button>
+            {sellBy !== 'WEIGHT' && (
+              <button
+                type="button"
+                onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                aria-label="Increase quantity"
+                className="w-10 h-10 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
+              >+</button>
+            )}
+          </div>
         </div>
       </div>
+
+      {sellBy === 'WEIGHT' && scaleError && (
+        <p className="mt-2 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+          {scaleError}
+        </p>
+      )}
 
       {editingNotes && (
         <div className="mt-3">

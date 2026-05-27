@@ -202,6 +202,37 @@ export interface PrinterConfig {
   cutMode?: 'partial' | 'full' | 'none';
 }
 
+export type ScaleProtocol = 'DIBAL_GDPOS';
+
+export interface ScaleConfig {
+  enabled: boolean;
+  protocol: ScaleProtocol;
+  port: string;
+  baudRate?: number;
+}
+
+export type ScaleReadResult =
+  | {
+      success: true;
+      protocol: ScaleProtocol;
+      port: string;
+      weightKg: number;
+      stable: boolean;
+      status: string;
+      rawAscii?: string;
+      rawHex?: string;
+    }
+  | {
+      success: false;
+      protocol: ScaleProtocol;
+      port?: string;
+      error: string;
+      code: string;
+      rawAscii?: string;
+      rawHex?: string;
+      status?: string;
+    };
+
 export interface ServerPrinterMapping {
   id: string;
   agentId?: string | null;
@@ -391,6 +422,7 @@ export interface AgentConfig {
   zebraPrinter?: string;
   labelWidth?: number;
   labelHeight?: number;
+  scale?: ScaleConfig;
 
   // Server settings
   serverUrl: string;
@@ -847,6 +879,7 @@ export const IPC_CHANNELS = {
   // Printer
   LIST_PORTS: 'list-ports',
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
+  SCALE_READ_WEIGHT: 'scale:read-weight',
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
@@ -2381,6 +2414,7 @@ export interface ProductAdminCreateProductInput {
   initialStockQty?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
+  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
   imageUrl?: string | null;
   idempotencyKey?: string;
 }
@@ -2394,6 +2428,7 @@ export interface ProductAdminUpdateVariantInput {
   vatRate?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
+  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
   imageUrl?: string | null;
   isActive?: boolean;
   expectedUpdatedAt?: string;

@@ -85,6 +85,7 @@ function variantToProduct(variant: any): ProductListItem {
     is_on_sale: Number(variant.is_on_sale) || undefined,
     thumbnail_url: variant.thumbnail_url ?? null,
     sale_unit: variant.sale_unit ?? null,
+    sell_by: variant.sell_by ?? variant.sellBy ?? 'PIECE',
     name_translations: variant.name_translations ?? null,
   };
 }

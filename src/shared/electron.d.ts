@@ -103,6 +103,7 @@ import type {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  ScaleReadResult,
 } from './types';
 
 // ── POS DB row types (mirrors repos) ──
@@ -237,6 +238,9 @@ interface ElectronAPI {
   // Printer
   listPorts: () => Promise<string[]>;
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
+  scale: {
+    readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
+  };
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   printLabel: (barcode: string, text?: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
@@ -711,6 +715,9 @@ interface ElectronAPI {
       openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>;
       cardPayment: (data: { amount: number; orderId: string }) => Promise<{ success: boolean; error?: string }>;
       onElavonStatus: (callback: (data: any) => void) => () => void;
+    };
+    scale: {
+      readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
     };
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;

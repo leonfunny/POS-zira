@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CartItem, PosAction } from './usePosStore';
 import type { NumpadMode } from '../components/pos/POSNumpad';
+import { normalizeSellBy } from '../../shared/pos-sale';
 
 export type NumpadTarget =
   | { kind: 'payment' }
-  | { kind: 'cartItem'; itemId: string; itemName: string; field: 'qty' | 'price' }
+  | { kind: 'cartItem'; itemId: string; itemName: string; field: 'qty' | 'price'; sellBy?: string | null }
   | { kind: 'discount' };
 
 const MAX_BUFFER_LEN = 9;
@@ -57,6 +58,7 @@ export function parseBufferQuantity(buf: string): number {
 function modeForTarget(target: NumpadTarget): NumpadMode {
   if (target.kind === 'payment') return 'cash';
   if (target.kind === 'discount') return 'discount';
+  if (target.kind === 'cartItem' && target.field === 'qty' && normalizeSellBy(target.sellBy) === 'WEIGHT') return 'weight';
   if (target.kind === 'cartItem' && target.field === 'qty') return 'qty';
   return 'price';
 }
@@ -139,7 +141,7 @@ export function usePOSNumpadController({
       return;
     }
     commit(target, buffer, isPercent);
-    setTarget({ kind: 'cartItem', itemId: item.id, itemName: item.name, field });
+    setTarget({ kind: 'cartItem', itemId: item.id, itemName: item.name, field, sellBy: item.sellBy ?? null });
     setBuffer('');
   }, [target, buffer, isPercent, commit]);
 

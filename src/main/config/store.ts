@@ -27,6 +27,12 @@ const defaultConfig: AgentConfig = {
   printerProtocol: 'THERMAL',
   printerBaudRate: 9600,
   multiPrinterMode: false,
+  scale: {
+    enabled: false,
+    protocol: 'DIBAL_GDPOS',
+    port: '',
+    baudRate: 9600,
+  },
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
     : 'https://api.enail.pro',
@@ -69,6 +75,17 @@ const printersConfigSchema = {
     TICKET: printerConfigSchema,
     KITCHEN: printerConfigSchema,
   },
+};
+
+const scaleConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    protocol: { type: 'string', enum: ['DIBAL_GDPOS'], default: 'DIBAL_GDPOS' },
+    port: { type: 'string', default: '' },
+    baudRate: { type: 'number', default: 9600 },
+  },
+  default: {},
 };
 
 // Telegram group config schema
@@ -158,6 +175,7 @@ const store = new Store<AgentConfig>({
     zebraPrinter: { type: 'string' },
     labelWidth: { type: 'number', default: 50 },
     labelHeight: { type: 'number', default: 30 },
+    scale: scaleConfigSchema,
     serverUrl: { type: 'string', default: 'https://api.enail.pro' },
     isPaired: { type: 'boolean', default: false },
     autoStart: { type: 'boolean', default: true },

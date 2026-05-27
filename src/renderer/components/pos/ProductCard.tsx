@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
 import { resolveName } from '../../../shared/catalog-names';
+import { classifyProductSale } from '../../../shared/product-sale-classifier';
 
 interface ProductCardProps {
   product: Product;
@@ -38,6 +39,7 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
   const lowStock = !isDraft && !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';
+  const saleClass = classifyProductSale(product);
   // Placeholder color hashes canonical `name` so the same product keeps the
   // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
@@ -92,7 +94,7 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
         )}
         {lowStock && (
           <span className="absolute top-2 left-2 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
-            {stockQty} {pieces}
+            {stockQty} {saleClass.isWeighted ? saleClass.saleUnit : pieces}
           </span>
         )}
         {product.is_on_sale === 1 && !soldOut && !isDraft && (
@@ -113,7 +115,7 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
 
       <div className="flex items-end justify-between gap-2 shrink-0">
         <span className="text-sm font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
-          {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
+          {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
         </span>
         {!soldOut && (
           <span

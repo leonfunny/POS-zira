@@ -4,6 +4,8 @@ import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStor
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
 import { resolveName } from '../../../../../shared/catalog-names';
+import { classifyProductSale } from '../../../../../shared/product-sale-classifier';
+import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -48,6 +50,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scaleReadInFlightRef = useRef(false);
   const [heldCarts, setHeldCarts] = useState<Array<{
     id: string;
     items: CartItem[];
@@ -294,6 +297,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     }
   }, [isSyncing, tOr]);
 
+  const showToolbarError = useCallback((message: string) => {
+    setSyncError(message);
+    if (syncErrorTimerRef.current) clearTimeout(syncErrorTimerRef.current);
+    syncErrorTimerRef.current = setTimeout(() => setSyncError(null), 4_000);
+  }, []);
+
   // Cleanup the auto-dismiss timer on unmount.
   useEffect(() => {
     return () => {
@@ -308,7 +317,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     document.dispatchEvent(new CustomEvent('pos:focus-search'));
   }, [cart.items]);
 
-  const handleAddProduct = useCallback((product: Product) => {
+  const handleAddProduct = useCallback(async (product: Product) => {
     // Drafts haven't been imported into product_variants yet — route through
     // the scan-import modal so the server materializes a real variant before
     // we add anything to the cart. The modal's confirm path adds to cart on
@@ -321,29 +330,32 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     }
     if ((Number(product.retail_price) || 0) <= 0) return;
     if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
-    dispatch({
-      type: 'cart/addItem',
-      payload: {
-        id: crypto.randomUUID(),
-        variantId: product.id,
-        name: product.name,
-        sku: product.sku || '',
-        price: product.retail_price,
-        quantity: 1,
-        total: product.retail_price,
-        saleUnit: product.sale_unit ?? null,
-        sellBy: product.sell_by ?? 'PIECE',
-        imageUrl: product.image_url || undefined,
-        vatRate: product.vat_rate,
-        name_translations: product.name_translations ?? null,
-      },
-    });
-  }, [dispatch, onUnknownBarcodeScanned]);
+    const saleClass = classifyProductSale(product);
+    if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
+    const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
+    if (saleClass.requiresScale) scaleReadInFlightRef.current = true;
+    try {
+      const result = await resolveRetailCartItem(product, {
+        scaleEnabled: config?.scale?.enabled === true,
+        scalePort: config?.scale?.port,
+        readWeight,
+      });
+      if (!result.ok) {
+        showToolbarError(formatRetailSaleError(result.error, tOr));
+        return;
+      }
+      dispatch({ type: 'cart/addItem', payload: result.item });
+    } catch (err: any) {
+      showToolbarError(err?.message || tOr('pos.scale.failed', 'Scale did not return a weight'));
+    } finally {
+      if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
+    }
+  }, [config?.scale?.enabled, config?.scale?.port, dispatch, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handleBarcodeScanned = useCallback(async (barcode: string) => {
     const product = await window.electronAPI.pos.products.getByBarcode(barcode);
     if (product) {
-      handleAddProduct(product);
+      await handleAddProduct(product);
       return;
     }
     if (onUnknownBarcodeScanned) {

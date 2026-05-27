@@ -23,6 +23,7 @@ import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '..
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
+import { readScaleWeight } from '../hardware/scale/scale-reader-service';
 import { listSerialPorts, listWindowsPrintersDetailed, getVidForPort } from '../hardware/port-utils';
 import { validateProtocolAgainstVid, type ValidationResult as PortValidationResult } from '../hardware/detection/vid-protocol-registry';
 import {
@@ -221,6 +222,10 @@ export class HardwareModule extends BaseModule {
         }
       }
       return ports;
+    });
+
+    ipcMain.handle(IPC_CHANNELS.SCALE_READ_WEIGHT, async (_event, options?: { port?: string }) => {
+      return readScaleWeight(getConfig(), options);
     });
 
     ipcMain.handle(IPC_CHANNELS.LIST_WINDOWS_PRINTERS, async () => {

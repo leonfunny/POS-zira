@@ -3,6 +3,8 @@ import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow from './CartItem';
 import POSNumpad from './POSNumpad';
 import { parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
+import { useConfig } from '../../hooks/useConfig';
+import { normalizeSellBy } from '../../../shared/pos-sale';
 
 interface CartProps {
   cart: CartState;
@@ -121,7 +123,11 @@ export default function Cart({
   onHold,
 }: CartProps) {
   const currency = t('pos.currency');
+  const { config } = useConfig();
+  const scaleEnabled = config?.scale?.enabled === true;
   const [confirmClear, setConfirmClear] = useState(false);
+  const [scaleBusyItemId, setScaleBusyItemId] = useState<string | null>(null);
+  const [scaleErrors, setScaleErrors] = useState<Record<string, string>>({});
   const itemsScrollRef = useRef<HTMLDivElement>(null);
 
   const tOr = useCallback((key: string, fallback: string) => {
@@ -182,8 +188,42 @@ export default function Cart({
   const handleClearConfirm = useCallback(() => {
     dispatch({ type: 'cart/clear' });
     setConfirmClear(false);
+    setScaleErrors({});
     controller.selectPayment();
   }, [dispatch, controller]);
+
+  const handleReadScale = useCallback(async (item: CartItem) => {
+    if (normalizeSellBy(item.sellBy) !== 'WEIGHT') return;
+    setScaleBusyItemId(item.id);
+    setScaleErrors((prev) => ({ ...prev, [item.id]: '' }));
+    try {
+      const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
+      if (!readWeight) throw new Error('Scale API is not available');
+      const result = await readWeight();
+      if (!result?.success) {
+        throw new Error(result?.error || 'Scale did not return a weight');
+      }
+      if (!result.stable) {
+        throw new Error(`Scale weight is not stable (${result.status || 'unknown'})`);
+      }
+      if (result.weightKg <= 0) {
+        throw new Error('Scale returned 0.000 kg');
+      }
+      dispatch({ type: 'cart/updateQuantity', payload: { id: item.id, quantity: result.weightKg } });
+      setScaleErrors((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    } catch (err: any) {
+      setScaleErrors((prev) => ({
+        ...prev,
+        [item.id]: err?.message || 'Failed to read scale',
+      }));
+    } finally {
+      setScaleBusyItemId(null);
+    }
+  }, [dispatch]);
 
   const isDiscountActive = controller.target.kind === 'discount';
   const hasItems = cart.items.length > 0;
@@ -265,6 +305,9 @@ export default function Cart({
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
                 onSelectField={handleSelectField}
+                onReadScale={scaleEnabled ? handleReadScale : undefined}
+                scaleBusy={scaleBusyItemId === item.id}
+                scaleError={scaleErrors[item.id] || null}
                 activeField={activeFieldFor(item.id)}
                 activeBuffer={controller.buffer}
                 t={t}

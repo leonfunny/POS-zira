@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => ipcRenderer.removeListener('pos:elavon-status', listener);
       },
     },
+    scale: {
+      readWeight: (options?: { port?: string }) => ipcRenderer.invoke('scale:read-weight', options),
+    },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke('pos:shift:open', data),
       close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke('pos:shift:close', data),

@@ -120,6 +120,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Printer
   listPorts: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_PORTS),
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
+  scale: {
+    readWeight: (options?: { port?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SCALE_READ_WEIGHT, options),
+  },
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   printLabel: (barcode: string, text?: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),

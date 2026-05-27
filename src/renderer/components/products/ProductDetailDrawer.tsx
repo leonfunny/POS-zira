@@ -288,6 +288,7 @@ export default function ProductDetailDrawer({
               <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
               <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
               <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
+              <DetailRow label={tOr(t, 'products.drawer.sellBy', 'Sell by')} value={product.sell_by === 'WEIGHT' ? 'Weight' : 'Piece'} />
               <DetailRow label={tOr(t, 'products.drawer.saleUnit', 'Sale unit')} value={product.sale_unit || '-'} />
               <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
             </div>
