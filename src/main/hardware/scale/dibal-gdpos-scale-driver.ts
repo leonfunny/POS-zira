@@ -100,33 +100,40 @@ $p.ReadTimeout = 250
 $p.WriteTimeout = 250
 $p.DtrEnable = $true
 $p.RtsEnable = $true
-function Read-Bytes([int]$timeoutMs) {
+function Read-Bytes([int]$timeoutMs, [int]$quietMs, [bool]$returnAfterFirst, [bool]$stopOnEot) {
   $buf = New-Object System.Collections.Generic.List[byte]
   $deadline = (Get-Date).AddMilliseconds($timeoutMs)
+  $lastReadAt = Get-Date
+  $sawBytes = $false
   while ((Get-Date) -lt $deadline) {
     $n = $p.BytesToRead
     if ($n -gt 0) {
       $bytes = New-Object byte[] $n
       [void]$p.Read($bytes, 0, $n)
       foreach ($b in $bytes) { $buf.Add($b) }
+      $lastReadAt = Get-Date
+      $sawBytes = $true
+      if ($returnAfterFirst -and $buf.Count -gt 0) { break }
+      if ($stopOnEot -and $buf.Count -gt 0 -and $buf[$buf.Count - 1] -eq 0x04) { break }
     } else {
-      Start-Sleep -Milliseconds 25
+      if ($sawBytes -and (((Get-Date) - $lastReadAt).TotalMilliseconds -ge $quietMs)) { break }
+      Start-Sleep -Milliseconds 10
     }
   }
   return $buf.ToArray()
 }
 try {
   $p.Open()
-  if ($p.BytesToRead -gt 0) { [void]([byte[]]@(Read-Bytes 100)) }
+  if ($p.BytesToRead -gt 0) { [void]([byte[]]@(Read-Bytes 120 30 $false $false)) }
   $p.Write([byte[]](0x05), 0, 1)
-  $ack = [byte[]]@(Read-Bytes 500)
+  $ack = [byte[]]@(Read-Bytes 350 20 $true $false)
   if ($ack.Length -lt 1 -or $ack[0] -ne 0x06) {
     $ackB64 = [Convert]::ToBase64String($ack)
     Write-Output (@{ ok = $false; code = 'NO_ACK'; ack = $ackB64 } | ConvertTo-Json -Compress)
     exit 0
   }
   $p.Write([byte[]](0x12), 0, 1)
-  $frame = [byte[]]@(Read-Bytes 1200)
+  $frame = [byte[]]@(Read-Bytes 900 60 $false $true)
   if ($frame.Length -lt 1) {
     Write-Output (@{ ok = $false; code = 'NO_FRAME'; frame = '' } | ConvertTo-Json -Compress)
     exit 0
@@ -144,7 +151,7 @@ try {
     const { stdout } = await execFileAsync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-      { encoding: 'utf8', timeout: 5000 },
+      { encoding: 'utf8', timeout: 4000 },
     );
     const line = stdout.trim().split(/\r?\n/).find((l) => l.trim().startsWith('{')) ?? '';
     if (!line) {

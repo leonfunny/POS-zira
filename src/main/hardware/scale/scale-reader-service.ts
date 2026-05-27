@@ -16,6 +16,9 @@ const KNOWN_NON_SCALE_SERIAL_VIDS = new Set([
   '079B', // Ingenico/Elavon Move/5000 payment terminal
 ]);
 const execFileAsync = promisify(execFile);
+const SCALE_PORT_CACHE_MS = 10 * 60 * 1000;
+
+let cachedScalePort: { port: string; expiresAt: number } | null = null;
 
 function addComPort(ports: Set<string>, port?: string | null): void {
   const normalized = String(port || '').trim().toUpperCase();
@@ -88,6 +91,7 @@ export async function buildScalePortCandidates(
   };
 
   for (const knownPort of KNOWN_SCALE_PORTS) addCandidate(knownPort);
+  if (candidates.length > 0) return candidates;
 
   for (const candidate of ports) {
     const port = candidate.toUpperCase();
@@ -117,21 +121,35 @@ export async function readScaleWeight(
   const explicitPort = String(options?.port || config.scale?.port || '').trim().toUpperCase();
   const baudRate = config.scale?.baudRate || 9600;
   const readScale = (port: string) => new DibalGdposScaleDriver(port, baudRate).readWeight();
+  const rememberSuccess = (result: ScaleReadResult): ScaleReadResult => {
+    if (result.success) {
+      cachedScalePort = { port: result.port, expiresAt: Date.now() + SCALE_PORT_CACHE_MS };
+    }
+    return result;
+  };
 
-  if (explicitPort) return readScale(explicitPort);
+  if (explicitPort) return rememberSuccess(await readScale(explicitPort));
 
-  const ports = mergeScaleSerialPorts(
-    await listSerialPorts(),
-    await listPresentScaleUsbSerialPorts(),
-  );
-  const candidates = await buildScalePortCandidates(ports, collectConfiguredSerialPorts(config));
+  const configuredPorts = collectConfiguredSerialPorts(config);
+  if (cachedScalePort && cachedScalePort.expiresAt > Date.now() && !configuredPorts.has(cachedScalePort.port)) {
+    const cachedResult = await readScale(cachedScalePort.port);
+    if (cachedResult.success) return rememberSuccess(cachedResult);
+    cachedScalePort = null;
+  }
+
+  const [serialPorts, scaleUsbPorts] = await Promise.all([
+    listSerialPorts(),
+    listPresentScaleUsbSerialPorts(),
+  ]);
+  const ports = mergeScaleSerialPorts(serialPorts, scaleUsbPorts);
+  const candidates = await buildScalePortCandidates(ports, configuredPorts);
 
   let firstFailure: ScaleReadResult | null = null;
   for (const candidate of candidates) {
     const result = await readScale(candidate);
-    if (result.success) return result;
+    if (result.success) return rememberSuccess(result);
     firstFailure ||= result;
   }
 
-  return firstFailure || readScale(ports[0] || '');
+  return firstFailure || rememberSuccess(await readScale(ports[0] || ''));
 }
