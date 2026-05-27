@@ -50,6 +50,13 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain('formatInitialCashAmount(initialCashAmountGrosze)');
   });
 
+  it('exposes the BLIK quick branch from the cash bills row without opening the drawer', () => {
+    expect(PAYMENT_MODAL).toContain("const BLIK_RECEIPT_PHONE = '729448788'");
+    expect(PAYMENT_MODAL).toContain("setMethod('BLIK')");
+    expect(PAYMENT_MODAL).toContain("const printOrderCopyWithDrawer = hasCash");
+    expect(PAYMENT_MODAL).toContain("window.electronAPI.pos.payment.printReceipt(orderId)");
+  });
+
   it('blocks payments when a restored shift has no staff name', () => {
     expect(RETAIL_TEMPLATE).toContain('missingShiftStaff');
     expect(RETAIL_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');

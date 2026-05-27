@@ -149,6 +149,20 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
     });
   });
 
+  describe('BLIK receipt instructions', () => {
+    it('prints the BLIK phone number below the payment section', () => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const lines = fmt.formatReceiptPlainLines(buildReceiptData({
+        payment: { method: 'BLIK', amount: 750 },
+      }));
+      const flat = lines.map((l) => l.text).join('\n');
+
+      expect(flat).toContain('BLIK');
+      expect(flat).toContain('729448788');
+      expect(flat.indexOf('729448788')).toBeLessThan(flat.lastIndexOf('BLIK'));
+    });
+  });
+
   describe('G3 / test print uses formatDatePl (not toLocaleString) and shows salon header', () => {
     it('formatTestPage date matches DD.MM.YYYY  HH:MM, never the slash-separated locale format', () => {
       const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });

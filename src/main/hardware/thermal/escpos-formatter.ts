@@ -2,6 +2,7 @@ import { ReceiptData, ReceiptItem, charsPerLineFor } from '../../../shared/types
 
 export type EscPosCharset = 'utf8' | 'cp1250' | 'ascii';
 export type EscPosCutMode = 'partial' | 'full' | 'none';
+const BLIK_RECEIPT_PHONE = '729448788';
 export type EscPosPlainLine = {
   text: string;
   rightText?: string;
@@ -282,6 +283,15 @@ export class EscPosFormatter {
         parts.push(this.formatLine(this.paymentMethodPl(data.payment.method), this.formatMoney(data.total)));
       }
     }
+    if (!data.isRefund && data.payment.method.toUpperCase() === 'BLIK') {
+      parts.push(this.text(''));
+      parts.push(ESCPOS.ALIGN_CENTER);
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.text(BLIK_RECEIPT_PHONE));
+      parts.push(this.text('BLIK'));
+      parts.push(ESCPOS.BOLD_OFF);
+      parts.push(ESCPOS.ALIGN_LEFT);
+    }
 
     // Footer (centered)
     parts.push(this.text(''));
@@ -531,6 +541,11 @@ export class EscPosFormatter {
       } else {
         lines.push(lr(this.paymentMethodPl(data.payment.method), this.formatMoney(data.total)));
       }
+    }
+    if (!data.isRefund && data.payment.method.toUpperCase() === 'BLIK') {
+      lines.push({ text: '' });
+      lines.push({ text: BLIK_RECEIPT_PHONE, center: true, bold: true });
+      lines.push({ text: 'BLIK', center: true, bold: true });
     }
 
     // Footer

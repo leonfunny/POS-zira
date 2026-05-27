@@ -37,6 +37,7 @@ type ReceiptRecovery = {
 // denominations smaller than the order total (e.g. customer pays 200 zł
 // for a 350 zł order with 2× 200 zł notes).
 const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000];
+const BLIK_RECEIPT_PHONE = '729448788';
 
 const KEYPAD_KEYS = [
   ['7', '8', '9', 'backspace'],
@@ -84,6 +85,9 @@ export default function PaymentModal({
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
+  const [customerNip, setCustomerNip] = useState(() =>
+    String(extraOrderFields?.customer_nip ?? '').replace(/\D/g, '').slice(0, 10),
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
@@ -112,6 +116,8 @@ export default function PaymentModal({
   const cashShortfall = method === 'CASH' && !splitMode && cashAmountGrosze > 0 && cashAmountGrosze < grandTotal
     ? grandTotal - cashAmountGrosze
     : 0;
+  const customerNipValid = customerNip.length === 0 || customerNip.length === 10;
+  const customerNipForOrder = customerNip.length === 10 ? customerNip : null;
 
   const isB2B = extraOrderFields?.mode === 'b2b';
   const canPayInvoice = extraOrderFields?.canPayInvoice ?? false;
@@ -167,6 +173,15 @@ export default function PaymentModal({
   const resetDenoms = () => {
     setDenomCounts({});
     setCashAmount('');
+  };
+
+  const selectBlikPayment = () => {
+    setSplitMode(false);
+    setMethod('BLIK');
+    setDenomCounts({});
+    setCashAmount('');
+    setError(null);
+    setPrintWarning(null);
   };
 
   // ─── Add split tender ─────────────────────────────────────
@@ -244,7 +259,7 @@ export default function PaymentModal({
       staff_name: staffName,
       customer_id: extraOrderFields?.customer_id ?? null,
       customer_name: extraOrderFields?.customer_name ?? null,
-      customer_nip: extraOrderFields?.customer_nip ?? null,
+      customer_nip: customerNipForOrder,
       shift_id: shiftId,
       source: 'POS',
       table_id: extraOrderFields?.table_id ?? null,
@@ -290,6 +305,9 @@ export default function PaymentModal({
     const hasCash = splitMode
       ? tenders.some(t => t.method === 'CASH')
       : method === 'CASH';
+    const hasBlik = splitMode
+      ? tenders.some(t => t.method === 'BLIK')
+      : method === 'BLIK';
 
     if (method === 'INVOICE' && extraOrderFields?.customer_id) {
       try { await window.electronAPI.pos.customers.increaseDebt(extraOrderFields.customer_id, cart.total); }
@@ -300,18 +318,23 @@ export default function PaymentModal({
     // CASH (or split with any cash tender): print the order copy on the
     //   thermal RECEIPT printer + open drawer, then ASK the cashier
     //   whether to also print the fiscal receipt.
-    // CARD/BLIK/TRANSFER: skip the order copy, fire the fiscal receipt
-    //   directly. No drawer.
+    // BLIK: print the order copy with the BLIK phone instruction, no drawer,
+    //   then ask whether to also print the fiscal receipt.
+    // CARD/TRANSFER: skip the order copy, fire the fiscal receipt directly.
     // INVOICE: skip both prints (debt already increased above).
-    const printOrderCopy = hasCash;
-    const autoPrintFiscal = !hasCash && method !== 'INVOICE';
-    const offerFiscalPrompt = hasCash && hasFiscalPrinter;
+    const printOrderCopy = hasCash || hasBlik;
+    const printOrderCopyWithDrawer = hasCash;
+    const autoPrintFiscal = !printOrderCopy && method !== 'INVOICE';
+    const offerFiscalPrompt = printOrderCopy && hasFiscalPrinter;
 
     setSavingLabel(t('test.printing') || 'Printing...');
     let printResult: PrintReceiptResponse | undefined;
     try {
       if (printOrderCopy) {
-        printResult = await window.electronAPI.pos.payment.printReceiptAndOpenDrawer(orderId).catch(
+        const printOrderCopyAction = printOrderCopyWithDrawer
+          ? window.electronAPI.pos.payment.printReceiptAndOpenDrawer(orderId)
+          : window.electronAPI.pos.payment.printReceipt(orderId);
+        printResult = await printOrderCopyAction.catch(
           (err: unknown) => {
             rlog.warn('[PaymentModal] Receipt print/drawer failed:', err);
             return { success: false, receiptPrinted: false } as PrintReceiptResponse;
@@ -470,6 +493,11 @@ export default function PaymentModal({
         setSaving(false);
         return;
       }
+      if (!customerNipValid) {
+        setError(tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.'));
+        setSaving(false);
+        return;
+      }
 
       const orderId = crypto.randomUUID();
 
@@ -488,7 +516,7 @@ export default function PaymentModal({
     }
   };
 
-  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffId && !!staffName?.trim() && (
+  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffId && !!staffName?.trim() && customerNipValid && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );
@@ -713,6 +741,34 @@ export default function PaymentModal({
                   })}
                 </div>
               </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <label className="block" htmlFor="payment-customer-nip">
+                  <span className="block text-sm font-semibold text-slate-900">
+                    {tOr('pos.payment.customerNipLabel', 'Buyer NIP (optional)')}
+                  </span>
+                  <input
+                    id="payment-customer-nip"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={customerNip}
+                    onChange={(e) => setCustomerNip(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder={tOr('pos.payment.customerNipPlaceholder', '10 digits')}
+                    aria-invalid={!customerNipValid}
+                    className={`mt-2 h-12 w-full rounded-md border bg-white px-3 text-lg font-semibold tracking-widest text-slate-950 focus:outline-none focus:ring-2 ${
+                      customerNipValid
+                        ? 'border-slate-300 focus:ring-brand-500'
+                        : 'border-red-300 focus:ring-red-500'
+                    }`}
+                  />
+                </label>
+                <p className={`mt-2 text-xs font-semibold ${customerNipValid ? 'text-slate-500' : 'text-red-700'}`}>
+                  {customerNipValid
+                    ? tOr('pos.payment.customerNipHint', 'Add before payment if the customer needs NIP on the receipt or invoice.')
+                    : tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.')}
+                </p>
+              </div>
             </aside>
 
             <section className="flex min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -882,7 +938,18 @@ export default function PaymentModal({
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                  <button
+                    type="button"
+                    onClick={selectBlikPayment}
+                    aria-label="Pay by BLIK"
+                    className="min-h-[64px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-300"
+                  >
+                    <span className="block text-sm font-extrabold leading-none">BLIK</span>
+                    <span className="mt-1 block text-[11px] font-bold leading-none tabular-nums text-slate-200">
+                      {BLIK_RECEIPT_PHONE}
+                    </span>
+                  </button>
                   {DENOMINATIONS.map((denom) => {
                     const count = denomCounts[denom] ?? 0;
                     const active = count > 0;
@@ -990,6 +1057,16 @@ export default function PaymentModal({
                       <p className="mt-1 text-sm text-slate-600">{t('pos.cart.total')}: {money(grandTotal)}</p>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {method === 'BLIK' && (
+                <div className="rounded-lg border border-slate-900 bg-slate-950 p-5 text-white">
+                  <p className="text-xs font-semibold uppercase text-slate-300">BLIK</p>
+                  <p className="mt-2 text-4xl font-semibold leading-none tracking-normal">{BLIK_RECEIPT_PHONE}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-200">
+                    {tOr('pos.payment.blikReceiptHint', 'Receipt will print this phone number with BLIK below it.')}
+                  </p>
                 </div>
               )}
 
