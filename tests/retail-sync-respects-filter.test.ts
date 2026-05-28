@@ -1,15 +1,14 @@
 /**
- * RetailTemplate — pos:products-synced must respect the active filter.
+ * RetailTemplate - category switching must not render stale full-catalog rows.
  *
- * Regression: the previous handler called `setProducts(all)` on every
- * sync event. With the new 30s periodic ProductSync that fires every 30s
- * regardless of cashier activity, the visible grid was being reset to
- * the full catalogue while the cashier was filtering by category or
- * typing a search query. Not a data bug, but disruptive at the till.
+ * Regression: clicking a category could leave the category gallery and render
+ * ProductGrid with the previous async `products` state, often the full catalog,
+ * until the category IPC query completed.
  *
- * Fix: extract one `loadFilteredProducts()` helper that respects the
- * current `searchQuery` + `activeCategoryId` and reuse it from both the
- * filter-change effect and the sync-event effect.
+ * Fix: non-search category browsing is derived synchronously from the renderer's
+ * local `allProducts` cache. Search fetches keep raw async results, while the
+ * displayed search rows are derived synchronously from those results plus the
+ * active category so category changes do not wait for the search debounce.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,49 +20,63 @@ const RETAIL_TEMPLATE = path.resolve(
   '../src/renderer/components/pos/templates/retail/RetailTemplate.tsx',
 );
 
-describe('RetailTemplate — pos:products-synced respects current filter', () => {
+describe('RetailTemplate - category switching uses renderer-side filtering', () => {
   const source = fs.readFileSync(RETAIL_TEMPLATE, 'utf8');
 
-  it('defines the shared loadFilteredProducts helper', () => {
-    expect(source).toMatch(/loadFilteredProducts\s*=\s*useCallback/);
-  });
-
-  it('loadFilteredProducts useCallback depends on searchQuery and activeCategoryId', () => {
-    // Capture the dep array of the loadFilteredProducts useCallback.
-    const match = source.match(
-      /loadFilteredProducts\s*=\s*useCallback\([\s\S]*?,\s*\[([^\]]*)\]\s*\)/,
+  it('derives non-search category products synchronously from allProducts', () => {
+    expect(source).toMatch(/visibleCategoryProducts\s*=\s*useMemo/);
+    expect(source).toMatch(
+      /allProducts\.filter\(\(product\) => product\.category_id === activeCategoryId\)/,
     );
-    expect(match, 'loadFilteredProducts useCallback dep array not found').not.toBeNull();
-    const deps = match![1];
-    expect(deps).toMatch(/searchQuery/);
-    expect(deps).toMatch(/activeCategoryId/);
+    expect(source).toMatch(/visibleProducts\s*=\s*searchQuery \? visibleSearchProducts : visibleCategoryProducts/);
   });
 
-  it('the onProductsSynced handler reuses loadFilteredProducts (no setProducts(all))', () => {
-    // Locate the onProductsSynced subscription block.
+  it('derives displayed search products synchronously from raw searchResults and activeCategoryId', () => {
+    expect(source).toContain('const visibleSearchProducts = useMemo(() => {');
+    expect(source).toContain(
+      'searchResults.filter((product) => !product._isDraft && product.category_id === activeCategoryId)',
+    );
+    expect(source).toContain('const variantBarcodes = new Set(');
+    expect(source).toContain(
+      '(product) => product._isDraft && (!product.barcode || !variantBarcodes.has(product.barcode)),',
+    );
+    expect(source).toContain('}, [searchResults, activeCategoryId]);');
+    expect(source).toMatch(/visibleProducts\s*=\s*searchQuery \? visibleSearchProducts : visibleCategoryProducts/);
+  });
+
+  it('ProductGrid consumes visibleProducts instead of raw async search state directly', () => {
+    const idx = source.indexOf('<ProductGrid');
+    expect(idx, 'ProductGrid usage not found').toBeGreaterThan(-1);
+    const block = source.slice(idx, idx + 350);
+
+    expect(block).toMatch(/products=\{visibleProducts\}/);
+    expect(block).not.toMatch(/products=\{searchResults\}/);
+    expect(block).not.toMatch(/products=\{visibleSearchProducts\}/);
+    expect(block).not.toMatch(/products=\{products\}/);
+  });
+
+  it('does not query category rows over IPC for retail category browsing', () => {
+    expect(source).not.toMatch(/pos\.products\.getByCategory/);
+  });
+
+  it('keeps draft product search/import behavior on the async search path', () => {
+    expect(source).toMatch(/pos\.products\.search\(searchQuery\)/);
+    expect(source).toMatch(/draftProducts\s*\.\s*searchByCode\(searchQuery\)/);
+    expect(source).toMatch(/_isDraft:\s*true/);
+    expect(source).not.toMatch(/setSearchResults\(visibleCategoryProducts\)/);
+    expect(source).not.toMatch(/setSearchResults\(allProducts\)/);
+  });
+
+  it('sync refreshes allProducts and preserves active category or search state', () => {
     const idx = source.indexOf('onProductsSynced(');
     expect(idx, 'onProductsSynced subscription not found').toBeGreaterThan(-1);
-    // Inspect the next ~600 chars — comfortably covers the callback body
-    // and the surrounding useEffect cleanup.
-    const block = source.slice(idx, idx + 600);
-    // Regression guard: the old `setProducts(all)` pattern must not be
-    // present in this block. (Without the substring guard the broader
-    // file might still contain the legacy pattern elsewhere.)
-    expect(block).not.toMatch(/setProducts\(\s*all\s*\)/);
-    // Forward guard: the new handler must call loadFilteredProducts so
-    // the grid honours the cashier's current category / search filter.
-    expect(block).toMatch(/loadFilteredProducts\(\)/);
-  });
+    const block = source.slice(idx, idx + 900);
 
-  it('reuses loadFilteredProducts in BOTH the filter-change effect and the sync handler', () => {
-    // The whole point of extracting the helper is to share it between
-    // the two callers — the filter-change effect AND the
-    // pos:products-synced handler. If a future contributor re-inlines
-    // the branches into one of them, we want this test to fail.
-    const callCount = (source.match(/loadFilteredProducts\s*\(\s*\)/g) ?? []).length;
-    expect(
-      callCount,
-      'loadFilteredProducts() must be invoked from at least 2 sites (filter effect + sync handler)',
-    ).toBeGreaterThanOrEqual(2);
+    expect(block).toMatch(/pos\.categories\.getAll\(\)/);
+    expect(block).toMatch(/pos\.products\.getAll\(\)/);
+    expect(block).toMatch(/setAllProducts\(prods\)/);
+    expect(block).toMatch(/if \(searchQuery\)/);
+    expect(block).toMatch(/loadSearchResults\(\)/);
+    expect(block).not.toMatch(/setProducts/);
   });
 });

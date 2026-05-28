@@ -46,7 +46,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const syncErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,7 +152,6 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
           if (retryProds.length > 0) {
             setCategories(retryCats);
             setAllProducts(retryProds);
-            setProducts(retryProds);
           }
         }, 2000);
       }
@@ -160,96 +159,111 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     load();
   }, []);
 
-  // Load the visible product grid honouring whatever category /
-  // search filter the cashier currently has applied. Reused by the
-  // filter-change effect AND by the pos:products-synced handler so a
-  // 30s periodic ProductSync tick (or a manual refresh) does not yank
-  // the cashier back to the full catalogue mid-sale.
-  const loadFilteredProducts = useCallback(async (): Promise<Product[]> => {
-    if (searchQuery) {
-      // Retail till searches by name, SKU, and barcode — cashier may either
-      // scan/key a code or type a partial product name (grocery items where
-      // EAN is missing). Backed by productRepo.search() which normalises
-      // Polish + Vietnamese diacritics.
-      const variantsRaw = await window.electronAPI.pos.products.search(searchQuery);
-      const variants: Product[] = activeCategoryId
-        ? variantsRaw.filter((p: any) => p.category_id === activeCategoryId)
-        : variantsRaw;
+  // Non-search category browsing is synchronous from the local catalogue
+  // cache, so ProductGrid never paints the previous full-catalog state
+  // while a category IPC query catches up.
+  const visibleCategoryProducts = useMemo(() => {
+    if (!activeCategoryId) return allProducts;
+    return allProducts.filter((product) => product.category_id === activeCategoryId);
+  }, [allProducts, activeCategoryId]);
 
-      // Also surface master-catalog drafts that match the same code so an
-      // unimported item can be added to the cart in one tap. Clicking a
-      // draft routes through the scan-import flow (creates the variant on
-      // the server, then adds to cart). Drafts are appended after real
-      // variants so the cashier sees stocked items first.
-      const drafts: any[] = await window.electronAPI.pos.draftProducts
-        .searchByCode(searchQuery)
-        .catch(() => []);
-      const variantBarcodes = new Set(
-        variants.map((v) => v.barcode).filter((b): b is string => !!b),
-      );
-      const draftItems: Product[] = drafts
-        .filter((d) => !d.barcode || !variantBarcodes.has(d.barcode))
-        .map((d) => ({
-          id: `draft:${d.id}`,
-          template_id: null,
-          name: d.name,
-          sku: d.sku ?? null,
-          barcode: d.barcode ?? null,
-          retail_price: Number(d.retail_price) || 0,
-          category_id: d.category_id ?? null,
-          image_url: d.image_url ?? null,
-          in_stock: Number(d.in_stock) || 0,
-          vat_rate: Number(d.vat_rate) || 23,
-          is_active: 1,
-          updated_at: d.updated_at ?? null,
-          available_qty: Number(d.in_stock) || 0,
-          _isDraft: true,
-        }));
+  const visibleSearchProducts = useMemo(() => {
+    const variants = activeCategoryId
+      ? searchResults.filter((product) => !product._isDraft && product.category_id === activeCategoryId)
+      : searchResults.filter((product) => !product._isDraft);
+    const variantBarcodes = new Set(
+      variants.map((product) => product.barcode).filter((barcode): barcode is string => !!barcode),
+    );
+    const drafts = searchResults.filter(
+      (product) => product._isDraft && (!product.barcode || !variantBarcodes.has(product.barcode)),
+    );
+    return [...variants, ...drafts];
+  }, [searchResults, activeCategoryId]);
 
-      return [...variants, ...draftItems];
-    }
-    if (activeCategoryId) {
-      return window.electronAPI.pos.products.getByCategory(activeCategoryId);
-    }
-    return window.electronAPI.pos.products.getAll();
-  }, [searchQuery, activeCategoryId]);
+  const visibleProducts = searchQuery ? visibleSearchProducts : visibleCategoryProducts;
 
-  // Filter-change effect: debounced for search, immediate for category.
+  const loadSearchResults = useCallback(async (): Promise<Product[]> => {
+    // Retail till searches by name, SKU, and barcode — cashier may either
+    // scan/key a code or type a partial product name (grocery items where
+    // EAN is missing). Backed by productRepo.search() which normalises
+    // Polish + Vietnamese diacritics.
+    const variants: Product[] = await window.electronAPI.pos.products.search(searchQuery);
+
+    // Also surface master-catalog drafts that match the same code so an
+    // unimported item can be added to the cart in one tap. Clicking a
+    // draft routes through the scan-import flow (creates the variant on
+    // the server, then adds to cart). Drafts are appended after real
+    // variants so the cashier sees stocked items first.
+    const drafts: any[] = await window.electronAPI.pos.draftProducts
+      .searchByCode(searchQuery)
+      .catch(() => []);
+    const draftItems: Product[] = drafts
+      .map((d) => ({
+        id: `draft:${d.id}`,
+        template_id: null,
+        name: d.name,
+        sku: d.sku ?? null,
+        barcode: d.barcode ?? null,
+        retail_price: Number(d.retail_price) || 0,
+        category_id: d.category_id ?? null,
+        image_url: d.image_url ?? null,
+        in_stock: Number(d.in_stock) || 0,
+        vat_rate: Number(d.vat_rate) || 23,
+        is_active: 1,
+        updated_at: d.updated_at ?? null,
+        available_qty: Number(d.in_stock) || 0,
+        _isDraft: true,
+      }));
+
+    return [...variants, ...draftItems];
+  }, [searchQuery]);
+
+  // Search fetch stays async because it also consults draft_products; the
+  // displayed search rows above still react synchronously to category changes.
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     let cancelled = false;
+    if (!searchQuery) {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      setSearchResults([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const run = async () => {
-      const result = await loadFilteredProducts();
-      if (!cancelled) setProducts(result);
+      const result = await loadSearchResults();
+      if (!cancelled) setSearchResults(result);
     };
 
-    if (searchQuery) {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(run, 250);
-    } else {
-      run();
-    }
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(run, 250);
 
     return () => {
       cancelled = true;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [loadFilteredProducts, searchQuery]);
+  }, [loadSearchResults, searchQuery]);
 
-  // Refresh categories + the cached full product list (used by other
-  // surfaces) and then re-apply the cashier's CURRENT filter. Critical
-  // here: `loadFilteredProducts` reads the latest searchQuery /
-  // activeCategoryId via its useCallback closure — calling it on each
-  // sync tick avoids the previous `setProducts(all)` reset that would
-  // dump category/search filtering back to the full catalogue.
+  // Refresh categories + the cached full product list, then preserve the
+  // cashier's current view: category browsing recomputes from allProducts;
+  // active search re-runs the async variant/draft search.
   useEffect(() => {
     const unsub = window.electronAPI.pos.sync.onProductsSynced(() => {
-      window.electronAPI.pos.categories.getAll().then(setCategories);
-      window.electronAPI.pos.products.getAll().then(setAllProducts);
-      loadFilteredProducts().then(setProducts);
+      void (async () => {
+        const [cats, prods] = await Promise.all([
+          window.electronAPI.pos.categories.getAll(),
+          window.electronAPI.pos.products.getAll(),
+        ]);
+        setCategories(cats);
+        setAllProducts(prods);
+        if (searchQuery) {
+          setSearchResults(await loadSearchResults());
+        }
+      })();
     });
     return unsub;
-  }, [loadFilteredProducts]);
+  }, [loadSearchResults, searchQuery]);
 
   const tOr = useCallback(
     (key: string, fallback: string) => {
@@ -663,7 +677,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             </div>
           ) : (
             <ProductGrid
-              products={products}
+              products={visibleProducts}
               onAddProduct={handleAddProduct}
               t={t}
               resetScrollKey={activeCategoryId ?? 'all'}
