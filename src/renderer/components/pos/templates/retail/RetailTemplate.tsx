@@ -457,6 +457,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     return getVisibleRetailCategories(categories, categoryUnitCounts, browseUnitFilter);
   }, [categories, categoryUnitCounts, activeUnitFilter, searchQuery]);
 
+  const handleUnitFilterChange = useCallback((nextFilter: RetailUnitFilter) => {
+    if (searchQuery) return;
+    setActiveUnitFilter(nextFilter);
+    setActiveCategoryId(null);
+  }, [searchQuery]);
+
   useEffect(() => {
     if (!activeCategoryId) return;
     const activeCount = countForRetailUnitFilter(categoryUnitCounts.get(activeCategoryId), activeUnitFilter);
@@ -547,10 +553,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                     <button
                       key={filter.id}
                       type="button"
-                      onClick={() => {
-                        if (searchQuery) return;
-                        setActiveUnitFilter(filter.id);
-                      }}
+                      onClick={() => handleUnitFilterChange(filter.id)}
                       aria-disabled={searchQuery ? true : undefined}
                       className={`min-w-14 px-3 rounded-md text-xs font-extrabold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
                         isActive
@@ -620,6 +623,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                     </span>
                   )}
                   <button
+                    type="button"
                     onClick={() => {
                       if (searchQuery) return;
                       setActiveCategoryId(null);
@@ -638,6 +642,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                     return (
                       <button
                         key={cat.id}
+                        type="button"
                         onClick={() => {
                           if (searchQuery) return;
                           setActiveCategoryId(isActive ? null : cat.id);

@@ -107,6 +107,13 @@ describe('RetailTemplate - category switching uses renderer-side filtering', () 
     expect(source).toContain('if (searchQuery) return;');
   });
 
+  it('returns to the category gallery when the browse unit filter changes', () => {
+    expect(source).toContain('const handleUnitFilterChange = useCallback((nextFilter: RetailUnitFilter) => {');
+    expect(source).toContain('setActiveUnitFilter(nextFilter);');
+    expect(source).toContain('setActiveCategoryId(null);');
+    expect(source).toContain('onClick={() => handleUnitFilterChange(filter.id)}');
+  });
+
   it('ProductGrid consumes visibleProducts instead of raw async search state directly', () => {
     const idx = source.indexOf('<ProductGrid');
     expect(idx, 'ProductGrid usage not found').toBeGreaterThan(-1);
