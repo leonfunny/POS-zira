@@ -73,4 +73,36 @@ describe('retail sale flow', () => {
       });
     }
   });
+
+  it('uses sale_unit kg as the weight signal when sell_by is stale PIECE', async () => {
+    const readWeight = vi.fn().mockResolvedValue({
+      success: true,
+      protocol: 'DIBAL_GDPOS',
+      port: 'COM5',
+      weightKg: 0.5,
+      stable: true,
+      status: 'S',
+      rawAscii: '',
+      rawHex: '',
+    });
+
+    const result = await resolveRetailCartItem(product({ sell_by: 'PIECE', sale_unit: 'kg' }), {
+      scaleEnabled: true,
+      scalePort: 'COM5',
+      readWeight,
+      generateId: () => 'line-kg-fallback',
+    });
+
+    expect(readWeight).toHaveBeenCalledWith({ port: 'COM5' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.item).toMatchObject({
+        id: 'line-kg-fallback',
+        quantity: 0.5,
+        total: 4000,
+        saleUnit: 'kg',
+        sellBy: 'WEIGHT',
+      });
+    }
+  });
 });

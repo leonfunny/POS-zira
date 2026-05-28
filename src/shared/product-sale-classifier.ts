@@ -21,8 +21,17 @@ export interface ProductSaleClassification {
   priceSuffix: string;
 }
 
+function saleUnitImpliesWeight(value: unknown): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
+}
+
 export function classifyProductSale(product: ProductSaleClassifiable): ProductSaleClassification {
-  const sellBy = normalizeSellBy(product.sellBy ?? product.sell_by);
+  const rawSaleUnit = product.saleUnit ?? product.sale_unit;
+  const normalizedSellBy = normalizeSellBy(product.sellBy ?? product.sell_by);
+  const sellBy = normalizedSellBy === 'WEIGHT' || saleUnitImpliesWeight(rawSaleUnit)
+    ? 'WEIGHT'
+    : 'PIECE';
   const saleUnit = normalizeSaleUnit({
     saleUnit: product.saleUnit,
     sale_unit: product.sale_unit,

@@ -18,15 +18,15 @@ describe('product sale classifier', () => {
     });
   });
 
-  it('keeps products normal unless sell_by is explicitly WEIGHT', () => {
+  it('treats kg sale-unit products as weighted when backend omits sell_by', () => {
     expect(classifyProductSale({ sale_unit: 'kg' })).toMatchObject({
-      kind: 'NORMAL',
-      sellBy: 'PIECE',
+      kind: 'WEIGHTED',
+      sellBy: 'WEIGHT',
       saleUnit: 'kg',
-      isNormal: true,
-      requiresScale: false,
-      quantityInputMode: 'integer',
-      priceSuffix: '',
+      isWeighted: true,
+      requiresScale: true,
+      quantityInputMode: 'decimal',
+      priceSuffix: '/kg',
     });
   });
 
