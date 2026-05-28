@@ -502,6 +502,11 @@ export class AgentOrchestrator implements TrayManagerHost {
       logger.info('[AutoStart] First run - enabling auto-start by default');
     }
 
+    if (!app.isPackaged) {
+      logger.info('[AutoStart] Skipping OS auto-start configuration in development');
+      return;
+    }
+
     logger.info(`[AutoStart] Setting auto-start: ${autoStart}`);
     try {
       app.setLoginItemSettings({

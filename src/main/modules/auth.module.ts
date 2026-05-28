@@ -204,8 +204,19 @@ export class AuthModule extends BaseModule {
 
     // ─── Auto-start ─────────────────────────────────────────────
     ipcMain.handle('app:set-auto-start', (_, enabled: boolean) => {
-      app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true });
       setConfigValue('autoStart', enabled);
+
+      if (!app.isPackaged) {
+        logger.info('[AutoStart] Skipping OS auto-start configuration in development');
+        return { success: true };
+      }
+
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        openAsHidden: true,
+        path: process.execPath,
+        args: ['--hidden'],
+      });
       return { success: true };
     });
 

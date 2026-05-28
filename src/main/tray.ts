@@ -208,9 +208,16 @@ export default class TrayManager {
       checked: app.getLoginItemSettings().openAtLogin,
       click: (menuItem) => {
         logger.info(`[Tray] Auto-start changed: ${menuItem.checked}`);
+        if (!app.isPackaged) {
+          logger.info('[Tray] Skipping OS auto-start configuration in development');
+          return;
+        }
+
         app.setLoginItemSettings({
           openAtLogin: menuItem.checked,
-          path: app.getPath('exe'),
+          openAsHidden: true,
+          path: process.execPath,
+          args: ['--hidden'],
         });
       },
     });
