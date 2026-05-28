@@ -1252,4 +1252,20 @@ export const migrations: Migration[] = [
       ALTER TABLE order_items ADD COLUMN sell_by TEXT NOT NULL DEFAULT 'PIECE';
     `,
   },
+  {
+    version: 36,
+    name: 'pos_schedule_cache',
+    up: `
+      CREATE TABLE IF NOT EXISTS pos_schedule_cache (
+        cache_key TEXT PRIMARY KEY,
+        salon_id TEXT,
+        business_date TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        server_version INTEGER DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pos_schedule_cache_date
+        ON pos_schedule_cache(business_date, updated_at);
+    `,
+  },
 ];

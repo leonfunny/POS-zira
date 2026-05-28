@@ -58,6 +58,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getServerList: (params: any) => ipcRenderer.invoke('pos:orders:getServerList', params),
       getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
     },
+    nailTurns: {
+      getToday: () => ipcRenderer.invoke('pos:nail-turns:getToday'),
+      onUpdated: (callback: (data: { orderId?: string; checkedOut?: number }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on('pos:nail-turns-updated', listener);
+        return () => ipcRenderer.removeListener('pos:nail-turns-updated', listener);
+      },
+    },
+    schedule: {
+      getToday: (date?: string) => ipcRenderer.invoke('pos:schedule:getToday', date),
+      getWeek: (from?: string, days?: number) => ipcRenderer.invoke('pos:schedule:getWeek', from, days),
+      setStaffStatus: (payload: any) => ipcRenderer.invoke('pos:schedule:setStaffStatus', payload),
+      assignNext: (payload: any) => ipcRenderer.invoke('pos:schedule:assignNext', payload),
+      requestStaff: (payload: any) => ipcRenderer.invoke('pos:schedule:requestStaff', payload),
+    },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-receipt', orderId),
       printReceiptAndOpenDrawer: (orderId: string) => ipcRenderer.invoke('pos:print-receipt-and-open-drawer', orderId),

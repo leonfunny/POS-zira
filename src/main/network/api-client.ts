@@ -40,6 +40,9 @@ import {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  PosScheduleDayResponse,
+  PosScheduleStaffStatus,
+  PosScheduleWeekResponse,
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
@@ -58,6 +61,52 @@ export interface ServerOrderListParams {
   requiresInvoice?: boolean;
   page?: number;
   limit?: number;
+}
+
+export interface NailTurnStaffSummary {
+  staff_profile_id: string;
+  user_id?: string | null;
+  name?: string | null;
+  queue_position?: number;
+  status?: string;
+  revenue_today_pln?: number;
+  tips_today_pln?: number;
+}
+
+export interface NailTurnAssignmentSummary {
+  id: string;
+  staff_profile_id: string;
+  staff_name?: string | null;
+  booking_id?: string | null;
+  checkin_log_id?: string | null;
+  customer_name?: string | null;
+  service_name?: string | null;
+  is_request?: boolean;
+  status?: string;
+  assigned_at?: string;
+}
+
+export interface NailTurnBoardResponse {
+  day?: {
+    id?: string;
+    business_date?: string;
+    strategy?: string;
+    half_turn_threshold_pln?: number;
+    queue_version?: number;
+  };
+  settings?: Record<string, any>;
+  staff?: NailTurnStaffSummary[];
+  active_assignments?: NailTurnAssignmentSummary[];
+  can_undo?: boolean;
+  last_action?: Record<string, any> | null;
+}
+
+export interface NailTurnCheckoutPayload {
+  amount_pln: number;
+  tip_pln?: number;
+  booking_id?: string;
+  turn_charge?: 'FULL' | 'HALF' | 'NONE';
+  idempotency_key?: string;
 }
 import { refreshAccessToken, AuthRefreshNetworkError } from './auth-refresh';
 
@@ -1407,6 +1456,286 @@ export class ApiClient {
     }
 
     return response.json();
+  }
+
+  private async nailTurnRequest<T>(
+    token: string,
+    method: string,
+    path: string,
+    body?: any,
+    idempotencyKey?: string,
+  ): Promise<T | null> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/nail-turns${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const raw = await response.text();
+    let data: any = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = raw;
+    }
+
+    if (response.status === 403 || response.status === 404 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      const message = (data && typeof data === 'object' ? data.message || data.error : null)
+        || raw
+        || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number; serverBody?: unknown };
+      error.status = response.status;
+      error.serverBody = data;
+      throw error;
+    }
+
+    return data as T;
+  }
+
+  /**
+   * Get today's Nail Turn board.
+   * Returns null when the server endpoint/feature is not deployed or enabled.
+   */
+  async getNailTurnBoard(token: string): Promise<NailTurnBoardResponse | null> {
+    return this.nailTurnRequest<NailTurnBoardResponse>(token, 'GET', '/today');
+  }
+
+  private async posScheduleRequest<T>(
+    token: string,
+    method: 'GET' | 'POST' | 'PATCH',
+    path: string,
+    query?: Record<string, string | number | undefined | null>,
+    body?: Record<string, unknown>,
+  ): Promise<T | null> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value !== undefined && value !== null && value !== '') {
+        params.set(key, String(value));
+      }
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/pos/schedule${path}${suffix}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const raw = await response.text();
+    let data: any = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = raw;
+    }
+
+    if (response.status === 403 || response.status === 404 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      const message = (data && typeof data === 'object' ? data.message || data.error : null)
+        || raw
+        || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number; serverBody?: unknown };
+      error.status = response.status;
+      error.serverBody = data;
+      throw error;
+    }
+
+    return data as T;
+  }
+
+  private async posScheduleAgentRequest<T>(
+    apiKey: string,
+    path: '/today' | '/week',
+    query?: Record<string, string | number | undefined | null>,
+  ): Promise<T | null> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value !== undefined && value !== null && value !== '') {
+        params.set(key, String(value));
+      }
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const config = getConfig();
+    const headers: Record<string, string> = {
+      'X-Print-Agent-Api-Key': apiKey,
+      'Content-Type': 'application/json',
+    };
+    if (config.machineId) {
+      headers['X-Pos-Machine-Id'] = config.machineId;
+    }
+
+    const response = await fetchWithTimeout(
+      `${this.baseUrl}/api/v1/pos/schedule/agent${path}${suffix}`,
+      {
+        method: 'GET',
+        headers,
+      },
+    );
+    const raw = await response.text();
+    let data: any = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = raw;
+    }
+
+    if (response.status === 403 || response.status === 404 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      const message = (data && typeof data === 'object' ? data.message || data.error : null)
+        || raw
+        || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number; serverBody?: unknown };
+      error.status = response.status;
+      error.serverBody = data;
+      throw error;
+    }
+
+    return data as T;
+  }
+
+  async getPosScheduleToday(
+    token: string,
+    date?: string,
+  ): Promise<PosScheduleDayResponse | null> {
+    return this.posScheduleRequest<PosScheduleDayResponse>(token, 'GET', '/today', {
+      date,
+      timezone: 'Europe/Prague',
+    });
+  }
+
+  async getPosScheduleTodayWithApiKey(
+    apiKey: string,
+    date?: string,
+  ): Promise<PosScheduleDayResponse | null> {
+    return this.posScheduleAgentRequest<PosScheduleDayResponse>(apiKey, '/today', {
+      date,
+      timezone: 'Europe/Prague',
+    });
+  }
+
+  async getPosScheduleWeek(
+    token: string,
+    from?: string,
+    days = 7,
+  ): Promise<PosScheduleWeekResponse | null> {
+    return this.posScheduleRequest<PosScheduleWeekResponse>(token, 'GET', '/week', {
+      from,
+      days,
+      timezone: 'Europe/Prague',
+    });
+  }
+
+  async getPosScheduleWeekWithApiKey(
+    apiKey: string,
+    from?: string,
+    days = 7,
+  ): Promise<PosScheduleWeekResponse | null> {
+    return this.posScheduleAgentRequest<PosScheduleWeekResponse>(apiKey, '/week', {
+      from,
+      days,
+      timezone: 'Europe/Prague',
+    });
+  }
+
+  async setPosScheduleStaffStatus(
+    token: string,
+    staffProfileId: string,
+    status: PosScheduleStaffStatus,
+    idempotencyKey?: string,
+  ): Promise<PosScheduleDayResponse | null> {
+    return this.posScheduleRequest<PosScheduleDayResponse>(
+      token,
+      'PATCH',
+      `/staff/${encodeURIComponent(staffProfileId)}/status`,
+      { timezone: 'Europe/Prague' },
+      { status, idempotency_key: idempotencyKey },
+    );
+  }
+
+  async assignPosScheduleNext(
+    token: string,
+    checkinLogId: string,
+    payload: {
+      bookingId?: string | null;
+      customerName?: string | null;
+      customerPhone?: string | null;
+      serviceName?: string | null;
+      idempotencyKey?: string;
+    } = {},
+  ): Promise<PosScheduleDayResponse | null> {
+    return this.posScheduleRequest<PosScheduleDayResponse>(
+      token,
+      'POST',
+      `/checkins/${encodeURIComponent(checkinLogId)}/assign-next`,
+      { timezone: 'Europe/Prague' },
+      {
+        booking_id: payload.bookingId || undefined,
+        customer_name: payload.customerName || undefined,
+        customer_phone: payload.customerPhone || undefined,
+        service_name: payload.serviceName || undefined,
+        idempotency_key: payload.idempotencyKey,
+      },
+    );
+  }
+
+  async requestPosScheduleStaff(
+    token: string,
+    checkinLogId: string,
+    payload: {
+      staffProfileId: string;
+      bookingId?: string | null;
+      customerName?: string | null;
+      customerPhone?: string | null;
+      serviceName?: string | null;
+      idempotencyKey?: string;
+    },
+  ): Promise<PosScheduleDayResponse | null> {
+    return this.posScheduleRequest<PosScheduleDayResponse>(
+      token,
+      'POST',
+      `/checkins/${encodeURIComponent(checkinLogId)}/request-staff`,
+      { timezone: 'Europe/Prague' },
+      {
+        staff_profile_id: payload.staffProfileId,
+        booking_id: payload.bookingId || undefined,
+        customer_name: payload.customerName || undefined,
+        customer_phone: payload.customerPhone || undefined,
+        service_name: payload.serviceName || undefined,
+        idempotency_key: payload.idempotencyKey,
+      },
+    );
+  }
+
+  /**
+   * Close an active Nail Turn assignment after POS checkout.
+   * Idempotency lives both in the body and header so retries cannot double-move
+   * the technician queue.
+   */
+  async checkoutNailTurnAssignment(
+    token: string,
+    assignmentId: string,
+    payload: NailTurnCheckoutPayload,
+  ): Promise<NailTurnBoardResponse | null> {
+    return this.nailTurnRequest<NailTurnBoardResponse>(
+      token,
+      'POST',
+      `/assignments/${encodeURIComponent(assignmentId)}/checkout`,
+      payload,
+      payload.idempotency_key,
+    );
   }
 
   /**

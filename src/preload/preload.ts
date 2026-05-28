@@ -62,6 +62,9 @@ import {
   ProductAdminDeactivateVariantInput,
   ProductAdminStockAdjustmentInput,
   ProductAdminUpdateVariantInput,
+  PosScheduleAssignNextPayload,
+  PosScheduleRequestStaffPayload,
+  PosScheduleStaffStatusPayload,
 } from '../shared/types';
 
 // Log preload initialization
@@ -645,6 +648,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') =>
         ipcRenderer.invoke('pos:orders:mirrorFromServer', orderId, kind),
+    },
+    nailTurns: {
+      getToday: () => ipcRenderer.invoke(IPC_CHANNELS.POS_NAIL_TURNS_GET_TODAY),
+      onUpdated: (callback: (data: { orderId?: string; checkedOut?: number }) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on(IPC_CHANNELS.POS_NAIL_TURNS_UPDATED, listener);
+        return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_NAIL_TURNS_UPDATED, listener);
+      },
+    },
+    schedule: {
+      getToday: (date?: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_SCHEDULE_GET_TODAY, date),
+      getWeek: (from?: string, days?: number) => ipcRenderer.invoke(IPC_CHANNELS.POS_SCHEDULE_GET_WEEK, from, days),
+      setStaffStatus: (payload: PosScheduleStaffStatusPayload) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_SCHEDULE_SET_STAFF_STATUS, payload),
+      assignNext: (payload: PosScheduleAssignNextPayload) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_SCHEDULE_ASSIGN_NEXT, payload),
+      requestStaff: (payload: PosScheduleRequestStaffPayload) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_SCHEDULE_REQUEST_STAFF, payload),
     },
     payment: {
       printReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT, orderId),

@@ -48,7 +48,11 @@ import { serviceRepo } from '../database/repos/service-repo';
 import { serviceRuleRepo } from '../database/repos/service-rule-repo';
 import { database } from '../database/database';
 import SocketClient from '../network/socket-client';
-import { apiClient, type ServerOrderListParams } from '../network/api-client';
+import {
+  apiClient,
+  type NailTurnBoardResponse,
+  type ServerOrderListParams,
+} from '../network/api-client';
 import {
   getConfig,
   getSecureAuthToken,
@@ -69,6 +73,10 @@ import type {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  PosScheduleAssignNextPayload,
+  PosScheduleDayResponse,
+  PosScheduleRequestStaffPayload,
+  PosScheduleStaffStatusPayload,
   SelectedService,
   LiveCustomerDisplayProfile,
 } from '../../shared/types';
@@ -114,6 +122,22 @@ function orderMatchesPaymentFilter(order: any, paymentMethod?: string): boolean 
   if (paymentMethod === 'SPLIT') return isSplit;
   if (paymentMethod === 'INVOICE') return Boolean(order?.requires_invoice || order?.customer_nip);
   return !isSplit && normalizeOrderPaymentMethod(order?.payment_method) === normalizeOrderPaymentMethod(paymentMethod);
+}
+
+type NailTurnCheckoutGroup = {
+  staffId: string;
+  staffName: string | null;
+  amountGrosze: number;
+  tipGrosze: number;
+};
+
+function moneyGroszeToPln(grosze: number): number {
+  return Math.max(0, Math.round(grosze)) / 100;
+}
+
+function positiveGrosze(value: unknown): number {
+  const amount = Math.round(Number(value) || 0);
+  return amount > 0 ? amount : 0;
 }
 
 function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
@@ -311,6 +335,199 @@ export class PosModule extends BaseModule {
     }
 
     return true;
+  }
+
+  private buildNailTurnCheckoutGroups(order: any, items: any[]): NailTurnCheckoutGroup[] {
+    if (String(order?.mode || '').toLowerCase() !== 'salon') return [];
+
+    const staffedItems = (items || [])
+      .map((item: any) => ({
+        staffId: String(item?.staff_id || '').trim(),
+        staffName: item?.staff_name ? String(item.staff_name) : null,
+        totalGrosze: positiveGrosze(item?.total),
+      }))
+      .filter((item) => item.staffId && item.totalGrosze > 0);
+    if (staffedItems.length === 0) return [];
+
+    const grossTotal = staffedItems.reduce((sum, item) => sum + item.totalGrosze, 0);
+    const discount = Math.min(positiveGrosze(order?.discount), grossTotal);
+    const tip = positiveGrosze(order?.tip);
+    const netTotal = Math.max(0, grossTotal - discount);
+    const groups = new Map<string, NailTurnCheckoutGroup>();
+
+    let remainingNet = netTotal;
+    staffedItems.forEach((item, index) => {
+      const netLine = index === staffedItems.length - 1
+        ? remainingNet
+        : Math.max(0, item.totalGrosze - Math.round((item.totalGrosze / grossTotal) * discount));
+      remainingNet = Math.max(0, remainingNet - netLine);
+
+      const group = groups.get(item.staffId) || {
+        staffId: item.staffId,
+        staffName: item.staffName,
+        amountGrosze: 0,
+        tipGrosze: 0,
+      };
+      group.amountGrosze += netLine;
+      if (!group.staffName && item.staffName) group.staffName = item.staffName;
+      groups.set(item.staffId, group);
+    });
+
+    const result = Array.from(groups.values());
+    if (tip > 0 && result.length > 0) {
+      let remainingTip = tip;
+      result.forEach((group, index) => {
+        const share = index === result.length - 1
+          ? remainingTip
+          : netTotal > 0
+            ? Math.round(tip * (group.amountGrosze / netTotal))
+            : Math.round(tip / result.length);
+        group.tipGrosze = Math.max(0, share);
+        remainingTip = Math.max(0, remainingTip - group.tipGrosze);
+      });
+    }
+
+    return result.filter((group) => group.amountGrosze > 0 || group.tipGrosze > 0);
+  }
+
+  private resolveNailTurnStaffProfileId(board: NailTurnBoardResponse, staffId: string): string | null {
+    const staff = (board.staff || []).find((s: any) => s.staff_profile_id === staffId || s.user_id === staffId);
+    return staff?.staff_profile_id || staffId || null;
+  }
+
+  private async syncNailTurnCheckoutForOrder(orderId: string, order: any, items: any[]): Promise<void> {
+    const groups = this.buildNailTurnCheckoutGroups(order, items);
+    if (groups.length === 0) return;
+
+    const token = getSecureAuthToken();
+    if (!token) {
+      logger.debug(`[PosModule] Nail turn checkout skipped for ${orderId}: no auth token`);
+      return;
+    }
+
+    const board = await apiClient.getNailTurnBoard(token);
+    if (!board) {
+      logger.debug(`[PosModule] Nail turn checkout skipped for ${orderId}: board unavailable`);
+      return;
+    }
+
+    const usedAssignments = new Set<string>();
+    let checkedOut = 0;
+    for (const group of groups) {
+      const staffProfileId = this.resolveNailTurnStaffProfileId(board, group.staffId);
+      if (!staffProfileId) continue;
+
+      const assignment = (board.active_assignments || []).find((item: any) =>
+        item.staff_profile_id === staffProfileId
+        && item.status === 'ASSIGNED'
+        && !usedAssignments.has(item.id),
+      );
+      if (!assignment?.id) {
+        logger.warn(
+          `[PosModule] Nail turn checkout skipped for order ${orderId}: no active assignment for ${group.staffName || group.staffId}`,
+        );
+        continue;
+      }
+
+      const idempotencyKey = `pos-zira:nail-turn-checkout:${orderId}:${assignment.id}`;
+      const result = await apiClient.checkoutNailTurnAssignment(token, assignment.id, {
+        amount_pln: moneyGroszeToPln(group.amountGrosze),
+        tip_pln: moneyGroszeToPln(group.tipGrosze),
+        idempotency_key: idempotencyKey,
+      });
+      if (!result) {
+        logger.debug(`[PosModule] Nail turn checkout unavailable for order ${orderId}, assignment ${assignment.id}`);
+        continue;
+      }
+
+      checkedOut += 1;
+      usedAssignments.add(assignment.id);
+      logger.info(
+        `[PosModule] Nail turn checked out for order ${orderId}: ${group.staffName || staffProfileId}, amount=${moneyGroszeToPln(group.amountGrosze).toFixed(2)} tip=${moneyGroszeToPln(group.tipGrosze).toFixed(2)}`,
+      );
+    }
+
+    if (checkedOut > 0) {
+      notifyPosRenderers(this.container, 'pos:nail-turns-updated', { orderId, checkedOut });
+    }
+  }
+
+  private scheduleCacheKey(date?: string | null): string {
+    const businessDate = date || new Date().toISOString().slice(0, 10);
+    return `pos-schedule:${businessDate}`;
+  }
+
+  private saveScheduleCache(schedule: PosScheduleDayResponse): void {
+    if (!schedule?.business_date) return;
+    const updatedAt = new Date().toISOString();
+    database.run(
+      `INSERT OR REPLACE INTO pos_schedule_cache
+        (cache_key, salon_id, business_date, payload_json, server_version, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        this.scheduleCacheKey(schedule.business_date),
+        schedule.salon?.id ?? null,
+        schedule.business_date,
+        JSON.stringify(schedule),
+        Number(schedule.version || 0),
+        updatedAt,
+      ],
+    );
+  }
+
+  private getScheduleCache(date?: string | null): PosScheduleDayResponse | null {
+    const row = database.get<{ payload_json: string; updated_at: string }>(
+      `SELECT payload_json, updated_at
+       FROM pos_schedule_cache
+       WHERE cache_key = ?
+       LIMIT 1`,
+      [this.scheduleCacheKey(date)],
+    );
+    if (!row?.payload_json) return null;
+    try {
+      return {
+        ...JSON.parse(row.payload_json),
+        stale: true,
+        cached_at: row.updated_at,
+      };
+    } catch (e: any) {
+      logger.warn(`[PosModule] Failed to read POS schedule cache: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
+  private async fetchPosScheduleToday(date?: string): Promise<{ schedule: PosScheduleDayResponse; authMode: 'jwt' | 'agent' } | null> {
+    const token = getSecureAuthToken();
+    if (token) {
+      try {
+        const schedule = await apiClient.getPosScheduleToday(token, date);
+        if (schedule) return { schedule, authMode: 'jwt' };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule JWT fetch failed, trying agent key: ${e?.message ?? e}`);
+      }
+    }
+
+    const apiKey = getSecureApiKey();
+    if (!apiKey) return null;
+    const schedule = await apiClient.getPosScheduleTodayWithApiKey(apiKey, date);
+    return schedule ? { schedule, authMode: 'agent' } : null;
+  }
+
+  private async fetchPosScheduleWeek(from?: string, days = 7): Promise<{ week: any; authMode: 'jwt' | 'agent' } | null> {
+    const token = getSecureAuthToken();
+    if (token) {
+      try {
+        const week = await apiClient.getPosScheduleWeek(token, from, days);
+        if (week) return { week, authMode: 'jwt' };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule week JWT fetch failed, trying agent key: ${e?.message ?? e}`);
+      }
+    }
+
+    const apiKey = getSecureApiKey();
+    if (!apiKey) return null;
+    const week = await apiClient.getPosScheduleWeekWithApiKey(apiKey, from, days);
+    return week ? { week, authMode: 'agent' } : null;
   }
 
   registerIpcHandlers(): void {
@@ -1186,10 +1403,14 @@ export class PosModule extends BaseModule {
             if (normalizedOrder.change_amount > 0) dto.changeAmount = normalizedOrder.change_amount / 100;
             if (normalizedOrder.tip && normalizedOrder.tip > 0) dto.tip = normalizedOrder.tip / 100;
             syncLog.writeLocalEntry('order', id, 'created', dto);
-          }
-        } catch (e) { logger.debug('[PosModule] Sync log write failed for order:', e); }
+            }
+          } catch (e) { logger.debug('[PosModule] Sync log write failed for order:', e); }
 
-        return { success: true, id };
+          this.syncNailTurnCheckoutForOrder(id, normalizedOrder, normalizedItems).catch((e: any) => {
+            logger.warn(`[PosModule] Nail turn checkout sync failed for order ${id}: ${e?.message ?? e}`);
+          });
+
+          return { success: true, id };
       }
       catch (e: any) { return { success: false, error: e.message }; }
     });
@@ -1352,6 +1573,113 @@ export class PosModule extends BaseModule {
 
     // Staff
     ipcMain.handle('pos:staff:getAll', () => staffRepo.getAll());
+
+    // Nail turn board (backend-driven module; dark-launch safe)
+    ipcMain.handle('pos:nail-turns:getToday', async () => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, unavailable: true, error: 'not_authenticated' };
+        const board = await apiClient.getNailTurnBoard(token);
+        if (!board) return { success: false, unavailable: true, error: 'nail_turns_unavailable' };
+        return { success: true, board };
+      } catch (e: any) {
+        logger.warn(`[PosModule] Nail turn board fetch failed: ${e?.message ?? e}`);
+        return { success: false, unavailable: true, error: e?.message ?? 'nail_turns_failed' };
+      }
+    });
+
+    ipcMain.handle('pos:schedule:getToday', async (_e, date?: string) => {
+      try {
+        const result = await this.fetchPosScheduleToday(date);
+        if (!result) {
+          const cached = this.getScheduleCache(date);
+          if (cached) return { success: true, schedule: cached, stale: true };
+          return { success: false, unavailable: true, error: 'schedule_unavailable' };
+        }
+        const { schedule, authMode } = result;
+        this.saveScheduleCache(schedule);
+        logger.info(`[PosModule] POS schedule loaded for ${schedule.business_date}: staff=${schedule.staff?.length ?? 0} bookings=${schedule.bookings?.length ?? 0} auth=${authMode}`);
+        return { success: true, schedule };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule fetch failed: ${e?.message ?? e}`);
+        const cached = this.getScheduleCache(date);
+        if (cached) return { success: true, schedule: cached, stale: true };
+        return { success: false, unavailable: true, error: e?.message ?? 'schedule_failed' };
+      }
+    });
+
+    ipcMain.handle('pos:schedule:getWeek', async (_e, from?: string, days?: number) => {
+      try {
+        const result = await this.fetchPosScheduleWeek(from, days || 7);
+        if (!result) return { success: false, unavailable: true, error: 'schedule_unavailable' };
+        const { week, authMode } = result;
+        for (const schedule of week.schedules || []) {
+          this.saveScheduleCache(schedule);
+        }
+        logger.info(`[PosModule] POS schedule week loaded from ${week.from}: days=${week.days} auth=${authMode}`);
+        return { success: true, week };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule week fetch failed: ${e?.message ?? e}`);
+        return { success: false, unavailable: true, error: e?.message ?? 'schedule_week_failed' };
+      }
+    });
+
+    ipcMain.handle('pos:schedule:setStaffStatus', async (_e, payload: PosScheduleStaffStatusPayload) => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, unavailable: true, error: 'not_authenticated' };
+        if (!payload?.staffProfileId || !payload.status) {
+          return { success: false, error: 'invalid_staff_status_payload' };
+        }
+        const schedule = await apiClient.setPosScheduleStaffStatus(
+          token,
+          payload.staffProfileId,
+          payload.status,
+          payload.idempotencyKey,
+        );
+        if (!schedule) return { success: false, unavailable: true, error: 'schedule_unavailable' };
+        this.saveScheduleCache(schedule);
+        logger.info(`[PosModule] POS schedule staff status updated: staff=${payload.staffProfileId} status=${payload.status}`);
+        return { success: true, schedule };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule staff status update failed: ${e?.message ?? e}`);
+        return { success: false, error: e?.message ?? 'schedule_staff_status_failed' };
+      }
+    });
+
+    ipcMain.handle('pos:schedule:assignNext', async (_e, payload: PosScheduleAssignNextPayload) => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, unavailable: true, error: 'not_authenticated' };
+        if (!payload?.checkinLogId) return { success: false, error: 'invalid_assign_next_payload' };
+        const schedule = await apiClient.assignPosScheduleNext(token, payload.checkinLogId, payload);
+        if (!schedule) return { success: false, unavailable: true, error: 'schedule_unavailable' };
+        this.saveScheduleCache(schedule);
+        logger.info(`[PosModule] POS schedule assign-next completed: checkin=${payload.checkinLogId}`);
+        return { success: true, schedule };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule assign-next failed: ${e?.message ?? e}`);
+        return { success: false, error: e?.message ?? 'schedule_assign_next_failed' };
+      }
+    });
+
+    ipcMain.handle('pos:schedule:requestStaff', async (_e, payload: PosScheduleRequestStaffPayload) => {
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, unavailable: true, error: 'not_authenticated' };
+        if (!payload?.checkinLogId || !payload.staffProfileId) {
+          return { success: false, error: 'invalid_request_staff_payload' };
+        }
+        const schedule = await apiClient.requestPosScheduleStaff(token, payload.checkinLogId, payload);
+        if (!schedule) return { success: false, unavailable: true, error: 'schedule_unavailable' };
+        this.saveScheduleCache(schedule);
+        logger.info(`[PosModule] POS schedule request-staff completed: checkin=${payload.checkinLogId} staff=${payload.staffProfileId}`);
+        return { success: true, schedule };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS schedule request-staff failed: ${e?.message ?? e}`);
+        return { success: false, error: e?.message ?? 'schedule_request_staff_failed' };
+      }
+    });
 
     // Hold orders
     ipcMain.handle('pos:hold:create', (_e, id: string, title: string, payload: any) => {

@@ -103,6 +103,12 @@ import type {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  NailTurnBoardIpcResult,
+  PosScheduleAssignNextPayload,
+  PosScheduleDayIpcResult,
+  PosScheduleRequestStaffPayload,
+  PosScheduleStaffStatusPayload,
+  PosScheduleWeekIpcResult,
   ScaleReadResult,
 } from './types';
 
@@ -704,6 +710,17 @@ interface ElectronAPI {
       }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
       getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') => Promise<{ success: boolean; localOrderId?: string; error?: string; wasSplit?: boolean }>;
+    };
+    nailTurns: {
+      getToday: () => Promise<NailTurnBoardIpcResult>;
+      onUpdated: (callback: (data: { orderId?: string; checkedOut?: number }) => void) => () => void;
+    };
+    schedule: {
+      getToday: (date?: string) => Promise<PosScheduleDayIpcResult>;
+      getWeek: (from?: string, days?: number) => Promise<PosScheduleWeekIpcResult>;
+      setStaffStatus: (payload: PosScheduleStaffStatusPayload) => Promise<PosScheduleDayIpcResult>;
+      assignNext: (payload: PosScheduleAssignNextPayload) => Promise<PosScheduleDayIpcResult>;
+      requestStaff: (payload: PosScheduleRequestStaffPayload) => Promise<PosScheduleDayIpcResult>;
     };
     payment: {
       printReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;

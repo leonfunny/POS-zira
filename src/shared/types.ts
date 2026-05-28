@@ -999,6 +999,15 @@ export const IPC_CHANNELS = {
   POS_ORDERS_GET_DAILY_STATS: 'pos:orders:getDailyStats',
   POS_ORDERS_MIRROR_FROM_SERVER: 'pos:orders:mirrorFromServer',
 
+  // POS - Nail Turns
+  POS_NAIL_TURNS_GET_TODAY: 'pos:nail-turns:getToday',
+  POS_NAIL_TURNS_UPDATED: 'pos:nail-turns-updated',
+  POS_SCHEDULE_GET_TODAY: 'pos:schedule:getToday',
+  POS_SCHEDULE_GET_WEEK: 'pos:schedule:getWeek',
+  POS_SCHEDULE_SET_STAFF_STATUS: 'pos:schedule:setStaffStatus',
+  POS_SCHEDULE_ASSIGN_NEXT: 'pos:schedule:assignNext',
+  POS_SCHEDULE_REQUEST_STAFF: 'pos:schedule:requestStaff',
+
   // POS - Payment
   POS_PRINT_RECEIPT: 'pos:print-receipt',
   POS_PRINT_RECEIPT_AND_OPEN_DRAWER: 'pos:print-receipt-and-open-drawer',
@@ -2324,6 +2333,164 @@ export interface WarehouseInventoryCount {
   notes?: string | null;
   lines?: any[];
   [key: string]: any;
+}
+
+// ==========================================
+// POS Nail Turn Types
+// ==========================================
+
+export interface NailTurnStaffSummary {
+  staff_profile_id: string;
+  user_id?: string | null;
+  name?: string | null;
+  queue_position?: number;
+  status?: string;
+  turn_credit?: number;
+  full_turns?: number;
+  half_turns?: number;
+  request_count?: number;
+  revenue_today_pln?: number;
+  tips_today_pln?: number;
+}
+
+export interface NailTurnAssignmentSummary {
+  id: string;
+  staff_profile_id: string;
+  staff_name?: string | null;
+  checkin_log_id?: string | null;
+  booking_id?: string | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  service_name?: string | null;
+  source_type?: string;
+  is_request?: boolean;
+  status?: string;
+  assigned_at?: string;
+}
+
+export interface NailTurnBoardResponse {
+  day?: {
+    id?: string;
+    business_date?: string;
+    timezone?: string;
+    strategy?: string;
+    half_turn_threshold_pln?: number;
+    status?: string;
+    queue_version?: number;
+  };
+  settings?: Record<string, any>;
+  staff?: NailTurnStaffSummary[];
+  active_assignments?: NailTurnAssignmentSummary[];
+  can_undo?: boolean;
+  last_action?: Record<string, any> | null;
+}
+
+export interface NailTurnBoardIpcResult {
+  success: boolean;
+  board?: NailTurnBoardResponse | null;
+  unavailable?: boolean;
+  error?: string;
+}
+
+export interface PosScheduleStaffSummary extends NailTurnStaffSummary {
+  display_color?: string | null;
+}
+
+export interface PosScheduleBookingSummary {
+  id: string;
+  staff_profile_id?: string | null;
+  owner_id?: string | null;
+  customer_name?: string | null;
+  customer_phone_masked?: string | null;
+  service_name?: string | null;
+  starts_at: string;
+  ends_at: string;
+  status?: string;
+  is_request?: boolean;
+  source?: string;
+}
+
+export interface PosScheduleCheckinSummary {
+  id: string;
+  booking_id?: string | null;
+  customer_name?: string | null;
+  service_name?: string | null;
+  checked_in_at: string;
+  assigned_staff_profile_id?: string | null;
+}
+
+export interface PosScheduleAssignmentSummary extends NailTurnAssignmentSummary {
+  assigned_at?: string;
+}
+
+export interface PosScheduleDayResponse {
+  salon?: {
+    id?: string;
+    slug?: string | null;
+    timezone?: string;
+  };
+  business_date: string;
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  staff: PosScheduleStaffSummary[];
+  bookings: PosScheduleBookingSummary[];
+  unassigned_bookings?: PosScheduleBookingSummary[];
+  waiting_checkins: PosScheduleCheckinSummary[];
+  active_assignments: PosScheduleAssignmentSummary[];
+  next_turn?: {
+    staff_profile_id: string;
+    name?: string | null;
+  } | null;
+  server_time?: string;
+  version?: number;
+  stale?: boolean;
+  cached_at?: string;
+}
+
+export interface PosScheduleWeekResponse {
+  salon?: PosScheduleDayResponse['salon'];
+  from: string;
+  days: number;
+  schedules: PosScheduleDayResponse[];
+  server_time?: string;
+}
+
+export interface PosScheduleDayIpcResult {
+  success: boolean;
+  schedule?: PosScheduleDayResponse | null;
+  unavailable?: boolean;
+  stale?: boolean;
+  error?: string;
+}
+
+export interface PosScheduleWeekIpcResult {
+  success: boolean;
+  week?: PosScheduleWeekResponse | null;
+  unavailable?: boolean;
+  error?: string;
+}
+
+export type PosScheduleStaffStatus = 'AVAILABLE' | 'BUSY' | 'BREAK' | 'OFF';
+
+export interface PosScheduleStaffStatusPayload {
+  staffProfileId: string;
+  status: PosScheduleStaffStatus;
+  idempotencyKey?: string;
+}
+
+export interface PosScheduleAssignNextPayload {
+  checkinLogId: string;
+  bookingId?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  serviceName?: string | null;
+  idempotencyKey?: string;
+}
+
+export interface PosScheduleRequestStaffPayload extends PosScheduleAssignNextPayload {
+  staffProfileId: string;
 }
 
 // ==========================================
