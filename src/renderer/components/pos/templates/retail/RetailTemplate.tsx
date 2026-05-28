@@ -12,6 +12,14 @@ import Cart from '../../Cart';
 import PaymentModal from '../../PaymentModal';
 import OrderHistoryModal from '../../OrderHistoryModal';
 import QuickActions from './QuickActions';
+import {
+  RETAIL_UNIT_FILTERS,
+  type RetailUnitFilter,
+  countForRetailUnitFilter,
+  countRetailProductsByCategory,
+  filterRetailBrowseProducts,
+  getVisibleRetailCategories,
+} from './retailBrowseFilters';
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
 // server-provided `icon` field when it's a short pictogram/emoji (≤ 2
@@ -42,6 +50,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+  const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
@@ -161,16 +170,14 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
 
   // Non-search category browsing is synchronous from the local catalogue
   // cache, so ProductGrid never paints the previous full-catalog state
-  // while a category IPC query catches up.
+  // while a category IPC query catches up. The unit filter belongs only to
+  // this manual browse path; search and scanner lookup stay global.
   const visibleCategoryProducts = useMemo(() => {
-    if (!activeCategoryId) return allProducts;
-    return allProducts.filter((product) => product.category_id === activeCategoryId);
-  }, [allProducts, activeCategoryId]);
+    return filterRetailBrowseProducts(allProducts, activeCategoryId, activeUnitFilter);
+  }, [allProducts, activeCategoryId, activeUnitFilter]);
 
   const visibleSearchProducts = useMemo(() => {
-    const variants = activeCategoryId
-      ? searchResults.filter((product) => !product._isDraft && product.category_id === activeCategoryId)
-      : searchResults.filter((product) => !product._isDraft);
+    const variants = searchResults.filter((product) => !product._isDraft);
     const variantBarcodes = new Set(
       variants.map((product) => product.barcode).filter((barcode): barcode is string => !!barcode),
     );
@@ -178,9 +185,13 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
       (product) => product._isDraft && (!product.barcode || !variantBarcodes.has(product.barcode)),
     );
     return [...variants, ...drafts];
-  }, [searchResults, activeCategoryId]);
+  }, [searchResults]);
 
   const visibleProducts = searchQuery ? visibleSearchProducts : visibleCategoryProducts;
+
+  useEffect(() => {
+    if (searchQuery && activeCategoryId !== null) setActiveCategoryId(null);
+  }, [searchQuery, activeCategoryId]);
 
   const loadSearchResults = useCallback(async (): Promise<Product[]> => {
     // Retail till searches by name, SKU, and barcode — cashier may either
@@ -437,6 +448,21 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     });
   };
 
+  const categoryUnitCounts = useMemo(() => {
+    return countRetailProductsByCategory(allProducts);
+  }, [allProducts]);
+
+  const visibleCategories = useMemo(() => {
+    const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
+    return getVisibleRetailCategories(categories, categoryUnitCounts, browseUnitFilter);
+  }, [categories, categoryUnitCounts, activeUnitFilter, searchQuery]);
+
+  useEffect(() => {
+    if (!activeCategoryId) return;
+    const activeCount = countForRetailUnitFilter(categoryUnitCounts.get(activeCategoryId), activeUnitFilter);
+    if (activeCount === 0) setActiveCategoryId(null);
+  }, [activeCategoryId, activeUnitFilter, categoryUnitCounts]);
+
   const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
     setPaymentPrefillCashGrosze(prefillCashGrosze);
     setShowPayment(true);
@@ -473,7 +499,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
       el.removeEventListener('scroll', updateCategoryScrollHints);
       ro.disconnect();
     };
-  }, [updateCategoryScrollHints, categories.length]);
+  }, [updateCategoryScrollHints, visibleCategories.length, activeUnitFilter]);
 
   const scrollCategories = useCallback((direction: 'left' | 'right') => {
     const el = categoryScrollRef.current;
@@ -486,16 +512,9 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   // returning from a category resets to it. Search and a picked category
   // still drive the regular ProductGrid so the cashier can browse by
   // either entry point.
-  const showCategoryGallery = !searchQuery && activeCategoryId === null;
-
-  const productCountByCategory = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const product of allProducts) {
-      if (!product.category_id) continue;
-      map.set(product.category_id, (map.get(product.category_id) ?? 0) + 1);
-    }
-    return map;
-  }, [allProducts]);
+  const browseActiveCategoryId = searchQuery ? null : activeCategoryId;
+  const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
+  const showCategoryGallery = !searchQuery && browseActiveCategoryId === null;
 
   return (
     <>
@@ -515,6 +534,34 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 onBarcodeScanned={handleBarcodeScanned}
                 placeholder={tOr('pos.searchByCode', 'Search by EAN / SKU...')}
               />
+              </div>
+
+              <div
+                className="shrink-0 inline-flex min-h-11 rounded-lg border border-slate-300 bg-white p-0.5"
+                role="group"
+                aria-label={tOr('pos.unitFilter.label', 'Unit filter')}
+              >
+                {RETAIL_UNIT_FILTERS.map((filter) => {
+                  const isActive = browseUnitFilter === filter.id;
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => {
+                        if (searchQuery) return;
+                        setActiveUnitFilter(filter.id);
+                      }}
+                      aria-disabled={searchQuery ? true : undefined}
+                      className={`min-w-14 px-3 rounded-md text-xs font-extrabold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                        isActive
+                          ? 'bg-brand-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-brand-50 hover:text-brand-700'
+                      }`}
+                    >
+                      {tOr(filter.labelKey, filter.fallback)}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="flex-1 min-w-0 relative">
@@ -573,21 +620,28 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                     </span>
                   )}
                   <button
-                    onClick={() => setActiveCategoryId(null)}
+                    onClick={() => {
+                      if (searchQuery) return;
+                      setActiveCategoryId(null);
+                    }}
                     className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus:ring-2 focus:ring-brand-200 ${
-                      activeCategoryId === null
+                      !searchQuery && browseActiveCategoryId === null
                         ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                         : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
                     }`}
                   >
-                    {t('pos.allCategories') || 'All'}
+                    {tOr('pos.allCategories', 'All')}
                   </button>
-                  {categories.map((cat) => {
-                    const isActive = activeCategoryId === cat.id;
+                  {visibleCategories.map((cat) => {
+                    const isActive = browseActiveCategoryId === cat.id;
+                    const count = countForRetailUnitFilter(categoryUnitCounts.get(cat.id), browseUnitFilter);
                     return (
                       <button
                         key={cat.id}
-                        onClick={() => setActiveCategoryId(isActive ? null : cat.id)}
+                        onClick={() => {
+                          if (searchQuery) return;
+                          setActiveCategoryId(isActive ? null : cat.id);
+                        }}
                         className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-brand-200 ${
                           isActive
                             ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
@@ -600,6 +654,13 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                           aria-hidden="true"
                         />
                         {resolveName(cat, lang)}
+                        <span
+                          className={`text-[11px] font-extrabold tabular-nums ${
+                            isActive ? 'text-white/85' : 'text-slate-500'
+                          }`}
+                        >
+                          {count}
+                        </span>
                       </button>
                     );
                   })}
@@ -627,10 +688,10 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                   {tOr('pos.categories.title', 'Categories')}
                 </h2>
                 <span className="text-xs font-bold text-slate-500 tabular-nums">
-                  {categories.length} {tOr('pos.categories.count', 'categories')}
+                  {visibleCategories.length} {tOr('pos.categories.count', 'categories')}
                 </span>
               </div>
-              {categories.length === 0 ? (
+              {visibleCategories.length === 0 ? (
                 <div className="flex items-center justify-center text-slate-500 py-16">
                   <div className="text-center px-6">
                     <svg className="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -643,9 +704,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-4 gap-3 p-4">
-                  {categories.map((cat) => {
+                  {visibleCategories.map((cat) => {
                     const displayName = resolveName(cat, lang);
-                    const count = productCountByCategory.get(cat.id) ?? 0;
+                    const counts = categoryUnitCounts.get(cat.id);
+                    const count = countForRetailUnitFilter(counts, browseUnitFilter);
+                    const pieceCount = counts?.piece ?? 0;
+                    const kgCount = counts?.kg ?? 0;
                     const bg = cat.color || '#da7756';
                     return (
                       <button
@@ -668,6 +732,18 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                           <p className="text-xs font-medium text-slate-500 mt-1 tabular-nums">
                             {count} {tOr('pos.categories.productCount', 'products')}
                           </p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {(browseUnitFilter === 'all' || browseUnitFilter === 'piece') && pieceCount > 0 && (
+                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-slate-100 text-slate-700 border border-slate-200 tabular-nums">
+                                {pieceCount} {tOr('pos.unitFilter.pieceShort', 'pc')}
+                              </span>
+                            )}
+                            {(browseUnitFilter === 'all' || browseUnitFilter === 'kg') && kgCount > 0 && (
+                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 tabular-nums">
+                                {kgCount} kg
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </button>
                     );
@@ -680,7 +756,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               products={visibleProducts}
               onAddProduct={handleAddProduct}
               t={t}
-              resetScrollKey={activeCategoryId ?? 'all'}
+              resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
             />
           )}

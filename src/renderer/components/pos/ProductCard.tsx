@@ -97,6 +97,11 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
             {stockQty} {saleClass.isWeighted ? saleClass.saleUnit : pieces}
           </span>
         )}
+        {saleClass.isWeighted && !soldOut && (
+          <span className="absolute bottom-2 left-2 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-1 rounded font-extrabold leading-none shadow-sm">
+            {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : 'WEIGHT'}
+          </span>
+        )}
         {product.is_on_sale === 1 && !soldOut && !isDraft && (
           <span className="absolute top-2 right-2 text-[10px] text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             SALE
