@@ -1,4 +1,4 @@
-import React, { useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
 
 export interface SearchBarHandle {
   focus: () => void;
@@ -24,12 +24,24 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
     focus: () => inputRef.current?.focus(),
   }), []);
 
+  const submitBarcode = useCallback((rawValue: string, inputEl = inputRef.current): boolean => {
+    const barcode = rawValue.trim();
+    const onScan = barcodeCallbackRef.current;
+    if (!barcode || !onScan) return false;
+
+    if (inputEl) inputEl.value = '';
+    if (inputRef.current && inputRef.current !== inputEl) inputRef.current.value = '';
+    onChange('');
+    onScan(barcode);
+    return true;
+  }, [onChange]);
+
   useEffect(() => {
     const unsub = window.electronAPI.onBarcodeScanned((barcode: string) => {
-      barcodeCallbackRef.current?.(barcode);
+      submitBarcode(barcode);
     });
     return unsub;
-  }, []);
+  }, [submitBarcode]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -101,11 +113,9 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter') return;
-            const barcode = value.trim();
-            if (!barcode || !onBarcodeScanned) return;
-            e.preventDefault();
-            onBarcodeScanned(barcode);
-            onChange('');
+            if (submitBarcode(e.currentTarget.value, e.currentTarget)) {
+              e.preventDefault();
+            }
           }}
           placeholder={placeholder || 'Search or scan barcode'}
           inputMode="none"
