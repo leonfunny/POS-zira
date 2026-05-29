@@ -89,7 +89,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     : t('selfCheckout.mode.production');
   const paymentRuntimeState = runtime.paymentProfile === 'assistedDemo'
     ? t('selfCheckout.demoOnly')
-    : runtime.paymentProfile === 'terminalProduction'
+    : runtime.paymentProfile === 'assistedProduction' || runtime.paymentProfile === 'terminalProduction'
       ? t('selfCheckout.mode.production')
       : t('selfCheckout.blocked');
   const paymentRuntimeBlocked = runtime.paymentProfile === 'unavailable';

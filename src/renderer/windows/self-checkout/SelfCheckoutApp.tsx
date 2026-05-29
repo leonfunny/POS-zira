@@ -87,7 +87,7 @@ export default function SelfCheckoutApp() {
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
   const [idleWarnOpen, setIdleWarnOpen] = useState(false);
-  const [fiscalPrinting, setFiscalPrinting] = useState(false);
+  const [receiptPrinting, setReceiptPrinting] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
 
@@ -137,7 +137,7 @@ export default function SelfCheckoutApp() {
     setAbandonOpen(false);
     setToast(null);
     setIdleWarnOpen(false);
-    setFiscalPrinting(false);
+    setReceiptPrinting(false);
     reset();
   }, [cart, reset]);
 
@@ -513,25 +513,23 @@ export default function SelfCheckoutApp() {
 
       window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
 
-      // Show "Drukowanie paragonu fiskalnego..." while the printer is
-      // working — Polish customers expect to see this state before walking
-      // away. The fiscal print is mandatory so we don't race to the receipt
-      // screen with a stale "done" flag.
+      // Keep the customer on the receipt screen while the backend routes the
+      // print job. Cash/BLIK use the order-copy printer; card uses fiscal.
       setLastPaymentMethod(method);
       setPaymentOpen(false);
-      setFiscalPrinting(true);
+      setReceiptPrinting(true);
       setLastReceiptPrinted(true);
       goTo('receipt');
 
-      const printResult = await window.electronAPI?.pos?.payment?.printReceipt?.(orderId).catch(
-        () => ({ success: false, receiptPrinted: false }),
+      const printResult = await window.electronAPI?.selfCheckout?.finalizePrint?.({ orderId, method }).catch(
+        () => ({ success: false, printed: false, receiptPrinted: false }),
       );
-      const receiptPrinted = !!printResult?.receiptPrinted;
+      const receiptPrinted = !!(printResult?.printed ?? printResult?.receiptPrinted ?? printResult?.fiscalPrinted);
       if (!receiptPrinted) {
-        showToast('error', t.receiptPrintFailed);
+        showToast('error', printResult?.error || t.receiptPrintFailed);
       }
       setLastReceiptPrinted(receiptPrinted);
-      setFiscalPrinting(false);
+      setReceiptPrinting(false);
     },
     [cart.cart.items, cart.cart.totalGrosze, goTo, kioskUserId, mode, showToast, t],
   );
@@ -662,7 +660,7 @@ export default function SelfCheckoutApp() {
         method={lastPaymentMethod}
         totalGrosze={cart.cart.totalGrosze}
         receiptPrinted={lastReceiptPrinted}
-        fiscalPrinting={fiscalPrinting}
+        receiptPrinting={receiptPrinting}
         onComplete={() => goTo('thankyou')}
         onLangChange={handleLangChange}
         onCallStaff={callStaffOther}

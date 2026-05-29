@@ -841,6 +841,7 @@ describe('IPC channel contracts - self-checkout preload', () => {
     { method: 'getConfig', ipc: 'get-config' },
     { method: 'helpRequest', ipc: 'self-checkout:help-request' },
     { method: 'checkStatus', ipc: 'self-checkout:help-status' },
+    { method: 'finalizePrint', ipc: 'self-checkout:finalize-print' },
     { method: 'close', ipc: 'self-checkout:close' },
   ];
 
@@ -854,6 +855,11 @@ describe('IPC channel contracts - self-checkout preload', () => {
       expect(preloadSelfCheckout).toContain(ipc);
     });
   }
+
+  it('electron.d.ts declares self-checkout final print routing', () => {
+    expect(electronDts).toContain('finalizePrint: (payload: { orderId: string; method:');
+    expect(electronDts).toContain("method: 'CASH' | 'CARD' | 'BLIK'");
+  });
 
   for (const forbidden of [
     'saveConfig',

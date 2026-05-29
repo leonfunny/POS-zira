@@ -12,8 +12,8 @@ interface ReceiptScreenProps {
   method: PaymentMethod;
   totalGrosze: number;
   receiptPrinted?: boolean;
-  /** Server is still printing the fiscal receipt; show a printing state. */
-  fiscalPrinting?: boolean;
+  /** Backend is still routing the order-copy or fiscal receipt print job. */
+  receiptPrinting?: boolean;
   onComplete: () => void;
   onLangChange: (lang: ScLanguage) => void;
   onCallStaff?: () => void;
@@ -31,7 +31,7 @@ export default function ReceiptScreen({
   method,
   totalGrosze,
   receiptPrinted = true,
-  fiscalPrinting = false,
+  receiptPrinting = false,
   onComplete,
   onLangChange,
   onCallStaff,
@@ -39,10 +39,12 @@ export default function ReceiptScreen({
   const t = getScStrings(lang);
   // Visible countdown so the customer knows the screen will auto-advance.
   const [remainingMs, setRemainingMs] = useState(AUTO_ADVANCE_MS);
-  const printFailed = !receiptPrinted && !fiscalPrinting;
+  const printFailed = !receiptPrinted && !receiptPrinting;
+  const printLabel = method === 'CARD' ? t.receiptPrintStep : t.receiptOrderPrintStep;
+  const printingLabel = method === 'CARD' ? t.receiptFiscalPrinting : t.receiptOrderPrinting;
 
   useEffect(() => {
-    if (!receiptPrinted || fiscalPrinting) return;
+    if (!receiptPrinted || receiptPrinting) return;
     setRemainingMs(AUTO_ADVANCE_MS);
     const tick = window.setInterval(() => {
       setRemainingMs((ms) => Math.max(0, ms - 250));
@@ -52,7 +54,7 @@ export default function ReceiptScreen({
       window.clearInterval(tick);
       window.clearTimeout(done);
     };
-  }, [onComplete, receiptPrinted, fiscalPrinting]);
+  }, [onComplete, receiptPrinted, receiptPrinting]);
 
   const secondsLeft = Math.ceil(remainingMs / 1000);
 
@@ -83,11 +85,10 @@ export default function ReceiptScreen({
             {t.receiptTitle}
           </h1>
 
-          {/* Fiscal-printing state: Polish customers expect to see this and
-              wait for the printer before walking away. */}
-          {fiscalPrinting ? (
+          {/* Keep the customer here until the backend-routed printer job is done. */}
+          {receiptPrinting ? (
             <p className="mx-auto mt-4 flex items-center justify-center gap-3 text-xl font-bold text-[var(--sc-primary-deep)]">
-              <span>{t.receiptFiscalPrinting}</span>
+              <span>{printingLabel}</span>
               <span className="sc-dot-loader" aria-hidden="true">
                 <span /><span /><span />
               </span>
@@ -111,7 +112,7 @@ export default function ReceiptScreen({
             />
             <ReceiptStep
               icon={<Printer size={24} />}
-              label={fiscalPrinting ? t.receiptFiscalPrinting : t.receiptPrintStep}
+              label={receiptPrinting ? printingLabel : printLabel}
               done={mode === 'demo' || receiptPrinted}
             />
             <ReceiptStep
@@ -138,7 +139,7 @@ export default function ReceiptScreen({
           {/* Physical arrow pointing toward the printer slot. Research from
               kiosk vendors: a visible "take your receipt" arrow significantly
               improves receipt pickup, esp. for first-time customers. */}
-          {receiptPrinted && !fiscalPrinting && (
+          {receiptPrinted && !receiptPrinting && (
             <div className="mt-6 flex items-center justify-center gap-2 text-sm font-bold text-[var(--sc-muted)]">
               <ArrowDown size={18} className="animate-bounce" />
               <span>{t.receiptCollectArrow}</span>
@@ -146,7 +147,7 @@ export default function ReceiptScreen({
           )}
 
           {/* Visible countdown so the customer knows the kiosk will reset. */}
-          {receiptPrinted && !fiscalPrinting && secondsLeft > 0 && (
+          {receiptPrinted && !receiptPrinting && secondsLeft > 0 && (
             <div className="mt-3 text-xs font-bold uppercase tracking-wide text-[var(--sc-muted)]">
               {formatMessage(t.receiptCountdown, { seconds: secondsLeft })}
             </div>

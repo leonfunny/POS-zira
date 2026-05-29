@@ -72,6 +72,7 @@ interface ScStrings {
   receiptContinue: string;
   receiptOrderSaved: string;
   receiptPrintStep: string;
+  receiptOrderPrintStep: string;
   receiptCollectStep: string;
   // Payment
   paymentTitle: string;
@@ -108,6 +109,7 @@ interface ScStrings {
   idleWarningStay: string;
   // Receipt extras
   receiptFiscalPrinting: string;
+  receiptOrderPrinting: string;
   receiptCountdown: string;
   receiptCollectArrow: string;
   // Help (extended)
@@ -200,6 +202,7 @@ const PL: ScStrings = {
   receiptContinue: 'Kontynuuj',
   receiptOrderSaved: 'Zamówienie zapisane',
   receiptPrintStep: 'Paragon fiskalny',
+  receiptOrderPrintStep: 'Potwierdzenie zamówienia',
   receiptCollectStep: 'Odbiór paragonu',
   paymentTitle: 'Wybierz formę płatności',
   cash: 'Gotówka',
@@ -236,6 +239,7 @@ const PL: ScStrings = {
   idleWarningBody: 'Sesja zostanie zakończona za 15 sekund.',
   idleWarningStay: 'Tak, jestem',
   receiptFiscalPrinting: 'Drukowanie paragonu fiskalnego...',
+  receiptOrderPrinting: 'Drukowanie potwierdzenia zamówienia...',
   receiptCountdown: 'Powrót do startu za {seconds}s',
   receiptCollectArrow: 'Odbierz paragon z drukarki',
   helpCancel: 'Anuluj wezwanie',
@@ -320,6 +324,7 @@ const EN: ScStrings = {
   receiptContinue: 'Continue',
   receiptOrderSaved: 'Order saved',
   receiptPrintStep: 'Fiscal receipt',
+  receiptOrderPrintStep: 'Order copy',
   receiptCollectStep: 'Receipt pickup',
   paymentTitle: 'Choose payment method',
   cash: 'Cash',
@@ -356,6 +361,7 @@ const EN: ScStrings = {
   idleWarningBody: 'Session will end in 15 seconds.',
   idleWarningStay: 'Yes, I am',
   receiptFiscalPrinting: 'Printing fiscal receipt...',
+  receiptOrderPrinting: 'Printing order copy...',
   receiptCountdown: 'Returning in {seconds}s',
   receiptCollectArrow: 'Please take your receipt',
   helpCancel: 'Cancel request',
@@ -440,6 +446,7 @@ const VI: ScStrings = {
   receiptContinue: 'Tiếp tục',
   receiptOrderSaved: 'Đơn hàng đã lưu',
   receiptPrintStep: 'Hóa đơn fiskal',
+  receiptOrderPrintStep: 'Phiếu order',
   receiptCollectStep: 'Nhận hóa đơn',
   paymentTitle: 'Chọn phương thức thanh toán',
   cash: 'Tiền mặt',
@@ -476,6 +483,7 @@ const VI: ScStrings = {
   idleWarningBody: 'Phiên sẽ kết thúc sau 15 giây.',
   idleWarningStay: 'Có, tôi vẫn ở đây',
   receiptFiscalPrinting: 'Đang in hóa đơn fiskal...',
+  receiptOrderPrinting: 'Đang in phiếu order...',
   receiptCountdown: 'Quay về sau {seconds}s',
   receiptCollectArrow: 'Vui lòng nhận hóa đơn',
   helpCancel: 'Hủy yêu cầu',

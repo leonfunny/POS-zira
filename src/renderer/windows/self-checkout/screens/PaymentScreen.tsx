@@ -47,7 +47,11 @@ export default function PaymentScreen({
   onLangChange,
 }: PaymentScreenProps) {
   const t = getScStrings(lang);
-  const assisted = profile === 'assistedDemo';
+  const assisted = profile === 'assistedDemo' || profile === 'assistedProduction';
+  const runtimeBadge = profile === 'assistedProduction' ? t.productionMode : t.demoMode;
+  const runtimeBadgeClass = profile === 'assistedProduction'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : 'border-amber-200 bg-amber-50 text-amber-800';
   const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -169,8 +173,8 @@ export default function PaymentScreen({
             {t.cancel}
           </button>
           <div className="flex items-center gap-3">
-            <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800">
-              {t.demoMode}
+            <div className={`rounded-full border px-4 py-2 text-sm font-black uppercase tracking-[0.14em] ${runtimeBadgeClass}`}>
+              {runtimeBadge}
             </div>
             <LanguageSwitch lang={lang} onLangChange={onLangChange} compact />
           </div>

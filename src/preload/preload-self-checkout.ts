@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
 
   selfCheckout: {
+    finalizePrint: (payload: { orderId: string; method: 'CASH' | 'CARD' | 'BLIK' }) =>
+      ipcRenderer.invoke('self-checkout:finalize-print', payload),
     helpRequest: (payload: { reason: string; cartTotalGrosze: number }) =>
       ipcRenderer.invoke('self-checkout:help-request', payload),
     checkStatus: (id: string) =>

@@ -26,23 +26,19 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutProfile('grocery_kitchen_mix')).toBe('retail_scan');
   });
 
-  it('keeps production mode fail-closed until unattended contracts exist', () => {
+  it('enables production with assisted payment and backend printer routing', () => {
     const demo = resolveSelfCheckoutRuntime({ selfCheckoutMode: 'demo' });
     expect(demo.unavailableReasons).toEqual([]);
     expect(demo.paymentProfile).toBe('assistedDemo');
 
     const production = resolveSelfCheckoutRuntime({ selfCheckoutMode: 'production' });
-    expect(production.unavailableReasons).toEqual([
-      'no_terminal',
-      'no_fiscal_printer',
-      'order_creation_unverified',
-    ]);
-    expect(production.paymentProfile).toBe('unavailable');
+    expect(production.unavailableReasons).toEqual([]);
+    expect(production.paymentProfile).toBe('assistedProduction');
   });
 
-  it('resolves payment profiles without allowing assisted methods in production', () => {
+  it('resolves payment profiles while preserving fail-closed blockers', () => {
     expect(resolveSelfCheckoutPaymentProfile('demo', [])).toBe('assistedDemo');
-    expect(resolveSelfCheckoutPaymentProfile('production', [])).toBe('terminalProduction');
+    expect(resolveSelfCheckoutPaymentProfile('production', [])).toBe('assistedProduction');
     expect(resolveSelfCheckoutPaymentProfile('production', ['no_terminal'])).toBe('unavailable');
   });
 
@@ -69,7 +65,7 @@ describe('self-checkout runtime model', () => {
     expect(paymentSource).not.toContain('blikCode');
     expect(paymentSource).toContain("'CASH' | 'CARD' | 'BLIK'");
     expect(paymentSource).toContain("const ASSISTED_PAYMENT_METHODS: PaymentMethod[] = ['BLIK', 'CARD', 'CASH']");
-    expect(paymentSource).toContain("const assisted = profile === 'assistedDemo'");
+    expect(paymentSource).toContain("const assisted = profile === 'assistedDemo' || profile === 'assistedProduction'");
     expect(paymentSource).toContain("if (phase !== 'idle' || !assisted) return");
     expect(paymentSource).toContain('blikInstructionTitle');
     expect(paymentSource).toContain('BLIK_PHONE_DISPLAY');
@@ -86,23 +82,33 @@ describe('self-checkout runtime model', () => {
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
     const buildSaleSource = readSource('src/renderer/windows/self-checkout/build-sale.ts');
     const preloadSource = readSource('src/preload/preload-self-checkout.ts');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
 
     expect(buildSaleSource).toContain("source: 'SELF_CHECKOUT'");
     expect(appSource).toContain('buildSelfCheckoutSale');
     expect(appSource).toContain('pos?.orders?.create');
-    expect(appSource).toContain('pos?.payment?.printReceipt');
+    expect(appSource).toContain('selfCheckout?.finalizePrint?.({ orderId, method })');
     expect(appSource).toContain('pos?.sync?.orders');
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:payment:card', data)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:print-receipt', orderId)");
+    expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:finalize-print', payload)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");
+    expect(posModuleSource).toContain("route: 'FISCAL_RECEIPT'");
+    expect(posModuleSource).toContain("route: 'ORDER_COPY'");
+    expect(posModuleSource).toContain("ipcMain.handle('self-checkout:finalize-print'");
+    expect(posModuleSource).toContain("method === 'CARD'");
+    expect(posModuleSource).toContain('printFiscalReceipt(orderId)');
+    expect(posModuleSource).toContain("method === 'CASH'");
+    expect(posModuleSource).toContain('printReceiptAndOpenDrawer(orderId)');
+    expect(posModuleSource).toContain('printReceipt(orderId)');
   });
 
   it('locks the receipt screen on print failure instead of completing the session', () => {
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
     const receiptSource = readSource('src/renderer/windows/self-checkout/screens/ReceiptScreen.tsx');
 
-    expect(receiptSource).toContain('const printFailed = !receiptPrinted && !fiscalPrinting');
-    expect(receiptSource).toContain('if (!receiptPrinted || fiscalPrinting) return');
+    expect(receiptSource).toContain('const printFailed = !receiptPrinted && !receiptPrinting');
+    expect(receiptSource).toContain('if (!receiptPrinted || receiptPrinting) return');
     expect(receiptSource).toContain('{printFailed && onCallStaff && (');
     expect(receiptSource).not.toContain('onClick={onComplete}');
     expect(receiptSource).not.toContain('t.receiptContinue');

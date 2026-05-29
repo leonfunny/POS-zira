@@ -2200,6 +2200,58 @@ export class PosModule extends BaseModule {
       });
     });
 
+    ipcMain.handle('self-checkout:finalize-print', async (_e, payload: { orderId?: string; method?: string }) => {
+      const orderId = String(payload?.orderId || '').trim();
+      const method = String(payload?.method || '').toUpperCase();
+      if (!orderId) return { success: false, printed: false, error: 'missing_order_id' };
+      if (!['CASH', 'CARD', 'BLIK'].includes(method)) {
+        return { success: false, printed: false, error: 'unsupported_payment_method' };
+      }
+
+      try {
+        if (method === 'CARD') {
+          const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
+          return {
+            success: fiscalPrinted,
+            printed: fiscalPrinted,
+            fiscalPrinted,
+            receiptPrinted: fiscalPrinted,
+            route: 'FISCAL_RECEIPT',
+          };
+        }
+
+        if (method === 'CASH') {
+          const result = await this.paymentController?.printReceiptAndOpenDrawer(orderId);
+          const receiptPrinted = result?.receiptPrinted ?? false;
+          return {
+            success: receiptPrinted,
+            printed: receiptPrinted,
+            receiptPrinted,
+            drawerOpened: result?.drawerOpened ?? false,
+            route: 'ORDER_COPY',
+            error: result?.error,
+          };
+        }
+
+        const receiptPrinted = await this.paymentController?.printReceipt(orderId) ?? false;
+        return {
+          success: receiptPrinted,
+          printed: receiptPrinted,
+          receiptPrinted,
+          drawerOpened: false,
+          route: 'ORDER_COPY',
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          printed: false,
+          receiptPrinted: false,
+          fiscalPrinted: false,
+          error: e?.message || String(e),
+        };
+      }
+    });
+
     ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
