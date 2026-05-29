@@ -231,7 +231,7 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
   });
 
   it('does not skip non-cash fiscal printing once hasFiscalPrinter reports a configured route', () => {
-    expect(source).toContain("const autoPrintFiscal = !hasCash && method !== 'INVOICE';");
+    expect(source).toContain("const autoPrintFiscal = !printOrderCopy && method !== 'INVOICE';");
     const fiscalBranch = source.slice(
       source.indexOf('if (autoPrintFiscal)'),
       source.indexOf('const outcome = deriveReceiptOutcome'),
