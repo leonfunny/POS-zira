@@ -3,25 +3,34 @@ import { PrintJobType, PrinterType, ReceiptData } from '../src/shared/types';
 
 const {
   createPrintJob,
+  createPrintJobWithApiKey,
   getConfig,
+  getSecureApiKey,
   getSecureAuthToken,
   listPrinterAssignments,
+  listPrinterAssignmentsWithApiKey,
 } = vi.hoisted(() => ({
   createPrintJob: vi.fn(),
+  createPrintJobWithApiKey: vi.fn(),
   getConfig: vi.fn(),
+  getSecureApiKey: vi.fn(),
   getSecureAuthToken: vi.fn(),
   listPrinterAssignments: vi.fn(),
+  listPrinterAssignmentsWithApiKey: vi.fn(),
 }));
 
 vi.mock('../src/main/config/store', () => ({
   getConfig,
+  getSecureApiKey,
   getSecureAuthToken,
 }));
 
 vi.mock('../src/main/network/api-client', () => ({
   ApiClient: class {
     createPrintJob = createPrintJob;
+    createPrintJobWithApiKey = createPrintJobWithApiKey;
     listPrinterAssignments = listPrinterAssignments;
+    listPrinterAssignmentsWithApiKey = listPrinterAssignmentsWithApiKey;
   },
 }));
 
@@ -43,16 +52,49 @@ const receiptData: ReceiptData = {
 describe('submitSharedReceiptPrint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getConfig.mockReturnValue({ serverUrl: 'https://api.example.test' });
+    getConfig.mockReturnValue({ serverUrl: 'https://api.example.test', machineId: 'machine-2' });
     getSecureAuthToken.mockReturnValue('jwt-token');
+    getSecureApiKey.mockReturnValue(null);
   });
 
-  it('skips remote routing when the app is not authenticated', async () => {
+  it('skips remote routing when the app has no JWT or print-agent API key', async () => {
     getSecureAuthToken.mockReturnValue(null);
+    getSecureApiKey.mockReturnValue(null);
     const result = await submitSharedReceiptPrint(receiptData);
     expect(result).toEqual({ handled: false, printed: false });
     expect(listPrinterAssignments).not.toHaveBeenCalled();
     expect(createPrintJob).not.toHaveBeenCalled();
+  });
+
+  it('uses the print-agent API key when no staff JWT is available', async () => {
+    getSecureAuthToken.mockReturnValue(null);
+    getSecureApiKey.mockReturnValue('pa_self_checkout');
+    listPrinterAssignmentsWithApiKey.mockResolvedValue({
+      assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
+    });
+    createPrintJobWithApiKey.mockResolvedValue({ jobId: 'job-api-key', sent: true });
+
+    const result = await submitSharedReceiptPrint(receiptData, {
+      referenceType: 'POS_RECEIPT',
+      referenceId: 'order-1',
+      source: 'self-checkout',
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      printerId: 'printer-remote-1',
+      jobId: 'job-api-key',
+    });
+    expect(listPrinterAssignmentsWithApiKey).toHaveBeenCalledWith('pa_self_checkout', 'machine-2');
+    expect(createPrintJobWithApiKey).toHaveBeenCalledWith(
+      'pa_self_checkout',
+      expect.objectContaining({
+        printerId: 'printer-remote-1',
+        referenceType: 'POS_RECEIPT',
+      }),
+      'machine-2',
+    );
   });
 
   it('posts a receipt print job with the assigned shared printerId', async () => {

@@ -505,6 +505,35 @@ export class ApiClient {
     return JSON.parse(text);
   }
 
+  private async requestWithPrintAgentApiKey(
+    method: string,
+    path: string,
+    apiKey: string,
+    body?: any,
+    machineId?: string,
+  ): Promise<any> {
+    const normalizedPath = path.startsWith('/api/v1/') ? path : `/api/v1${path}`;
+    const url = `${this.baseUrl}${normalizedPath}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-print-agent-api-key': apiKey,
+    };
+    if (machineId) headers['x-print-agent-machine-id'] = machineId;
+
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const text = await response.text();
+    if (!text) return {};
+    return JSON.parse(text);
+  }
+
   private async warehouseRequest<T>(
     token: string,
     method: string,
@@ -726,8 +755,41 @@ export class ApiClient {
     return { printers: Array.isArray(result?.printers) ? result.printers : [] };
   }
 
+  async listSalonPrintersWithApiKey(
+    apiKey: string,
+    options: SalonPrintersListOptions = {},
+    machineId?: string,
+  ): Promise<SalonPrintersResponse> {
+    const params = new URLSearchParams();
+    if (options.shareableOnly) params.set('shareableOnly', 'true');
+    if (options.role) params.set('role', options.role);
+    const query = params.toString();
+    const result = await this.requestWithPrintAgentApiKey(
+      'GET',
+      `/print-agent/agent/printers${query ? `?${query}` : ''}`,
+      apiKey,
+      undefined,
+      machineId,
+    );
+    return { printers: Array.isArray(result?.printers) ? result.printers : [] };
+  }
+
   async listPrinterAssignments(token: string): Promise<SalonPrinterAssignmentsResponse> {
     const result = await this.request('GET', '/print-agent/salons/me/printer-assignments', token);
+    return { assignments: Array.isArray(result?.assignments) ? result.assignments : [] };
+  }
+
+  async listPrinterAssignmentsWithApiKey(
+    apiKey: string,
+    machineId?: string,
+  ): Promise<SalonPrinterAssignmentsResponse> {
+    const result = await this.requestWithPrintAgentApiKey(
+      'GET',
+      '/print-agent/agent/printer-assignments',
+      apiKey,
+      undefined,
+      machineId,
+    );
     return { assignments: Array.isArray(result?.assignments) ? result.assignments : [] };
   }
 
@@ -755,6 +817,20 @@ export class ApiClient {
 
   async createPrintJob(token: string, body: CreatePrintJobRequest): Promise<CreatePrintJobResponse> {
     return this.request('POST', '/print-agent/jobs', token, body);
+  }
+
+  async createPrintJobWithApiKey(
+    apiKey: string,
+    body: CreatePrintJobRequest,
+    machineId?: string,
+  ): Promise<CreatePrintJobResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      '/print-agent/agent/jobs',
+      apiKey,
+      body,
+      machineId,
+    );
   }
 
   async createAgentPrinter(

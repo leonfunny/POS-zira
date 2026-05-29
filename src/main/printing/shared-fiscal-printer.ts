@@ -5,7 +5,7 @@ import {
   SalonPrinterMapping,
   SalonPrinterRole,
 } from '../../shared/types';
-import { getConfig, getSecureAuthToken } from '../config/store';
+import { getConfig, getSecureApiKey, getSecureAuthToken } from '../config/store';
 import { ApiClient } from '../network/api-client';
 import logger from '../logger';
 
@@ -42,6 +42,11 @@ function isBackendContractUnavailable(err: unknown): boolean {
   return /\b(400|404|501)\b/.test(message);
 }
 
+function isAuthFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return /\b(401|403)\b|unauthori[sz]ed|forbidden|jwt|token/i.test(message);
+}
+
 function hasPhysicalTarget(printer?: SalonPrinterMapping | null): boolean {
   return !!(
     printer?.windowsPrinterName?.trim()
@@ -68,7 +73,8 @@ function createClient(): ApiClient {
 }
 
 async function resolveSharedFiscalPrinter(
-  token: string,
+  token: string | null,
+  apiKey: string | null,
 ): Promise<SharedFiscalPrinterStatus> {
   if (Date.now() < fiscalEndpointUnavailableUntil) {
     return {
@@ -79,9 +85,24 @@ async function resolveSharedFiscalPrinter(
   }
 
   const client = createClient();
+  const config = getConfig();
   let printerId: string | undefined;
   try {
-    const assignments = await client.listPrinterAssignments(token);
+    let assignments;
+    if (token) {
+      try {
+        assignments = await client.listPrinterAssignments(token);
+      } catch (err) {
+        if (!apiKey || !isAuthFailure(err)) throw err;
+        logger.warn('[SharedFiscalPrinter] JWT assignment lookup failed; retrying with print-agent API key');
+      }
+    }
+    if (!assignments && apiKey) {
+      assignments = await client.listPrinterAssignmentsWithApiKey(apiKey, config.machineId);
+    }
+    if (!assignments) {
+      return { configured: false, connected: false };
+    }
     printerId = assignments.assignments.find((assignment) => assignment.role === SHARED_FISCAL_ROLE)?.printerId;
   } catch (err: any) {
     if (isBackendContractUnavailable(err)) {
@@ -97,7 +118,13 @@ async function resolveSharedFiscalPrinter(
   }
 
   try {
-    const response = await client.listSalonPrinters(token);
+    const response = token
+      ? await client.listSalonPrinters(token).catch(async (err) => {
+          if (!apiKey || !isAuthFailure(err)) throw err;
+          logger.warn('[SharedFiscalPrinter] JWT printer readiness lookup failed; retrying with print-agent API key');
+          return client.listSalonPrintersWithApiKey(apiKey, {}, config.machineId);
+        })
+      : await client.listSalonPrintersWithApiKey(apiKey!, {}, config.machineId);
     const printer = response.printers.find((item) => item.id === printerId) || null;
     if (!printer) {
       const error = `${SHARED_FISCAL_ROLE} assignment points at missing printer ${printerId}`;
@@ -122,8 +149,9 @@ async function resolveSharedFiscalPrinter(
 
 export async function getSharedFiscalPrinterStatus(): Promise<SharedFiscalPrinterStatus> {
   const token = getSecureAuthToken();
-  if (!token) return { configured: false, connected: false };
-  return resolveSharedFiscalPrinter(token);
+  const apiKey = getSecureApiKey();
+  if (!token && !apiKey) return { configured: false, connected: false };
+  return resolveSharedFiscalPrinter(token, apiKey);
 }
 
 export async function submitSharedFiscalPrint(
@@ -131,9 +159,10 @@ export async function submitSharedFiscalPrint(
   meta: SharedFiscalPrintMeta = {},
 ): Promise<SharedFiscalPrintResult> {
   const token = getSecureAuthToken();
-  if (!token) return { handled: false, printed: false };
+  const apiKey = getSecureApiKey();
+  if (!token && !apiKey) return { handled: false, printed: false };
 
-  const route = await resolveSharedFiscalPrinter(token);
+  const route = await resolveSharedFiscalPrinter(token, apiKey);
   if (!route.printerId) {
     return { handled: false, printed: false, error: route.error };
   }
@@ -158,7 +187,14 @@ export async function submitSharedFiscalPrint(
       `[SharedFiscalPrinter] creating POS_FISCAL_RECEIPT job for fiscal printer ${route.printerId} ` +
       `paymentMethod=${String(receiptData.payment?.method || 'none')}`,
     );
-    const result = await client.createPrintJob(token, body);
+    const config = getConfig();
+    const result = token
+      ? await client.createPrintJob(token, body).catch(async (err) => {
+          if (!apiKey || !isAuthFailure(err)) throw err;
+          logger.warn('[SharedFiscalPrinter] JWT fiscal job create failed; retrying with print-agent API key');
+          return client.createPrintJobWithApiKey(apiKey, body, config.machineId);
+        })
+      : await client.createPrintJobWithApiKey(apiKey!, body, config.machineId);
     const jobId = (result.jobId || result.id) as string | undefined;
     const status = finalStatusFromResponse(result);
 

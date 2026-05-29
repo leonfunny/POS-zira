@@ -1,5 +1,5 @@
 import { PrintJobType, PrinterType, ReceiptData, SalonPrinterRole } from '../../shared/types';
-import { getConfig, getSecureAuthToken } from '../config/store';
+import { getConfig, getSecureApiKey, getSecureAuthToken } from '../config/store';
 import { ApiClient } from '../network/api-client';
 import logger from '../logger';
 
@@ -11,6 +11,11 @@ let assignmentEndpointUnavailableUntil = 0;
 function isEndpointUnavailable(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err || '');
   return /\b(404|501)\b/.test(message);
+}
+
+function isAuthFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return /\b(401|403)\b|unauthori[sz]ed|forbidden|jwt|token/i.test(message);
 }
 
 export interface SharedReceiptPrintMeta {
@@ -43,7 +48,8 @@ export async function submitSharedReceiptPrint(
   meta: SharedReceiptPrintMeta = {},
 ): Promise<SharedReceiptPrintResult> {
   const token = getSecureAuthToken();
-  if (!token) return { handled: false, printed: false };
+  const apiKey = getSecureApiKey();
+  if (!token && !apiKey) return { handled: false, printed: false };
 
   if (Date.now() < assignmentEndpointUnavailableUntil) {
     return { handled: false, printed: false };
@@ -54,7 +60,19 @@ export async function submitSharedReceiptPrint(
 
   let printerId: string | undefined;
   try {
-    const response = await client.listPrinterAssignments(token);
+    let response;
+    if (token) {
+      try {
+        response = await client.listPrinterAssignments(token);
+      } catch (err) {
+        if (!apiKey || !isAuthFailure(err)) throw err;
+        logger.warn('[SharedReceiptPrinter] JWT assignment lookup failed; retrying with print-agent API key');
+      }
+    }
+    if (!response && apiKey) {
+      response = await client.listPrinterAssignmentsWithApiKey(apiKey, config.machineId);
+    }
+    if (!response) return { handled: false, printed: false };
     printerId = response.assignments.find((assignment) => assignment.role === SHARED_RECEIPT_ROLE)?.printerId;
   } catch (err: any) {
     if (isEndpointUnavailable(err)) {
@@ -83,13 +101,24 @@ export async function submitSharedReceiptPrint(
     let drawerOpenRequested = !!meta.openDrawer;
     let result;
     try {
-      result = await client.createPrintJob(token, body);
+      result = token
+        ? await client.createPrintJob(token, body).catch(async (err) => {
+            if (!apiKey || !isAuthFailure(err)) throw err;
+            logger.warn('[SharedReceiptPrinter] JWT print job create failed; retrying with print-agent API key');
+            return client.createPrintJobWithApiKey(apiKey, body, config.machineId);
+          })
+        : await client.createPrintJobWithApiKey(apiKey!, body, config.machineId);
     } catch (err) {
       if (!meta.openDrawer || !isUnsupportedDrawerIntentError(err)) throw err;
       logger.warn('[SharedReceiptPrinter] Backend does not accept openDrawer yet; retrying receipt job without drawer intent');
       drawerOpenRequested = false;
       const { openDrawer: _unsupported, ...retryBody } = body;
-      result = await client.createPrintJob(token, retryBody);
+      result = token
+        ? await client.createPrintJob(token, retryBody).catch(async (retryErr) => {
+            if (!apiKey || !isAuthFailure(retryErr)) throw retryErr;
+            return client.createPrintJobWithApiKey(apiKey, retryBody, config.machineId);
+          })
+        : await client.createPrintJobWithApiKey(apiKey!, retryBody, config.machineId);
     }
     const jobId = (result.jobId || result.id) as string | undefined;
     const sent = result.sent !== false;

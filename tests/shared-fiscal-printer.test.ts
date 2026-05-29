@@ -3,28 +3,40 @@ import { PrintJobType, PrinterType, ReceiptData } from '../src/shared/types';
 
 const {
   createPrintJob,
+  createPrintJobWithApiKey,
   getConfig,
+  getSecureApiKey,
   getSecureAuthToken,
   listPrinterAssignments,
+  listPrinterAssignmentsWithApiKey,
   listSalonPrinters,
+  listSalonPrintersWithApiKey,
 } = vi.hoisted(() => ({
   createPrintJob: vi.fn(),
+  createPrintJobWithApiKey: vi.fn(),
   getConfig: vi.fn(),
+  getSecureApiKey: vi.fn(),
   getSecureAuthToken: vi.fn(),
   listPrinterAssignments: vi.fn(),
+  listPrinterAssignmentsWithApiKey: vi.fn(),
   listSalonPrinters: vi.fn(),
+  listSalonPrintersWithApiKey: vi.fn(),
 }));
 
 vi.mock('../src/main/config/store', () => ({
   getConfig,
+  getSecureApiKey,
   getSecureAuthToken,
 }));
 
 vi.mock('../src/main/network/api-client', () => ({
   ApiClient: class {
     createPrintJob = createPrintJob;
+    createPrintJobWithApiKey = createPrintJobWithApiKey;
     listPrinterAssignments = listPrinterAssignments;
+    listPrinterAssignmentsWithApiKey = listPrinterAssignmentsWithApiKey;
     listSalonPrinters = listSalonPrinters;
+    listSalonPrintersWithApiKey = listSalonPrintersWithApiKey;
   },
 }));
 
@@ -58,8 +70,9 @@ const readyFiscalPrinter = {
 describe('submitSharedFiscalPrint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getConfig.mockReturnValue({ serverUrl: 'https://api.example.test' });
+    getConfig.mockReturnValue({ serverUrl: 'https://api.example.test', machineId: 'machine-2' });
     getSecureAuthToken.mockReturnValue('jwt-token');
+    getSecureApiKey.mockReturnValue(null);
     listPrinterAssignments.mockResolvedValue({
       assignments: [{ role: 'FISCAL_RECEIPT', printerId: 'fiscal-printer-1' }],
     });
@@ -74,6 +87,41 @@ describe('submitSharedFiscalPrint', () => {
     });
     expect(listPrinterAssignments).toHaveBeenCalledTimes(1);
     expect(listSalonPrinters).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the print-agent API key when no staff JWT is available', async () => {
+    getSecureAuthToken.mockReturnValue(null);
+    getSecureApiKey.mockReturnValue('pa_self_checkout');
+    listPrinterAssignmentsWithApiKey.mockResolvedValue({
+      assignments: [{ role: 'FISCAL_RECEIPT', printerId: 'fiscal-printer-1' }],
+    });
+    listSalonPrintersWithApiKey.mockResolvedValue({ printers: [readyFiscalPrinter] });
+    createPrintJobWithApiKey.mockResolvedValue({ jobId: 'job-api-key', status: 'COMPLETED', sent: true });
+
+    const result = await submitSharedFiscalPrint(receiptData, {
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: 'order-1',
+      source: 'self-checkout',
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      printerId: 'fiscal-printer-1',
+      jobId: 'job-api-key',
+      status: 'COMPLETED',
+    });
+    expect(listPrinterAssignmentsWithApiKey).toHaveBeenCalledWith('pa_self_checkout', 'machine-2');
+    expect(listSalonPrintersWithApiKey).toHaveBeenCalledWith('pa_self_checkout', {}, 'machine-2');
+    expect(createPrintJobWithApiKey).toHaveBeenCalledWith(
+      'pa_self_checkout',
+      expect.objectContaining({
+        printerType: PrinterType.FISCAL,
+        printerId: 'fiscal-printer-1',
+        waitForCompletion: true,
+      }),
+      'machine-2',
+    );
   });
 
   it('posts a FISCAL receipt job and prints only after final COMPLETED', async () => {
