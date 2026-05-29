@@ -32,6 +32,7 @@ interface QuickAddCameraModalProps {
   onClose: () => void;
   onPrepare: (images: QuickAddCapturedImage[], idempotencyKey: string) => Promise<QuickAddPreparedResult>;
   onFinalize: (input: QuickAddFinalizeInput) => Promise<void>;
+  onRecognize?: (images: QuickAddCapturedImage[]) => Promise<any[]>;
   t: (key: string) => string;
 }
 
@@ -40,6 +41,7 @@ export default function QuickAddCameraModal({
   onClose,
   onPrepare,
   onFinalize,
+  onRecognize,
   t,
 }: QuickAddCameraModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -55,6 +57,8 @@ export default function QuickAddCameraModal({
   const [busy, setBusy] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recognized, setRecognized] = useState<any[] | null>(null);
+  const [recognizing, setRecognizing] = useState(false);
 
   const tOr = (key: string, fallback: string) => {
     const v = t(key);
@@ -79,6 +83,8 @@ export default function QuickAddCameraModal({
     setBusy(false);
     setCameraReady(false);
     setError(null);
+    setRecognized(null);
+    setRecognizing(false);
     prepareIdempotencyKeyRef.current = crypto.randomUUID();
     finalizeIdempotencyKeyRef.current = crypto.randomUUID();
 
@@ -135,6 +141,20 @@ export default function QuickAddCameraModal({
       setError(err?.message || tOr('pos.quickAdd.analyzeFailed', 'Analyze failed'));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleRecognize = async () => {
+    if (!onRecognize || images.length < 1) return;
+    setRecognizing(true);
+    setError(null);
+    try {
+      const products = await onRecognize(images);
+      setRecognized(products);
+    } catch (err: any) {
+      setError(err?.message || tOr('pos.quickAdd.recognizeFailed', 'Recognition failed'));
+    } finally {
+      setRecognizing(false);
     }
   };
 
@@ -271,6 +291,52 @@ export default function QuickAddCameraModal({
               <div className="text-xs leading-relaxed text-slate-400">
                 {tOr('pos.quickAdd.photoRule', 'Minimum 2 photos, maximum 3 photos.')}
               </div>
+
+              {onRecognize && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleRecognize}
+                    disabled={recognizing || busy || images.length < 1}
+                    className="h-11 rounded-lg border border-sky-500/50 bg-sky-950/40 font-semibold text-sky-200 hover:bg-sky-900/50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {recognizing
+                      ? tOr('pos.quickAdd.recognizing', 'Recognizing…')
+                      : tOr('pos.quickAdd.recognize', 'Recognize (preview)')}
+                  </button>
+                  {recognized && (
+                    <div className="max-h-44 space-y-1.5 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/60 p-2 text-xs">
+                      {recognized.length === 0 ? (
+                        <div className="text-slate-500">
+                          {tOr('pos.quickAdd.recognizeNone', 'No product recognized')}
+                        </div>
+                      ) : (
+                        recognized.map((p: any, i: number) => {
+                          const qty =
+                            p?.itemCount != null
+                              ? `×${p.itemCount}`
+                              : p?.packageQuantity != null
+                                ? `${p.packageQuantity}${p.packageUnit || ''}`
+                                : '';
+                          return (
+                            <div key={i} className="flex items-start justify-between gap-2 border-b border-slate-800 pb-1 last:border-0">
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold text-white">
+                                  {p?.name || p?.productType || '—'}
+                                </div>
+                                <div className="truncate text-slate-400">
+                                  {[p?.productType, p?.ean ? `EAN ${p.ean}` : null].filter(Boolean).join(' · ')}
+                                </div>
+                              </div>
+                              {qty && <div className="shrink-0 font-bold text-sky-300">{qty}</div>}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         ) : (

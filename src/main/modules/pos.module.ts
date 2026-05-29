@@ -1177,6 +1177,26 @@ export class PosModule extends BaseModule {
       },
     );
 
+    // Pure recognition preview (reusable backend module). Returns structured
+    // products[] (type/name/quantity/ean) for the cashier to eyeball BEFORE
+    // the existing quick-add create/finalize flow runs. Does not touch stock.
+    ipcMain.handle(
+      'pos:recognition:analyze',
+      async (_e, payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) => {
+        try {
+          if (!Array.isArray(payload?.images) || payload.images.length < 1 || payload.images.length > 5) {
+            return { ok: false, error: 'Capture 1 to 5 images before recognizing' };
+          }
+          const result = await apiClient.recognizeProducts(payload.images, payload.language || 'vi');
+          return result?.ok === false
+            ? { ok: false, error: result.error || 'recognition-failed' }
+            : { ok: true, products: result?.products ?? [], language: result?.language };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'recognition-failed' };
+        }
+      },
+    );
+
     ipcMain.handle(
       'pos:quick-add:prepare',
       async (_e, payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) => {

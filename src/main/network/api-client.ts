@@ -571,6 +571,36 @@ export class ApiClient {
     return (text ? JSON.parse(text) : {}) as T;
   }
 
+  /**
+   * Pure product recognition via the reusable backend module
+   * (POST /api/v1/recognition/analyze). Returns structured JSON
+   * (products[] with type/name/quantity/ean/...) without touching stock.
+   * Public endpoint gated by salon slug+code; does not create products.
+   */
+  async recognizeProducts(
+    images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>,
+    language?: string,
+  ): Promise<any> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/recognition/analyze`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ images, language: language || 'vi' }),
+    });
+    const text = await response.text().catch(() => '');
+    let parsed: any = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch { /* keep raw */ }
+    if (!response.ok) {
+      throw new Error(parsed?.message || parsed?.error || text || `HTTP ${response.status}`);
+    }
+    return parsed ?? {};
+  }
+
   async listWarehouses(token: string): Promise<{ warehouses: WarehouseInfo[] } | null> {
     const data: any = await this.warehouseRequest(token, 'GET', '/warehouses');
     if (!data) return null;

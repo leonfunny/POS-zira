@@ -148,6 +148,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       finalize: (payload: { productId: string; variantId: string; name?: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:quick-add:finalize', payload),
     },
+    recognition: {
+      analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) =>
+        ipcRenderer.invoke('pos:recognition:analyze', payload),
+    },
     // Mode-specific: Tables (Restaurant)
     tables: {
       getAll: () => ipcRenderer.invoke('pos:tables:getAll'),

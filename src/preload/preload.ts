@@ -746,6 +746,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       finalize: (payload: { productId: string; variantId: string; name?: string; retailPrice: number; quantity: number; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:quick-add:finalize', payload),
     },
+    recognition: {
+      analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) =>
+        ipcRenderer.invoke('pos:recognition:analyze', payload),
+    },
     tables: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ALL),
       getActive: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ACTIVE),

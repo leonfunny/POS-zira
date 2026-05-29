@@ -267,6 +267,17 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     };
   }, []);
 
+  // Pure recognition preview — returns structured products[] for the cashier
+  // to eyeball before creating. Does not touch stock; the create flow is
+  // unchanged. Returns [] on any failure so the modal degrades gracefully.
+  const recognizeQuickAdd = useCallback(async (
+    images: QuickAddCapturedImage[],
+  ): Promise<any[]> => {
+    const result = await window.electronAPI.pos.recognition.analyze({ images, language: 'vi' });
+    if (!result?.ok) throw new Error(result?.error || 'Recognition failed');
+    return Array.isArray(result.products) ? result.products : [];
+  }, []);
+
   const finalizeQuickAdd = useCallback(async (input: QuickAddFinalizeInput) => {
     const result = await window.electronAPI.pos.quickAdd.finalize({
       productId: input.productId,
@@ -530,6 +541,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         onClose={() => setShowQuickAddCamera(false)}
         onPrepare={prepareQuickAdd}
         onFinalize={finalizeQuickAdd}
+        onRecognize={recognizeQuickAdd}
         t={t}
       />
       {/* Sync conflict banner (Path B) */}
