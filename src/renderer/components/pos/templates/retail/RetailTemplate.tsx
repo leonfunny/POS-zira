@@ -19,6 +19,9 @@ import {
   countRetailProductsByCategory,
   filterRetailBrowseProducts,
   getVisibleRetailCategories,
+  sortCategoriesByRank,
+  categoryTierForRank,
+  countNoBarcodeByCategory,
 } from './retailBrowseFilters';
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
@@ -453,9 +456,16 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     return countRetailProductsByCategory(allProducts);
   }, [allProducts]);
 
+  // "Must-tap" counts: products with no barcode (fresh produce/meat) per
+  // category — surfaced as a badge so the owner sees which categories actually
+  // need prominent placement, and so cashiers spot the tap-only groups.
+  const noBarcodeCounts = useMemo(() => countNoBarcodeByCategory(allProducts), [allProducts]);
+
+  // Categories are shown in owner-configured priority order (sort_order asc).
+  // The top-ranked ones render larger (see categoryTierForRank in the gallery).
   const visibleCategories = useMemo(() => {
     const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
-    return getVisibleRetailCategories(categories, categoryUnitCounts, browseUnitFilter);
+    return sortCategoriesByRank(getVisibleRetailCategories(categories, categoryUnitCounts, browseUnitFilter));
   }, [categories, categoryUnitCounts, activeUnitFilter, searchQuery]);
 
   const handleUnitFilterChange = useCallback((nextFilter: RetailUnitFilter) => {
@@ -710,35 +720,50 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-4 gap-3 p-4">
-                  {visibleCategories.map((cat) => {
+                  {visibleCategories.map((cat, index) => {
                     const displayName = resolveName(cat, lang);
                     const counts = categoryUnitCounts.get(cat.id);
                     const count = countForRetailUnitFilter(counts, browseUnitFilter);
                     const pieceCount = counts?.piece ?? 0;
                     const kgCount = counts?.kg ?? 0;
                     const bg = cat.color || '#da7756';
+                    // Owner-configured priority → render size. Top-ranked
+                    // categories (typically the fresh, no-barcode groups) get a
+                    // larger, wider card so the cashier reaches them fastest.
+                    const tier = categoryTierForRank(index);
+                    const isBig = tier === 'big';
+                    const noBarcode = noBarcodeCounts.get(cat.id)?.noBarcode ?? 0;
                     return (
                       <button
                         key={cat.id}
                         type="button"
                         onClick={() => setActiveCategoryId(cat.id)}
-                        className="group flex items-center gap-4 p-4 rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 hover:bg-brand-50/40 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 min-h-[96px]"
+                        className={`group flex items-center gap-4 p-4 rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 hover:bg-brand-50/40 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 ${
+                          isBig ? 'sm:col-span-2 min-h-[124px]' : 'min-h-[96px]'
+                        }`}
                       >
                         <div
-                          className="shrink-0 w-14 h-14 rounded-xl flex items-center justify-center text-xl font-extrabold"
+                          className={`shrink-0 rounded-xl flex items-center justify-center font-extrabold ${
+                            isBig ? 'w-16 h-16 text-2xl' : 'w-14 h-14 text-xl'
+                          }`}
                           style={{ backgroundColor: `${bg}2E`, color: bg }}
                           aria-hidden="true"
                         >
                           {categoryGlyph(cat, displayName)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-base font-bold text-slate-900 line-clamp-1 leading-tight">
+                          <p className={`font-bold text-slate-900 line-clamp-1 leading-tight ${isBig ? 'text-lg' : 'text-base'}`}>
                             {displayName}
                           </p>
                           <p className="text-xs font-medium text-slate-500 mt-1 tabular-nums">
                             {count} {tOr('pos.categories.productCount', 'products')}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-1">
+                            {noBarcode > 0 && (
+                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
+                                {noBarcode} {tOr('pos.categories.mustTap', 'cần bấm')}
+                              </span>
+                            )}
                             {(browseUnitFilter === 'all' || browseUnitFilter === 'piece') && pieceCount > 0 && (
                               <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-slate-100 text-slate-700 border border-slate-200 tabular-nums">
                                 {pieceCount} {tOr('pos.unitFilter.pieceShort', 'pc')}
