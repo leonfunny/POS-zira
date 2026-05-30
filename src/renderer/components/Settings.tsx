@@ -3,6 +3,7 @@ import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelS
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
+import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import rlog from '../utils/logger';
 import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale } from 'lucide-react';
 
@@ -3736,6 +3737,11 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 ))}
               </select>
               <p className="text-xs text-slate-500 mt-1">{t('settings.posLanguageDesc')}</p>
+            </div>
+
+            {/* Category priority ranking — retail browse order + size */}
+            <div className="border-t border-slate-200 pt-4 mt-4">
+              <CategoryRankingSettings lang={posLanguage || undefined} />
             </div>
 
             {/* Scale Settings */}
