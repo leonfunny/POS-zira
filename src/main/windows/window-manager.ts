@@ -336,6 +336,13 @@ export class WindowManager {
         nodeIntegration: false,
         sandbox: true, // SECURITY: Enable sandbox to isolate renderer
         devTools: isDebugMode, // SECURITY: Only enable DevTools in debug mode
+        // Real-time surfaces (POS / customer display / self-checkout) must keep
+        // painting even when occluded or unfocused. The customer display lives on
+        // a never-focused secondary monitor, and the <webview> "Tạo sản phẩm" panel
+        // covers the POS host — both trigger Chromium occlusion throttling, which
+        // defers React paint commits so cart/state updates only appear after a
+        // focus/fullscreen toggle forces a repaint.
+        backgroundThrottling: false,
       },
       show: false,
       autoHideMenuBar: true,
