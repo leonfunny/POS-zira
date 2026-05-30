@@ -43,9 +43,10 @@ interface RetailTemplateProps {
   session: PosState['session'];
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
+  onCreateProduct?: () => void;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
@@ -780,6 +781,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
               onQuickAddCamera={onQuickAddCamera}
+              onCreateProduct={onCreateProduct}
             />
           </div>
         </div>

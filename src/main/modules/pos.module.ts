@@ -6,6 +6,7 @@
 
 import { ipcMain, dialog, shell, BrowserWindow, app, type IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { promises as fs } from 'fs';
 import { randomUUID } from 'crypto';
 import { BaseModule, ModuleState } from '../core/module';
@@ -1176,6 +1177,14 @@ export class PosModule extends BaseModule {
         }
       },
     );
+
+    // Absolute file:// path to the webview bridge preload, for the embedded
+    // /add page panel. Computed in main (the sandboxed renderer/preload cannot
+    // use `path`). dist layout: this module = dist/main/modules, preload =
+    // dist/preload/addbridge-preload.js.
+    ipcMain.handle('app:addbridge-preload-path', () => {
+      return pathToFileURL(path.join(__dirname, '../../preload/addbridge-preload.js')).href;
+    });
 
     // Pure recognition preview (reusable backend module). Returns structured
     // products[] (type/name/quantity/ean) for the cashier to eyeball BEFORE

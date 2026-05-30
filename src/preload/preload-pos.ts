@@ -152,6 +152,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) =>
         ipcRenderer.invoke('pos:recognition:analyze', payload),
     },
+    // Absolute file:// path to the webview bridge preload (for the embedded /add panel).
+    getAddbridgePreloadPath: (): Promise<string> => ipcRenderer.invoke('app:addbridge-preload-path'),
     // Mode-specific: Tables (Restaurant)
     tables: {
       getAll: () => ipcRenderer.invoke('pos:tables:getAll'),

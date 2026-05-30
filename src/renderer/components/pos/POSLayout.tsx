@@ -18,6 +18,7 @@ import QuickAddCameraModal, {
   QuickAddFinalizeInput,
   QuickAddPreparedResult,
 } from './QuickAddCameraModal';
+import AddProductWebviewPanel from './AddProductWebviewPanel';
 import { formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
@@ -109,6 +110,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     error: string | null;
   }>({ open: false, ean: '', preview: null, loading: false, error: null });
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
+  const [showAddProduct, setShowAddProduct] = useState(false);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -544,6 +546,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         onRecognize={recognizeQuickAdd}
         t={t}
       />
+      <AddProductWebviewPanel
+        open={showAddProduct}
+        salonCode={(config as any)?.salonCode}
+        onProductCreated={(line) => {
+          dispatch({ type: 'cart/addItem', payload: { ...line, id: crypto.randomUUID() } });
+        }}
+        onClose={() => setShowAddProduct(false)}
+      />
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {/* Header - shared across all modes */}
@@ -649,6 +659,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             session={session}
             onUnknownBarcodeScanned={openScanImport}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
+            onCreateProduct={() => setShowAddProduct(true)}
           />
         )}
         {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
