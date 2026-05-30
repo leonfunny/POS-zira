@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { translations } from '../../i18n/translations';
+import { describeFiscalError } from '../../lib/fiscal-error-text';
 import { buildRefundRequest } from './refund-request';
 import {
   getRemainingRefundableItems,
@@ -1373,13 +1374,13 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       } else {
         setReprintStatus({
           type: 'error',
-          message: result?.error || 'Fiscal printer not connected',
+          message: describeFiscalError(result?.error, (k, f) => tOr(t, k, f)),
         });
       }
     } catch (e: any) {
       setReprintStatus({
         type: 'error',
-        message: e?.message || 'Fiscal printer not connected',
+        message: describeFiscalError(e?.message, (k, f) => tOr(t, k, f)),
       });
     } finally {
       setPrintingFiscal(false);

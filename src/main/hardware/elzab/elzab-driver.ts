@@ -6,6 +6,7 @@ import {
   type FiscalAttemptRow,
 } from '../../database/repos/fiscal-attempt-repo';
 import logger from '../../logger';
+import { listSerialPorts, getVidForPort } from '../port-utils';
 import {
   createDefaultElzabBridge,
   isRealFiscalPrintEnabled,
@@ -15,6 +16,11 @@ import {
   type ElzabOperationResult,
 } from './elzab-bridge';
 
+// ELZAB Zeta Online enumerates its USB-CDC serial interface under this USB
+// Vendor ID (see BRAND_PATTERNS). Used to re-locate the fiscal COM port when a
+// USB re-enumeration moves it off the configured number.
+const ELZAB_USB_VID = 'C1CA';
+
 type ElzabConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
 
 export interface ElzabDriverOptions {
@@ -23,6 +29,12 @@ export interface ElzabDriverOptions {
   baudRate?: number;
   bridge?: ElzabBridge;
   fiscalJournal?: FiscalAttemptJournal;
+  // Injectable for deterministic tests; default to the real PnP-backed scanners.
+  listSerialPortsFn?: () => Promise<string[]>;
+  getVidForPortFn?: (port: string) => Promise<string | null>;
+  // P6: fired when a receipt attempt ends in an ambiguous (UNKNOWN) state so the
+  // POS can alert the cashier to reconcile immediately. Best-effort, never throws.
+  onFiscalUnknown?: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void;
 }
 
 export class ElzabDriver {
@@ -30,11 +42,15 @@ export class ElzabDriver {
   private lastDiagnostic: { code: ElzabDiagnosticCode; detail?: string } | undefined;
   private bridge: ElzabBridge;
   private fiscalJournal: FiscalAttemptJournal;
+  private listSerialPortsFn: () => Promise<string[]>;
+  private getVidForPortFn: (port: string) => Promise<string | null>;
 
   constructor(private options: ElzabDriverOptions) {
     this.options.baudRate = options.baudRate || 9600;
     this.bridge = options.bridge || createDefaultElzabBridge();
     this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
+    this.listSerialPortsFn = options.listSerialPortsFn || listSerialPorts;
+    this.getVidForPortFn = options.getVidForPortFn || getVidForPort;
   }
 
   getConnectionState(): ElzabConnectionState { return this.connectionState; }
@@ -58,16 +74,61 @@ export class ElzabDriver {
       return false;
     }
 
-    const result = await this.bridge.connect(this.connectionConfig());
-    if (!result.ok) {
-      this.setFailure(result);
-      return false;
+    // P2: a flaky USB-serial link can drop/re-enumerate mid-connect. Retry the
+    // COM path once after re-resolving the port; IP targets don't re-scan.
+    const maxAttempts = this.options.port ? 2 : 1;
+    let result: ElzabOperationResult | undefined;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (this.options.port) await this.resolveElzabPort();
+      result = await this.bridge.connect(this.connectionConfig());
+      if (result.ok) {
+        this.connectionState = 'protocol_ready';
+        this.lastDiagnostic = undefined;
+        logger.info(`[ElzabDriver] Connected to ${this.options.port || this.options.address} via ELZAB_STX sidecar`);
+        return true;
+      }
+      if (attempt < maxAttempts) {
+        logger.warn(`[ElzabDriver] connect attempt ${attempt}/${maxAttempts} failed (${result.code}); re-scanning port and retrying`);
+        await new Promise((r) => setTimeout(r, 1200));
+      }
     }
+    if (result) this.setFailure(result);
+    return false;
+  }
 
-    this.connectionState = 'protocol_ready';
-    this.lastDiagnostic = undefined;
-    logger.info(`[ElzabDriver] Connected to ${this.options.port || this.options.address} via ELZAB_STX sidecar`);
-    return true;
+  /**
+   * P1: re-point the fiscal COM port to the live ELZAB device when the
+   * configured port is no longer present (USB re-enumeration moved it, e.g.
+   * COM3 → COM4). Only switches when the configured port is ABSENT and another
+   * present port hosts the ELZAB USB VID, so it can never steal a working port
+   * or send fiscal commands to an unrelated serial device. No-op for IP targets.
+   */
+  private notifyUnknown(data: ReceiptData, code: string, detail?: string): void {
+    try {
+      this.options.onFiscalUnknown?.({ orderId: data.orderId, orderNumber: data.orderNumber, code, detail });
+    } catch (e: any) {
+      logger.warn(`[ElzabDriver] onFiscalUnknown handler threw (ignored): ${e?.message ?? e}`);
+    }
+  }
+
+  private async resolveElzabPort(): Promise<void> {
+    const configured = this.options.port;
+    if (!configured) return;
+    try {
+      const present = await this.listSerialPortsFn();
+      if (present.includes(configured.toUpperCase())) return; // configured port still live → keep it
+      for (const candidate of present) {
+        const vid = await this.getVidForPortFn(candidate);
+        if (vid === ELZAB_USB_VID) {
+          logger.warn(`[ElzabDriver] Configured fiscal port ${configured} not present; ELZAB (VID ${ELZAB_USB_VID}) found on ${candidate} — using ${candidate} for this connection.`);
+          this.options.port = candidate;
+          return;
+        }
+      }
+      logger.warn(`[ElzabDriver] Configured fiscal port ${configured} absent and no ELZAB (VID ${ELZAB_USB_VID}) device among present ports [${present.join(', ') || 'none'}].`);
+    } catch (e: any) {
+      logger.warn(`[ElzabDriver] resolveElzabPort scan failed: ${e?.message ?? e}`);
+    }
   }
 
   disconnect(): void {
@@ -140,10 +201,10 @@ export class ElzabDriver {
     try {
       result = await this.bridge.printReceipt(this.connectionConfig(), data);
     } catch (error: any) {
-      this.fiscalJournal.markUnknown(context.attempt.id, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', {
-        detail: error?.message || String(error),
-      });
-      throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after bridge error: ${error?.message || String(error)}`);
+      const detail = error?.message || String(error);
+      this.fiscalJournal.markUnknown(context.attempt.id, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', { detail });
+      this.notifyUnknown(data, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', detail);
+      throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after bridge error: ${detail}`);
     }
 
     if (result.ok) {
@@ -155,6 +216,7 @@ export class ElzabDriver {
     if (this.isAmbiguousAfterSent(result)) {
       this.fiscalJournal.markUnknown(context.attempt.id, code, result);
       this.setFailure(result);
+      this.notifyUnknown(data, code, result.detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after ${code}${result.detail ? `: ${result.detail}` : ''}`);
     }
 

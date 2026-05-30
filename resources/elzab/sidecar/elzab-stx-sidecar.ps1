@@ -272,6 +272,12 @@ function Invoke-Receipt {
 
   $receiptOpen = $false
   try {
+    # P4: a prior crash (e.g. AccessViolationException mid-receipt) can leave a
+    # fiscal receipt OPEN on the device, which makes the next ReceiptBegin fail.
+    # Defensively cancel any dangling receipt before starting a fresh one; the
+    # device returns a harmless error when nothing is open, which we ignore.
+    try { [void][ElzabNative]::ReceiptCancel() } catch {}
+
     $vat = Read-VatRates
     if (!$vat.ok) {
       Write-Result $false 'ELZAB_PROTOCOL_NOT_READY' $vat.detail $vat

@@ -111,6 +111,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   }>({ open: false, ean: '', preview: null, loading: false, error: null });
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
+  // must reconcile it in order history before that order can print again.
+  const [fiscalAlert, setFiscalAlert] = useState<{ orderNumber?: string } | null>(null);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -460,6 +463,15 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => unsub?.();
   }, []);
 
+  // P6: surface ambiguous fiscal results immediately so the cashier reconciles
+  // the order in history instead of discovering it only on the next reprint.
+  useEffect(() => {
+    const unsub = window.electronAPI.pos.onFiscalUnknown?.((info: { orderNumber?: string; orderId?: string }) => {
+      setFiscalAlert({ orderNumber: info?.orderNumber || info?.orderId });
+    });
+    return () => unsub?.();
+  }, []);
+
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
 
   const handleShiftOpen = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
@@ -525,6 +537,23 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             : 'bg-red-600 text-white'
         }`}>
           {scanToast.text}
+        </div>
+      )}
+      {/* Fiscal UNKNOWN alert — persistent until dismissed; prompts reconciliation */}
+      {fiscalAlert && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+          <span>
+            {tOr('pos.fiscal.unknownAlert', 'Hóa đơn fiskal')}
+            {fiscalAlert.orderNumber ? ` ${fiscalAlert.orderNumber}` : ''}
+            {' — '}
+            {tOr('pos.fiscal.unknownAlertBody', 'chưa xác nhận đã in. Mở Lịch sử đơn để đối soát (đã in / chưa in) trước khi in lại.')}
+          </span>
+          <button
+            onClick={() => setFiscalAlert(null)}
+            className="ml-2 rounded-md bg-white/20 px-2 py-1 text-xs font-bold hover:bg-white/30"
+          >
+            {tOr('pos.fiscal.dismiss', 'Đã hiểu')}
+          </button>
         </div>
       )}
       {/* Scan import preview modal */}

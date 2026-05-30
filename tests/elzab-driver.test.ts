@@ -1,4 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Keep the COM-port re-resolution (P1) deterministic and offline: stub the
+// PnP-backed serial scanners so the driver never shells out to PowerShell or
+// depends on whatever serial hardware the test machine happens to have.
+vi.mock('../src/main/hardware/port-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/hardware/port-utils')>()),
+  listSerialPorts: async () => [],
+  getVidForPort: async () => null,
+}));
+
 import { ElzabDriver } from '../src/main/hardware/elzab/elzab-driver';
 import { MissingElzabBridge, type ElzabBridge } from '../src/main/hardware/elzab/elzab-bridge';
 import type { FiscalAttemptJournal, FiscalAttemptRow } from '../src/main/database/repos/fiscal-attempt-repo';

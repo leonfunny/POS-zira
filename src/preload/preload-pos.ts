@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:state-changed', listener);
       return () => ipcRenderer.removeListener('pos:state-changed', listener);
     },
+    onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => {
+      const listener = (_e: any, info: any) => callback(info);
+      ipcRenderer.on('pos:fiscal-unknown', listener);
+      return () => ipcRenderer.removeListener('pos:fiscal-unknown', listener);
+    },
     // Database queries
     products: {
       getAll: () => ipcRenderer.invoke('pos:products:getAll'),

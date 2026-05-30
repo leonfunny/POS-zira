@@ -599,6 +599,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on(IPC_CHANNELS.POS_STATE_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STATE_CHANGED, listener);
     },
+    onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => {
+      const listener = (_e: any, info: any) => callback(info);
+      ipcRenderer.on('pos:fiscal-unknown', listener);
+      return () => ipcRenderer.removeListener('pos:fiscal-unknown', listener);
+    },
     products: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_ALL),
       getByCategory: (catId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_CATEGORY, catId),

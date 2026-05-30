@@ -650,6 +650,7 @@ interface ElectronAPI {
     dispatch: (action: any) => Promise<void>;
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
+    onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
 
     products: {
       getAll: () => Promise<PosProduct[]>;

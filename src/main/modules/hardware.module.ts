@@ -51,6 +51,7 @@ import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, c
 import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
 import { WindowManager } from '../windows/window-manager';
+import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
 
@@ -1876,6 +1877,10 @@ export class HardwareModule extends BaseModule {
           port: config.port,
           address: config.address,
           baudRate: config.baudRate || 9600,
+          onFiscalUnknown: (info) => {
+            try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
+            catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }
+          },
         });
       }
       logger.warn(`[HardwareModule] ELZAB_STX printer "${name}" requires a COM port or IP address`);
