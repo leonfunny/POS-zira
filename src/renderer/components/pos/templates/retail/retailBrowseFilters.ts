@@ -70,3 +70,87 @@ export function getVisibleRetailCategories(
     countForRetailUnitFilter(countsByCategory.get(category.id), activeUnitFilter) > 0
   ));
 }
+
+// ---------------------------------------------------------------------------
+// Category priority ranking (POS-configurable)
+//
+// The shop owner ranks categories in POS Settings; the order is persisted as
+// `sort_order` on each category (synced down from the backend `display_order`).
+// Lower `sort_order` = higher priority = shown first and bigger on the retail
+// browse screen. Grocery tills scan ~90% of items, so the value is surfacing
+// the few "must-tap" (no-barcode) fresh categories at the top.
+// ---------------------------------------------------------------------------
+
+export type CategoryTier = 'big' | 'medium' | 'small';
+
+/** Default rank → size bands: positions [0,big) big, [big,medium) medium, rest small. */
+export const CATEGORY_TIER_BANDS: { big: number; medium: number } = { big: 3, medium: 8 };
+
+/**
+ * Sort categories by priority: ascending `sort_order`, tie-broken by name so
+ * the order is stable when several categories share a rank (e.g. all 0 before
+ * the owner ranks anything). Returns a new array; input is not mutated.
+ */
+export function sortCategoriesByRank(categories: Category[]): Category[] {
+  return [...categories].sort((a, b) => {
+    const oa = a.sort_order ?? 0;
+    const ob = b.sort_order ?? 0;
+    if (oa !== ob) return oa - ob;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+}
+
+/** Map a 0-based rank position to its render tier using the given bands. */
+export function categoryTierForRank(
+  position: number,
+  bands: { big: number; medium: number } = CATEGORY_TIER_BANDS,
+): CategoryTier {
+  if (position < bands.big) return 'big';
+  if (position < bands.medium) return 'medium';
+  return 'small';
+}
+
+export interface CategoryTapCounts {
+  /** Products with no barcode → cashier must tap them. */
+  noBarcode: number;
+  total: number;
+}
+
+/** Count "must-tap" (no-barcode) products per category id. */
+export function countNoBarcodeByCategory(products: Product[]): Map<string, CategoryTapCounts> {
+  const map = new Map<string, CategoryTapCounts>();
+  for (const product of products) {
+    if (!product.category_id) continue;
+    const counts = map.get(product.category_id) ?? { noBarcode: 0, total: 0 };
+    counts.total += 1;
+    if (!product.barcode || product.barcode.trim() === '') counts.noBarcode += 1;
+    map.set(product.category_id, counts);
+  }
+  return map;
+}
+
+/**
+ * Auto-suggested priority order ("Gợi ý tự xếp"): categories whose products are
+ * mostly missing a barcode (fresh produce, meat, herbs) float to the top, since
+ * those are the ones a cashier actually taps. Ranks by no-barcode *ratio* desc,
+ * tie-broken by absolute no-barcode count desc, then name. Returns category ids
+ * in suggested priority order (assign sequential sort_order from this).
+ */
+export function suggestCategoryOrder(categories: Category[], products: Product[]): string[] {
+  const counts = countNoBarcodeByCategory(products);
+  const ratioOf = (id: string): number => {
+    const c = counts.get(id);
+    return c && c.total > 0 ? c.noBarcode / c.total : 0;
+  };
+  return [...categories]
+    .sort((a, b) => {
+      const ra = ratioOf(a.id);
+      const rb = ratioOf(b.id);
+      if (rb !== ra) return rb - ra;
+      const na = counts.get(a.id)?.noBarcode ?? 0;
+      const nb = counts.get(b.id)?.noBarcode ?? 0;
+      if (nb !== na) return nb - na;
+      return (a.name || '').localeCompare(b.name || '');
+    })
+    .map((c) => c.id);
+}
