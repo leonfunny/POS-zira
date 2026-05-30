@@ -1530,6 +1530,40 @@ export class ApiClient {
       };
     });
 
+    // TODO(server-change): the warehouse catalog is shipping a single shared
+    // `template.nameTranslations` across unrelated products — observed live as
+    // every quick-add item (Mực, Củ cải trắng, Nem mắm…) carrying
+    // `{en:Okra, pl:Okra, vi:Đậu bắp}` regardless of its real name. resolveName()
+    // then renders the wrong localized name (e.g. "Mực" shows as "Đậu bắp" in VI),
+    // which is dangerous on a till. Backend must regenerate per-product
+    // translations; remove this guard once that lands. Until then, drop any
+    // translation map shared by products with DIFFERENT canonical names: a real
+    // translation belongs to exactly one product name, so cross-product
+    // duplication is a reliable corruption signature. Dropping falls back to the
+    // (correct) canonical `name` — it never invents data.
+    const translationOwnerNames = new Map<string, Set<string>>();
+    for (const p of products) {
+      if (!p.name_translations) continue;
+      let owners = translationOwnerNames.get(p.name_translations);
+      if (!owners) {
+        owners = new Set<string>();
+        translationOwnerNames.set(p.name_translations, owners);
+      }
+      owners.add(p.name);
+    }
+    let poisonedTranslationCount = 0;
+    for (const p of products) {
+      if (p.name_translations && (translationOwnerNames.get(p.name_translations)?.size ?? 0) > 1) {
+        p.name_translations = null;
+        poisonedTranslationCount++;
+      }
+    }
+    if (poisonedTranslationCount > 0) {
+      logger.warn(
+        `[ApiClient] Dropped ${poisonedTranslationCount} shared/poisoned product translation(s) (same map on differently-named products) — falling back to canonical name. Backend translation data needs regeneration.`,
+      );
+    }
+
     return {
       products,
       categories: Array.from(categoryMap.values()),
