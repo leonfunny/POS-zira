@@ -5,6 +5,7 @@ import {
   categoryTierForRank,
   countNoBarcodeByCategory,
   suggestCategoryOrder,
+  categoryImageUrl,
   CATEGORY_TIER_BANDS,
 } from '../src/renderer/components/pos/templates/retail/retailBrowseFilters';
 
@@ -93,5 +94,24 @@ describe('suggestCategoryOrder', () => {
       prod('b1', 'b', null), prod('b2', 'b', null),
     ];
     expect(suggestCategoryOrder(categories, products)).toEqual(['b', 'a']);
+  });
+});
+
+describe('categoryImageUrl', () => {
+  const withIcon = (icon: string | null): Category =>
+    ({ id: 'c', name: 'C', icon, color: null, sort_order: 0, updated_at: null } as Category);
+
+  it('returns the url when icon holds an http(s) image url', () => {
+    expect(categoryImageUrl(withIcon('https://img.zira.pl/quick-add/chesaigon/categories/cat-1.jpg')))
+      .toBe('https://img.zira.pl/quick-add/chesaigon/categories/cat-1.jpg');
+    expect(categoryImageUrl(withIcon('//img.zira.pl/x.jpg'))).toBe('//img.zira.pl/x.jpg');
+    expect(categoryImageUrl(withIcon('/uploads/x.jpg'))).toBe('/uploads/x.jpg');
+  });
+
+  it('returns null for emoji / short glyphs / empty', () => {
+    expect(categoryImageUrl(withIcon('🥬'))).toBeNull();
+    expect(categoryImageUrl(withIcon('AB'))).toBeNull();
+    expect(categoryImageUrl(withIcon(''))).toBeNull();
+    expect(categoryImageUrl(withIcon(null))).toBeNull();
   });
 });

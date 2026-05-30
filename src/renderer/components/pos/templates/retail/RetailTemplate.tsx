@@ -22,6 +22,7 @@ import {
   sortCategoriesByRank,
   categoryTierForRank,
   countNoBarcodeByCategory,
+  categoryImageUrl,
 } from './retailBrowseFilters';
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
@@ -722,59 +723,51 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-4 gap-3 p-4">
                   {visibleCategories.map((cat, index) => {
                     const displayName = resolveName(cat, lang);
-                    const counts = categoryUnitCounts.get(cat.id);
-                    const count = countForRetailUnitFilter(counts, browseUnitFilter);
-                    const pieceCount = counts?.piece ?? 0;
-                    const kgCount = counts?.kg ?? 0;
                     const bg = cat.color || '#da7756';
                     // Owner-configured priority → render size. Top-ranked
                     // categories (typically the fresh, no-barcode groups) get a
-                    // larger, wider card so the cashier reaches them fastest.
+                    // larger, wider, image-first tile so the cashier reaches
+                    // them fastest. Image dominates; text is kept to one line.
                     const tier = categoryTierForRank(index);
                     const isBig = tier === 'big';
                     const noBarcode = noBarcodeCounts.get(cat.id)?.noBarcode ?? 0;
+                    const catImg = categoryImageUrl(cat);
                     return (
                       <button
                         key={cat.id}
                         type="button"
                         onClick={() => setActiveCategoryId(cat.id)}
-                        className={`group flex items-center gap-4 p-4 rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 hover:bg-brand-50/40 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 ${
-                          isBig ? 'sm:col-span-2 min-h-[124px]' : 'min-h-[96px]'
+                        className={`group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 ${
+                          isBig ? 'sm:col-span-2' : ''
                         }`}
                       >
-                        <div
-                          className={`shrink-0 rounded-xl flex items-center justify-center font-extrabold ${
-                            isBig ? 'w-16 h-16 text-2xl' : 'w-14 h-14 text-xl'
-                          }`}
-                          style={{ backgroundColor: `${bg}2E`, color: bg }}
-                          aria-hidden="true"
-                        >
-                          {categoryGlyph(cat, displayName)}
+                        <div className={`relative w-full overflow-hidden bg-slate-100 ${isBig ? 'aspect-[16/9]' : 'aspect-[4/3]'}`}>
+                          {catImg ? (
+                            <img
+                              src={catImg}
+                              alt={displayName}
+                              loading="lazy"
+                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                            />
+                          ) : (
+                            <div
+                              className={`w-full h-full flex items-center justify-center font-extrabold ${isBig ? 'text-4xl' : 'text-3xl'}`}
+                              style={{ backgroundColor: `${bg}2E`, color: bg }}
+                              aria-hidden="true"
+                            >
+                              {categoryGlyph(cat, displayName)}
+                            </div>
+                          )}
+                          {noBarcode > 0 && (
+                            <span className="absolute top-2 left-2 text-[10px] font-extrabold leading-none px-2 py-1 rounded-md bg-amber-500 text-white shadow-sm tabular-nums">
+                              {noBarcode} {tOr('pos.categories.mustTap', 'cần bấm')}
+                            </span>
+                          )}
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className={`font-bold text-slate-900 line-clamp-1 leading-tight ${isBig ? 'text-lg' : 'text-base'}`}>
+                        <div className="px-2.5 py-2">
+                          <p className={`font-extrabold text-slate-900 line-clamp-1 leading-tight ${isBig ? 'text-lg' : 'text-sm'}`}>
                             {displayName}
                           </p>
-                          <p className="text-xs font-medium text-slate-500 mt-1 tabular-nums">
-                            {count} {tOr('pos.categories.productCount', 'products')}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {noBarcode > 0 && (
-                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 tabular-nums">
-                                {noBarcode} {tOr('pos.categories.mustTap', 'cần bấm')}
-                              </span>
-                            )}
-                            {(browseUnitFilter === 'all' || browseUnitFilter === 'piece') && pieceCount > 0 && (
-                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-slate-100 text-slate-700 border border-slate-200 tabular-nums">
-                                {pieceCount} {tOr('pos.unitFilter.pieceShort', 'pc')}
-                              </span>
-                            )}
-                            {(browseUnitFilter === 'all' || browseUnitFilter === 'kg') && kgCount > 0 && (
-                              <span className="text-[10px] font-extrabold leading-none px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 tabular-nums">
-                                {kgCount} kg
-                              </span>
-                            )}
-                          </div>
                         </div>
                       </button>
                     );

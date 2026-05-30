@@ -81,6 +81,18 @@ export function getVisibleRetailCategories(
 // the few "must-tap" (no-barcode) fresh categories at the top.
 // ---------------------------------------------------------------------------
 
+/**
+ * The POS sync stores a category's image URL in its `icon` field
+ * (api-client maps backend `category.imageUrl` → local `icon`). Emoji icons
+ * are ≤2 code points; anything that looks like a URL is treated as an image.
+ * Returns the image URL when `icon` is one, else null (caller shows a glyph).
+ */
+export function categoryImageUrl(cat: { icon?: string | null }): string | null {
+  const v = (cat.icon || '').trim();
+  if (!v) return null;
+  return /^https?:\/\//i.test(v) || v.startsWith('//') || v.startsWith('/') ? v : null;
+}
+
 export type CategoryTier = 'big' | 'medium' | 'small';
 
 /** Default rank → size bands: positions [0,big) big, [big,medium) medium, rest small. */
@@ -91,7 +103,9 @@ export const CATEGORY_TIER_BANDS: { big: number; medium: number } = { big: 3, me
  * the order is stable when several categories share a rank (e.g. all 0 before
  * the owner ranks anything). Returns a new array; input is not mutated.
  */
-export function sortCategoriesByRank(categories: Category[]): Category[] {
+export function sortCategoriesByRank<T extends { name: string; sort_order?: number | null }>(
+  categories: T[],
+): T[] {
   return [...categories].sort((a, b) => {
     const oa = a.sort_order ?? 0;
     const ob = b.sort_order ?? 0;
@@ -117,7 +131,9 @@ export interface CategoryTapCounts {
 }
 
 /** Count "must-tap" (no-barcode) products per category id. */
-export function countNoBarcodeByCategory(products: Product[]): Map<string, CategoryTapCounts> {
+export function countNoBarcodeByCategory(
+  products: Array<{ category_id?: string | null; barcode?: string | null }>,
+): Map<string, CategoryTapCounts> {
   const map = new Map<string, CategoryTapCounts>();
   for (const product of products) {
     if (!product.category_id) continue;
@@ -136,7 +152,10 @@ export function countNoBarcodeByCategory(products: Product[]): Map<string, Categ
  * tie-broken by absolute no-barcode count desc, then name. Returns category ids
  * in suggested priority order (assign sequential sort_order from this).
  */
-export function suggestCategoryOrder(categories: Category[], products: Product[]): string[] {
+export function suggestCategoryOrder<T extends { id: string; name: string }>(
+  categories: T[],
+  products: Array<{ category_id?: string | null; barcode?: string | null }>,
+): string[] {
   const counts = countNoBarcodeByCategory(products);
   const ratioOf = (id: string): number => {
     const c = counts.get(id);

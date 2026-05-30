@@ -15,6 +15,7 @@ import { getScStrings } from '../i18n';
 import CategoryChips from './CategoryChips';
 import DepartmentTabs from './DepartmentTabs';
 import ProductTile from './ProductTile';
+import KioskCategoryGallery from './KioskCategoryGallery';
 
 interface KioskMenuPanelProps {
   lang: ScLanguage;
@@ -72,6 +73,12 @@ export default function KioskMenuPanel({
               {t.catalogLoading}
             </div>
           </div>
+        ) : activeCategoryId === null && categories.length > 0 ? (
+          <KioskCategoryGallery
+            lang={lang}
+            categories={categories}
+            onSelect={onCategorySelect}
+          />
         ) : products.length === 0 ? (
           <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-8 text-center">
             <PackageSearch size={58} className="mb-4 text-[var(--sc-border)]" />

@@ -7,6 +7,7 @@ import {
   categoryTierForRank,
   countNoBarcodeByCategory,
   suggestCategoryOrder,
+  categoryImageUrl,
   type CategoryTapCounts,
   type CategoryTier,
 } from './templates/retail/retailBrowseFilters';
@@ -157,6 +158,7 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
             const noBarcode = c?.noBarcode ?? 0;
             const total = c?.total ?? 0;
             const bg = cat.color || '#da7756';
+            const catImg = categoryImageUrl(cat);
             return (
               <li
                 key={cat.id}
@@ -169,11 +171,19 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
                 }`}
               >
                 <GripVertical size={16} className="shrink-0 text-slate-300" />
-                <span
-                  className="w-1.5 self-stretch rounded-full shrink-0"
-                  style={{ backgroundColor: bg }}
-                  aria-hidden="true"
-                />
+                {catImg ? (
+                  <img
+                    src={catImg}
+                    alt=""
+                    className="w-11 h-11 rounded-lg object-cover shrink-0 border border-slate-200 bg-slate-50"
+                  />
+                ) : (
+                  <span
+                    className="w-1.5 self-stretch rounded-full shrink-0"
+                    style={{ backgroundColor: bg }}
+                    aria-hidden="true"
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <p
                     className={`font-bold text-slate-900 truncate ${
