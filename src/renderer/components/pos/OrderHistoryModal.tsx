@@ -1181,6 +1181,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
   const [reprinting, setReprinting] = useState(false);
   const [printingFiscal, setPrintingFiscal] = useState(false);
+  // A prior fiscal attempt left in UNKNOWN_NEEDS_RECONCILIATION (e.g. the ELZAB
+  // sidecar crashed mid-receipt). The reprint gate stays blocked until the
+  // operator confirms — on the physical printer — whether it actually printed.
+  const [reconcilable, setReconcilable] = useState<{ id: string; status: string } | null>(null);
+  const [reconciling, setReconciling] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1378,6 +1383,48 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setPrintingFiscal(false);
+    }
+  };
+
+  // Detect a stuck fiscal attempt whenever the detail panel opens for an order,
+  // so the Printing section can offer a reconcile action instead of a silently
+  // blocked reprint.
+  useEffect(() => {
+    const orderId = detail?.order.id;
+    if (!orderId) { setReconcilable(null); return; }
+    let cancelled = false;
+    setReconcilable(null);
+    window.electronAPI.pos.payment
+      .getReconcilableFiscalAttempt(orderId)
+      .then((res: { attempt: { id: string; status: string } | null } | undefined) => {
+        if (cancelled) return;
+        setReconcilable(res?.attempt ? { id: res.attempt.id, status: res.attempt.status } : null);
+      })
+      .catch(() => { if (!cancelled) setReconcilable(null); });
+    return () => { cancelled = true; };
+  }, [detail?.order.id]);
+
+  const handleReconcileFiscal = async (orderId: string, didPrint: boolean) => {
+    if (reconciling) return;
+    setReconciling(true);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.payment.reconcileFiscalAttempt(orderId, didPrint);
+      if (result?.success) {
+        setReconcilable(null);
+        setReprintStatus({
+          type: 'ok',
+          message: didPrint
+            ? tOr(t, 'pos.history.reconciledPrinted', 'Marked as already fiscalized. No reprint needed — use "Print order" for a copy.')
+            : tOr(t, 'pos.history.reconciledNotPrinted', 'Cleared. You can print the fiscal receipt now.'),
+        });
+      } else {
+        setReprintStatus({ type: 'error', message: result?.error || tOr(t, 'pos.history.reconcileFailed', 'Could not reconcile') });
+      }
+    } catch (e: any) {
+      setReprintStatus({ type: 'error', message: e?.message || tOr(t, 'pos.history.reconcileFailed', 'Could not reconcile') });
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -1752,9 +1799,36 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   {reprinting ? 'Sending...' : 'Print order'}
                 </button>
 
+                {reconcilable && (
+                  <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                    <p className="text-sm font-extrabold text-amber-900">
+                      {tOr(t, 'pos.history.reconcileTitle', 'Hóa đơn fiskal trước bị gián đoạn')}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-amber-800">
+                      {tOr(t, 'pos.history.reconcilePrompt', 'Lần in trước không xác nhận được. Kiểm tra MÁY fiskal: hóa đơn cho đơn này đã in ra giấy chưa? In lại có thể tạo hóa đơn trùng.')}
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => handleReconcileFiscal(order.id, true)}
+                        disabled={reconciling}
+                        className="flex-1 min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                      >
+                        {tOr(t, 'pos.history.reconcileDidPrint', 'Đã in trên máy')}
+                      </button>
+                      <button
+                        onClick={() => handleReconcileFiscal(order.id, false)}
+                        disabled={reconciling}
+                        className="flex-1 min-h-11 rounded-lg border border-amber-400 bg-amber-500 px-3 text-sm font-extrabold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-amber-200"
+                      >
+                        {tOr(t, 'pos.history.reconcileNotPrinted', 'Chưa in → cho in lại')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handlePrintFiscal(order.id); }}
-                  disabled={printingFiscal || reprinting || isMirroring || refundStatus !== 'none'}
+                  disabled={printingFiscal || reprinting || isMirroring || refundStatus !== 'none' || !!reconcilable}
                   className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 >
                   {(printingFiscal || isMirroring) && (

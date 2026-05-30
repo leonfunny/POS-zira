@@ -38,6 +38,7 @@ import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
+import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
 import { staffRepo } from '../database/repos/staff-repo';
@@ -1820,6 +1821,33 @@ export class PosModule extends BaseModule {
       return { success: true, ...status };
     });
 
+    // Surface a fiscal attempt stuck in UNKNOWN_NEEDS_RECONCILIATION so the UI
+    // can offer the operator a reconcile action instead of a permanently
+    // blocked reprint.
+    ipcMain.handle('pos:fiscal:get-reconcilable', async (_e, orderId: string) => {
+      try {
+        const attempt = fiscalAttemptRepo.findReconcilableAttempt(orderId);
+        return { success: true, attempt: attempt ?? null };
+      } catch (e: any) {
+        return { success: false, attempt: null, error: e?.message ?? String(e) };
+      }
+    });
+
+    // Operator-confirmed resolution after they checked the physical printer.
+    // didPrint=true → mark SUCCESS_CONFIRMED (already fiscalized, no reprint).
+    // didPrint=false → mark FAILED_CONFIRMED, clearing the gate so the cashier
+    // can print a fresh fiscal receipt.
+    ipcMain.handle('pos:fiscal:reconcile', async (_e, orderId: string, didPrint: boolean) => {
+      try {
+        const resolved = fiscalAttemptRepo.resolveReconcilable(orderId, !!didPrint);
+        if (!resolved) return { success: false, error: 'No unresolved fiscal attempt for this order' };
+        logger.info(`[PosModule] Fiscal attempt ${resolved.id} for order ${orderId} reconciled by operator: didPrint=${!!didPrint} → ${resolved.status}`);
+        return { success: true, status: resolved.status };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? String(e) };
+      }
+    });
+
     ipcMain.handle('pos:reprint-receipt', async (_e, orderId: string) => {
       try { const printed = await this.paymentController?.reprintReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
@@ -1960,8 +1988,23 @@ export class PosModule extends BaseModule {
         const { success: _s, ...rest } = result;
         return { success: true, receiptPrinted, ...rest };
       } catch (e: any) {
-        logger.error(`[PosModule] Refund failed for order ${orderId}: ${e.message}`);
-        return { success: false, error: e.message };
+        // Surface the real cause: refund failures were logging only e.message,
+        // which is empty for non-Error throws and opaque network/runtime faults,
+        // making "Refund failed" undiagnosable. Capture name/code/cause/stack.
+        const detail =
+          e?.message
+          || e?.code
+          || e?.cause?.message
+          || e?.cause?.code
+          || e?.name
+          || (typeof e === 'string' ? e : '');
+        const surfaced = detail || 'Unknown refund error';
+        logger.error(
+          `[PosModule] Refund failed for order ${orderId}: ${surfaced}`
+          + ` (name=${e?.name ?? 'n/a'} code=${e?.code ?? 'n/a'} cause=${e?.cause?.code ?? e?.cause?.message ?? 'n/a'})`,
+        );
+        if (e?.stack) logger.error(`[PosModule] Refund failure stack: ${e.stack}`);
+        return { success: false, error: surfaced };
       }
     });
 

@@ -728,6 +728,8 @@ interface ElectronAPI {
       printReceiptAndOpenDrawer: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; drawerOpened: boolean; error?: string }>;
       printFiscalReceipt: (orderId: string) => Promise<{ success: boolean; fiscalPrinted: boolean; error?: string }>;
       hasFiscalPrinter: () => Promise<{ success: boolean; configured: boolean; connected: boolean }>;
+      getReconcilableFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; error?: string }>;
+      reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => Promise<{ success: boolean; status?: string; error?: string }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       printRefundReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>;

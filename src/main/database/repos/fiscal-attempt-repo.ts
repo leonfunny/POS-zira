@@ -38,6 +38,8 @@ export interface CreateFiscalAttemptInput {
 
 export interface FiscalAttemptJournal {
   findBlockingAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null;
+  findReconcilableAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null;
+  resolveReconcilable(orderId: string, didPrint: boolean, paymentId?: string | null): FiscalAttemptRow | null;
   getNextAttemptNo(orderId: string, paymentId?: string | null): number;
   createPending(input: CreateFiscalAttemptInput): FiscalAttemptRow;
   markSent(id: string): void;
@@ -98,6 +100,41 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
        LIMIT 1`,
       [orderId, ...payment.params, ...BLOCKING_STATUSES],
     );
+  },
+
+  // Latest attempt left in UNKNOWN_NEEDS_RECONCILIATION for an order. Unlike
+  // findBlockingAttempt this does NOT exclude pre-print (ReceiptBegin/Conditions)
+  // failures — the operator-facing reconcile UI surfaces every unresolved
+  // unknown so a stuck order can always be cleared by a human who checked the
+  // physical printer.
+  findReconcilableAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null {
+    const payment = paymentPredicate(paymentId);
+    return database.get<FiscalAttemptRow>(
+      `SELECT * FROM fiscal_attempts
+       WHERE order_id = ?
+         AND ${payment.sql}
+         AND status = 'UNKNOWN_NEEDS_RECONCILIATION'
+       ORDER BY attempt_no DESC
+       LIMIT 1`,
+      [orderId, ...payment.params],
+    );
+  },
+
+  // Operator-driven resolution of a stuck unknown attempt after they verified
+  // the physical printer. didPrint=true → the receipt is already fiscalized
+  // (SUCCESS_CONFIRMED, no reprint). didPrint=false → nothing printed
+  // (FAILED_CONFIRMED), which clears the safety gate so a fresh receipt can be
+  // printed. Returns the resolved row, or null if there was nothing to resolve.
+  resolveReconcilable(orderId: string, didPrint: boolean, paymentId?: string | null): FiscalAttemptRow | null {
+    const attempt = this.findReconcilableAttempt(orderId, paymentId);
+    if (!attempt) return null;
+    const reconciliation = { reconciledBy: 'operator', didPrint, reconciledAt: new Date().toISOString() };
+    if (didPrint) {
+      markResolved(attempt.id, 'SUCCESS_CONFIRMED', undefined, reconciliation);
+    } else {
+      markResolved(attempt.id, 'FAILED_CONFIRMED', 'OPERATOR_RECONCILED_NOT_PRINTED', reconciliation);
+    }
+    return database.get<FiscalAttemptRow>('SELECT * FROM fiscal_attempts WHERE id = ?', [attempt.id]);
   },
 
   getNextAttemptNo(orderId: string, paymentId?: string | null): number {
