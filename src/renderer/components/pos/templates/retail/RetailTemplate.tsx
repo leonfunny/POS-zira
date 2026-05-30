@@ -20,7 +20,6 @@ import {
   filterRetailBrowseProducts,
   getVisibleRetailCategories,
   sortCategoriesByRank,
-  categoryTierForRank,
   countNoBarcodeByCategory,
   categoryImageUrl,
 } from './retailBrowseFilters';
@@ -463,7 +462,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const noBarcodeCounts = useMemo(() => countNoBarcodeByCategory(allProducts), [allProducts]);
 
   // Categories are shown in owner-configured priority order (sort_order asc).
-  // The top-ranked ones render larger (see categoryTierForRank in the gallery).
+  // All tiles render at the same size; priority only affects ordering.
   const visibleCategories = useMemo(() => {
     const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
     return sortCategoriesByRank(getVisibleRetailCategories(categories, categoryUnitCounts, browseUnitFilter));
@@ -721,15 +720,14 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-4 gap-3 p-4">
-                  {visibleCategories.map((cat, index) => {
+                  {visibleCategories.map((cat) => {
                     const displayName = resolveName(cat, lang);
                     const bg = cat.color || '#da7756';
-                    // Owner-configured priority → render size. Top-ranked
-                    // categories (typically the fresh, no-barcode groups) get a
-                    // larger, wider, image-first tile so the cashier reaches
-                    // them fastest. Image dominates; text is kept to one line.
-                    const tier = categoryTierForRank(index);
-                    const isBig = tier === 'big';
+                    // Uniform image-first tiles: every category renders at the
+                    // same size and aspect ratio so the grid stays even with no
+                    // ragged gaps. Priority order is still preserved (categories
+                    // are sorted by rank before this map), it just no longer
+                    // changes tile size.
                     const noBarcode = noBarcodeCounts.get(cat.id)?.noBarcode ?? 0;
                     const catImg = categoryImageUrl(cat);
                     return (
@@ -737,11 +735,9 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                         key={cat.id}
                         type="button"
                         onClick={() => setActiveCategoryId(cat.id)}
-                        className={`group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300 ${
-                          isBig ? 'sm:col-span-2' : ''
-                        }`}
+                        className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300"
                       >
-                        <div className={`relative w-full overflow-hidden bg-slate-100 ${isBig ? 'aspect-[16/9]' : 'aspect-[4/3]'}`}>
+                        <div className="relative w-full overflow-hidden bg-slate-100 aspect-[4/3]">
                           {catImg ? (
                             <img
                               src={catImg}
@@ -751,7 +747,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                             />
                           ) : (
                             <div
-                              className={`w-full h-full flex items-center justify-center font-extrabold ${isBig ? 'text-4xl' : 'text-3xl'}`}
+                              className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
                               style={{ backgroundColor: `${bg}2E`, color: bg }}
                               aria-hidden="true"
                             >
@@ -765,7 +761,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                           )}
                         </div>
                         <div className="px-2.5 py-2">
-                          <p className={`font-extrabold text-slate-900 line-clamp-1 leading-tight ${isBig ? 'text-lg' : 'text-sm'}`}>
+                          <p className="font-extrabold text-slate-900 line-clamp-1 leading-tight text-sm">
                             {displayName}
                           </p>
                         </div>
