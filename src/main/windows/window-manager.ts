@@ -331,6 +331,7 @@ export class WindowManager {
       skipTaskbar: isLockedKioskSurface,
       webPreferences: {
         preload: join(__dirname, `../../preload/${config.preload}`),
+        webviewTag: true, // allow embedding the web /add page in a <webview>
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true, // SECURITY: Enable sandbox to isolate renderer
