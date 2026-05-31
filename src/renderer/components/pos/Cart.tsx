@@ -227,9 +227,21 @@ export default function Cart({
 
   const isDiscountActive = controller.target.kind === 'discount';
   const hasItems = cart.items.length > 0;
+  const cartAutoScrollSignature = cart.items
+    .map((item) => `${item.id}:${item.quantity}`)
+    .join('|');
   const shiftWarning = shiftBlockReason || tOr('pos.shift.openRequired', 'Open a shift to accept payments');
   const subtotalStr = `${(cart.subtotal / 100).toFixed(2)} ${currency}`;
   const totalStr = (cart.total / 100).toFixed(2);
+
+  useEffect(() => {
+    const el = itemsScrollRef.current;
+    if (!el || cart.items.length === 0) return;
+    const frame = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [cart.items.length, cartAutoScrollSignature]);
 
   return (
     <div className="flex flex-col h-full bg-white">

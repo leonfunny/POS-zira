@@ -40,6 +40,14 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(CART).toContain('parseBufferGrosze(controller.buffer)');
   });
 
+  it('scrolls the cart item list to the newest line after item changes', () => {
+    expect(CART).toContain('const cartAutoScrollSignature = cart.items');
+    expect(CART).toContain('itemsScrollRef.current');
+    expect(CART).toContain('requestAnimationFrame(() => {');
+    expect(CART).toContain("el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })");
+    expect(CART).toContain('[cart.items.length, cartAutoScrollSignature]');
+  });
+
   it('stores the draft in the retail surface and passes it into PaymentModal', () => {
     expect(RETAIL_TEMPLATE).toContain('paymentPrefillCashGrosze');
     expect(RETAIL_TEMPLATE).toContain('initialCashAmountGrosze={paymentPrefillCashGrosze}');

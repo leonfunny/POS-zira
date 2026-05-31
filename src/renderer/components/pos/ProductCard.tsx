@@ -1,17 +1,27 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 
+export interface ProductLongPressResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
 interface ProductCardProps {
   product: Product;
   onAdd: (product: Product) => void;
+  onLongPress?: (product: Product) => void | ProductLongPressResult | Promise<void | ProductLongPressResult>;
   t?: (key: string) => string;
   /** Operator UI language — drives display-name resolution. Canonical
    *  `product.name` is still used for placeholder-color stability and for
    *  persisted order/fiscal lines; paper receipts localize at print time. */
   lang?: string;
 }
+
+const LONG_PRESS_PRINT_DELAY_MS = 1400;
+const LONG_PRESS_MOVE_CANCEL_PX = 10;
 
 const PLACEHOLDER_COLORS = [
   'bg-brand-50 text-brand-500',
@@ -28,8 +38,14 @@ function placeholderColor(name: string): string {
   return PLACEHOLDER_COLORS[Math.abs(hash) % PLACEHOLDER_COLORS.length];
 }
 
-function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
+function ProductCard({ product, onAdd, onLongPress, t, lang }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
+  const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
+  const [longPressMessage, setLongPressMessage] = useState('');
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const pointerStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const isService = product.category_id === 'cat-5';
   const isDraft = product._isDraft === true;
   const stockQty = product.available_qty ?? product.in_stock;
@@ -46,11 +62,86 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
   const displayName = resolveName(product, lang);
   const imgSrc = product.thumbnail_url || product.image_url;
   const showImage = imgSrc && !imgError;
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pointerStartRef.current = null;
+  }, []);
+  const showLongPressNotice = useCallback((state: 'printed' | 'error', message: string) => {
+    setLongPressState(state);
+    setLongPressMessage(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => {
+      setLongPressState('idle');
+      setLongPressMessage('');
+    }, 2200);
+  }, []);
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, [clearLongPressTimer]);
+
   const handleAdd = () => { if (!soldOut) onAdd(product); };
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (longPressTriggeredRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    handleAdd();
+  };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if ((event.key === 'Enter' || event.key === ' ') && !soldOut) {
       event.preventDefault();
       handleAdd();
+    }
+  };
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (soldOut || !onLongPress) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    clearLongPressTimer();
+    longPressTriggeredRef.current = false;
+    pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Some synthetic/browser paths do not support pointer capture.
+    }
+    longPressTimerRef.current = setTimeout(async () => {
+      longPressTimerRef.current = null;
+      longPressTriggeredRef.current = true;
+      setLongPressState('printing');
+      setLongPressMessage(t?.('pos.label.printing') ?? 'Đang in mã...');
+      try {
+        const result = await onLongPress(product);
+        if (result?.success === false) {
+          showLongPressNotice('error', result.error || result.message || (t?.('pos.label.failed') ?? 'Không in được mã'));
+          return;
+        }
+        showLongPressNotice('printed', result?.message || (t?.('pos.label.printed') ?? 'Đã in mã'));
+      } catch (err: any) {
+        showLongPressNotice('error', err?.message || (t?.('pos.label.failed') ?? 'Không in được mã'));
+      }
+    }, LONG_PRESS_PRINT_DELAY_MS);
+  };
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) clearLongPressTimer();
+  };
+  const handlePointerEnd = () => {
+    clearLongPressTimer();
+    if (longPressTriggeredRef.current) {
+      setTimeout(() => {
+        longPressTriggeredRef.current = false;
+      }, 500);
     }
   };
 
@@ -58,8 +149,14 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
     <div
       role="button"
       tabIndex={soldOut ? -1 : 0}
-      onClick={handleAdd}
+      onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerLeave={clearLongPressTimer}
+      onPointerCancel={handlePointerEnd}
+      onContextMenu={(event) => event.preventDefault()}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
       className={`group bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
@@ -111,6 +208,19 @@ function ProductCard({ product, onAdd, t, lang }: ProductCardProps) {
           <span className="absolute top-2 right-2 text-[10px] text-purple-700 bg-purple-50 border border-purple-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             DRAFT
           </span>
+        )}
+        {longPressState !== 'idle' && (
+          <div
+            className={`absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] font-extrabold ${
+              longPressState === 'error'
+                ? 'bg-red-900/70 text-white'
+                : longPressState === 'printed'
+                ? 'bg-emerald-900/70 text-white'
+                : 'bg-slate-900/65 text-white'
+            }`}
+          >
+            {longPressMessage}
+          </div>
         )}
       </div>
 

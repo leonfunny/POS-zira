@@ -248,7 +248,11 @@ interface ElectronAPI {
     readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
   };
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
-  printLabel: (barcode: string, text?: string) => Promise<{ success: boolean; error?: string }>;
+  printLabel: (
+    barcode: string,
+    text?: string,
+    options?: import('./types').LabelPrintOptions,
+  ) => Promise<{ success: boolean; error?: string }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
   validatePrinterPort: (port: string, protocol: import('./types').PrinterProtocol) => Promise<{

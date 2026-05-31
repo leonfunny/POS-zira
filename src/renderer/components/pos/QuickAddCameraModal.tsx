@@ -47,6 +47,8 @@ export default function QuickAddCameraModal({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraStartPromiseRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(false);
   const prepareIdempotencyKeyRef = useRef<string | null>(null);
   const finalizeIdempotencyKeyRef = useRef<string | null>(null);
   const [images, setImages] = useState<QuickAddCapturedImage[]>([]);
@@ -65,6 +67,22 @@ export default function QuickAddCameraModal({
     return v && v !== key ? v : fallback;
   };
 
+  const hasLiveCamera = () => (
+    streamRef.current?.getVideoTracks().some((track) => track.readyState === 'live') ?? false
+  );
+
+  const attachCameraToVideo = () => {
+    const stream = streamRef.current;
+    const video = videoRef.current;
+    if (!stream || !video) return;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    void video.play().then(() => {
+      if (mountedRef.current && video.readyState >= 2) setCameraReady(true);
+    }).catch(() => {
+      // The next open/capture attempt will retry play() after the video is visible.
+    });
+  };
+
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -72,49 +90,85 @@ export default function QuickAddCameraModal({
     setCameraReady(false);
   };
 
+  const startCamera = () => {
+    if (hasLiveCamera()) {
+      attachCameraToVideo();
+      return Promise.resolve();
+    }
+
+    if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(tOr('pos.quickAdd.cameraUnavailable', 'Camera unavailable'));
+      return Promise.resolve();
+    }
+
+    setCameraReady(false);
+    setError(null);
+
+    const request = navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    }).then((stream) => {
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (streamRef.current === stream) {
+            streamRef.current = null;
+            setCameraReady(false);
+          }
+        };
+      });
+      streamRef.current = stream;
+      attachCameraToVideo();
+    }).catch((err: any) => {
+      if (mountedRef.current) {
+        setError(err?.message || tOr('pos.quickAdd.cameraUnavailable', 'Camera unavailable'));
+      }
+    }).finally(() => {
+      cameraStartPromiseRef.current = null;
+    });
+
+    cameraStartPromiseRef.current = request;
+    return request;
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void startCamera();
+
+    return () => {
+      mountedRef.current = false;
+      stopCamera();
+    };
+  }, []);
+
+  useEffect(() => {
+    attachCameraToVideo();
+  }, [open, prepared]);
+
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
     setImages([]);
     setPrepared(null);
     setProductName('');
     setPrice('');
     setQuantity('1');
     setBusy(false);
-    setCameraReady(false);
     setError(null);
     setRecognized(null);
     setRecognizing(false);
     prepareIdempotencyKeyRef.current = crypto.randomUUID();
     finalizeIdempotencyKeyRef.current = crypto.randomUUID();
-
-    navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-      audio: false,
-    }).then((stream) => {
-      if (cancelled) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        void videoRef.current.play();
-      }
-    }).catch((err: any) => {
-      setError(err?.message || tOr('pos.quickAdd.cameraUnavailable', 'Camera unavailable'));
-    });
-
-    return () => {
-      cancelled = true;
-      stopCamera();
-    };
+    void startCamera();
   }, [open]);
-
-  if (!open) return null;
 
   const handleCapture = () => {
     if (!videoRef.current || !canvasRef.current || images.length >= 3) return;
+    attachCameraToVideo();
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const width = video.videoWidth || 1280;
@@ -136,7 +190,6 @@ export default function QuickAddCameraModal({
       const result = await onPrepare(images, prepareIdempotencyKeyRef.current ?? crypto.randomUUID());
       setPrepared(result);
       setProductName(result.analysis?.name ?? '');
-      stopCamera();
     } catch (err: any) {
       setError(err?.message || tOr('pos.quickAdd.analyzeFailed', 'Analyze failed'));
     } finally {
@@ -208,7 +261,14 @@ export default function QuickAddCameraModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75" onClick={busy ? undefined : requestClose}>
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/75 ${
+        open ? '' : 'pointer-events-none opacity-0'
+      }`}
+      style={open ? undefined : { transform: 'translateX(-120vw)' }}
+      aria-hidden={!open}
+      onClick={open && !busy ? requestClose : undefined}
+    >
       <div className="w-full max-w-4xl mx-4 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-700 px-5 py-4">
           <div>
@@ -423,4 +483,3 @@ export default function QuickAddCameraModal({
     </div>
   );
 }
-

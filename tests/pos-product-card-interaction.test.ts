@@ -19,8 +19,20 @@ describe('POS product card interaction', () => {
     expect(cardSource).toContain('const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {');
     expect(cardSource).toContain("event.key === 'Enter' || event.key === ' '");
     expect(cardSource).toContain('role="button"');
-    expect(cardSource).toContain('onClick={handleAdd}');
+    expect(cardSource).toContain('onClick={handleClick}');
     expect(cardSource).toContain('onKeyDown={handleKeyDown}');
+  });
+
+  it('supports long-press product code printing without adding to cart', () => {
+    const cardSource = productCardSource();
+
+    expect(cardSource).toContain('LONG_PRESS_PRINT_DELAY_MS = 1400');
+    expect(cardSource).toContain('onLongPress?: (product: Product)');
+    expect(cardSource).toContain('onPointerDown={handlePointerDown}');
+    expect(cardSource).toContain('onPointerUp={handlePointerEnd}');
+    expect(cardSource).toContain('onContextMenu={(event) => event.preventDefault()}');
+    expect(cardSource).toContain('longPressTriggeredRef.current');
+    expect(cardSource).toContain('event.stopPropagation()');
   });
 
   it('keeps the plus affordance visible without making it a nested button', () => {

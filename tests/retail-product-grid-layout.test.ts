@@ -27,4 +27,14 @@ describe('retail product grid layout', () => {
     expect(cardSource).not.toContain('p-2 h-full min-h-[190px]');
     expect(cardSource).toContain('className="w-11 h-11');
   });
+
+  it('passes the optional long-press product action into each product card', () => {
+    const gridSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/components/pos/ProductGrid.tsx'),
+      'utf8',
+    );
+
+    expect(gridSource).toContain('onLongPressProduct?: (product: Product)');
+    expect(gridSource).toContain('onLongPress={onLongPressProduct}');
+  });
 });

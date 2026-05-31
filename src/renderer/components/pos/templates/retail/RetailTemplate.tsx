@@ -47,9 +47,10 @@ interface RetailTemplateProps {
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
   onCreateProduct?: () => void;
+  homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
@@ -381,6 +382,31 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     }
   }, [config?.scale?.enabled, config?.scale?.port, dispatch, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
+  const handlePrintProductCode = useCallback(async (product: Product) => {
+    const barcode = product.barcode?.trim();
+    if (!barcode) {
+      return { success: false, error: tOr('pos.label.noBarcode', 'Sản phẩm chưa có mã vạch') };
+    }
+
+    try {
+      const displayName = resolveName(product, lang) || product.name;
+      const priceGrosze = Number(product.retail_price) || 0;
+      const priceText = priceGrosze > 0
+        ? `${(priceGrosze / 100).toFixed(2)} ${tOr('pos.currency', 'zl')}`
+        : undefined;
+      const result = await window.electronAPI.printLabel(barcode, displayName, {
+        priceText,
+        sku: product.sku?.trim() || undefined,
+      });
+      if (result?.success) {
+        return { success: true, message: tOr('pos.label.printed', 'Đã in mã') };
+      }
+      return { success: false, error: result?.error || tOr('pos.label.failed', 'Không in được mã') };
+    } catch (err: any) {
+      return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
+    }
+  }, [lang, tOr]);
+
   const handleBarcodeScanned = useCallback(async (barcode: string) => {
     const product = await window.electronAPI.pos.products.getByBarcode(barcode);
     if (product) {
@@ -532,6 +558,17 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const browseActiveCategoryId = searchQuery ? null : activeCategoryId;
   const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
   const showCategoryGallery = !searchQuery && browseActiveCategoryId === null;
+
+  useEffect(() => {
+    if (!homeResetKey) return;
+    setSearchQuery('');
+    setSearchResults([]);
+    setActiveCategoryId(null);
+    setActiveUnitFilter('all');
+    setShowPayment(false);
+    setPaymentPrefillCashGrosze(undefined);
+    setShowHistory(false);
+  }, [homeResetKey]);
 
   return (
     <>
@@ -775,6 +812,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             <ProductGrid
               products={visibleProducts}
               onAddProduct={handleAddProduct}
+              onLongPressProduct={handlePrintProductCode}
               t={t}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}

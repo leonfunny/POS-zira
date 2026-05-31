@@ -31,6 +31,15 @@ describe('POS quick-add camera flow', () => {
     expect(modal).toContain('images.length >= 3');
   });
 
+  it('keeps the camera stream warm while the modal is hidden', () => {
+    expect(modal).toContain('cameraStartPromiseRef');
+    expect(modal).toContain('void startCamera();');
+    expect(modal).toContain("open ? '' : 'pointer-events-none opacity-0'");
+    expect(modal).toContain("transform: 'translateX(-120vw)'");
+    expect(modal).not.toContain('if (!open) return null');
+    expect(modal).not.toMatch(/setProductName\(result\.analysis\?\.name \?\? ''\);\s*stopCamera\(\);/);
+  });
+
   it('prepares, finalizes, and auto-adds the created variant to cart', () => {
     expect(posLayout).toContain('window.electronAPI.pos.quickAdd.prepare');
     expect(posLayout).toContain('window.electronAPI.pos.quickAdd.finalize');

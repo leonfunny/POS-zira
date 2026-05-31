@@ -33,6 +33,7 @@ import {
   PrinterConfig,
   PrinterProtocol,
   LabelData,
+  LabelPrintOptions,
   ReceiptData,
   DocumentData,
   DailyReportData,
@@ -291,8 +292,8 @@ export class HardwareModule extends BaseModule {
       return this.testPrint();
     });
 
-    ipcMain.handle(IPC_CHANNELS.PRINT_LABEL, async (_event, barcode: string, text?: string) => {
-      return this.printLabel(barcode, text);
+    ipcMain.handle(IPC_CHANNELS.PRINT_LABEL, async (_event, barcode: string, text?: string, options?: LabelPrintOptions) => {
+      return this.printLabel(barcode, text, options);
     });
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, async (_, printerType: string) => {
@@ -563,7 +564,9 @@ export class HardwareModule extends BaseModule {
               type: 'object',
               properties: {
                 barcode: { type: 'string', description: 'Barcode value' },
-                text: { type: 'string', description: 'Text below barcode' },
+                text: { type: 'string', description: 'Product name or text for the label' },
+                priceText: { type: 'string', description: 'Formatted retail price, e.g. 12.99 zl' },
+                sku: { type: 'string', description: 'Optional SKU to print in small text' },
               },
               required: ['barcode'],
             },
@@ -572,7 +575,10 @@ export class HardwareModule extends BaseModule {
         module: this.name,
         category: 'hardware',
         execute: async (args) => {
-          const result = await this.printLabel(args.barcode as string, args.text as string | undefined);
+          const result = await this.printLabel(args.barcode as string, args.text as string | undefined, {
+            priceText: args.priceText as string | undefined,
+            sku: args.sku as string | undefined,
+          });
           return result.success ? '✅ Label printed' : `❌ ${result.error}`;
         },
       },
@@ -1228,13 +1234,25 @@ export class HardwareModule extends BaseModule {
     try { await driver.openDrawer(); return { success: true }; } catch (e: any) { return { success: false, error: e.message }; }
   }
 
-  async printLabel(barcode: string, text?: string): Promise<{ success: boolean; error?: string }> {
+  async printLabel(barcode: string, text?: string, options?: LabelPrintOptions): Promise<{ success: boolean; error?: string }> {
+    const normalizedBarcode = String(barcode || '').trim();
+    if (!normalizedBarcode) return { success: false, error: 'Barcode is required' };
     const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
     if (!driver) return { success: false, error: 'No label printer configured' };
     if (!driver.isConnected()) return { success: false, error: 'Label printer not connected' };
     if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Label printing requires Zebra printer' };
     try {
-      await driver.printLabel({ barcode, barcodeType: barcode.length === 13 ? 'EAN13' : 'CODE128', text1: text || barcode, quantity: 1 });
+      const priceText = options?.priceText?.trim() || options?.text2?.trim();
+      const skuText = options?.sku?.trim();
+      const detailText = options?.text3?.trim() || (skuText ? `SKU ${skuText}` : undefined);
+      await driver.printLabel({
+        barcode: normalizedBarcode,
+        barcodeType: /^\d{13}$/.test(normalizedBarcode) ? 'EAN13' : 'CODE128',
+        text1: text?.trim() || normalizedBarcode,
+        text2: priceText,
+        text3: detailText,
+        quantity: 1,
+      });
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
   }

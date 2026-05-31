@@ -1,10 +1,11 @@
 import React, { useRef, useEffect } from 'react';
 import type { Product } from '../../hooks/usePosDb';
-import ProductCard from './ProductCard';
+import ProductCard, { type ProductLongPressResult } from './ProductCard';
 
 interface ProductGridProps {
   products: Product[];
   onAddProduct: (product: Product) => void;
+  onLongPressProduct?: (product: Product) => void | ProductLongPressResult | Promise<void | ProductLongPressResult>;
   t?: (key: string) => string;
   /** When this value changes (e.g. activeCategoryId), scroll resets to top */
   resetScrollKey?: string | null;
@@ -12,7 +13,7 @@ interface ProductGridProps {
   lang?: string;
 }
 
-export default function ProductGrid({ products, onAddProduct, t, resetScrollKey, lang }: ProductGridProps) {
+export default function ProductGrid({ products, onAddProduct, onLongPressProduct, t, resetScrollKey, lang }: ProductGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,7 +37,14 @@ export default function ProductGrid({ products, onAddProduct, t, resetScrollKey,
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="grid [grid-template-columns:repeat(auto-fill,minmax(154px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(172px,1fr))] gap-2 p-1 pb-2">
         {products.map((product) => (
-          <ProductCard key={product.id} product={product} onAdd={onAddProduct} t={t} lang={lang} />
+          <ProductCard
+            key={product.id}
+            product={product}
+            onAdd={onAddProduct}
+            onLongPress={onLongPressProduct}
+            t={t}
+            lang={lang}
+          />
         ))}
       </div>
     </div>

@@ -113,7 +113,11 @@ export default function ProductDetailDrawer({
     setLabelBusy(true);
     setLabelMessage(null);
     try {
-      const result = await window.electronAPI.printLabel(product.barcode, displayName);
+      const priceGrosze = Number(product.retail_price) || 0;
+      const result = await window.electronAPI.printLabel(product.barcode, displayName, {
+        priceText: priceGrosze > 0 ? formatMoney(priceGrosze, currency) : undefined,
+        sku: product.sku?.trim() || undefined,
+      });
       if (result?.success) {
         setLabelMessage({ ok: true, text: tOr(t, 'products.label.printed', 'Label printed') });
       } else {

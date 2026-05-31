@@ -208,10 +208,10 @@ describe('Product module implementation contract', () => {
 
   it('exposes label printing through the existing hardware printLabel path', () => {
     expect(sharedTypes).toContain("PRINT_LABEL: 'print-label'");
-    expect(preload).toContain('printLabel: (barcode: string, text?: string)');
-    expect(electronDts).toContain('printLabel: (barcode: string, text?: string)');
+    expect(preload).toContain('printLabel: (barcode: string, text?: string, options?:');
+    expect(electronDts).toContain('options?: import(\'./types\').LabelPrintOptions');
     expect(hardwareModule).toContain('ipcMain.handle(IPC_CHANNELS.PRINT_LABEL');
-    expect(hardwareModule).toContain('return this.printLabel(barcode, text)');
+    expect(hardwareModule).toContain('return this.printLabel(barcode, text, options)');
     expect(drawer).toContain('window.electronAPI.printLabel');
   });
 

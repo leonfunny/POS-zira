@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Home } from 'lucide-react';
 import { usePosStore } from '../../hooks/usePosStore';
 import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
@@ -111,6 +112,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   }>({ open: false, ean: '', preview: null, loading: false, error: null });
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [homeResetKey, setHomeResetKey] = useState(0);
   // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
   // must reconcile it in order history before that order can print again.
   const [fiscalAlert, setFiscalAlert] = useState<{ orderNumber?: string } | null>(null);
@@ -495,6 +497,24 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (result.report) setShiftReport(result.report);
   };
 
+  const handleHomeReset = useCallback(() => {
+    setLangOpen(false);
+    setScanToast(null);
+    setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
+    setShowQuickAddCamera(false);
+    setShowAddProduct(false);
+    setFiscalAlert(null);
+    setBarcodeBuffer('');
+    dispatch({ type: 'cart/clear' });
+    dispatch({ type: 'cart/clearDiscount' });
+    dispatch({ type: 'customer/clear' });
+    dispatch({ type: 'tip/clear' });
+    dispatch({ type: 'table/setActive', payload: { tableId: null } });
+    dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
+    setHomeResetKey((key) => key + 1);
+    setTimeout(() => document.dispatchEvent(new CustomEvent('pos:focus-search')), 0);
+  }, [dispatch]);
+
   if (!state) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-gray-400">
@@ -588,7 +608,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
         <div className="flex items-center gap-3">
-          <h1 className="text-base font-bold text-brand-600 tracking-wide">Zira POS</h1>
+          <button
+            type="button"
+            onClick={handleHomeReset}
+            className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-base font-bold tracking-wide text-brand-600 hover:bg-brand-50 active:bg-brand-100 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200"
+            aria-label={tOr('pos.homeReset', 'Reset POS home')}
+            title={tOr('pos.homeReset', 'Reset POS home')}
+          >
+            <Home size={17} aria-hidden="true" />
+            <span>Zira POS</span>
+          </button>
           <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">
             {t(MODE_LABELS[posMode])}
           </span>
@@ -689,6 +718,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             onUnknownBarcodeScanned={openScanImport}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
             onCreateProduct={() => setShowAddProduct(true)}
+            homeResetKey={homeResetKey}
           />
         )}
         {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}

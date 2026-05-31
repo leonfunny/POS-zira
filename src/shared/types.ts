@@ -125,6 +125,13 @@ export interface LabelData {
   quantity: number;
 }
 
+export interface LabelPrintOptions {
+  priceText?: string;
+  sku?: string;
+  text2?: string;
+  text3?: string;
+}
+
 // Manufacturer/distributor role on Polish food labels (per art. 11 ustawa o
 // bezpieczeństwie żywności i żywienia). Renders as "Producent: ..." /
 // "Importer: ..." etc. on the info label.

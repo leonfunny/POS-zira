@@ -127,7 +127,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readWeight: (options?: { port?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SCALE_READ_WEIGHT, options),
   },
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
-  printLabel: (barcode: string, text?: string) => ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text),
+  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text, options),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
   validatePrinterPort: (port: string, protocol: string) => ipcRenderer.invoke(IPC_CHANNELS.VALIDATE_PRINTER_PORT, port, protocol),

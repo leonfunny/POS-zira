@@ -105,6 +105,30 @@ describe("ZebraDriver.printInfoLabel", () => {
     }
   });
 
+  it("uses ASCII product-label text on GK420d so accented glyphs do not disappear", async () => {
+    const configured = new ZebraDriver("ZDesigner GK420d", 50, 30);
+    (configured as any).connected = true;
+    const labelSpy = vi.spyOn(configured as any, "printRaw").mockResolvedValue(undefined);
+
+    try {
+      await configured.printLabel({
+        barcode: "5901234123457",
+        barcodeType: "EAN13",
+        text1: "B\u00e1nh m\u00ec \u0141\u00f3d\u017a",
+        text2: "12.99 zl",
+        quantity: 1,
+      });
+
+      const zpl: string = labelSpy.mock.calls[0][0];
+      expect(zpl).toContain("Banh mi Lodz");
+      expect(zpl).not.toContain("B\u00e1nh");
+      expect(zpl).not.toContain("\u0141\u00f3d\u017a");
+    } finally {
+      labelSpy.mockRestore();
+      configured.disconnect();
+    }
+  });
+
   it("throws when disconnected", async () => {
     (driver as any).connected = false;
     await expect(driver.printInfoLabel(sample)).rejects.toThrow();

@@ -186,8 +186,8 @@ export class ZplFormatter {
     // Adaptive vertical budget based on configured label height (mm).
     const H = this.labelHeight;
     const topMarginMm = Math.max(2, H * 0.07);
-    const baseBarcodeHeightMm = Math.max(8, Math.min(12, H * 0.34));
-    const text2FontMm = Math.max(3.6, Math.min(5.2, H * 0.135));
+    const baseBarcodeHeightMm = Math.max(10, Math.min(15, H * 0.42));
+    const text2FontMm = Math.max(4.2, Math.min(5.8, H * 0.16));
     const text2GapMm = text2FontMm + 0.1;
     const text3FontMm = Math.max(1.8, Math.min(3, H * 0.072));
 
@@ -223,13 +223,13 @@ export class ZplFormatter {
       // Product title first: the old order wasted the whole upper half of
       // 50x30mm product labels by placing every text line below the barcode.
       const titleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
-      const titleMaxLines = H >= 30 ? 3 : 2;
+      const titleMaxLines = H >= 45 ? 3 : 2;
       const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine, titleMaxLines) : [];
       const text1FontMm = text1Lines.length >= 3
-        ? Math.max(1.9, H * 0.072)
+        ? Math.max(2.1, Math.min(2.8, H * 0.072))
         : text1Lines.length > 1
-          ? Math.max(2.1, H * 0.08)
-          : Math.max(2.6, H * 0.10);
+          ? Math.max(2.4, Math.min(3.1, H * 0.09))
+          : Math.max(3, Math.min(4.1, H * 0.115));
       const text1GapMm = text1FontMm + 0.25;
 
       for (const textLine of text1Lines) {
@@ -248,16 +248,18 @@ export class ZplFormatter {
       // enlarged price line claim vertical space first, while preserving a
       // scannable minimum bar height on 50x30mm labels.
       const currentYMm = currentY / this.dotsPerMm;
+      const priceGapBelowBarcodeMm = data.text2 ? (H <= 35 ? 3.2 : 3) : 2;
       const footerBudgetMm =
-        (data.text2 ? text2GapMm : 0)
+        (data.text2 ? priceGapBelowBarcodeMm + text2GapMm : 0)
         + (data.text3 ? text3FontMm + 0.7 : 0)
         + 0.8;
-      const barcodeHeightMm = Math.max(7.5, Math.min(baseBarcodeHeightMm, H - currentYMm - footerBudgetMm));
-      lines.push(`^FO${barcodeX},${currentY}^BY2`);  // Barcode defaults, module width 2
+      const barcodeHeightMm = Math.max(9.5, Math.min(baseBarcodeHeightMm, H - currentYMm - footerBudgetMm));
+      const barcodeModuleWidth = resolvedBarcodeType === 'EAN13' && this.labelWidth >= 45 ? 3 : 2;
+      lines.push(`^FO${barcodeX},${currentY}^BY${barcodeModuleWidth}`);  // Wider EAN bars on GK420d 50mm labels.
       const barcodeCmd = BARCODE_COMMANDS[resolvedBarcodeType];
       lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},Y,N,N`);  // Adaptive height, interpretation line
       lines.push(`^FD${data.barcode}^FS`);
-      currentY += this.mmToDots(barcodeHeightMm + 2);  // ~2mm gap below barcode
+      currentY += this.mmToDots(barcodeHeightMm + priceGapBelowBarcodeMm);
     }
 
     if (data.text2 && wouldFit(currentY, text2FontMm)) {

@@ -236,6 +236,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   setConfig: (config: any) => ipcRenderer.invoke('set-config', config),
   saveConfig: (config: any) => ipcRenderer.invoke('set-config', config),
+  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string }) =>
+    ipcRenderer.invoke('print-label', barcode, text, options),
 
   // === Connection status ===
   getStatus: () => ipcRenderer.invoke('get-status'),

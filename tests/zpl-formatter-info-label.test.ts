@@ -233,6 +233,9 @@ describe("ZplFormatter.formatLabel", () => {
     const priceIndex = lines.indexOf("^FD6.00 PLN^FS");
     const priceFont = lines[priceIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
     const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+    const barcodeY = Number(lines[barcodeIndex - 1]?.match(/\^FO\d+,(\d+)/)?.[1] || 0);
+    const barcodeHeight = Number(lines[barcodeIndex]?.match(/\^BE,(\d+),/)?.[1] || 0);
+    const priceY = Number(lines[priceIndex - 2]?.match(/\^FO\d+,(\d+)/)?.[1] || 0);
     const titleLines = lines
       .slice(0, barcodeIndex)
       .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
@@ -244,8 +247,9 @@ describe("ZplFormatter.formatLabel", () => {
     ]);
     expect(zpl).not.toContain("\u2026");
     expect(priceIndex).toBeGreaterThan(0);
-    expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(19);
-    expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(32);
-    expect(zpl).toContain("#LOBO-86G SKU mieszanka-do-smaz");
+    expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(22);
+    expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(36);
+    expect(priceY - (barcodeY + barcodeHeight)).toBeGreaterThanOrEqual(24);
+    expect(zpl).toContain("^BY3");
   });
 });

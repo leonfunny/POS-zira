@@ -21,7 +21,7 @@ export class ZebraDriver {
   private formatter: ZplFormatter;
 
   private static textProfileForPrinter(printerName: string): ZplTextProfile {
-    return /xprinter|xp-?423|xp-?42/i.test(printerName) ? 'ascii' : 'zebra';
+    return /xprinter|xp-?423|xp-?42|gk420|zdesigner|zebra|ztc/i.test(printerName) ? 'ascii' : 'zebra';
   }
 
   constructor(
