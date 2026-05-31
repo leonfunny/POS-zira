@@ -43,6 +43,7 @@ import {
   PosScheduleDayResponse,
   PosScheduleStaffStatus,
   PosScheduleWeekResponse,
+  PosLoyaltyLookupResponse,
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
@@ -505,6 +506,19 @@ export class ApiClient {
     return JSON.parse(text);
   }
 
+  async getPosCustomerLoyalty(
+    token: string,
+    phone: string,
+  ): Promise<PosLoyaltyLookupResponse | null> {
+    const value = String(phone || '').trim();
+    if (!value) return null;
+    return this.request(
+      'GET',
+      `/loyalty/pos/customer?phone=${encodeURIComponent(value)}`,
+      token,
+    ) as Promise<PosLoyaltyLookupResponse>;
+  }
+
   private async requestWithPrintAgentApiKey(
     method: string,
     path: string,
@@ -963,7 +977,6 @@ export class ApiClient {
 
     // Save connection info to config
     const nextConfig: Parameters<typeof setConfig>[0] = {
-      apiKey,
       agentId: data.agentId,
       salonId: data.salonId,
       salonName: data.salonName,

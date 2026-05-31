@@ -771,6 +771,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       increaseDebt: (id: string, amount: number) => ipcRenderer.invoke(IPC_CHANNELS.POS_CUSTOMERS_INCREASE_DEBT, id, amount),
       lookupNip: (nip: string) => ipcRenderer.invoke('pos:customers:lookupNip', nip),
     },
+    loyalty: {
+      lookupCustomer: (phone: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_LOYALTY_LOOKUP_CUSTOMER, phone),
+    },
     staff: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL),
     },

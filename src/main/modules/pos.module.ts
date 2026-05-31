@@ -75,6 +75,7 @@ import type {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  PosLoyaltyLookupIpcResult,
   PosScheduleAssignNextPayload,
   PosScheduleDayResponse,
   PosScheduleRequestStaffPayload,
@@ -1600,6 +1601,22 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:customers:search', (_e, query: string) => customerRepo.search(query));
     ipcMain.handle('pos:customers:getById', (_e, id: string) => customerRepo.getById(id));
     ipcMain.handle('pos:customers:increaseDebt', (_e, id: string, amount: number) => { customerRepo.increaseDebt(id, amount); return { success: true }; });
+    ipcMain.handle(IPC_CHANNELS.POS_LOYALTY_LOOKUP_CUSTOMER, async (_e, phone: string): Promise<PosLoyaltyLookupIpcResult> => {
+      const value = String(phone || '').trim();
+      if (!value) return { success: false, error: 'phone_required' };
+
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, unavailable: true, error: 'auth_required' };
+
+        const result = await apiClient.getPosCustomerLoyalty(token, value);
+        if (!result) return { success: false, unavailable: true, error: 'loyalty_unavailable' };
+        return { success: true, result };
+      } catch (e: any) {
+        logger.warn(`[PosModule] POS loyalty lookup failed: ${e?.message ?? e}`);
+        return { success: false, unavailable: true, error: e?.message ?? 'loyalty_lookup_failed' };
+      }
+    });
 
     // Staff
     ipcMain.handle('pos:staff:getAll', () => staffRepo.getAll());

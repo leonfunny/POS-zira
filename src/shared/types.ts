@@ -1007,6 +1007,7 @@ export const IPC_CHANNELS = {
   POS_SCHEDULE_SET_STAFF_STATUS: 'pos:schedule:setStaffStatus',
   POS_SCHEDULE_ASSIGN_NEXT: 'pos:schedule:assignNext',
   POS_SCHEDULE_REQUEST_STAFF: 'pos:schedule:requestStaff',
+  POS_LOYALTY_LOOKUP_CUSTOMER: 'pos:loyalty:lookupCustomer',
 
   // POS - Payment
   POS_PRINT_RECEIPT: 'pos:print-receipt',
@@ -2491,6 +2492,61 @@ export interface PosScheduleAssignNextPayload {
 
 export interface PosScheduleRequestStaffPayload extends PosScheduleAssignNextPayload {
   staffProfileId: string;
+}
+
+// ==========================================
+// POS Loyalty Types
+// ==========================================
+
+export interface PosLoyaltyMemberStatus {
+  memberId: string;
+  currentPoints: number;
+  lifetimePoints: number;
+  redeemedPoints: number;
+  totalSpendPln: number;
+  totalBookings: number;
+  tier: {
+    id: string;
+    code: string;
+    name: string;
+    color: string;
+    discountPercent: number;
+    pointsMultiplier: number;
+  } | null;
+  nextTier: {
+    id: string;
+    code: string;
+    name: string;
+    minPoints: number;
+    pointsNeeded: number;
+  } | null;
+  referralCode: string;
+  referralCount: number;
+  pendingRedemptions: number;
+  activeStampCards: number;
+}
+
+export interface PosLoyaltyLookupResponse {
+  found: boolean;
+  phone: string;
+  owner?: {
+    id: string;
+    fullName: string;
+    phone: string;
+    email?: string | null;
+    isBlocked: boolean;
+    noShowCount: number;
+    lateCount: number;
+    cancelCount: number;
+  };
+  loyalty?: PosLoyaltyMemberStatus;
+}
+
+export interface PosLoyaltyLookupIpcResult {
+  success: boolean;
+  result?: PosLoyaltyLookupResponse;
+  unavailable?: boolean;
+  error?: string;
 }
 
 // ==========================================
