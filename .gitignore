@@ -5,6 +5,9 @@ node_modules/
 dist/
 release/
 backups/
+/backup-*/
+/installed-dist-backup-*/
+/installed-renderer-backup-*/
 *.tsbuildinfo
 *.bak
 
