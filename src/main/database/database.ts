@@ -337,8 +337,7 @@ class Database {
    */
   clearSalonData(): void {
     if (!this.db) {
-      logger.warn('[DB] Cannot clear data: database not initialized');
-      return;
+      throw new Error('Database not initialized');
     }
 
     logger.info('[DB] Clearing salon-specific data for tenant isolation...');
@@ -352,11 +351,15 @@ class Database {
       'forecast_runs',
       'replenishment_policies',
       'shifts',
+      // Product/catalog mirrors, including local-only imports from master drafts
+      'local_variant_imports',
       'product_variants',
       'categories',
+      'draft_products',
       'pos_tables',
       'pos_customers',
       'pos_staff',
+      'pos_schedule_cache',
       'pos_hold_orders',
       'pos_quickkey_assignments',  // FK to layouts, clear before layouts
       'pos_quickkey_layouts',
@@ -386,6 +389,14 @@ class Database {
       'bookings',
       'service_rules',
       'services',
+      // Local invoicing/accounting data (seller identity, customers, documents, products)
+      'invoice_payments',
+      'invoice_items',
+      'invoices',
+      'invoice_customers',
+      'invoice_sequences',
+      'accounting_products',
+      'seller_settings',
       // Sync state
       'change_feed_cursor',
       // Path B sync log tables
@@ -405,30 +416,23 @@ class Database {
       for (const table of tablesToClear) {
         if (!validTablePattern.test(table)) {
           logger.error(`[DB] Invalid table name rejected: ${table}`);
-          continue;
+          throw new Error(`Invalid table name rejected: ${table}`);
         }
-        try {
-          this.db!.run(`DELETE FROM ${table}`);
-          logger.info(`[DB] Cleared table: ${table}`);
-        } catch (error) {
-          // Table might not exist in older versions
-          logger.warn(`[DB] Could not clear table ${table}:`, error);
-        }
+        this.db!.run(`DELETE FROM ${table}`);
+        logger.info(`[DB] Cleared table: ${table}`);
       }
 
       // Reset sync metadata to force full sync on next login
-      try {
-        this.db!.run(`DELETE FROM sync_metadata`);
-        logger.info('[DB] Reset sync metadata');
-      } catch (error) {
-        logger.warn('[DB] Could not reset sync_metadata:', error);
-      }
+      this.db!.run(`DELETE FROM sync_metadata`);
+      logger.info('[DB] Reset sync metadata');
     });
 
     this.dirty = true;
-    // Fire-and-forget — auto-save loop will pick up the dirty flag within 5s.
-    // Awaiting here would force callers to be async unnecessarily.
-    void this.save();
+    // Tenant switches must be durable before the next salon can continue.
+    const flush = this.saveSync();
+    if (!flush.success) {
+      throw new Error(`Failed to persist cleared salon data: ${flush.error || 'unknown error'}`);
+    }
     logger.info('[DB] Salon data cleared successfully');
   }
 

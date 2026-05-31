@@ -215,6 +215,10 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
     path.resolve(__dirname, '../src/main/modules/auth.module.ts'),
     'utf8',
   );
+  const apiClientSource = fs.readFileSync(
+    path.resolve(__dirname, '../src/main/network/api-client.ts'),
+    'utf8',
+  );
 
   it('AUTH_CHECK_TOKEN handler (Telegram login) calls setSecureRefreshToken when refresh_token is present', () => {
     const idx = source.indexOf('AUTH_CHECK_TOKEN');
@@ -257,9 +261,35 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
   it('login auto-connect falls back to the current print-agent key when the stored key is stale', () => {
     expect(source).toContain('connectWithAvailablePrintAgentKey');
     expect(source).toContain('Stored print-agent key failed after');
+    expect(source).toContain('Stored print-agent key salon mismatch after');
     expect(source).toContain('client.getMyPrintAgentKey(accessToken)');
-    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'telegram login')");
-    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'email login')");
-    expect(source).toContain("await this.connectWithAvailablePrintAgentKey(client, token, 'startup')");
+    expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'telegram login'[\s\S]+newSalonId/);
+    expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'email login'[\s\S]+newSalonId/);
+    expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+token,[\s\S]+'startup'[\s\S]+config\.salonId/);
+  });
+
+  it('print-agent connect does not write plaintext apiKey into renderer config', () => {
+    const idx = apiClientSource.indexOf('const nextConfig');
+    expect(idx).toBeGreaterThan(-1);
+    const block = apiClientSource.slice(idx, apiClientSource.indexOf('setConfig(nextConfig)', idx));
+    expect(block).not.toMatch(/\bapiKey\b/);
+  });
+
+  it('GET_CONFIG returns renderer-safe config with credential fields stripped', () => {
+    expect(source).toContain('function getRendererConfig');
+    expect(source).toContain('ipcMain.handle(IPC_CHANNELS.GET_CONFIG, () => getRendererConfig())');
+    for (const field of [
+      'apiKey',
+      'authToken',
+      'encryptedAuthToken',
+      'encryptedRefreshToken',
+      'encryptedApiKey',
+      'encryptedAiApiKey',
+      'encryptedRemotePin',
+      'enailJwt',
+      'telegramBotToken',
+    ]) {
+      expect(source).toContain(field);
+    }
   });
 });

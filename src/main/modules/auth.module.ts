@@ -17,6 +17,7 @@ import {
   IPC_CHANNELS,
   AgentConfig,
   AuthUser,
+  ConnectResponse,
   AgentPrintersResponse,
   SalonPrinterRole,
   SalonPrintersListOptions,
@@ -63,6 +64,35 @@ function isValidExternalUrl(url: string): boolean {
   }
 }
 
+function getRendererConfig(): AgentConfig {
+  const config = getConfig();
+  const sanitized: AgentConfig = {
+    ...config,
+    apiKey: '',
+    authToken: '',
+    aiApiKey: '',
+    telegramToken: '',
+    remoteAccessPin: '',
+    booksy: config.booksy ? {
+      ...config.booksy,
+      enailJwt: '',
+      encryptedEnailJwt: '',
+      telegramBotToken: '',
+      hasJwt: !!(config.booksy.enailJwt || config.booksy.encryptedEnailJwt),
+    } : config.booksy,
+  };
+
+  const hidden = sanitized as AgentConfig & Record<string, unknown>;
+  hidden.encryptedToken = '';
+  hidden.encryptedAuthToken = '';
+  hidden.encryptedRefreshToken = '';
+  hidden.encryptedApiKey = '';
+  hidden.encryptedAiApiKey = '';
+  hidden.encryptedTelegramToken = '';
+  hidden.encryptedRemotePin = '';
+  return sanitized;
+}
+
 export class AuthModule extends BaseModule {
   readonly name = 'auth';
 
@@ -95,7 +125,7 @@ export class AuthModule extends BaseModule {
 
   registerIpcHandlers(): void {
     // ─── Config ─────────────────────────────────────────────────
-    ipcMain.handle(IPC_CHANNELS.GET_CONFIG, () => getConfig());
+    ipcMain.handle(IPC_CHANNELS.GET_CONFIG, () => getRendererConfig());
 
     ipcMain.handle(IPC_CHANNELS.SET_CONFIG, async (_, config: Partial<AgentConfig>) => {
       // SECURITY: Block sensitive fields that should not be settable from the renderer
@@ -293,19 +323,28 @@ export class AuthModule extends BaseModule {
         const result = await client.checkTelegramLoginToken(loginToken);
 
         if (result?.access_token && result.status === 'VERIFIED') {
-          setSecureAuthToken(result.access_token);
-          // Backend's auth response carries a refresh_token alongside the
-          // access token (auth.service.ts:571-572). Persist it now so the
-          // 401-retry flow can rotate without forcing a relogin every
-          // time JWT_EXPIRES_IN ticks over.
-          if (result.refresh_token) setSecureRefreshToken(result.refresh_token);
           const user: any = result.user || {};
           const newSalonId = user.salonId || '';
           const currentSalonId = config.salonId || '';
+          if (!newSalonId) {
+            return { success: false, error: 'Login response missing salon id' };
+          }
 
           // Multi-tenant isolation: clear if switching salons
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
             await this.clearSalonDataWithBackup('telegram login salon switch');
+          }
+
+          if (!setSecureAuthToken(result.access_token)) {
+            return { success: false, error: 'Failed to store auth token securely' };
+          }
+          // Backend's auth response carries a refresh_token alongside the
+          // access token (auth.service.ts:571-572). Persist it now so the
+          // 401-retry flow can rotate without forcing a relogin every
+          // time JWT_EXPIRES_IN ticks over.
+          if (result.refresh_token && !setSecureRefreshToken(result.refresh_token)) {
+            clearSecureAuthTokens();
+            return { success: false, error: 'Failed to store refresh token securely' };
           }
 
           setConfig({
@@ -319,7 +358,13 @@ export class AuthModule extends BaseModule {
 
           // Auto-connect Socket.IO (same as email login)
           try {
-            await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'telegram login');
+            await this.connectWithAvailablePrintAgentKey(
+              client,
+              result.access_token,
+              'telegram login',
+              newSalonId,
+              result.salon?.name || user.salon?.name || '',
+            );
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -350,7 +395,7 @@ export class AuthModule extends BaseModule {
       // for the per-branch behaviour spec. The handler here is only
       // wiring: pass real dependencies in, run the helper, return its
       // result verbatim.
-      return resolveCurrentUser({
+      const result = await resolveCurrentUser({
         getAuthToken: getSecureAuthToken,
         getMe: (token) => client.getMe(token),
         getCachedAuthUser: () => config.authUser as AuthUser | undefined,
@@ -361,6 +406,21 @@ export class AuthModule extends BaseModule {
         },
         onUserResolved: (authUser) => setConfig({ authUser }),
       });
+
+      const resolvedUser = result.data?.isAuthenticated ? result.data.user : undefined;
+      const newSalonId = resolvedUser?.salonId || '';
+      const currentSalonId = config.salonId || '';
+      if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
+        await this.clearSalonDataWithBackup('startup auth salon switch');
+      }
+      if (newSalonId) {
+        setConfig({
+          salonId: newSalonId,
+          salonName: resolvedUser?.salonName || config.salonName || '',
+        });
+      }
+
+      return result;
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
@@ -392,6 +452,9 @@ export class AuthModule extends BaseModule {
           const user = result.user;
           const newSalonId = user.salonId || '';
           const currentSalonId = config.salonId || '';
+          if (!newSalonId) {
+            return { success: false, error: 'Login response missing salon id' };
+          }
 
           // Multi-tenant isolation: only clear if switching to a genuinely different salon
           if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
@@ -411,13 +474,22 @@ export class AuthModule extends BaseModule {
           // refresh-on-401 flow can rotate the session without
           // forcing the cashier back to AuthScreen every JWT TTL.
           // Backend response shape: auth.service.ts:758-762.
-          if (result.refresh_token) setSecureRefreshToken(result.refresh_token);
+          if (result.refresh_token && !setSecureRefreshToken(result.refresh_token)) {
+            clearSecureAuthTokens();
+            return { success: false, error: 'Failed to store refresh token securely' };
+          }
 
           setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: user.salon?.slug || '', posEnabled: true, customerDisplayEnabled: true });
 
           // Auto-connect
           try {
-            await this.connectWithAvailablePrintAgentKey(client, result.access_token, 'email login');
+            await this.connectWithAvailablePrintAgentKey(
+              client,
+              result.access_token,
+              'email login',
+              newSalonId,
+              authUser.salonName || '',
+            );
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after email login failed:', err?.message); }
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -527,7 +599,7 @@ export class AuthModule extends BaseModule {
     }
   }
 
-  async connectWithApiKey(apiKey: string): Promise<void> {
+  async connectWithApiKey(apiKey: string): Promise<ConnectResponse | null> {
     const config = getConfig();
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     if (!socket) throw new Error('Socket not initialized');
@@ -541,13 +613,22 @@ export class AuthModule extends BaseModule {
     const prevAgentId = config.agentId;
     const prevSalonId = config.salonId;
 
-    setSecureApiKey(apiKey);
+    if (!setSecureApiKey(apiKey)) {
+      throw new Error('Failed to store API key securely');
+    }
 
-    // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug
+    let response: ConnectResponse | null = null;
+    // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug.
+    // Only catch the REST call itself; tenant wipe errors must fail closed.
     try {
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-      const response = await client.connectWithApiKey(apiKey);
+      response = await client.connectWithApiKey(apiKey);
+    } catch (err: any) {
+      logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
+      setConfig({ isPaired: true });
+    }
 
+    if (response) {
       const identityChanged =
         (prevApiKey && prevApiKey !== apiKey) ||
         (prevAgentId && response.agentId && prevAgentId !== response.agentId) ||
@@ -556,11 +637,7 @@ export class AuthModule extends BaseModule {
         logger.info(
           `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
         );
-        try {
-          database.clearSalonData();
-        } catch (err: any) {
-          logger.warn('[AuthModule] clearSalonData after identity change failed:', err?.message);
-        }
+        await this.clearSalonDataWithBackup('apiKey/agent change');
       }
 
       // Server-pushed printers carry their own isEnabled flag (typically false
@@ -577,25 +654,42 @@ export class AuthModule extends BaseModule {
         this.eventBus.emit('config:changed', { changedKeys });
       }
       await this.syncWindowsPrintersWithBackend(apiKey);
-    } catch (err: any) {
-      logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
-      setConfig({ isPaired: true });
     }
 
     const latestConfig = getConfig();
+    if (socket.isConnected() && prevApiKey && prevApiKey !== apiKey) {
+      socket.disconnect();
+    }
     await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey, latestConfig.machineId);
+    return response;
   }
 
   private async connectWithAvailablePrintAgentKey(
     client: ApiClient,
     accessToken: string,
     context: string,
+    expectedSalonId = '',
+    expectedSalonName = '',
   ): Promise<void> {
     const existingKey = getSecureApiKey();
     if (existingKey?.startsWith('pa_')) {
       try {
-        await this.connectWithApiKey(existingKey);
-        return;
+        const response = await this.connectWithApiKey(existingKey);
+        if (!expectedSalonId || response?.salonId === expectedSalonId) {
+          return;
+        }
+        logger.warn(
+          `[AuthModule] Stored print-agent key salon mismatch after ${context}: expected=${expectedSalonId} actual=${response?.salonId || 'unknown'}; fetching current key`,
+        );
+        setSecureApiKey('');
+        setConfig({
+          apiKey: '',
+          agentId: '',
+          salonId: expectedSalonId,
+          ...(expectedSalonName && { salonName: expectedSalonName }),
+          isPaired: false,
+        });
+        this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET)?.disconnect();
       } catch (err: any) {
         logger.warn(`[AuthModule] Stored print-agent key failed after ${context}; fetching current key: ${err?.message || err}`);
       }
@@ -606,7 +700,21 @@ export class AuthModule extends BaseModule {
       throw new Error('No print-agent API key available');
     }
 
-    await this.connectWithApiKey(keyResult.apiKey);
+    const response = await this.connectWithApiKey(keyResult.apiKey);
+    if (expectedSalonId && response?.salonId !== expectedSalonId) {
+      setSecureApiKey('');
+      setConfig({
+        apiKey: '',
+        agentId: '',
+        salonId: expectedSalonId,
+        ...(expectedSalonName && { salonName: expectedSalonName }),
+        isPaired: false,
+      });
+      this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET)?.disconnect();
+      throw new Error(
+        `Print-agent key belongs to salon ${response?.salonId || 'unknown'}, expected ${expectedSalonId}`,
+      );
+    }
   }
 
   private getAuthenticatedApiContext(): { client: ApiClient; token: string } {
@@ -674,11 +782,7 @@ export class AuthModule extends BaseModule {
 
   private async clearSalonDataWithBackup(context: string): Promise<void> {
     await this.createRestorePoint('pre-clear-salon-data', context);
-    try {
-      database.clearSalonData();
-    } catch (err: any) {
-      logger.debug(`[AuthModule] clear salon data failed during ${context}:`, err?.message);
-    }
+    database.clearSalonData();
   }
 
   private async createRestorePoint(reason: BackupRunReason, context: string): Promise<void> {
@@ -718,15 +822,32 @@ export class AuthModule extends BaseModule {
       const hasMachineId = !!config.machineId;
 
       if (hasApiKey || (secureKey && hasMachineId)) {
+        const token = getSecureAuthToken();
         try {
-          await this.connect();
+          if (token && hasApiKey) {
+            const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+            await this.connectWithAvailablePrintAgentKey(
+              client,
+              token,
+              'startup',
+              config.salonId || config.authUser?.salonId || '',
+              config.salonName || config.authUser?.salonName || '',
+            );
+          } else {
+            await this.connect();
+          }
         } catch (e: any) {
           logger.warn('[AuthModule] Auto-connect failed:', e);
-          const token = getSecureAuthToken();
           if (token) {
             try {
               const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-              await this.connectWithAvailablePrintAgentKey(client, token, 'startup');
+              await this.connectWithAvailablePrintAgentKey(
+                client,
+                token,
+                'startup',
+                config.salonId || config.authUser?.salonId || '',
+                config.salonName || config.authUser?.salonName || '',
+              );
             } catch (retryErr: any) {
               logger.warn('[AuthModule] Auto-connect retry with current print-agent key failed:', retryErr?.message || retryErr);
             }

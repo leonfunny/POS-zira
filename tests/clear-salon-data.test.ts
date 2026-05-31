@@ -42,4 +42,47 @@ describe('database.clearSalonData() table list', () => {
   it('clears the local fiscal_attempts journal on salon switch', () => {
     expect(block).toMatch(/'fiscal_attempts'/);
   });
+
+  it('clears local invoicing/accounting tables that contain tenant data', () => {
+    for (const table of [
+      'invoice_payments',
+      'invoice_items',
+      'invoices',
+      'invoice_customers',
+      'invoice_sequences',
+      'accounting_products',
+      'seller_settings',
+    ]) {
+      expect(block).toMatch(new RegExp(`'${table}'`));
+    }
+  });
+
+  it('clears local draft/import tables that can create tenant-specific product variants', () => {
+    expect(block).toMatch(/'draft_products'/);
+    expect(block).toMatch(/'local_variant_imports'/);
+  });
+
+  it('keeps clearSalonData fail-closed instead of swallowing delete errors', () => {
+    expect(source).not.toContain('Could not clear table');
+    expect(source).toContain('Failed to persist cleared salon data');
+  });
+
+  it('covers every migration table except shared/system tables', () => {
+    const migrations = readFileSync(
+      resolve(__dirname, '../src/main/database/migrations.ts'),
+      'utf-8',
+    );
+    const migrationTables = Array.from(
+      migrations.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z_]+)/gi),
+      (match) => match[1],
+    );
+    const clearTables = new Set(Array.from(block.matchAll(/'([a-z_]+)'/g), (match) => match[1]));
+    clearTables.add('sync_metadata');
+    const sharedOrSystemTables = new Set(['vat_rates', 'sync_metadata']);
+    const missing = migrationTables
+      .filter((table) => !sharedOrSystemTables.has(table))
+      .filter((table) => !clearTables.has(table));
+
+    expect(missing).toEqual([]);
+  });
 });
