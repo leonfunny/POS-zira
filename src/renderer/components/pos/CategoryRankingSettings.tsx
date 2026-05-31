@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, Sparkles, Save, GripVertical, Loader2 } from 'lucide-react';
 import type { Category, Product } from '../../hooks/usePosDb';
 import { resolveName } from '../../../shared/catalog-names';
@@ -23,6 +23,10 @@ const TIER_LABEL: Record<CategoryTier, string> = {
   small: 'nút nhỏ',
 };
 
+const AUTO_SAVE_DEBOUNCE_MS = 1600;
+
+type SaveMode = 'auto' | 'manual';
+
 /**
  * POS Settings → "Sắp xếp danh mục" — lets the owner rank categories for the
  * retail browse screen. Order is persisted as each category's `sortOrder`
@@ -35,10 +39,20 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
   const [products, setProducts] = useState<Product[]>([]);
   const [counts, setCounts] = useState<Map<string, CategoryTapCounts>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  const mountedRef = useRef(true);
+  const orderedRef = useRef<Category[]>([]);
+  const dirtyRef = useRef(false);
+  const saving = manualSaving;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,35 +77,41 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
     void load();
   }, [load]);
 
-  const move = (index: number, dir: -1 | 1) => {
-    setOrdered((prev) => {
-      const j = index + dir;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[j]] = [next[j], next[index]];
-      return next;
-    });
-    setSavedNote(null);
-    setDirty(true);
-  };
+  useEffect(() => {
+    orderedRef.current = ordered;
+  }, [ordered]);
 
-  const autoSuggest = () => {
-    const idOrder = suggestCategoryOrder(ordered, products);
-    const byId = new Map(ordered.map((c) => [c.id, c]));
-    setOrdered(idOrder.map((id) => byId.get(id)!).filter(Boolean));
-    setSavedNote(null);
-    setDirty(true);
-  };
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
 
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    setSavedNote(null);
+  const persistOrder = useCallback(async (
+    targetOrder: Category[] = orderedRef.current,
+    mode: SaveMode = 'auto',
+  ) => {
+    if (saveInFlightRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
+
+    const isManualSave = mode === 'manual';
+    saveInFlightRef.current = true;
+    if (mountedRef.current) {
+      if (isManualSave) {
+        setManualSaving(true);
+      } else {
+        setAutoSaving(true);
+      }
+      setError(null);
+      setSavedNote(null);
+    }
+
+    let failed = false;
     try {
       let written = 0;
-      for (let i = 0; i < ordered.length; i++) {
-        const cat = ordered[i];
-        if ((cat.sort_order ?? 0) === i) continue; // unchanged → skip
+      for (let i = 0; i < targetOrder.length; i++) {
+        const cat = targetOrder[i];
+        if ((cat.sort_order ?? 0) === i) continue; // unchanged -> skip
         const res: any = await window.electronAPI.pos.productAdmin.updateCategory(cat.id, {
           name: cat.name,
           sortOrder: i,
@@ -108,16 +128,128 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
         }
         written += 1;
       }
-      // Optimistically reflect the persisted order so the list doesn't jump
-      // back before the next product sync rewrites local sort_order.
-      setOrdered((prev) => prev.map((c, i) => ({ ...c, sort_order: i })));
-      setDirty(false);
-      setSavedNote(written === 0 ? 'Không có thay đổi' : `Đã lưu ${written} danh mục`);
+
+      if (!pendingSaveRef.current && mountedRef.current) {
+        // Reflect the persisted ranks so follow-up auto-save skips unchanged rows.
+        setOrdered((prev) => prev.map((c, i) => ({ ...c, sort_order: i })));
+        setDirty(false);
+        setSavedNote(written === 0 ? 'Không có thay đổi' : `Đã lưu ${written} danh mục`);
+      }
     } catch (e: any) {
-      setError(e?.message || 'Lưu thất bại');
+      failed = true;
+      pendingSaveRef.current = false;
+      if (mountedRef.current) {
+        setDirty(true);
+        setError(e?.message || 'Lưu thất bại');
+      }
     } finally {
-      setSaving(false);
+      saveInFlightRef.current = false;
+      if (mountedRef.current) {
+        if (isManualSave) {
+          setManualSaving(false);
+        } else {
+          setAutoSaving(false);
+        }
+      }
+      if (!failed && pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        void persistOrder(orderedRef.current, 'auto');
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    if (!dirty || loading || draggingId) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      void persistOrder(orderedRef.current, 'auto');
+    }, AUTO_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [dirty, ordered, loading, draggingId, persistOrder]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (dirtyRef.current) {
+        void persistOrder(orderedRef.current, 'auto');
+      }
+    };
+  }, [persistOrder]);
+
+  const markDirty = () => {
+    if (saveInFlightRef.current) pendingSaveRef.current = true;
+    setSavedNote(null);
+    setDirty(true);
+  };
+
+  const reorder = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    setOrdered((prev) => {
+      if (fromIndex >= prev.length || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+    markDirty();
+  };
+
+  const move = (index: number, dir: -1 | 1) => {
+    reorder(index, index + dir);
+  };
+
+  const autoSuggest = () => {
+    const idOrder = suggestCategoryOrder(ordered, products);
+    const byId = new Map(ordered.map((c) => [c.id, c]));
+    setOrdered(idOrder.map((id) => byId.get(id)!).filter(Boolean));
+    markDirty();
+  };
+
+  const save = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    await persistOrder(orderedRef.current, 'manual');
+  };
+
+  const handleDragStart = (event: React.DragEvent<HTMLLIElement>, categoryId: string) => {
+    if (saving) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', categoryId);
+    setDraggingId(categoryId);
+    setDragOverId(null);
+  };
+
+  const handleDragEnter = (categoryId: string) => {
+    if (!draggingId || draggingId === categoryId) return;
+    setDragOverId(categoryId);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLLIElement>, targetId: string) => {
+    event.preventDefault();
+    const sourceId = event.dataTransfer.getData('text/plain') || draggingId;
+    setDraggingId(null);
+    setDragOverId(null);
+    if (!sourceId || sourceId === targetId) return;
+
+    const current = orderedRef.current;
+    const fromIndex = current.findIndex((cat) => cat.id === sourceId);
+    const toIndex = current.findIndex((cat) => cat.id === targetId);
+    reorder(fromIndex, toIndex);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingId(null);
+    setDragOverId(null);
   };
 
   return (
@@ -162,19 +294,37 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
             return (
               <li
                 key={cat.id}
-                className={`flex items-center gap-3 rounded-xl border bg-white px-3 ${
+                draggable={!saving}
+                onDragStart={(event) => handleDragStart(event, cat.id)}
+                onDragEnter={() => handleDragEnter(cat.id)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                }}
+                onDrop={(event) => handleDrop(event, cat.id)}
+                onDragEnd={handleDragEnd}
+                aria-grabbed={draggingId === cat.id}
+                title="Giữ và kéo để đổi thứ tự"
+                className={`flex items-center gap-3 rounded-xl border bg-white px-3 transition ${
                   tier === 'big'
                     ? 'border-amber-200 py-3'
                     : tier === 'medium'
                     ? 'border-slate-200 py-2.5'
                     : 'border-slate-100 py-2'
+                } ${
+                  draggingId === cat.id ? 'opacity-60 ring-2 ring-brand-300' : ''
+                } ${
+                  dragOverId === cat.id ? 'ring-2 ring-blue-300' : ''
+                } ${
+                  saving ? 'cursor-wait' : 'cursor-grab active:cursor-grabbing'
                 }`}
               >
-                <GripVertical size={16} className="shrink-0 text-slate-300" />
+                <GripVertical size={16} className="shrink-0 text-slate-400" />
                 {catImg ? (
                   <img
                     src={catImg}
                     alt=""
+                    draggable={false}
                     className="w-11 h-11 rounded-lg object-cover shrink-0 border border-slate-200 bg-slate-50"
                   />
                 ) : (
@@ -227,14 +377,23 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
       )}
 
       <div className="mt-3 flex items-center justify-end gap-3">
-        {savedNote && <span className="text-xs font-medium text-emerald-600">{savedNote}</span>}
+        {manualSaving && <span className="text-xs font-medium text-slate-500">Đang lưu...</span>}
+        {!manualSaving && autoSaving && (
+          <span className="text-xs font-medium text-slate-500">Đang tự lưu...</span>
+        )}
+        {!manualSaving && !autoSaving && dirty && (
+          <span className="text-xs font-medium text-amber-700">Sẽ tự lưu...</span>
+        )}
+        {!manualSaving && !autoSaving && !dirty && savedNote && (
+          <span className="text-xs font-medium text-emerald-600">{savedNote}</span>
+        )}
         <button
           type="button"
           onClick={save}
-          disabled={saving || loading || !dirty}
+          disabled={manualSaving || loading || !dirty}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
         >
-          {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+          {manualSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
           Lưu
         </button>
       </div>
