@@ -29,9 +29,21 @@ const defaultConfig: AgentConfig = {
   multiPrinterMode: false,
   scale: {
     enabled: false,
+    connection: 'none',
     protocol: 'DIBAL_GDPOS',
     port: '',
     baudRate: 9600,
+    share: {
+      enabled: false,
+      port: 17891,
+      token: '',
+    },
+    remote: {
+      host: '',
+      port: 17891,
+      token: '',
+      timeoutMs: 2000,
+    },
   },
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
@@ -81,9 +93,29 @@ const scaleConfigSchema = {
   type: 'object',
   properties: {
     enabled: { type: 'boolean', default: false },
+    connection: { type: 'string', enum: ['none', 'local', 'remote'], default: 'none' },
     protocol: { type: 'string', enum: ['DIBAL_GDPOS'], default: 'DIBAL_GDPOS' },
     port: { type: 'string', default: '' },
     baudRate: { type: 'number', default: 9600 },
+    share: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', default: false },
+        port: { type: 'number', default: 17891 },
+        token: { type: 'string', default: '' },
+      },
+      default: {},
+    },
+    remote: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', default: '' },
+        port: { type: 'number', default: 17891 },
+        token: { type: 'string', default: '' },
+        timeoutMs: { type: 'number', default: 2000 },
+      },
+      default: {},
+    },
   },
   default: {},
 };

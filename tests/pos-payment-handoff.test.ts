@@ -58,6 +58,28 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain('formatInitialCashAmount(initialCashAmountGrosze)');
   });
 
+  it('wires retail scanner payment commands through SearchBar and PaymentModal', () => {
+    expect(RETAIL_TEMPLATE).toContain("const PAY_CARD_SCAN_COMMAND = '11111111';");
+    expect(RETAIL_TEMPLATE).toContain("const PAY_CASH_SCAN_COMMAND = '22222222';");
+    expect(RETAIL_TEMPLATE).toContain('commandBarcodes={RETAIL_SCAN_COMMANDS}');
+    expect(RETAIL_TEMPLATE).toContain("handleOpenPaymentScanCommand('CARD')");
+    expect(RETAIL_TEMPLATE).toContain("handleOpenPaymentScanCommand('CASH')");
+    expect(RETAIL_TEMPLATE).toContain('initialMethod={paymentInitialMethod}');
+    expect(RETAIL_TEMPLATE).toContain('card: PAY_CARD_SCAN_COMMAND');
+    expect(RETAIL_TEMPLATE).toContain('cash: PAY_CASH_SCAN_COMMAND');
+    expect(PAYMENT_MODAL).toContain('initialMethod?: PaymentMethod');
+    expect(PAYMENT_MODAL).toContain('scanCommands?: {');
+    expect(PAYMENT_MODAL).toContain("document.body.dataset.posPaymentOpen = 'true';");
+    expect(PAYMENT_MODAL).toContain("if (method === 'CARD')");
+    expect(PAYMENT_MODAL).toContain('if (canComplete) void handleComplete();');
+    expect(PAYMENT_MODAL).toContain("setCashAmount(totalZl.toFixed(2));");
+    expect(PAYMENT_MODAL).toContain("const shouldCompleteCash = method === 'CASH';");
+    expect(PAYMENT_MODAL).toContain('if (shouldCompleteCash) void completePayment(grandTotal);');
+    expect(PAYMENT_MODAL).toContain('candidate.startsWith(commandCandidate)');
+    expect(PAYMENT_MODAL).toContain('if (commandCandidate.length > 1)');
+    expect(PAYMENT_MODAL).toContain('removeScannedCommandFromActiveInput(commandCandidate.slice(0, -1));');
+  });
+
   it('exposes the BLIK quick branch from the cash bills row without opening the drawer', () => {
     expect(PAYMENT_MODAL).toContain("const BLIK_RECEIPT_PHONE = '729448788'");
     expect(PAYMENT_MODAL).toContain("setMethod('BLIK')");

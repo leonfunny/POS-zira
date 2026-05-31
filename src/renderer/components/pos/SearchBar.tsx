@@ -8,17 +8,20 @@ interface SearchBarProps {
   value: string;
   onChange: (value: string) => void;
   onBarcodeScanned?: (barcode: string) => void;
+  commandBarcodes?: string[];
   placeholder?: string;
 }
 
 const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar(
-  { value, onChange, onBarcodeScanned, placeholder },
+  { value, onChange, onBarcodeScanned, commandBarcodes = [], placeholder },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
   const barcodeCallbackRef = useRef(onBarcodeScanned);
+  const commandBarcodeSetRef = useRef(new Set(commandBarcodes.map((code) => code.trim()).filter(Boolean)));
   const searchId = 'pos-product-search';
   barcodeCallbackRef.current = onBarcodeScanned;
+  commandBarcodeSetRef.current = new Set(commandBarcodes.map((code) => code.trim()).filter(Boolean));
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -36,8 +39,19 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
     return true;
   }, [onChange]);
 
+  const handleInputChange = useCallback((nextValue: string) => {
+    const code = nextValue.trim();
+    if (code && commandBarcodeSetRef.current.has(code)) {
+      submitBarcode(code);
+      return;
+    }
+    onChange(nextValue);
+  }, [onChange, submitBarcode]);
+
   useEffect(() => {
     const unsub = window.electronAPI.onBarcodeScanned((barcode: string) => {
+      if (document.body.dataset.posAddProductOpen === 'true') return;
+      if (document.body.dataset.posPaymentOpen === 'true') return;
       submitBarcode(barcode);
     });
     return unsub;
@@ -110,9 +124,9 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
           ref={inputRef}
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key !== 'Enter') return;
+            if (e.key !== 'Enter' && e.key !== 'Tab') return;
             if (submitBarcode(e.currentTarget.value, e.currentTarget)) {
               e.preventDefault();
             }

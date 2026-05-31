@@ -1,5 +1,10 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 
+import {
+  getSharedEnvironmentCameraStream,
+  releaseSharedEnvironmentCameraStream,
+} from './camera-stream';
+
 export interface QuickAddCapturedImage {
   dataUrl: string;
   mimeType: string;
@@ -96,22 +101,13 @@ export default function QuickAddCameraModal({
       return Promise.resolve();
     }
 
-    if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError(tOr('pos.quickAdd.cameraUnavailable', 'Camera unavailable'));
-      return Promise.resolve();
-    }
+    if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current.then(() => undefined);
 
     setCameraReady(false);
     setError(null);
 
-    const request = navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-      audio: false,
-    }).then((stream) => {
+    const request = getSharedEnvironmentCameraStream().then((stream) => {
       if (!mountedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
         return;
       }
       stream.getTracks().forEach((track) => {
@@ -133,7 +129,7 @@ export default function QuickAddCameraModal({
     });
 
     cameraStartPromiseRef.current = request;
-    return request;
+    return request.then(() => undefined);
   };
 
   useEffect(() => {
@@ -143,6 +139,7 @@ export default function QuickAddCameraModal({
     return () => {
       mountedRef.current = false;
       stopCamera();
+      releaseSharedEnvironmentCameraStream();
     };
   }, []);
 

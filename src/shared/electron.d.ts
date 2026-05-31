@@ -246,6 +246,14 @@ interface ElectronAPI {
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   scale: {
     readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
+    getNetworkInfo: () => Promise<{
+      ips: string[];
+      suggestedHost: string;
+      defaultPort: number;
+      running?: boolean;
+      port?: number | null;
+      error?: string;
+    }>;
   };
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   printLabel: (
@@ -743,6 +751,14 @@ interface ElectronAPI {
     };
     scale: {
       readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
+      getNetworkInfo: () => Promise<{
+        ips: string[];
+        suggestedHost: string;
+        defaultPort: number;
+        running?: boolean;
+        port?: number | null;
+        error?: string;
+      }>;
     };
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
@@ -790,7 +806,7 @@ interface ElectronAPI {
         message?: string;
         error?: string;
       }>;
-      importDraft: (payload: { ean: string }) => Promise<{
+        importDraft: (payload: { ean: string; retailPriceGrosze?: number }) => Promise<{
         ok: boolean;
         outcome?: string;
         variant?: any;

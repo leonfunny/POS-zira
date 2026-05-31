@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     scale: {
       readWeight: (options?: { port?: string }) => ipcRenderer.invoke('scale:read-weight', options),
+      getNetworkInfo: () => ipcRenderer.invoke('scale:get-network-info'),
     },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke('pos:shift:open', data),
@@ -146,7 +147,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
-      importDraft: (payload: { ean: string }) =>
+      importDraft: (payload: { ean: string; retailPriceGrosze?: number }) =>
         ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
     },
     quickAdd: {
@@ -236,7 +237,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   setConfig: (config: any) => ipcRenderer.invoke('set-config', config),
   saveConfig: (config: any) => ipcRenderer.invoke('set-config', config),
-  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string }) =>
+  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke('print-label', barcode, text, options),
 
   // === Connection status ===
@@ -271,6 +272,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // === Dialog ===
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
+
+  // === Shell/URL operations ===
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
 
   // === Debug ===
   debug: {

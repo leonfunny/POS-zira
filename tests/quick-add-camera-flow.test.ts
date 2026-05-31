@@ -6,6 +6,10 @@ const modal = fs.readFileSync(
   path.resolve(__dirname, '../src/renderer/components/pos/QuickAddCameraModal.tsx'),
   'utf8',
 );
+const cameraStream = fs.readFileSync(
+  path.resolve(__dirname, '../src/renderer/components/pos/camera-stream.ts'),
+  'utf8',
+);
 const posLayout = fs.readFileSync(
   path.resolve(__dirname, '../src/renderer/components/pos/POSLayout.tsx'),
   'utf8',
@@ -26,7 +30,8 @@ const apiClient = fs.readFileSync(
 describe('POS quick-add camera flow', () => {
   it('opens from retail quick actions and captures 2-3 camera photos before send', () => {
     expect(quickActions).toContain("label={tOr('pos.quickAdd.camera', 'Camera')}");
-    expect(modal).toContain('navigator.mediaDevices.getUserMedia');
+    expect(cameraStream).toContain('navigator.mediaDevices.getUserMedia');
+    expect(modal).toContain('getSharedEnvironmentCameraStream');
     expect(modal).toContain('images.length < 2');
     expect(modal).toContain('images.length >= 3');
   });

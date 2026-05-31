@@ -1041,9 +1041,13 @@ export class PosModule extends BaseModule {
     // master-catalog endpoint is down. A `local_variant_imports` marker
     // tracks the row so ProductSync.deactivateExcept keeps it alive and
     // OrderSync defers pushing orders that depend on it.
-    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string }) => {
+    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string; retailPriceGrosze?: number }) => {
       const ean = String(payload?.ean ?? '').trim();
       if (!ean) return { ok: false, error: 'missing-ean' };
+      const requestedRetailPrice = Number(payload?.retailPriceGrosze);
+      const retailPriceGrosze = Number.isFinite(requestedRetailPrice)
+        ? Math.round(requestedRetailPrice)
+        : null;
 
       const existing = productRepo.getByBarcode(ean);
       if (existing) {
@@ -1070,7 +1074,10 @@ export class PosModule extends BaseModule {
         }
       }
       if (!draft) return { ok: false, error: 'draft-not-found' };
-      if (!(draft.retail_price >= 1)) {
+      const importRetailPrice = retailPriceGrosze != null && retailPriceGrosze >= 1
+        ? retailPriceGrosze
+        : draft.retail_price;
+      if (!(importRetailPrice >= 1)) {
         return { ok: false, error: 'draft-missing-price' };
       }
       if (!(draft.in_stock >= 1)) {
@@ -1091,7 +1098,7 @@ export class PosModule extends BaseModule {
             name: draft.name,
             sku: draft.sku,
             barcode: draft.barcode,
-            retail_price: draft.retail_price,
+            retail_price: importRetailPrice,
             category_id: draft.category_id,
             image_url: draft.image_url,
             in_stock: draft.in_stock,
@@ -1099,9 +1106,9 @@ export class PosModule extends BaseModule {
             is_active: 1,
             updated_at: now,
             available_qty: draft.in_stock,
-            price_gross: draft.retail_price,
-            price_net: Math.round(draft.retail_price * 100 / (100 + (draft.vat_rate || 0))),
-            vat_amount: draft.retail_price - Math.round(draft.retail_price * 100 / (100 + (draft.vat_rate || 0))),
+            price_gross: importRetailPrice,
+            price_net: Math.round(importRetailPrice * 100 / (100 + (draft.vat_rate || 0))),
+            vat_amount: importRetailPrice - Math.round(importRetailPrice * 100 / (100 + (draft.vat_rate || 0))),
             is_on_sale: 0,
             thumbnail_url: draft.image_url,
             sale_unit: null,

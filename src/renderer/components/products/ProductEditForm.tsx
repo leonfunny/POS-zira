@@ -124,7 +124,6 @@ export default function ProductEditForm({
       priceGrossGrosze,
       vatRate: Number(vatRate),
       categoryId: categoryId || null,
-      sellBy,
       saleUnit: saleUnit.trim() || null,
       imageUrl: imageUrl.trim() || null,
       isActive: product.is_active !== 0,

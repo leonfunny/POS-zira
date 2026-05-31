@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import type { CartState, PosAction } from '../../hooks/usePosStore';
 import type { PosLoyaltyLookupResponse } from '../../../shared/types';
 import rlog from '../../utils/logger';
@@ -18,6 +18,11 @@ interface PaymentModalProps {
   staffId: string | null;
   staffName: string | null;
   initialCashAmountGrosze?: number;
+  initialMethod?: PaymentMethod;
+  scanCommands?: {
+    card?: string;
+    cash?: string;
+  };
   extraOrderFields?: Record<string, any>;
 }
 
@@ -66,9 +71,11 @@ export default function PaymentModal({
   staffId,
   staffName,
   initialCashAmountGrosze,
+  initialMethod,
+  scanCommands,
   extraOrderFields,
 }: PaymentModalProps) {
-  const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [method, setMethod] = useState<PaymentMethod>(initialMethod ?? 'CASH');
   const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
   // Per-denomination bill counts (grosze → count). The cashier taps a
   // denomination to record one bill received; the total auto-syncs to
@@ -99,6 +106,9 @@ export default function PaymentModal({
   const [loyaltyError, setLoyaltyError] = useState<string | null>(null);
   const [nipPadOpen, setNipPadOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scannerBufferRef = useRef('');
+  const scannerLastKeyRef = useRef(0);
+  const paymentCompleteInFlightRef = useRef(false);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
@@ -201,6 +211,17 @@ export default function PaymentModal({
   useEffect(() => {
     if (method === 'CASH' && !splitMode) inputRef.current?.focus();
   }, [method, splitMode]);
+
+  useEffect(() => {
+    document.body.dataset.posPaymentOpen = 'true';
+    return () => {
+      delete document.body.dataset.posPaymentOpen;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialMethod) setMethod(initialMethod);
+  }, [initialMethod]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onClose(); };
@@ -540,8 +561,9 @@ export default function PaymentModal({
     finishReceiptRecovery(receiptRecovery);
   };
 
-  const handleComplete = async () => {
-    if (saving) return;
+  const completePayment = useCallback(async (paymentAmountOverride?: number) => {
+    if (saving || paymentCompleteInFlightRef.current) return;
+    paymentCompleteInFlightRef.current = true;
     setSaving(true);
     setError(null);
     setPrintWarning(null);
@@ -565,7 +587,7 @@ export default function PaymentModal({
         if (!splitComplete) { setError(t('pos.split.incomplete') || 'Split payment incomplete'); setSaving(false); return; }
         await saveOrderAndFinish(orderId, tendersTotal);
       } else {
-        const paymentAmount = method === 'CASH' ? cashAmountGrosze : grandTotal;
+        const paymentAmount = method === 'CASH' ? (paymentAmountOverride ?? cashAmountGrosze) : grandTotal;
         await saveOrderAndFinish(orderId, paymentAmount);
       }
     } catch (err) {
@@ -573,8 +595,13 @@ export default function PaymentModal({
       setError(t('pos.payment.error'));
     } finally {
       setSaving(false);
+      paymentCompleteInFlightRef.current = false;
     }
-  };
+  }, [cashAmountGrosze, customerNipValid, grandTotal, method, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
+
+  const handleComplete = useCallback(() => {
+    void completePayment();
+  }, [completePayment]);
 
   const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffId && !!staffName?.trim() && customerNipValid && (
     splitMode ? splitComplete
@@ -604,6 +631,117 @@ export default function PaymentModal({
   const splitProgress = grandTotal > 0
     ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
     : 0;
+
+  const removeScannedCommandFromActiveInput = useCallback((code: string) => {
+    window.setTimeout(() => {
+      const active = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+      if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) return;
+      const fullMatch = active.value.endsWith(code);
+      const partialCode = code.slice(0, -1);
+      const partialMatch = partialCode.length > 0 && active.value.endsWith(partialCode);
+      if (!fullMatch && !partialMatch) return;
+      active.value = active.value.slice(0, fullMatch ? -code.length : -partialCode.length);
+      active.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 0);
+  }, []);
+
+  const runPaymentScanCommand = useCallback((rawCode: string): boolean => {
+    const code = rawCode.trim();
+    const cardCommand = scanCommands?.card?.trim();
+    const cashCommand = scanCommands?.cash?.trim();
+
+    if (cardCommand && code === cardCommand) {
+      setSplitMode(false);
+      setTenders([]);
+      setSplitAmount('');
+      setDenomCounts({});
+      setCashAmount('');
+      setError(null);
+      setPrintWarning(null);
+
+      if (method === 'CARD') {
+        if (canComplete) void handleComplete();
+      } else {
+        setMethod('CARD');
+      }
+      return true;
+    }
+
+    if (cashCommand && code === cashCommand) {
+      const shouldCompleteCash = method === 'CASH';
+      setSplitMode(false);
+      setTenders([]);
+      setSplitAmount('');
+      setMethod('CASH');
+      setDenomCounts({});
+      setCashAmount(totalZl.toFixed(2));
+      setError(null);
+      setPrintWarning(null);
+      if (shouldCompleteCash) void completePayment(grandTotal);
+      return true;
+    }
+
+    return false;
+  }, [canComplete, completePayment, grandTotal, handleComplete, method, scanCommands?.card, scanCommands?.cash, totalZl]);
+
+  useEffect(() => {
+    const commandCodes = [scanCommands?.card, scanCommands?.cash]
+      .map((code) => code?.trim())
+      .filter((code): code is string => !!code);
+    if (commandCodes.length === 0) return;
+    const maxCommandLength = Math.max(...commandCodes.map((code) => code.length));
+
+    const handleCommand = (code: string, event?: KeyboardEvent): boolean => {
+      if (!runPaymentScanCommand(code)) return false;
+      event?.preventDefault();
+      event?.stopPropagation();
+      removeScannedCommandFromActiveInput(code);
+      scannerBufferRef.current = '';
+      return true;
+    };
+
+    const unsubscribe = window.electronAPI?.onBarcodeScanned?.((barcode: string) => {
+      handleCommand(barcode);
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      const now = Date.now();
+      if (now - scannerLastKeyRef.current > 150) scannerBufferRef.current = '';
+      scannerLastKeyRef.current = now;
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        handleCommand(scannerBufferRef.current, event);
+        scannerBufferRef.current = '';
+        return;
+      }
+
+      if (event.key.length !== 1) return;
+      const commandCandidate = (scannerBufferRef.current + event.key).slice(-maxCommandLength);
+      const matchingCommand = commandCodes.find((candidate) => candidate.startsWith(commandCandidate));
+      scannerBufferRef.current = commandCandidate;
+
+      if (!matchingCommand) return;
+
+      // Keyboard-wedge scanners type into the focused cash input before React
+      // can recognize the full 8-digit command. Let a single manual "1"/"2"
+      // through, but once the sequence is clearly a fast command prefix, stop
+      // it from becoming a cash amount suffix.
+      if (commandCandidate.length > 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeScannedCommandFromActiveInput(commandCandidate.slice(0, -1));
+      }
+
+      if (commandCandidate === matchingCommand) handleCommand(matchingCommand, event);
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      unsubscribe?.();
+    };
+  }, [removeScannedCommandFromActiveInput, runPaymentScanCommand, scanCommands?.card, scanCommands?.cash]);
 
   const renderNumericKeypad = (quickAction: 'exact' | 'remaining') => {
     const quickLabel = quickAction === 'exact'

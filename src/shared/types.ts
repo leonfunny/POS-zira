@@ -130,6 +130,8 @@ export interface LabelPrintOptions {
   sku?: string;
   text2?: string;
   text3?: string;
+  quantity?: number;
+  copies?: number;
 }
 
 // Manufacturer/distributor role on Polish food labels (per art. 11 ustawa o
@@ -210,12 +212,29 @@ export interface PrinterConfig {
 }
 
 export type ScaleProtocol = 'DIBAL_GDPOS';
+export type ScaleConnectionMode = 'none' | 'local' | 'remote';
+
+export interface ScaleShareConfig {
+  enabled?: boolean;
+  port?: number;
+  token?: string;
+}
+
+export interface ScaleRemoteConfig {
+  host?: string;
+  port?: number;
+  token?: string;
+  timeoutMs?: number;
+}
 
 export interface ScaleConfig {
   enabled: boolean;
+  connection?: ScaleConnectionMode;
   protocol: ScaleProtocol;
   port: string;
   baudRate?: number;
+  share?: ScaleShareConfig;
+  remote?: ScaleRemoteConfig;
 }
 
 export type ScaleReadResult =
@@ -226,6 +245,8 @@ export type ScaleReadResult =
       weightKg: number;
       stable: boolean;
       status: string;
+      source?: 'local' | 'remote';
+      remoteHost?: string;
       rawAscii?: string;
       rawHex?: string;
     }
@@ -235,6 +256,8 @@ export type ScaleReadResult =
       port?: string;
       error: string;
       code: string;
+      source?: 'local' | 'remote';
+      remoteHost?: string;
       rawAscii?: string;
       rawHex?: string;
       status?: string;
@@ -887,6 +910,7 @@ export const IPC_CHANNELS = {
   LIST_PORTS: 'list-ports',
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   SCALE_READ_WEIGHT: 'scale:read-weight',
+  SCALE_GET_NETWORK_INFO: 'scale:get-network-info',
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',

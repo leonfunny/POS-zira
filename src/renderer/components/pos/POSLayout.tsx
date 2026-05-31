@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Home } from 'lucide-react';
 import { usePosStore } from '../../hooks/usePosStore';
+import type { CartItem } from '../../hooks/usePosStore';
 import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName } from '../../../shared/catalog-names';
+import { normalizeSellBy } from '../../../shared/pos-sale';
 import rlog from '../../utils/logger';
 import ShiftModal from './ShiftModal';
 import ShiftReportModal from './ShiftReport';
@@ -25,6 +27,7 @@ import { formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
 const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
+const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
 
 function useLiveClock() {
   const [now, setNow] = useState(new Date());
@@ -88,6 +91,11 @@ function canSellImportedVariant(variant: any): string | null {
   return null;
 }
 
+function labelCopiesForCartItem(item: CartItem): number {
+  if (normalizeSellBy(item.sellBy) === 'WEIGHT') return 1;
+  return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
+}
+
 interface POSLayoutProps {
   onFullscreen?: () => void;
 }
@@ -123,6 +131,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // inputMode="none" prevents the on-screen touch keyboard from appearing.
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
+  const lastLabelVariantIdRef = useRef<string | null>(null);
   // Tracks the most recent time a real text input received keyboard activity.
   // The auto-refocus uses this to back off so SearchBar / customer name fields
   // can be typed via the TouchKeyboard without losing focus to the hidden
@@ -136,7 +145,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     // search input focused behind a modal would double-process scanner
     // wedge keystrokes — once through the focused input, once through the
     // IPC `barcode-scanned` listener that SearchBar still subscribes to.
-    if (document.querySelector('.fixed.inset-0.z-50')) return;
+    if (document.querySelector('.fixed.inset-0.z-50:not([aria-hidden="true"])')) return;
 
     const active = document.activeElement as HTMLElement | null;
 
@@ -216,6 +225,60 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const translated = t(key);
     return translated && translated !== key ? translated : fallback;
   }, [t]);
+
+  const rememberLastLabelVariant = useCallback((variantId: string | null | undefined) => {
+    if (variantId) lastLabelVariantIdRef.current = variantId;
+  }, []);
+
+  const printCartItemLabel = useCallback(async (item: CartItem) => {
+    try {
+      const product = await window.electronAPI.pos.products.getById(item.variantId);
+      if (!product) {
+        showScanToast(tOr('pos.label.productNotFound', 'Không tìm thấy sản phẩm để in mã'), 'err');
+        return;
+      }
+
+      const barcode = product.barcode?.trim();
+      if (!barcode) {
+        showScanToast(tOr('pos.label.noBarcode', 'Sản phẩm chưa có mã vạch'), 'err');
+        return;
+      }
+
+      const displayName = resolveName(product, language) || product.name;
+      const priceGrosze = Number(product.retail_price) || 0;
+      const priceText = priceGrosze > 0
+        ? `${(priceGrosze / 100).toFixed(2)} ${tOr('pos.currency', 'zl')}`
+        : undefined;
+      const result = await window.electronAPI.printLabel(barcode, displayName, {
+        priceText,
+        sku: product.sku?.trim() || undefined,
+        quantity: labelCopiesForCartItem(item),
+      });
+
+      if (result?.success) {
+        showScanToast(tOr('pos.label.printed', 'Đã in mã'), 'ok');
+      } else {
+        showScanToast(result?.error || tOr('pos.label.failed', 'Không in được mã'), 'err');
+      }
+    } catch (err: any) {
+      showScanToast(err?.message || tOr('pos.label.failed', 'Không in được mã'), 'err');
+    }
+  }, [language, showScanToast, tOr]);
+
+  const handlePrintLastCartLabelCommand = useCallback(async () => {
+    const items = state?.cart.items ?? [];
+    const variantId = lastLabelVariantIdRef.current;
+    const item = variantId
+      ? [...items].reverse().find((line) => line.variantId === variantId)
+      : items[items.length - 1];
+
+    if (!item) {
+      showScanToast(tOr('pos.label.noRecentItem', 'Chưa có hàng vừa quét để in mã'), 'err');
+      return;
+    }
+
+    await printCartItemLabel(item);
+  }, [printCartItemLabel, showScanToast, state?.cart.items, tOr]);
 
   /**
    * Open the scan-import modal for an EAN that's not in the local catalog.
@@ -326,11 +389,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         name_translations: variant.name_translations ?? null,
       },
     });
+    rememberLastLabelVariant(variant.id);
     showScanToast(`+ ${displayName}`, 'ok');
     setShowQuickAddCamera(false);
-  }, [dispatch, language, showScanToast]);
+  }, [dispatch, language, rememberLastLabelVariant, showScanToast]);
 
-  const confirmScanImport = useCallback(async () => {
+  const confirmScanImport = useCallback(async (retailPriceGrosze: number) => {
     const ean = scanImport.ean;
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
@@ -339,7 +403,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       // so the cashier can ring it up without waiting on the master-catalog
       // server. A background worker (and any natural delta sync that brings
       // the same product down later) reconciles the row with the server.
-      const result = await window.electronAPI.pos.masterCatalog.importDraft({ ean });
+      const result = await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
@@ -370,6 +434,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             name_translations: variant.name_translations ?? null,
           },
         });
+        rememberLastLabelVariant(variant.id);
         showScanToast(`+ ${displayName}`, 'ok');
       } else {
         showScanToast(`Imported: ${ean}`, 'ok');
@@ -379,14 +444,56 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [scanImport.ean, dispatch, language, showScanToast, closeScanImport]);
+  }, [scanImport.ean, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
+
+  const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
+    const code = ean.trim();
+    if (!code || !dispatch) return false;
+    try {
+      const product = await window.electronAPI.pos.products.getByBarcode(code);
+      if (!product) return false;
+
+      const displayName = resolveName(product, language);
+      const sellError = canSellImportedVariant(product);
+      if (sellError) {
+        showScanToast(`${displayName} - ${sellError}`, 'err');
+        return true;
+      }
+
+      const result = await resolveRetailCartItem(product, {
+        scaleEnabled: config?.scale?.enabled === true,
+        scalePort: config?.scale?.port,
+        readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
+      });
+      if (!result.ok) {
+        showScanToast(formatRetailSaleError(result.error, tOr), 'err');
+        return true;
+      }
+
+      dispatch({ type: 'cart/addItem', payload: result.item });
+      rememberLastLabelVariant(result.item.variantId);
+      showScanToast(`+ ${displayName}`, 'ok');
+      setShowAddProduct(false);
+      return true;
+    } catch (err: any) {
+      rlog.error('[POSLayout] add-product panel barcode lookup failed:', err?.message ?? err);
+      showScanToast('Scan failed', 'err');
+      return true;
+    }
+  }, [config?.scale?.enabled, config?.scale?.port, dispatch, language, rememberLastLabelVariant, showScanToast, tOr]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const code = barcodeBuffer.trim();
       setBarcodeBuffer('');
+      if (code === PRINT_LAST_CART_LABEL_COMMAND) {
+        document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
+        await handlePrintLastCartLabelCommand();
+        return;
+      }
       if (code.length >= 3 && dispatch) {
+        document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
         try {
           const product = await window.electronAPI.pos.products.getByBarcode(code);
           if (product) {
@@ -412,6 +519,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 return;
               }
               dispatch({ type: 'cart/addItem', payload: result.item });
+              rememberLastLabelVariant(result.item.variantId);
               showScanToast(`+ ${displayName}`, 'ok');
             }
           } else {
@@ -426,7 +534,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, showScanToast, language, t, tOr, openScanImport]);
+  }, [barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {
@@ -601,6 +709,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         onProductCreated={(line) => {
           dispatch({ type: 'cart/addItem', payload: { ...line, id: crypto.randomUUID() } });
         }}
+        onExistingProductScanned={handleAddProductPanelBarcode}
         onClose={() => setShowAddProduct(false)}
       />
       {/* Sync conflict banner (Path B) */}
@@ -718,6 +827,8 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             onUnknownBarcodeScanned={openScanImport}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
             onCreateProduct={() => setShowAddProduct(true)}
+            onLastLabelVariantChange={rememberLastLabelVariant}
+            onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
             homeResetKey={homeResetKey}
           />
         )}

@@ -472,6 +472,13 @@ function normalizeTelegramTokenResponse(data: any): TelegramLoginTokenResponse {
   return { token, expiresAt, deepLink };
 }
 
+function withoutUnsupportedProductAdminSellBy<T extends { sellBy?: unknown }>(
+  payload: T | null | undefined,
+): Omit<T, 'sellBy'> {
+  const { sellBy: _ignoredSellBy, ...body } = (payload || {}) as T;
+  return body;
+}
+
 /**
  * REST API client for eNail backend
  */
@@ -1269,7 +1276,7 @@ export class ApiClient {
     token: string,
     payload: ProductAdminCreateProductInput,
   ): Promise<ProductAdminProductMutationResponse> {
-    const { idempotencyKey, ...body } = payload;
+    const { idempotencyKey, ...body } = withoutUnsupportedProductAdminSellBy(payload);
     return this.productAdminRequest<ProductAdminProductMutationResponse>(
       token,
       'POST',
@@ -1284,11 +1291,12 @@ export class ApiClient {
     variantId: string,
     payload: ProductAdminUpdateVariantInput,
   ): Promise<ProductAdminVariantMutationResponse> {
+    const body = withoutUnsupportedProductAdminSellBy(payload);
     return this.productAdminRequest<ProductAdminVariantMutationResponse>(
       token,
       'PATCH',
       `/variants/${encodeURIComponent(variantId)}`,
-      payload,
+      body,
     );
   }
 

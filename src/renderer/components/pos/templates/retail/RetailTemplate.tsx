@@ -1,14 +1,20 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Loader2, ScanSearch } from 'lucide-react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
 import { resolveName } from '../../../../../shared/catalog-names';
 import { classifyProductSale } from '../../../../../shared/product-sale-classifier';
+import { normalizeSellBy } from '../../../../../shared/pos-sale';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
+import AutoCameraSearch, {
+  type AutoCameraCapturedImage,
+  type AutoCameraSearchStatus,
+} from '../../AutoCameraSearch';
 import PaymentModal from '../../PaymentModal';
 import OrderHistoryModal from '../../OrderHistoryModal';
 import QuickActions from './QuickActions';
@@ -39,6 +45,98 @@ function categoryGlyph(cat: Category, displayName: string): string {
   return trimmed.slice(0, 2).toUpperCase();
 }
 
+const RECOGNITION_TEXT_KEYS = [
+  'ean',
+  'barcode',
+  'detectedEan',
+  'detected_ean',
+  'name',
+  'productName',
+  'product_name',
+  'productType',
+  'product_type',
+  'namePreferred',
+  'name_preferred',
+  'label',
+  'title',
+];
+
+const RECOGNITION_BARCODE_KEYS = ['ean', 'barcode', 'detectedEan', 'detected_ean'];
+const AUTO_CAMERA_SCALE_TIMEOUT_MS = 1500;
+const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
+const PAY_CARD_SCAN_COMMAND = '11111111';
+const PAY_CASH_SCAN_COMMAND = '22222222';
+const RETAIL_SCAN_COMMANDS = [
+  PRINT_LAST_CART_LABEL_COMMAND,
+  PAY_CARD_SCAN_COMMAND,
+  PAY_CASH_SCAN_COMMAND,
+];
+
+type AddProductSource = 'manual' | 'auto';
+type PaymentInitialMethod = 'CASH' | 'CARD';
+
+function firstRecognitionString(source: any, keys: string[]): string | null {
+  if (!source || typeof source !== 'object') return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
+function recognitionCandidates(input: any[]): any[] {
+  return input.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const nested = Array.isArray(item.products) ? item.products : [];
+    return [item, ...nested];
+  });
+}
+
+function uniqueRecognitionTerms(products: any[]): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const product of recognitionCandidates(products)) {
+    const term = firstRecognitionString(product, RECOGNITION_TEXT_KEYS);
+    if (!term) continue;
+    const key = term.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    terms.push(term);
+  }
+  return terms.slice(0, 5);
+}
+
+function autoCameraStatusText(
+  status: AutoCameraSearchStatus,
+  tOr: (key: string, fallback: string) => string,
+): string {
+  switch (status) {
+    case 'starting':
+      return tOr('pos.autoCamera.starting', 'Camera...');
+    case 'motion':
+      return tOr('pos.autoCamera.motion', 'Wait...');
+    case 'stable':
+      return tOr('pos.autoCamera.stable', 'Stable...');
+    case 'analyzing':
+      return tOr('pos.autoCamera.analyzing', 'AI search...');
+    case 'cooldown':
+      return tOr('pos.autoCamera.cooldown', 'Added');
+    case 'error':
+      return tOr('pos.autoCamera.error', 'Check camera');
+    case 'watching':
+      return tOr('pos.autoCamera.watching', 'Ready');
+    case 'off':
+    default:
+      return tOr('pos.autoCamera.off', 'Off');
+  }
+}
+
+function labelCopiesForCartItem(item: CartItem): number {
+  if (normalizeSellBy(item.sellBy) === 'WEIGHT') return 1;
+  return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
+}
+
 interface RetailTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
@@ -47,10 +145,12 @@ interface RetailTemplateProps {
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
   onCreateProduct?: () => void;
+  onLastLabelVariantChange?: (variantId: string) => void;
+  onPrintLastCartLabelCommand?: () => void | Promise<void>;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
@@ -59,12 +159,19 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const [searchQuery, setSearchQuery] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
+  const [paymentInitialMethod, setPaymentInitialMethod] = useState<PaymentInitialMethod>('CASH');
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [autoCameraEnabled, setAutoCameraEnabled] = useState(false);
+  const [autoCameraStatus, setAutoCameraStatus] = useState<AutoCameraSearchStatus>('off');
+  const [autoCameraResult, setAutoCameraResult] = useState<string | null>(null);
   const syncErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scaleReadInFlightRef = useRef(false);
+  const autoCameraEnabledRef = useRef(false);
+  const autoCameraRunIdRef = useRef(0);
+  const lastLabelVariantIdRef = useRef<string | null>(null);
   const [heldCarts, setHeldCarts] = useState<Array<{
     id: string;
     items: CartItem[];
@@ -289,6 +396,26 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     [t],
   );
 
+  useEffect(() => {
+    autoCameraEnabledRef.current = autoCameraEnabled;
+    if (!autoCameraEnabled) autoCameraRunIdRef.current += 1;
+  }, [autoCameraEnabled]);
+
+  const interruptAutoCamera = useCallback((message?: string) => {
+    autoCameraRunIdRef.current += 1;
+    if (!autoCameraEnabledRef.current) return;
+    autoCameraEnabledRef.current = false;
+    setAutoCameraEnabled(false);
+    setAutoCameraStatus('off');
+    setAutoCameraResult(message ?? tOr('pos.autoCamera.paused', 'Auto paused'));
+  }, [tOr]);
+
+  useEffect(() => {
+    const handler = () => interruptAutoCamera();
+    document.addEventListener('pos:manual-cart-action', handler);
+    return () => document.removeEventListener('pos:manual-cart-action', handler);
+  }, [interruptAutoCamera]);
+
   // Manual catalog refresh — periodic 30s poll already runs in main, this
   // button is for "I just edited a price on web and want it now" UX.
   // pos:products-synced from main triggers the existing reload effect, so
@@ -347,7 +474,8 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     document.dispatchEvent(new CustomEvent('pos:focus-search'));
   }, [cart.items]);
 
-  const handleAddProduct = useCallback(async (product: Product) => {
+  const handleAddProduct = useCallback(async (product: Product, source: AddProductSource = 'manual') => {
+    if (source === 'manual') interruptAutoCamera();
     // Drafts haven't been imported into product_variants yet — route through
     // the scan-import modal so the server materializes a real variant before
     // we add anything to the cart. The modal's confirm path adds to cart on
@@ -363,26 +491,43 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     const saleClass = classifyProductSale(product);
     if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
     const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
+    const effectiveReadWeight = source === 'auto' && readWeight
+      ? (options?: { port?: string }) => Promise.race([
+          readWeight(options),
+          new Promise((resolve) => {
+            window.setTimeout(() => {
+              resolve({
+                success: false,
+                stable: false,
+                weightKg: 0,
+                error: tOr('pos.autoCamera.scaleTimeout', 'Auto camera scale timeout'),
+              });
+            }, AUTO_CAMERA_SCALE_TIMEOUT_MS);
+          }),
+        ]) as ReturnType<typeof readWeight>
+      : readWeight;
     if (saleClass.requiresScale) scaleReadInFlightRef.current = true;
     try {
       const result = await resolveRetailCartItem(product, {
         scaleEnabled: config?.scale?.enabled === true,
         scalePort: config?.scale?.port,
-        readWeight,
+        readWeight: effectiveReadWeight,
       });
       if (!result.ok) {
         showToolbarError(formatRetailSaleError(result.error, tOr));
         return;
       }
       dispatch({ type: 'cart/addItem', payload: result.item });
+      lastLabelVariantIdRef.current = product.id;
+      onLastLabelVariantChange?.(product.id);
     } catch (err: any) {
       showToolbarError(err?.message || tOr('pos.scale.failed', 'Scale did not return a weight'));
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
-  const handlePrintProductCode = useCallback(async (product: Product) => {
+  const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
     if (!barcode) {
       return { success: false, error: tOr('pos.label.noBarcode', 'Sản phẩm chưa có mã vạch') };
@@ -397,6 +542,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
       const result = await window.electronAPI.printLabel(barcode, displayName, {
         priceText,
         sku: product.sku?.trim() || undefined,
+        quantity: options.quantity,
       });
       if (result?.success) {
         return { success: true, message: tOr('pos.label.printed', 'Đã in mã') };
@@ -407,16 +553,152 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     }
   }, [lang, tOr]);
 
+  const handlePrintCartItemCode = useCallback(async (item: CartItem) => {
+    try {
+      const product = await window.electronAPI.pos.products.getById(item.variantId);
+      if (!product) {
+        return { success: false, error: tOr('pos.label.productNotFound', 'Không tìm thấy sản phẩm để in mã') };
+      }
+      return handlePrintProductCode(product, { quantity: labelCopiesForCartItem(item) });
+    } catch (err: any) {
+      return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
+    }
+  }, [handlePrintProductCode, tOr]);
+
+  const handlePrintLastScannedCartItemCode = useCallback(async () => {
+    const variantId = lastLabelVariantIdRef.current;
+    if (!variantId) {
+      showToolbarError(tOr('pos.label.noRecentItem', 'Chưa có hàng vừa quét để in mã'));
+      return;
+    }
+
+    const item = [...cart.items].reverse().find((line) => line.variantId === variantId);
+    if (!item) {
+      showToolbarError(tOr('pos.label.recentItemMissing', 'Hàng vừa quét không còn trong cart'));
+      return;
+    }
+
+    const result = await handlePrintCartItemCode(item);
+    if (result?.success === false) {
+      showToolbarError(result.error || result.message || tOr('pos.label.failed', 'Không in được mã'));
+      return;
+    }
+
+    showToolbarError(result?.message || tOr('pos.label.printed', 'Đã in mã'));
+  }, [cart.items, handlePrintCartItemCode, showToolbarError, tOr]);
+
+  const handleOpenPaymentScanCommand = useCallback((initialMethod: PaymentInitialMethod) => {
+    interruptAutoCamera();
+    if (cart.items.length === 0) {
+      showToolbarError(tOr('pos.cart.empty', 'Cart is empty'));
+      return;
+    }
+    if (!shiftPaymentOpen) {
+      showToolbarError(shiftBlockedMessage || tOr('pos.shift.paymentBlocked', 'Payment is blocked'));
+      return;
+    }
+
+    setPaymentInitialMethod(initialMethod);
+    setPaymentPrefillCashGrosze(initialMethod === 'CASH' ? cart.total : undefined);
+    setShowPayment(true);
+  }, [cart.items.length, cart.total, interruptAutoCamera, shiftBlockedMessage, shiftPaymentOpen, showToolbarError, tOr]);
+
   const handleBarcodeScanned = useCallback(async (barcode: string) => {
-    const product = await window.electronAPI.pos.products.getByBarcode(barcode);
+    interruptAutoCamera();
+    const code = barcode.trim();
+    if (code === PRINT_LAST_CART_LABEL_COMMAND) {
+      if (onPrintLastCartLabelCommand) {
+        await onPrintLastCartLabelCommand();
+      } else {
+        await handlePrintLastScannedCartItemCode();
+      }
+      return;
+    }
+    if (code === PAY_CARD_SCAN_COMMAND) {
+      handleOpenPaymentScanCommand('CARD');
+      return;
+    }
+    if (code === PAY_CASH_SCAN_COMMAND) {
+      handleOpenPaymentScanCommand('CASH');
+      return;
+    }
+
+    const product = await window.electronAPI.pos.products.getByBarcode(code);
     if (product) {
       await handleAddProduct(product);
       return;
     }
     if (onUnknownBarcodeScanned) {
-      await onUnknownBarcodeScanned(barcode);
+      await onUnknownBarcodeScanned(code);
     }
-  }, [handleAddProduct, onUnknownBarcodeScanned]);
+  }, [handleAddProduct, handleOpenPaymentScanCommand, handlePrintLastScannedCartItemCode, interruptAutoCamera, onPrintLastCartLabelCommand, onUnknownBarcodeScanned]);
+
+  const handleAutoCameraCapture = useCallback(async (image: AutoCameraCapturedImage) => {
+    const runId = autoCameraRunIdRef.current;
+    const stale = () => runId !== autoCameraRunIdRef.current || !autoCameraEnabledRef.current;
+    if (stale()) return;
+    setAutoCameraResult(null);
+    const result = await window.electronAPI.pos.recognition.analyze({
+      images: [image],
+      language: lang,
+    });
+    if (stale()) return;
+    if (!result?.ok) {
+      throw new Error(result?.error || tOr('pos.autoCamera.recognitionFailed', 'Recognition failed'));
+    }
+
+    const candidates = recognitionCandidates(Array.isArray(result.products) ? result.products : []);
+    if (candidates.length === 0) {
+      setAutoCameraResult(tOr('pos.autoCamera.noProduct', 'No match'));
+      return;
+    }
+
+    for (const candidate of candidates) {
+      const code = firstRecognitionString(candidate, RECOGNITION_BARCODE_KEYS);
+      if (!code) continue;
+      const product = await window.electronAPI.pos.products.getByBarcode(code);
+      if (stale()) return;
+      if (!product) continue;
+      setSearchQuery(code);
+      setSearchResults([product]);
+      setActiveCategoryId(null);
+      await handleAddProduct(product, 'auto');
+      if (stale()) return;
+      setAutoCameraResult(resolveName(product, lang));
+      return;
+    }
+
+    const terms = uniqueRecognitionTerms(candidates);
+    for (const term of terms) {
+      const matches: Product[] = await window.electronAPI.pos.products.search(term);
+      if (stale()) return;
+      const sellableMatches = matches.filter((match) => !match._isDraft);
+      if (sellableMatches.length === 1) {
+        const product = sellableMatches[0];
+        setSearchQuery(term);
+        setSearchResults(sellableMatches);
+        setActiveCategoryId(null);
+        await handleAddProduct(product, 'auto');
+        if (stale()) return;
+        setAutoCameraResult(resolveName(product, lang));
+        return;
+      }
+      if (sellableMatches.length > 1) {
+        setSearchQuery(term);
+        setSearchResults(sellableMatches);
+        setActiveCategoryId(null);
+        setAutoCameraResult(tOr('pos.autoCamera.chooseMatch', 'Choose item'));
+        return;
+      }
+    }
+
+    const fallbackTerm = terms[0];
+    if (fallbackTerm) {
+      setSearchQuery(fallbackTerm);
+      setActiveCategoryId(null);
+    }
+    setAutoCameraResult(tOr('pos.autoCamera.noLocalMatch', 'No local match'));
+  }, [handleAddProduct, lang, tOr]);
 
   const handleHoldCart = useCallback(() => {
     if (cart.items.length === 0) return;
@@ -506,7 +788,8 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     if (activeCount === 0) setActiveCategoryId(null);
   }, [activeCategoryId, activeUnitFilter, categoryUnitCounts]);
 
-  const handleOpenPayment = useCallback((prefillCashGrosze?: number) => {
+  const handleOpenPayment = useCallback((prefillCashGrosze?: number, initialMethod: PaymentInitialMethod = 'CASH') => {
+    setPaymentInitialMethod(initialMethod);
     setPaymentPrefillCashGrosze(prefillCashGrosze);
     setShowPayment(true);
   }, []);
@@ -514,6 +797,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   const handleClosePayment = useCallback(() => {
     setShowPayment(false);
     setPaymentPrefillCashGrosze(undefined);
+    setPaymentInitialMethod('CASH');
   }, []);
 
   // Category strip is a touch carousel: native horizontal scroll + chevron
@@ -567,11 +851,21 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     setActiveUnitFilter('all');
     setShowPayment(false);
     setPaymentPrefillCashGrosze(undefined);
+    setPaymentInitialMethod('CASH');
     setShowHistory(false);
+    setAutoCameraEnabled(false);
+    setAutoCameraStatus('off');
+    setAutoCameraResult(null);
   }, [homeResetKey]);
 
   return (
     <>
+      <AutoCameraSearch
+        enabled={autoCameraEnabled && !showPayment && !showHistory}
+        onCapture={handleAutoCameraCapture}
+        onStatus={setAutoCameraStatus}
+        onError={(message) => showToolbarError(message)}
+      />
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden bg-slate-100">
         {/* Left: Products */}
@@ -584,11 +878,50 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               <div className="w-[min(380px,44%)] min-w-[310px] shrink-0">
               <SearchBar
                 value={searchQuery}
-                onChange={setSearchQuery}
+                onChange={(value) => {
+                  interruptAutoCamera();
+                  setSearchQuery(value);
+                }}
                 onBarcodeScanned={handleBarcodeScanned}
+                commandBarcodes={RETAIL_SCAN_COMMANDS}
                 placeholder={tOr('pos.searchByCode', 'Search by EAN / SKU...')}
               />
               </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAutoCameraEnabled((enabled) => {
+                    if (enabled) autoCameraRunIdRef.current += 1;
+                    return !enabled;
+                  });
+                  setAutoCameraResult(null);
+                }}
+                aria-pressed={autoCameraEnabled}
+                title={tOr('pos.autoCamera.toggle', 'Auto camera search')}
+                className={`shrink-0 min-h-11 px-3 rounded-lg border inline-flex items-center gap-2 text-xs font-extrabold transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  autoCameraEnabled
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                    : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
+                }`}
+              >
+                {autoCameraStatus === 'analyzing' ? (
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <ScanSearch size={16} aria-hidden="true" />
+                )}
+                <span>{tOr('pos.autoCamera.button', 'Auto')}</span>
+              </button>
+
+              {autoCameraEnabled && (
+                <span
+                  role="status"
+                  className="shrink-0 max-w-28 truncate rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700"
+                  title={autoCameraResult || autoCameraStatusText(autoCameraStatus, tOr)}
+                >
+                  {autoCameraResult || autoCameraStatusText(autoCameraStatus, tOr)}
+                </span>
+              )}
 
               <div
                 className="shrink-0 inline-flex min-h-11 rounded-lg border border-slate-300 bg-white p-0.5"
@@ -832,8 +1165,14 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               onRecall={handleRecallCart}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
-              onQuickAddCamera={onQuickAddCamera}
-              onCreateProduct={onCreateProduct}
+              onQuickAddCamera={onQuickAddCamera ? () => {
+                interruptAutoCamera();
+                onQuickAddCamera();
+              } : undefined}
+              onCreateProduct={onCreateProduct ? () => {
+                interruptAutoCamera();
+                onCreateProduct();
+              } : undefined}
             />
           </div>
         </div>
@@ -856,6 +1195,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             lang={lang}
             heldCartsCount={heldCarts.length}
             onHold={cart.items.length > 0 ? handleHoldCart : undefined}
+            onPrintItemLabel={handlePrintCartItemCode}
           />
         </div>
       </div>
@@ -880,6 +1220,11 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
           staffId={session.staffId}
           staffName={session.staffName}
           initialCashAmountGrosze={paymentPrefillCashGrosze}
+          initialMethod={paymentInitialMethod}
+          scanCommands={{
+            card: PAY_CARD_SCAN_COMMAND,
+            cash: PAY_CASH_SCAN_COMMAND,
+          }}
         />
       )}
 

@@ -1,11 +1,13 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { AgentConfig } from '../../../shared/types';
+import type { AgentConfig, ScaleReadResult } from '../../../shared/types';
 import { getVidForPort, listSerialPorts } from '../port-utils';
-import { DibalGdposScaleDriver, type ScaleReadResult } from './dibal-gdpos-scale-driver';
+import { DibalGdposScaleDriver } from './dibal-gdpos-scale-driver';
+import { readRemoteScaleWeight, resolveScaleConnection } from './scale-network-service';
 
 export interface ScaleReadOptions {
   port?: string;
+  forceLocal?: boolean;
 }
 
 const KNOWN_SCALE_PORTS = ['COM5'];
@@ -118,6 +120,10 @@ export async function readScaleWeight(
   config: AgentConfig,
   options?: ScaleReadOptions,
 ): Promise<ScaleReadResult> {
+  if (!options?.forceLocal && resolveScaleConnection(config) === 'remote') {
+    return readRemoteScaleWeight(config);
+  }
+
   const explicitPort = String(options?.port || config.scale?.port || '').trim().toUpperCase();
   const baudRate = config.scale?.baudRate || 9600;
   const readScale = (port: string) => new DibalGdposScaleDriver(port, baudRate).readWeight();

@@ -116,6 +116,8 @@ describe('Product module implementation contract', () => {
     expect(editForm).toContain('parseMoneyToGrosze');
     expect(editForm).toContain('priceGrossGrosze');
     expect(editForm).toContain('expectedUpdatedAt: product.updated_at || undefined');
+    expect(editForm).not.toContain('\n      sellBy,\n');
+    expect(apiClient).toContain('withoutUnsupportedProductAdminSellBy');
     expect(editForm).toContain('products.edit.discardConfirm');
     expect(deactivateDialog).toContain('window.electronAPI.pos.productAdmin.deactivateVariant');
     expect(deactivateDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');

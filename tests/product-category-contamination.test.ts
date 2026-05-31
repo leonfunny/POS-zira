@@ -9,7 +9,33 @@ vi.mock('../src/main/database/database', () => ({
 }));
 
 import { database } from '../src/main/database/database';
-import { productRepo } from '../src/main/database/repos/product-repo';
+import { productRepo, type ProductVariantRow } from '../src/main/database/repos/product-repo';
+
+function product(overrides: Partial<ProductVariantRow>): ProductVariantRow {
+  return {
+    id: 'product',
+    template_id: null,
+    name: 'Product',
+    sku: null,
+    barcode: null,
+    retail_price: 100,
+    category_id: null,
+    image_url: null,
+    in_stock: 10,
+    vat_rate: 23,
+    is_active: 1,
+    updated_at: null,
+    available_qty: 10,
+    price_gross: 100,
+    price_net: 81,
+    vat_amount: 19,
+    is_on_sale: 0,
+    thumbnail_url: null,
+    sale_unit: 'szt',
+    sell_by: 'PIECE',
+    ...overrides,
+  };
+}
 
 describe('POS product category contamination guards', () => {
   beforeEach(() => {
@@ -38,5 +64,24 @@ describe('POS product category contamination guards', () => {
     expect(source).toMatch(/const isPaired = !!getConfigValue\('isPaired'\)/);
     expect(source).toMatch(/const hasAuthToken = !!getSecureAuthToken\(\)/);
     expect(source).toMatch(/if \(!isPaired && !hasAuthToken\) \{\s*seedIfEmpty\(\);/);
+  });
+
+  it('ranks accentless Vietnamese POS search by closest product name first', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'bao', name: 'Bánh bao Thịt trứng truyền thống', sku: 'banh-bao-thit' }),
+      product({ id: 'belly', name: 'Thịt ba chỉ', sku: 'boczek', sale_unit: 'kg', sell_by: 'WEIGHT' }),
+      product({ id: 'pork', name: 'Thịt heo xay', sku: 'mieso-mielone' }),
+    ]);
+
+    expect(productRepo.search('thit ba chi').map((row) => row.id)).toEqual(['belly']);
+  });
+
+  it('matches Vietnamese d/đ without accents for product names', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'tofu', name: 'Đậu hũ non', sku: 'tofu-soft' }),
+      product({ id: 'peanut', name: 'Đậu phộng rang', sku: 'orzeszki' }),
+    ]);
+
+    expect(productRepo.search('dau hu').map((row) => row.id)).toEqual(['tofu']);
   });
 });

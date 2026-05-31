@@ -1,14 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Scale } from 'lucide-react';
+import { Printer, Scale } from 'lucide-react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
 import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
+
+export interface CartItemLabelPrintResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
 
 interface CartItemProps {
   item: CartItemType;
   onUpdateQuantity: (id: string, quantity: number) => void;
   onRemove: (id: string) => void;
   onSetNotes?: (id: string, notes: string) => void;
+  onPrintLabel?: (item: CartItemType) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
   onReadScale?: (item: CartItemType) => void;
   scaleBusy?: boolean;
@@ -27,6 +34,7 @@ export default function CartItemRow({
   onUpdateQuantity,
   onRemove,
   onSetNotes,
+  onPrintLabel,
   onSelectField,
   onReadScale,
   scaleBusy,
@@ -50,11 +58,39 @@ export default function CartItemRow({
 
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState(item.notes || '');
+  const [labelState, setLabelState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
+  const [labelMessage, setLabelMessage] = useState('');
   useEffect(() => { setNotesInput(item.notes || ''); }, [item.notes]);
+  useEffect(() => {
+    if (labelState === 'idle' || labelState === 'printing') return;
+    const timer = window.setTimeout(() => {
+      setLabelState('idle');
+      setLabelMessage('');
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [labelState]);
 
   const handleSaveNotes = () => {
     if (onSetNotes) onSetNotes(item.id, notesInput.trim());
     setEditingNotes(false);
+  };
+  const handlePrintLabel = async () => {
+    if (!onPrintLabel || labelState === 'printing') return;
+    setLabelState('printing');
+    setLabelMessage(tOr('pos.label.printing', 'Đang in mã...'));
+    try {
+      const result = await onPrintLabel(item);
+      if (result?.success === false) {
+        setLabelState('error');
+        setLabelMessage(result.error || result.message || tOr('pos.label.failed', 'Không in được mã'));
+        return;
+      }
+      setLabelState('printed');
+      setLabelMessage(result?.message || tOr('pos.label.printed', 'Đã in mã'));
+    } catch (err: any) {
+      setLabelState('error');
+      setLabelMessage(err?.message || tOr('pos.label.failed', 'Không in được mã'));
+    }
   };
 
   const qtyDisplay = activeField === 'qty' && activeBuffer
@@ -111,7 +147,22 @@ export default function CartItemRow({
           >
             {priceDisplay} {currency}{perUnit}
           </button>
-          {onSetNotes && !editingNotes && (
+          {onPrintLabel && !editingNotes ? (
+            <button
+              type="button"
+              onClick={handlePrintLabel}
+              disabled={labelState === 'printing'}
+              aria-label={tOr('pos.label.print', 'Print barcode')}
+              title={tOr('pos.label.print', 'Print barcode')}
+              className={`min-h-[32px] w-8 flex items-center justify-center rounded-md cursor-pointer touch-manipulation transition-colors ${
+                labelState === 'printing'
+                  ? 'text-slate-400 bg-slate-100 cursor-wait'
+                  : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+              }`}
+            >
+              <Printer size={15} strokeWidth={2.4} />
+            </button>
+          ) : onSetNotes && !editingNotes && (
             <button
               type="button"
               onClick={() => setEditingNotes(true)}
@@ -185,6 +236,16 @@ export default function CartItemRow({
       {sellBy === 'WEIGHT' && scaleError && (
         <p className="mt-2 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
           {scaleError}
+        </p>
+      )}
+
+      {labelState !== 'idle' && labelMessage && (
+        <p className={`mt-2 text-xs font-bold rounded-md px-2.5 py-1.5 border ${
+          labelState === 'error'
+            ? 'text-red-800 bg-red-50 border-red-200'
+            : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+        }`}>
+          {labelMessage}
         </p>
       )}
 

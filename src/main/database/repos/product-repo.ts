@@ -3,11 +3,38 @@ import { database } from '../database';
 /** Strip diacritics/accents for search matching (bánh → banh, łódź → lodz) */
 function normalizeSearch(str: string): string {
   return str
-    .replace(/[Đđ]/g, (ch) => (ch === 'Đ' ? 'D' : 'd'))
-    .replace(/[Łł]/g, (ch) => (ch === 'Ł' ? 'L' : 'l'))
+    .replace(/[\u0110\u0111]/g, (ch) => (ch === '\u0110' ? 'D' : 'd'))
+    .replace(/[\u0141\u0142]/g, (ch) => (ch === '\u0141' ? 'L' : 'l'))
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+function searchTokens(query: string): string[] {
+  return normalizeSearch(query).split(/\s+/).filter(Boolean);
+}
+
+function tokenPositionScore(text: string, token: string): { index: number; score: number } | null {
+  const words = text.split(/[^a-z0-9]+/).filter(Boolean);
+  const exactIndex = words.findIndex((word) => word === token);
+  if (exactIndex >= 0) return { index: exactIndex, score: 80 };
+
+  const prefixIndex = words.findIndex((word) => word.startsWith(token));
+  if (prefixIndex >= 0) return { index: prefixIndex, score: 55 };
+
+  const substringIndex = text.indexOf(token);
+  if (substringIndex >= 0) return { index: words.length + substringIndex, score: 20 };
+
+  return null;
+}
+
+function tokenMatchScore(text: string, tokens: string[]): number | null {
+  if (tokens.length === 0) return null;
+  const matches = tokens.map((token) => tokenPositionScore(text, token));
+  if (matches.some((match) => !match)) return null;
+  const indexes = matches.map((match) => match!.index);
+  const spread = Math.max(...indexes) - Math.min(...indexes);
+  return matches.reduce((sum, match) => sum + match!.score, 0) - Math.min(spread, 50);
 }
 
 export interface ProductVariantRow {
@@ -69,6 +96,35 @@ const HIDE_TEMPLATES_WITH_VARIANTS = `
     WHERE template_id IS NOT NULL AND is_active = 1
   )
 `;
+
+function scoreSearchMatch(product: ProductVariantRow, query: string, normalizedQuery: string, tokens: string[]): number {
+  const name = normalizeSearch(product.name || '');
+  const sku = normalizeSearch(product.sku || '');
+  const barcode = normalizeSearch(product.barcode || '');
+  const codeFields = [barcode, sku].filter(Boolean);
+
+  if (codeFields.some((field) => field === normalizedQuery)) return 10000;
+  if (codeFields.some((field) => field.startsWith(normalizedQuery))) return 9200;
+  if (codeFields.some((field) => field.includes(normalizedQuery))) return 8600;
+
+  if (name === normalizedQuery) return 8000;
+  if (name.startsWith(normalizedQuery)) return 7400;
+  const phraseIndex = name.indexOf(normalizedQuery);
+  if (phraseIndex >= 0) return 6800 - Math.min(phraseIndex, 500);
+
+  const nameTokenScore = tokenMatchScore(name, tokens);
+  if (nameTokenScore != null) return 5600 + nameTokenScore;
+
+  const haystack = normalizeSearch([product.name, product.sku, product.barcode].filter(Boolean).join(' '));
+  const haystackTokenScore = tokenMatchScore(haystack, tokens);
+  if (haystackTokenScore != null) return 3600 + haystackTokenScore;
+
+  const lowerQuery = query.toLowerCase();
+  if (product.sku && product.sku.toLowerCase().includes(lowerQuery)) return 2500;
+  if (product.barcode && product.barcode.toLowerCase().includes(lowerQuery)) return 2500;
+
+  return 0;
+}
 
 export const productRepo = {
   getAll(): ProductVariantRow[] {
@@ -165,16 +221,18 @@ export const productRepo = {
     // (sku/barcode LIKE, then a full diacritics-aware scan) and then merged;
     // for a 5000-row catalog that was ~2× the work for no extra hits.
     const normalizedQuery = normalizeSearch(trimmed);
-    const lowerQuery = trimmed.toLowerCase();
+    const tokens = searchTokens(trimmed);
     const allActive = database.all<ProductVariantRow>(
       `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
-    return allActive.filter((p) => {
-      if (p.sku && p.sku.toLowerCase().includes(lowerQuery)) return true;
-      if (p.barcode && p.barcode.toLowerCase().includes(lowerQuery)) return true;
-      if (p.sku && normalizeSearch(p.sku).includes(normalizedQuery)) return true;
-      return normalizeSearch(p.name).includes(normalizedQuery);
-    });
+    return allActive
+      .map((product) => ({ product, score: scoreSearchMatch(product, trimmed, normalizedQuery, tokens) }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return (a.product.name || '').localeCompare(b.product.name || '');
+      })
+      .map((entry) => entry.product);
   },
 
   upsertMany(products: ProductVariantRow[]): void {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
@@ -83,6 +83,25 @@ type PrinterTypeValue = typeof PRINTER_TYPES[number];
 type SettingsTab = 'general' | 'pos' | 'printers';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
+const DEFAULT_SCALE_SHARE_PORT = 17891;
+const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
+
+function deriveScaleConnection(scale?: AgentConfig['scale'] | null): ScaleConnectionMode {
+  if (!scale?.enabled) return 'none';
+  if (scale.connection === 'remote') return 'remote';
+  if (scale.connection === 'none') return 'none';
+  return 'local';
+}
+
+function createScalePairingCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function parseScalePortNumber(value: string | number | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) return parsed;
+  return fallback;
+}
 
 type SalonPrinterRouteDefinition = {
   role: SalonPrinterRole;
@@ -508,8 +527,22 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
-  const [scaleEnabled, setScaleEnabled] = useState(config?.scale?.enabled ?? false);
+  const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
+  const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
+  const [scaleSharePort, setScaleSharePort] = useState(String(config?.scale?.share?.port || DEFAULT_SCALE_SHARE_PORT));
+  const [scaleShareToken, setScaleShareToken] = useState(config?.scale?.share?.token || '');
+  const [scaleRemoteHost, setScaleRemoteHost] = useState(config?.scale?.remote?.host || '');
+  const [scaleRemotePort, setScaleRemotePort] = useState(String(config?.scale?.remote?.port || DEFAULT_SCALE_SHARE_PORT));
+  const [scaleRemoteToken, setScaleRemoteToken] = useState(config?.scale?.remote?.token || '');
+  const [scaleNetworkInfo, setScaleNetworkInfo] = useState<{
+    ips: string[];
+    suggestedHost: string;
+    defaultPort: number;
+    running?: boolean;
+    port?: number | null;
+    error?: string;
+  } | null>(null);
   const [scaleTesting, setScaleTesting] = useState(false);
   const [scaleTestResult, setScaleTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [receiptSellerName, setReceiptSellerName] = useState(config?.receiptSellerName || '');
@@ -592,6 +625,32 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const latestPrinterSignatureRef = useRef(getPrinterPayloadSignature(latestPrinterPayloadRef.current));
   const componentMountedRef = useRef(true);
 
+  useEffect(() => {
+    let mounted = true;
+    const load = () => {
+      window.electronAPI.scale?.getNetworkInfo?.()
+        .then((info: {
+          ips: string[];
+          suggestedHost: string;
+          defaultPort: number;
+          running?: boolean;
+          port?: number | null;
+          error?: string;
+        }) => {
+          if (mounted) setScaleNetworkInfo(info);
+        })
+        .catch(() => {
+          if (mounted) setScaleNetworkInfo(null);
+        });
+    };
+    load();
+    const timer = scaleShareEnabled ? window.setTimeout(load, 900) : undefined;
+    return () => {
+      mounted = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [scaleShareEnabled, scaleSharePort]);
+
   const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
     autoStart,
@@ -600,10 +659,22 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
     scale: {
-      enabled: scaleEnabled,
+      enabled: scaleConnection !== 'none',
+      connection: scaleConnection,
       protocol: 'DIBAL_GDPOS',
       port: scalePort,
       baudRate: 9600,
+      share: {
+        enabled: scaleConnection === 'local' && scaleShareEnabled,
+        port: parseScalePortNumber(scaleSharePort, DEFAULT_SCALE_SHARE_PORT),
+        token: scaleShareToken.trim(),
+      },
+      remote: {
+        host: scaleRemoteHost.trim(),
+        port: parseScalePortNumber(scaleRemotePort, DEFAULT_SCALE_SHARE_PORT),
+        token: scaleRemoteToken.trim(),
+        timeoutMs: DEFAULT_REMOTE_SCALE_TIMEOUT_MS,
+      },
     },
     receiptSellerName,
     receiptSellerAddress,
@@ -620,7 +691,9 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     ...overrides,
   }), [
     name, autoStart, language,
-    posEnabled, posMode, posLanguage, scaleEnabled, scalePort,
+    posEnabled, posMode, posLanguage,
+    scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
+    scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
     customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
     customerDisplayRetailCatalogEnabled, customerDisplayFoodMenuEnabled,
@@ -888,8 +961,14 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosEnabled(config.posEnabled ?? false);
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
-      setScaleEnabled(config.scale?.enabled ?? false);
+      setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
+      setScaleShareEnabled(config.scale?.share?.enabled ?? false);
+      setScaleSharePort(String(config.scale?.share?.port || DEFAULT_SCALE_SHARE_PORT));
+      setScaleShareToken(config.scale?.share?.token || '');
+      setScaleRemoteHost(config.scale?.remote?.host || '');
+      setScaleRemotePort(String(config.scale?.remote?.port || DEFAULT_SCALE_SHARE_PORT));
+      setScaleRemoteToken(config.scale?.remote?.token || '');
       setReceiptSellerName(config.receiptSellerName || '');
       setReceiptSellerAddress(config.receiptSellerAddress || '');
       setReceiptSellerNip(config.receiptSellerNip || '');
@@ -1290,11 +1369,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     setScaleTesting(true);
     setScaleTestResult(null);
     try {
-      const result = await window.electronAPI.scale.readWeight({ port: scalePort || undefined });
+      const payload = buildGeneralConfigPayload();
+      await Promise.resolve(onConfigChange(payload));
+      const result = await window.electronAPI.scale.readWeight({
+        port: scaleConnection === 'local' ? scalePort || undefined : undefined,
+      });
       if (result.success) {
         setScaleTestResult({
           success: true,
-          message: `${result.weightKg.toFixed(3)} kg on ${result.port}`,
+          message: `${result.weightKg.toFixed(3)} kg ${result.source === 'remote' ? `via ${result.remoteHost || 'remote scale'}` : `on ${result.port}`}`,
         });
       } else {
         setScaleTestResult({
@@ -3746,35 +3829,41 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
 
             {/* Scale Settings */}
             <div className="border-t border-slate-200 pt-4 mt-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <Scale size={16} />
-                    Fresh-food scale
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Dibal G-325 USB serial reader for kg products.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScaleEnabled(!scaleEnabled);
-                    setScaleTestResult(null);
-                  }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
-                    scaleEnabled ? 'bg-brand-600' : 'bg-slate-300'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      scaleEnabled ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <Scale size={16} />
+                  Scale
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Use a local USB/COM scale, or read a scale shared by another POS over Wi-Fi.
+                </p>
               </div>
 
-              {scaleEnabled && (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                {([
+                  ['none', 'No scale'],
+                  ['local', 'This POS has scale'],
+                  ['remote', 'Wi-Fi scale from POS'],
+                ] as Array<[ScaleConnectionMode, string]>).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setScaleConnection(mode);
+                      setScaleTestResult(null);
+                    }}
+                    className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-colors ${
+                      scaleConnection === mode
+                        ? 'border-brand-500 bg-brand-50 text-brand-700'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {scaleConnection === 'local' && (
                 <div className="mt-3 space-y-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -3808,20 +3897,154 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleTestScale}
-                      disabled={scaleTesting}
-                      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        scaleTesting
-                          ? 'bg-slate-100 text-slate-400 cursor-wait'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                      }`}
-                    >
-                      <Scale size={16} />
-                      {scaleTesting ? 'Reading...' : 'Test scale'}
-                    </button>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-700">Share this scale over Wi-Fi</p>
+                        <p className="text-xs text-slate-500">Turn this on only on the machine physically connected to the scale.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !scaleShareEnabled;
+                          setScaleShareEnabled(next);
+                          if (next && !scaleShareToken.trim()) setScaleShareToken(createScalePairingCode());
+                          setScaleTestResult(null);
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
+                          scaleShareEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            scaleShareEnabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    {scaleShareEnabled && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-600 mb-1">
+                            This machine IP
+                          </label>
+                          <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700">
+                            {scaleNetworkInfo?.suggestedHost || 'Detecting...'}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-600 mb-1">
+                            Share port
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={scaleSharePort}
+                            onChange={(e) => setScaleSharePort(e.target.value)}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-600 mb-1">
+                            Pairing code
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              value={scaleShareToken}
+                              onChange={(e) => setScaleShareToken(e.target.value.replace(/\s/g, ''))}
+                              className="min-w-0 flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setScaleShareToken(createScalePairingCode())}
+                              className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                            >
+                              New
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {scaleShareEnabled && (
+                      <p className={`text-xs font-medium ${
+                        scaleNetworkInfo?.running ? 'text-emerald-700' : scaleNetworkInfo?.error ? 'text-amber-700' : 'text-slate-500'
+                      }`}>
+                        {scaleNetworkInfo?.running
+                          ? `Sharing on ${scaleNetworkInfo.suggestedHost}:${scaleNetworkInfo.port || scaleSharePort}`
+                          : scaleNetworkInfo?.error || 'Save settings to start sharing the scale.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {scaleConnection === 'remote' && (
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-600 mb-1">
+                      Host/IP of scale POS
+                    </label>
+                    <input
+                      value={scaleRemoteHost}
+                      onChange={(e) => {
+                        setScaleRemoteHost(e.target.value);
+                        setScaleTestResult(null);
+                      }}
+                      placeholder="192.168.1.20"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-600 mb-1">
+                      Remote port
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={scaleRemotePort}
+                      onChange={(e) => {
+                        setScaleRemotePort(e.target.value);
+                        setScaleTestResult(null);
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-600 mb-1">
+                      Pairing code
+                    </label>
+                    <input
+                      value={scaleRemoteToken}
+                      onChange={(e) => {
+                        setScaleRemoteToken(e.target.value.replace(/\s/g, ''));
+                        setScaleTestResult(null);
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {scaleConnection !== 'none' && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestScale}
+                    disabled={scaleTesting}
+                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      scaleTesting
+                        ? 'bg-slate-100 text-slate-400 cursor-wait'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                  >
+                    <Scale size={16} />
+                    {scaleTesting ? 'Reading...' : scaleConnection === 'remote' ? 'Test Wi-Fi scale' : 'Test scale'}
+                  </button>
+                  {scaleConnection === 'local' && (
                     <button
                       type="button"
                       onClick={handleRefreshPorts}
@@ -3829,16 +4052,16 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                     >
                       Refresh ports
                     </button>
-                    {scaleTestResult && (
-                      <span className={`text-xs font-semibold px-2.5 py-1.5 rounded-md border ${
-                        scaleTestResult.success
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}>
-                        {scaleTestResult.message}
-                      </span>
-                    )}
-                  </div>
+                  )}
+                  {scaleTestResult && (
+                    <span className={`text-xs font-semibold px-2.5 py-1.5 rounded-md border ${
+                      scaleTestResult.success
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border-amber-200'
+                    }`}>
+                      {scaleTestResult.message}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

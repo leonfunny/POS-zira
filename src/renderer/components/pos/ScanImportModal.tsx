@@ -16,11 +16,22 @@ interface ScanImportModalProps {
   open: boolean;
   preview: ScanImportDraftPreview | null;
   ean: string;
-  onConfirm: () => void | Promise<void>;
+  onConfirm: (retailPriceGrosze: number) => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
   error?: string | null;
   t: (key: string) => string;
+}
+
+function priceInputFromGrosze(value: number | null | undefined): string {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? (n / 100).toFixed(2) : '';
+}
+
+function parsePriceInput(value: string): number | null {
+  const n = Number(value.trim().replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100);
 }
 
 export default function ScanImportModal({
@@ -34,10 +45,13 @@ export default function ScanImportModal({
   t,
 }: ScanImportModalProps) {
   const [closing, setClosing] = useState(false);
+  const [priceInput, setPriceInput] = useState('');
 
   useEffect(() => {
-    if (open) setClosing(false);
-  }, [open]);
+    if (!open) return;
+    setClosing(false);
+    setPriceInput(priceInputFromGrosze(preview?.retail_price));
+  }, [open, preview?.id, preview?.barcode, preview?.retail_price]);
 
   if (!open) return null;
 
@@ -52,6 +66,7 @@ export default function ScanImportModal({
     onCancel();
   };
 
+  const retailPriceGrosze = parsePriceInput(priceInput);
   const priceText = preview ? (preview.retail_price / 100).toFixed(2) : '—';
   const vatText = preview ? `VAT ${preview.vat_rate}%` : '';
 
@@ -89,7 +104,9 @@ export default function ScanImportModal({
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-lg font-semibold text-white truncate">{preview.name}</div>
-                <div className="mt-1 text-2xl font-bold text-emerald-300">{priceText}</div>
+                <div className="mt-1 text-xs text-slate-400">
+                  {tOr('pos.scanImport.draftPrice', 'Draft price')}: {priceText}
+                </div>
                 <div className="mt-0.5 text-xs text-slate-400">{vatText}</div>
                 {preview.status ? (
                   <div className="mt-2 inline-flex px-2 py-0.5 rounded-md bg-purple-900/40 border border-purple-500/30 text-[10px] uppercase tracking-wide text-purple-300">
@@ -98,6 +115,22 @@ export default function ScanImportModal({
                 ) : null}
               </div>
             </div>
+            <label className="mt-4 block">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                {tOr('pos.scanImport.salePrice', 'Selling price')}
+              </span>
+              <input
+                value={priceInput}
+                onChange={(event) => setPriceInput(event.target.value)}
+                inputMode="decimal"
+                autoFocus
+                className="h-12 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-2xl font-bold text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/30"
+                placeholder="0.00"
+              />
+              <div className="mt-1 text-xs text-slate-400">
+                {tOr('pos.scanImport.salePriceHint', 'This price will be saved to the product and used for this cart line.')}
+              </div>
+            </label>
           </div>
         ) : (
           <div className="p-8 text-center text-sm text-slate-400">
@@ -122,8 +155,11 @@ export default function ScanImportModal({
           </button>
           <button
             type="button"
-            onClick={() => onConfirm()}
-            disabled={loading || !preview}
+            onClick={() => {
+              if (retailPriceGrosze == null) return;
+              onConfirm(retailPriceGrosze);
+            }}
+            disabled={loading || !preview || retailPriceGrosze == null}
             className="flex-2 h-12 px-6 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             style={{ flex: 2 }}
           >

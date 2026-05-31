@@ -125,9 +125,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
   scale: {
     readWeight: (options?: { port?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SCALE_READ_WEIGHT, options),
+    getNetworkInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SCALE_GET_NETWORK_INFO),
   },
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
-  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string }) =>
+  printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text, options),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
@@ -745,8 +746,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
-      importDraft: (payload: { ean: string }) =>
-        ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
+        importDraft: (payload: { ean: string; retailPriceGrosze?: number }) =>
+          ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
     },
     quickAdd: {
       prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>

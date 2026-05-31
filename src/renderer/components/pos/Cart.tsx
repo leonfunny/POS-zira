@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
-import CartItemRow from './CartItem';
+import CartItemRow, { type CartItemLabelPrintResult } from './CartItem';
 import POSNumpad from './POSNumpad';
 import { parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
@@ -20,6 +20,8 @@ interface CartProps {
   heldCartsCount?: number;
   /** Park the current cart so the cashier can start a new sale; surfaced as a chip. */
   onHold?: () => void;
+  /** Retail label print action for a cart line. When provided it replaces the note button. */
+  onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
 }
 
 interface OverflowMenuProps {
@@ -121,6 +123,7 @@ export default function Cart({
   lang,
   heldCartsCount = 0,
   onHold,
+  onPrintItemLabel,
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
@@ -316,6 +319,7 @@ export default function Cart({
                 onUpdateQuantity={(id, qty) => dispatch({ type: 'cart/updateQuantity', payload: { id, quantity: qty } })}
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
+                onPrintLabel={onPrintItemLabel}
                 onSelectField={handleSelectField}
                 onReadScale={scaleEnabled ? handleReadScale : undefined}
                 scaleBusy={scaleBusyItemId === item.id}

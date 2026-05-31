@@ -24,6 +24,7 @@ import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
 import { readScaleWeight } from '../hardware/scale/scale-reader-service';
+import { getScaleNetworkInfo, ScaleNetworkService } from '../hardware/scale/scale-network-service';
 import { listSerialPorts, listWindowsPrintersDetailed, getVidForPort } from '../hardware/port-utils';
 import { validateProtocolAgainstVid, type ValidationResult as PortValidationResult } from '../hardware/detection/vid-protocol-registry';
 import {
@@ -109,6 +110,7 @@ export class HardwareModule extends BaseModule {
   private printerDriver: PrinterDriver | null = null;
   // Barcode scanner
   private scanner: HidScanner | null = null;
+  private scaleNetworkService: ScaleNetworkService | null = null;
   // Posnet detection services
   private deviceRegistry: DeviceProfileRegistry | null = null;
   private detectionService: DeviceDetectionService | null = null;
@@ -183,6 +185,14 @@ export class HardwareModule extends BaseModule {
       this.scanner = null;
     }
 
+    this.scaleNetworkService = new ScaleNetworkService(
+      () => getConfig(),
+      () => readScaleWeight(getConfig(), { forceLocal: true }),
+    );
+    await this.scaleNetworkService.applyConfig().catch((err: any) => {
+      logger.warn('[HardwareModule] Remote scale share did not start:', err?.message || err);
+    });
+
     // Initialize Posnet detection services
     logger.info('[HardwareModule] Initializing Posnet detection services...');
     this.deviceRegistry = new DeviceProfileRegistry();
@@ -228,8 +238,16 @@ export class HardwareModule extends BaseModule {
       return ports;
     });
 
-    ipcMain.handle(IPC_CHANNELS.SCALE_READ_WEIGHT, async (_event, options?: { port?: string }) => {
+    ipcMain.handle(IPC_CHANNELS.SCALE_READ_WEIGHT, async (_event, options?: { port?: string; forceLocal?: boolean }) => {
       return readScaleWeight(getConfig(), options);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.SCALE_GET_NETWORK_INFO, () => {
+      return this.scaleNetworkService?.getStatus() || {
+        ...getScaleNetworkInfo(),
+        running: false,
+        port: null,
+      };
     });
 
     ipcMain.handle(IPC_CHANNELS.LIST_WINDOWS_PRINTERS, async () => {
@@ -522,6 +540,9 @@ export class HardwareModule extends BaseModule {
         if (payload.changedKeys.some(k => printerKeys.includes(k))) {
           logger.info('[HardwareModule] Printer config changed, reinitializing...');
           await this.reinitializePrinter();
+        }
+        if (payload.changedKeys.includes('scale')) {
+          await this.scaleNetworkService?.applyConfig();
         }
       } catch (err) {
         logger.error('[HardwareModule] Unhandled error in config:changed handler:', err);
@@ -1245,13 +1266,17 @@ export class HardwareModule extends BaseModule {
       const priceText = options?.priceText?.trim() || options?.text2?.trim();
       const skuText = options?.sku?.trim();
       const detailText = options?.text3?.trim() || (skuText ? `SKU ${skuText}` : undefined);
+      const requestedQuantity = Number(options?.quantity ?? options?.copies ?? 1);
+      const quantity = Number.isFinite(requestedQuantity)
+        ? Math.max(1, Math.min(999, Math.round(requestedQuantity)))
+        : 1;
       await driver.printLabel({
         barcode: normalizedBarcode,
         barcodeType: /^\d{13}$/.test(normalizedBarcode) ? 'EAN13' : 'CODE128',
         text1: text?.trim() || normalizedBarcode,
         text2: priceText,
         text3: detailText,
-        quantity: 1,
+        quantity,
       });
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
@@ -2225,6 +2250,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on stop failed:', err?.message); } }
     for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on stop failed:', err?.message); } }
@@ -2235,6 +2261,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on destroy failed:', err?.message); } }
     for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on destroy failed:', err?.message); } }
