@@ -1268,4 +1268,17 @@ export const migrations: Migration[] = [
         ON pos_schedule_cache(business_date, updated_at);
     `,
   },
+  {
+    version: 37,
+    name: 'repair_server_cash_received_amount',
+    up: `
+      UPDATE orders
+      SET payment_amount = total + change_amount
+      WHERE source = 'SERVER'
+        AND payment_method = 'CASH'
+        AND change_amount > 0
+        AND payment_amount <= total
+        AND total > 0;
+    `,
+  },
 ];

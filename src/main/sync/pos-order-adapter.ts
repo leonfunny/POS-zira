@@ -30,6 +30,28 @@ export function toGrosze(value: unknown): number {
   return Math.round(n * 100);
 }
 
+function toOptionalGrosze(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  if (!isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
+function resolveServerPaymentAmount(args: {
+  paymentMethod: string | null;
+  total: number;
+  paidAmount: number;
+  changeAmount: number;
+  cashReceived: number | null;
+}): number {
+  if (args.paymentMethod !== 'CASH') return args.paidAmount;
+  if (args.cashReceived != null) return args.cashReceived;
+  if (args.total > 0 && args.changeAmount > 0 && args.paidAmount <= args.total) {
+    return args.total + args.changeAmount;
+  }
+  return args.paidAmount;
+}
+
 // Resolves VAT rate while preserving legitimate 0% (export sales). Falls back
 // only when value is missing or non-numeric — avoids the `parseFloat('0') || 23`
 // trap that would silently rewrite legitimate 0% products to 23%.
@@ -92,6 +114,19 @@ export function adaptServerOrder(s: any): any {
     warnOnce('refundAmount', s);
   }
 
+  const total = toGrosze(s.total);
+  const paidAmount = toGrosze(s.paidAmount);
+  const changeAmount = toGrosze(s.changeAmount);
+  const paymentMethod = s.paymentMethod ?? null;
+  const cashReceived = toOptionalGrosze(s.cashReceived ?? s.cash_received);
+  const paymentAmount = resolveServerPaymentAmount({
+    paymentMethod,
+    total,
+    paidAmount,
+    changeAmount,
+    cashReceived,
+  });
+
   return {
     id: s.id,
     order_number: s.orderNumber ?? null,
@@ -110,10 +145,10 @@ export function adaptServerOrder(s: any): any {
     subtotal: toGrosze(s.subtotal),
     discount: toGrosze(s.discountAmount),
     tax: toGrosze(s.taxAmount),
-    total: toGrosze(s.total),
-    payment_method: s.paymentMethod ?? null,
-    payment_amount: toGrosze(s.paidAmount),
-    change_amount: toGrosze(s.changeAmount),
+    total,
+    payment_method: paymentMethod,
+    payment_amount: paymentAmount,
+    change_amount: changeAmount,
     tip: toGrosze(s.tip),
     staff_name: s.staffName ?? null,
     staff_id: s.staffId ?? null,

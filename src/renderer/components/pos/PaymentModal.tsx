@@ -33,6 +33,17 @@ interface Tender {
   amount: number; // grosze
 }
 
+type PaymentSnapshot = {
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  tip: number;
+  grandTotal: number;
+  cashAmountGrosze: number;
+  changeGrosze: number;
+};
+
 type ReceiptRecovery = {
   orderId: string;
   nextAction: 'close' | 'fiscalPrompt';
@@ -95,6 +106,7 @@ export default function PaymentModal({
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
+  const [paymentSnapshot, setPaymentSnapshot] = useState<PaymentSnapshot | null>(null);
   const [customerNip, setCustomerNip] = useState(() =>
     String(extraOrderFields?.customer_nip ?? '').replace(/\D/g, '').slice(0, 10),
   );
@@ -178,13 +190,22 @@ export default function PaymentModal({
   }, []);
 
   const tip = extraOrderFields?.tip ?? 0;
-  const grandTotal = cart.total + tip;
-  const totalZl = grandTotal / 100;
+  const liveGrandTotal = cart.total + tip;
   const parsedCash = parseFloat(cashAmount || '0');
   const cashAmountGrosze = Number.isFinite(parsedCash) ? Math.round(parsedCash * 100) : 0;
-  const changeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - grandTotal) : 0;
-  const cashShortfall = method === 'CASH' && !splitMode && cashAmountGrosze > 0 && cashAmountGrosze < grandTotal
-    ? grandTotal - cashAmountGrosze
+  const liveChangeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - liveGrandTotal) : 0;
+  const displaySubtotal = paymentSnapshot?.subtotal ?? cart.subtotal;
+  const displayDiscount = paymentSnapshot?.discount ?? cart.discount;
+  const displayTax = paymentSnapshot?.tax ?? cart.tax;
+  const displayTip = paymentSnapshot?.tip ?? tip;
+  const displayGrandTotal = paymentSnapshot?.grandTotal ?? liveGrandTotal;
+  const displayCashAmountGrosze = paymentSnapshot?.cashAmountGrosze ?? cashAmountGrosze;
+  const displayChangeGrosze = paymentSnapshot?.changeGrosze ?? liveChangeGrosze;
+  const grandTotal = displayGrandTotal;
+  const totalZl = grandTotal / 100;
+  const changeGrosze = displayChangeGrosze;
+  const cashShortfall = method === 'CASH' && !splitMode && displayCashAmountGrosze > 0 && displayCashAmountGrosze < grandTotal
+    ? grandTotal - displayCashAmountGrosze
     : 0;
   const customerNipValid = customerNip.length === 0 || customerNip.length === 10;
   const customerNipForOrder = customerNip.length === 10 ? customerNip : null;
@@ -447,6 +468,16 @@ export default function PaymentModal({
     }
 
     const outcome = deriveReceiptOutcome(printResult, t);
+    setPaymentSnapshot({
+      subtotal: cart.subtotal,
+      discount: cart.discount,
+      tax: cart.tax,
+      total: cart.total,
+      tip,
+      grandTotal: cart.total + tip,
+      cashAmountGrosze: method === 'CASH' && !splitMode ? paymentAmount : cashAmountGrosze,
+      changeGrosze: splitMode ? 0 : (method === 'CASH' ? Math.max(0, paymentAmount - (cart.total + tip)) : 0),
+    });
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
 
@@ -891,24 +922,24 @@ export default function PaymentModal({
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-200">
                   <div>
                     <p className="text-xs text-slate-400">{t('pos.cart.subtotal')}</p>
-                    <p className="font-semibold">{money(cart.subtotal)}</p>
+                    <p className="font-semibold">{money(displaySubtotal)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">{t('pos.cart.inclVat')}</p>
-                    <p className="font-semibold">{money(cart.tax)}</p>
+                    <p className="font-semibold">{money(displayTax)}</p>
                   </div>
-                  {(cart.discount > 0 || tip > 0) && (
+                  {(displayDiscount > 0 || displayTip > 0) && (
                     <>
-                      {cart.discount > 0 && (
+                      {displayDiscount > 0 && (
                         <div>
                           <p className="text-xs text-slate-400">{t('pos.cart.discount')}</p>
-                          <p className="font-semibold text-amber-200">-{money(cart.discount)}</p>
+                          <p className="font-semibold text-amber-200">-{money(displayDiscount)}</p>
                         </div>
                       )}
-                      {tip > 0 && (
+                      {displayTip > 0 && (
                         <div>
                           <p className="text-xs text-slate-400">{tOr('pos.tip', 'Tip')}</p>
-                          <p className="font-semibold">{money(tip)}</p>
+                          <p className="font-semibold">{money(displayTip)}</p>
                         </div>
                       )}
                     </>
@@ -1208,7 +1239,7 @@ export default function PaymentModal({
                   {splitMode
                     ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
                     : method === 'CASH'
-                      ? `${t('pos.payment.received')}: ${cashAmount ? money(cashAmountGrosze) : money(0)}`
+                      ? `${t('pos.payment.received')}: ${displayCashAmountGrosze > 0 ? money(displayCashAmountGrosze) : money(0)}`
                       : `${t('pos.cart.total')}: ${money(grandTotal)}`}
                 </p>
               </div>
@@ -1423,7 +1454,7 @@ export default function PaymentModal({
               <div aria-live="polite" className={`rounded-lg border p-4 ${
                 cashShortfall > 0
                   ? 'border-red-300 bg-red-50'
-                  : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
+                  : displayCashAmountGrosze >= grandTotal && displayCashAmountGrosze > 0
                     ? 'border-emerald-300 bg-emerald-50'
                     : 'border-slate-200 bg-slate-50'
               }`}>
@@ -1437,7 +1468,7 @@ export default function PaymentModal({
                     <p className={`mt-1 text-3xl font-semibold leading-none ${
                       cashShortfall > 0
                         ? 'text-red-800'
-                        : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
+                        : displayCashAmountGrosze >= grandTotal && displayCashAmountGrosze > 0
                           ? 'text-emerald-800'
                           : 'text-slate-500'
                     }`}>
@@ -1446,7 +1477,7 @@ export default function PaymentModal({
                   </div>
                   <div className="text-right text-sm text-slate-600">
                     <p>{t('pos.cart.total')}: {money(grandTotal)}</p>
-                    <p>{t('pos.payment.received')}: {money(cashAmountGrosze)}</p>
+                    <p>{t('pos.payment.received')}: {money(displayCashAmountGrosze)}</p>
                   </div>
                 </div>
               </div>

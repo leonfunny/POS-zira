@@ -48,4 +48,62 @@ describe('pos order adapter', () => {
       { method: 'CARD', amount: 2764 },
     ]);
   });
+
+  it('uses explicit cashReceived for mirrored server cash orders', () => {
+    const adapted = adaptServerOrder({
+      id: 'server-cash-1',
+      status: 'PAID',
+      subtotal: '14.00',
+      discountAmount: '0.00',
+      taxAmount: '2.62',
+      total: '14.00',
+      paidAmount: '14.00',
+      cashReceived: '50.00',
+      changeAmount: '36.00',
+      paymentMethod: 'CASH',
+      posMode: 'retail',
+      createdAt: '2026-06-01T12:02:08.000Z',
+    });
+
+    expect(adapted.payment_amount).toBe(5000);
+    expect(adapted.change_amount).toBe(3600);
+  });
+
+  it('derives legacy server cash received when backend only sends paidAmount plus changeAmount', () => {
+    const adapted = adaptServerOrder({
+      id: 'server-cash-legacy',
+      status: 'PAID',
+      subtotal: '14.00',
+      discountAmount: '0.00',
+      taxAmount: '2.62',
+      total: '14.00',
+      paidAmount: '14.00',
+      changeAmount: '36.00',
+      paymentMethod: 'CASH',
+      posMode: 'retail',
+      createdAt: '2026-06-01T12:02:08.000Z',
+    });
+
+    expect(adapted.payment_amount).toBe(5000);
+    expect(adapted.change_amount).toBe(3600);
+  });
+
+  it('does not reinterpret non-cash paidAmount as cash received', () => {
+    const adapted = adaptServerOrder({
+      id: 'server-card-1',
+      status: 'PAID',
+      subtotal: '14.00',
+      discountAmount: '0.00',
+      taxAmount: '2.62',
+      total: '14.00',
+      paidAmount: '14.00',
+      changeAmount: '36.00',
+      paymentMethod: 'CARD',
+      posMode: 'retail',
+      createdAt: '2026-06-01T12:02:08.000Z',
+    });
+
+    expect(adapted.payment_amount).toBe(1400);
+    expect(adapted.change_amount).toBe(3600);
+  });
 });
