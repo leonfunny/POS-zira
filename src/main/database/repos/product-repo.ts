@@ -7,11 +7,71 @@ function normalizeSearch(str: string): string {
     .replace(/[\u0141\u0142]/g, (ch) => (ch === '\u0141' ? 'L' : 'l'))
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function searchTokens(query: string): string[] {
-  return normalizeSearch(query).split(/\s+/).filter(Boolean);
+  return normalizeSearch(query).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function editDistanceWithin(a: string, b: string, maxDistance: number): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+  if (a.length === 0) return b.length <= maxDistance ? b.length : maxDistance + 1;
+  if (b.length === 0) return a.length <= maxDistance ? a.length : maxDistance + 1;
+
+  const previousPrevious = new Array<number>(b.length + 1).fill(0);
+  let previous = new Array<number>(b.length + 1).fill(0).map((_, index) => index);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = new Array<number>(b.length + 1).fill(0);
+    current[0] = i;
+    let rowMin = current[0];
+
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let best = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + substitutionCost,
+      );
+
+      if (
+        i > 1
+        && j > 1
+        && a[i - 1] === b[j - 2]
+        && a[i - 2] === b[j - 1]
+      ) {
+        best = Math.min(best, previousPrevious[j - 2] + 1);
+      }
+
+      current[j] = best;
+      if (best < rowMin) rowMin = best;
+    }
+
+    if (rowMin > maxDistance) return maxDistance + 1;
+    previousPrevious.splice(0, previousPrevious.length, ...previous);
+    previous = current;
+  }
+
+  return previous[b.length];
+}
+
+function maxFuzzyDistance(token: string): number {
+  if (token.length < 3 || /\d/.test(token)) return 0;
+  return token.length >= 6 ? 2 : 1;
+}
+
+function fuzzyWordScore(word: string, token: string): number | null {
+  const maxDistance = maxFuzzyDistance(token);
+  if (maxDistance <= 0 || word.length < 2 || /\d/.test(word)) return null;
+
+  const distance = editDistanceWithin(token, word, maxDistance);
+  if (distance > maxDistance) return null;
+  const lengthPenalty = Math.min(Math.abs(word.length - token.length) * 2, 8);
+  return Math.max(24, 48 - distance * 10 - lengthPenalty);
 }
 
 function tokenPositionScore(text: string, token: string): { index: number; score: number } | null {
@@ -22,8 +82,20 @@ function tokenPositionScore(text: string, token: string): { index: number; score
   const prefixIndex = words.findIndex((word) => word.startsWith(token));
   if (prefixIndex >= 0) return { index: prefixIndex, score: 55 };
 
-  const substringIndex = text.indexOf(token);
-  if (substringIndex >= 0) return { index: words.length + substringIndex, score: 20 };
+  let fuzzyMatch: { index: number; score: number } | null = null;
+  words.forEach((word, index) => {
+    const score = fuzzyWordScore(word, token);
+    if (score == null) return;
+    if (!fuzzyMatch || score > fuzzyMatch.score) {
+      fuzzyMatch = { index, score };
+    }
+  });
+  if (fuzzyMatch) return fuzzyMatch;
+
+  if (token.length >= 3) {
+    const substringIndex = text.indexOf(token);
+    if (substringIndex >= 0) return { index: words.length + substringIndex, score: 20 };
+  }
 
   return null;
 }
@@ -34,7 +106,10 @@ function tokenMatchScore(text: string, tokens: string[]): number | null {
   if (matches.some((match) => !match)) return null;
   const indexes = matches.map((match) => match!.index);
   const spread = Math.max(...indexes) - Math.min(...indexes);
-  return matches.reduce((sum, match) => sum + match!.score, 0) - Math.min(spread, 50);
+  const duplicateWordPenalty = (tokens.length - new Set(indexes).size) * 35;
+  return matches.reduce((sum, match) => sum + match!.score, 0)
+    - Math.min(spread, 50)
+    - duplicateWordPenalty;
 }
 
 export interface ProductVariantRow {
@@ -214,7 +289,7 @@ export const productRepo = {
 
   search(query: string): ProductVariantRow[] {
     const trimmed = query.trim();
-    if (!trimmed) return [];
+    if (!trimmed || normalizeSearch(trimmed).length < 2) return [];
 
     // One full scan — sku/barcode/name filtering happens in JS on the same
     // dataset. The previous version ran two SELECT * queries per keystroke
@@ -232,6 +307,7 @@ export const productRepo = {
         if (b.score !== a.score) return b.score - a.score;
         return (a.product.name || '').localeCompare(b.product.name || '');
       })
+      .slice(0, 30)
       .map((entry) => entry.product);
   },
 

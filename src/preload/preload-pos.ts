@@ -160,6 +160,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) =>
         ipcRenderer.invoke('pos:recognition:analyze', payload),
     },
+    voice: {
+      transcribe: (payload: { audioBase64: string; mimeType?: string; model?: string; timestamps?: boolean; chunkSeconds?: number }) =>
+        ipcRenderer.invoke('pos:voice:transcribe', payload),
+    },
     // Absolute file:// path to the webview bridge preload (for the embedded /add panel).
     getAddbridgePreloadPath: (): Promise<string> => ipcRenderer.invoke('app:addbridge-preload-path'),
     // Mode-specific: Tables (Restaurant)

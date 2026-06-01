@@ -84,4 +84,25 @@ describe('POS product category contamination guards', () => {
 
     expect(productRepo.search('dau hu').map((row) => row.id)).toEqual(['tofu']);
   });
+
+  it('keeps the closest Vietnamese product first when accents or letters are mistyped', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'tomato', name: 'C\u00e0 chua', sku: 'tomato' }),
+      product({ id: 'sour-soup', name: 'Canh chua', sku: 'soup' }),
+      product({ id: 'fish', name: 'C\u00e1 thu', sku: 'fish' }),
+    ]);
+
+    expect(productRepo.search('c\u00e1  chua').map((row) => row.id)[0]).toBe('tomato');
+    expect(productRepo.search('ca hua').map((row) => row.id)[0]).toBe('tomato');
+    expect(productRepo.search('c chua').map((row) => row.id)[0]).toBe('tomato');
+  });
+
+  it('does not flood POS search results for one-letter typo input', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'tomato', name: 'C\u00e0 chua', sku: 'tomato' }),
+      product({ id: 'fish', name: 'C\u00e1 thu', sku: 'fish' }),
+    ]);
+
+    expect(productRepo.search('c')).toEqual([]);
+  });
 });
