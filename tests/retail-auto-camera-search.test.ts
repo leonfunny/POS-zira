@@ -27,8 +27,10 @@ describe('retail auto camera search', () => {
   });
 
   it('recognizes, searches local products, and sells through the weighted-aware cart path', () => {
-    expect(retailTemplate).toContain('window.electronAPI.pos.recognition.analyze');
+    expect(retailTemplate).toContain('recognition.scanMatch');
+    expect(retailTemplate).toContain('recognition?.analyze');
     expect(retailTemplate).toContain('window.electronAPI.pos.products.getByBarcode');
+    expect(retailTemplate).toContain('window.electronAPI.pos.products.getById');
     expect(retailTemplate).toContain('window.electronAPI.pos.products.search');
     expect(retailTemplate).toContain("await handleAddProduct(product, 'auto')");
     expect(retailTemplate).toContain("setAutoCameraResult(tOr('pos.autoCamera.chooseMatch', 'Choose item'))");

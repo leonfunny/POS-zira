@@ -113,6 +113,8 @@ describe('IPC channel contracts - POS methods must be in BOTH preloads', () => {
     { scope: 'masterCatalog', method: 'scanCreate', ipc: 'pos:master-catalog:scan-create' },
     { scope: 'quickAdd', method: 'prepare', ipc: 'pos:quick-add:prepare' },
     { scope: 'quickAdd', method: 'finalize', ipc: 'pos:quick-add:finalize' },
+    { scope: 'recognition', method: 'analyze', ipc: 'pos:recognition:analyze' },
+    { scope: 'recognition', method: 'scanMatch', ipc: 'pos:recognition:scan-match' },
     { scope: 'sync', method: 'onOrderSynced', ipc: 'pos:order-synced' },
     { scope: 'sync', method: 'onOrderSyncFailed', ipc: 'pos:order-sync-failed' },
   ];

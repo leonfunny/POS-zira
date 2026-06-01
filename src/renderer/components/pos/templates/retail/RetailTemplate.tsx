@@ -62,6 +62,7 @@ const RECOGNITION_TEXT_KEYS = [
 ];
 
 const RECOGNITION_BARCODE_KEYS = ['ean', 'barcode', 'detectedEan', 'detected_ean'];
+const RECOGNITION_VARIANT_ID_KEYS = ['variantId', 'variant_id', 'productVariantId', 'product_variant_id', 'localVariantId', 'local_variant_id'];
 const AUTO_CAMERA_SCALE_TIMEOUT_MS = 1500;
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
 const PAY_CARD_SCAN_COMMAND = '11111111';
@@ -88,8 +89,14 @@ function firstRecognitionString(source: any, keys: string[]): string | null {
 function recognitionCandidates(input: any[]): any[] {
   return input.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
-    const nested = Array.isArray(item.products) ? item.products : [];
-    return [item, ...nested];
+    const direct = [item.product, item.variant].filter((value) => value && typeof value === 'object');
+    const nested = [
+      ...(Array.isArray(item.products) ? item.products : []),
+      ...(Array.isArray(item.matches) ? item.matches : []),
+      ...(Array.isArray(item.candidates) ? item.candidates : []),
+      ...(Array.isArray(item.variants) ? item.variants : []),
+    ];
+    return [item, ...direct, ...nested];
   });
 }
 
@@ -135,6 +142,25 @@ function autoCameraStatusText(
 function labelCopiesForCartItem(item: CartItem): number {
   if (normalizeSellBy(item.sellBy) === 'WEIGHT') return 1;
   return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
+}
+
+async function matchAutoCameraImage(image: AutoCameraCapturedImage, language: string): Promise<any> {
+  const recognition = window.electronAPI.pos?.recognition;
+  if (typeof recognition?.scanMatch === 'function') {
+    const result = await recognition.scanMatch({
+      images: [image],
+      language,
+      limit: 5,
+    }).catch(() => null);
+    if (result?.ok) return result;
+  }
+  if (typeof recognition?.analyze !== 'function') {
+    return { ok: false, error: 'recognition-unavailable' };
+  }
+  return recognition.analyze({
+    images: [image],
+    language,
+  });
 }
 
 interface RetailTemplateProps {
@@ -638,10 +664,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     const stale = () => runId !== autoCameraRunIdRef.current || !autoCameraEnabledRef.current;
     if (stale()) return;
     setAutoCameraResult(null);
-    const result = await window.electronAPI.pos.recognition.analyze({
-      images: [image],
-      language: lang,
-    });
+    const result = await matchAutoCameraImage(image, lang);
     if (stale()) return;
     if (!result?.ok) {
       throw new Error(result?.error || tOr('pos.autoCamera.recognitionFailed', 'Recognition failed'));
@@ -650,6 +673,21 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     const candidates = recognitionCandidates(Array.isArray(result.products) ? result.products : []);
     if (candidates.length === 0) {
       setAutoCameraResult(tOr('pos.autoCamera.noProduct', 'No match'));
+      return;
+    }
+
+    for (const candidate of candidates) {
+      const variantId = firstRecognitionString(candidate, RECOGNITION_VARIANT_ID_KEYS);
+      if (!variantId) continue;
+      const product = await window.electronAPI.pos.products.getById(variantId);
+      if (stale()) return;
+      if (!product) continue;
+      setSearchQuery(product.barcode || resolveName(product, lang) || product.name);
+      setSearchResults([product]);
+      setActiveCategoryId(null);
+      await handleAddProduct(product, 'auto');
+      if (stale()) return;
+      setAutoCameraResult(resolveName(product, lang));
       return;
     }
 

@@ -758,6 +758,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     recognition: {
       analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) =>
         ipcRenderer.invoke('pos:recognition:analyze', payload),
+      scanMatch: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) =>
+        ipcRenderer.invoke('pos:recognition:scan-match', payload),
     },
     tables: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ALL),

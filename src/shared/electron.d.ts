@@ -831,6 +831,23 @@ interface ElectronAPI {
         error?: string;
       }>;
     };
+    recognition: {
+      analyze: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string }) => Promise<{
+        ok: boolean;
+        products?: any[];
+        language?: string;
+        error?: string;
+      }>;
+      scanMatch: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) => Promise<{
+        ok: boolean;
+        products?: any[];
+        matches?: any[];
+        candidates?: any[];
+        language?: string;
+        error?: string;
+        [key: string]: any;
+      }>;
+    };
     tables: {
       getAll: () => Promise<PosTable[]>;
       getActive: () => Promise<PosTable[]>;

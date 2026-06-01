@@ -1216,6 +1216,33 @@ export class PosModule extends BaseModule {
     );
 
     ipcMain.handle(
+      'pos:recognition:scan-match',
+      async (_e, payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) => {
+        try {
+          if (!Array.isArray(payload?.images) || payload.images.length < 1 || payload.images.length > 5) {
+            return { ok: false, error: 'Capture 1 to 5 images before matching' };
+          }
+          const result = await apiClient.scanMatchProducts(payload.images, payload.language || 'vi', payload.limit || 5);
+          const data = result?.data && typeof result.data === 'object' ? result.data : null;
+          const products =
+            result?.products ??
+            result?.matches ??
+            result?.candidates ??
+            (Array.isArray(result?.data) ? result.data : undefined) ??
+            data?.products ??
+            data?.matches ??
+            data?.candidates ??
+            [];
+          return result?.ok === false
+            ? { ok: false, error: result.error || 'scan-match-failed' }
+            : { ...result, ok: true, products: Array.isArray(products) ? products : [] };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'scan-match-failed' };
+        }
+      },
+    );
+
+    ipcMain.handle(
       'pos:quick-add:prepare',
       async (_e, payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) => {
         try {
