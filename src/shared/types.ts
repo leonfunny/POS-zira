@@ -493,6 +493,7 @@ export interface AgentConfig {
   // POS settings
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
+  labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
   // Receipt seller info (Polish paragon compliance)
   receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
@@ -2933,6 +2934,7 @@ export type FeatureKey =
   | 'warehouse'   // Warehouse documents / Magazyn tab
   | 'forecast'    // Sales forecast and daily replenishment tab
   | 'pos'         // POS window
+  | 'label'       // Quick product label printing
   | 'remote'      // Remote control
   | 'telegram'    // Telegram bot
   | 'security'    // Security camera AI
@@ -2942,7 +2944,7 @@ export type FeatureKey =
   | 'selfCheckout'; // Self-checkout kiosk window
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'products' | 'warehouse' | 'forecast' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'label' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'products' | 'warehouse' | 'forecast' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -2979,6 +2981,7 @@ export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   warehouse: true,   // Warehouse documents — UI shell until backend posting exists
   forecast: true,    // Local sales forecast and daily ordering assistance
   pos: false,
+  label: true,
   selfCheckout: false,
   remote: false,
   telegram: false,

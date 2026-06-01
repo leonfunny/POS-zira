@@ -11,6 +11,7 @@ import AuthScreen from './components/AuthScreen';
 import InvoicingTab from './components/invoicing/InvoicingTab';
 import OrdersTab from './components/OrdersTab';
 import ProductModule from './components/products/ProductModule';
+import LabelModule from './components/label/LabelModule';
 import WarehouseModule from './components/warehouse/WarehouseModule';
 import ForecastOrderingTab from './components/forecast/ForecastOrderingTab';
 import SecurityTab from './components/security/SecurityTab';
@@ -41,6 +42,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   settings: true,    // Always enabled
   debug: true,
   pos: true,         // Always show POS tab
+  label: true,
   selfCheckout: true,
   billiard: false,   // Not relevant for nail salon
   remote: false,
@@ -53,6 +55,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
 // Tab to feature key mapping
 const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   pos: 'pos',
+  label: 'label',
   selfCheckout: 'selfCheckout',
   billiard: 'billiard',
   chat: 'chat',
@@ -126,7 +129,7 @@ export default function App() {
 
   // Get visible tabs based on entitlements and user preferences
   const visibleTabs = useMemo((): Tab[] => {
-    const allTabs: Tab[] = ['pos', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
+    const allTabs: Tab[] = ['pos', 'label', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
     return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
   }, [isFeatureEnabled, config?.hiddenTabs]);
@@ -446,6 +449,9 @@ export default function App() {
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
               {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'label' && isFeatureEnabled('label') && (
+                <LabelModule language={(config?.language as Language) || 'en'} />
+              )}
               {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
               )}

@@ -434,6 +434,7 @@ function getWindowsPrinterOptionsForSelect(
 
 const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
   { tab: 'pos',          label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
+  { tab: 'label',        label: 'Label',           icon: <Tag size={15} />,            color: 'text-emerald-700 bg-emerald-50' },
   { tab: 'selfCheckout', label: 'Self-Checkout',   icon: <ScanBarcode size={15} />,    color: 'text-emerald-600 bg-emerald-50' },
   { tab: 'billiard',     label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
   { tab: 'orders',     label: 'Orders',           icon: <ClipboardList size={15} />,   color: 'text-slate-600 bg-slate-100' },

@@ -235,6 +235,7 @@ const store = new Store<AgentConfig>({
     // POS settings
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
+    labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
     // Receipt seller info (Polish paragon compliance)
     receiptSellerName: { type: 'string' },
     receiptSellerAddress: { type: 'string' },
