@@ -540,7 +540,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
             firstName: data.user.firstName,
             lastName: data.user.lastName,
             role: data.user.role,
-            salonId: data.user.salonId || data.salon?.id || '',
+            salonId: data.user.salonId || (data.user as any).salon_id || data.salon?.id || '',
             salonName: data.salon?.name,
           };
 
