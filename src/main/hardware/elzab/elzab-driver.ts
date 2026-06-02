@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import type { DailyReportData, PrinterStatusInfo, ReceiptData } from '../../../shared/types';
+import { toFiscalSafeText } from '../../../shared/fiscal-text';
 import {
   fiscalAttemptRepo,
   type FiscalAttemptJournal,
@@ -22,6 +23,20 @@ import {
 const ELZAB_USB_VID = 'C1CA';
 
 type ElzabConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
+
+function toFiscalSafeReceiptData(data: ReceiptData): ReceiptData {
+  return {
+    ...data,
+    items: data.items.map((item) => {
+      const unit = item.unit === undefined ? undefined : toFiscalSafeText(item.unit);
+      return {
+        ...item,
+        name: toFiscalSafeText(item.name),
+        unit: unit || undefined,
+      };
+    }),
+  };
+}
 
 export interface ElzabDriverOptions {
   port?: string;
@@ -184,7 +199,8 @@ export class ElzabDriver {
 
   async printReceipt(data: ReceiptData): Promise<void> {
     this.assertConnected();
-    const context = this.createReceiptAttempt(data);
+    const fiscalData = toFiscalSafeReceiptData(data);
+    const context = this.createReceiptAttempt(fiscalData);
 
     try {
       this.assertRealFiscalAllowed('receipt');
@@ -199,11 +215,11 @@ export class ElzabDriver {
 
     let result: ElzabOperationResult;
     try {
-      result = await this.bridge.printReceipt(this.connectionConfig(), data);
+      result = await this.bridge.printReceipt(this.connectionConfig(), fiscalData);
     } catch (error: any) {
       const detail = error?.message || String(error);
       this.fiscalJournal.markUnknown(context.attempt.id, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', { detail });
-      this.notifyUnknown(data, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', detail);
+      this.notifyUnknown(fiscalData, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after bridge error: ${detail}`);
     }
 
@@ -216,7 +232,7 @@ export class ElzabDriver {
     if (this.isAmbiguousAfterSent(result)) {
       this.fiscalJournal.markUnknown(context.attempt.id, code, result);
       this.setFailure(result);
-      this.notifyUnknown(data, code, result.detail);
+      this.notifyUnknown(fiscalData, code, result.detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after ${code}${result.detail ? `: ${result.detail}` : ''}`);
     }
 
