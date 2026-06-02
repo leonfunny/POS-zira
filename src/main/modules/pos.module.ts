@@ -1654,6 +1654,28 @@ export class PosModule extends BaseModule {
 
     // Staff
     ipcMain.handle('pos:staff:getAll', () => staffRepo.getAll());
+    ipcMain.handle('pos:staff:getAllForSettings', () => staffRepo.getAllForSettings());
+    ipcMain.handle('pos:staff:create', (_e, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+      try {
+        return { success: true, staff: staffRepo.createLocal(input) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to create staff' };
+      }
+    });
+    ipcMain.handle('pos:staff:update', (_e, id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+      try {
+        return { success: true, staff: staffRepo.updateLocal(id, input) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to update staff' };
+      }
+    });
+    ipcMain.handle('pos:staff:setActive', (_e, id: string, active: boolean) => {
+      try {
+        return { success: true, staff: staffRepo.setActive(id, active) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to update staff status' };
+      }
+    });
 
     // Nail turn board (backend-driven module; dark-launch safe)
     ipcMain.handle('pos:nail-turns:getToday', async () => {

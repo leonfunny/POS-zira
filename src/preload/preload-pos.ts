@@ -186,6 +186,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Mode-specific: Staff (Salon)
     staff: {
       getAll: () => ipcRenderer.invoke('pos:staff:getAll'),
+      getAllForSettings: () => ipcRenderer.invoke('pos:staff:getAllForSettings'),
+      create: (input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke('pos:staff:create', input),
+      update: (id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke('pos:staff:update', id, input),
+      setActive: (id: string, active: boolean) => ipcRenderer.invoke('pos:staff:setActive', id, active),
     },
     // Hold Orders (park/recall)
     hold: {

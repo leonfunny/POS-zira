@@ -584,17 +584,18 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
 
-  const handleShiftOpen = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
+  const handleShiftOpen = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
+    if (!data.staffId || !data.staffName?.trim()) throw new Error(tOr('pos.shift.selectStaffRequired', 'Select a staff member'));
     const result = await window.electronAPI.pos.shift.open({
-      staffId: crypto.randomUUID(),
-      staffName: data.staffName || t('pos.cashier'),
+      staffId: data.staffId,
+      staffName: data.staffName,
       openingCash: data.openingCash ?? 0,
     });
     if (!result.success) throw new Error(result.error || 'Failed to open shift');
     setShowShiftModal(null);
   };
 
-  const handleShiftClose = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
+  const handleShiftClose = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
     if (!session.shiftId) throw new Error('No active shift');
     const result = await window.electronAPI.pos.shift.close({
       shiftId: session.shiftId,

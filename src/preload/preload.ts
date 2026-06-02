@@ -780,6 +780,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     staff: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL),
+      getAllForSettings: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL_FOR_SETTINGS),
+      create: (input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_CREATE, input),
+      update: (id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_UPDATE, id, input),
+      setActive: (id: string, active: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_SET_ACTIVE, id, active),
     },
     hold: {
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_CREATE, id, title, payload),

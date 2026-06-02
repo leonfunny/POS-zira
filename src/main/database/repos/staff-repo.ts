@@ -1,4 +1,5 @@
 import { database } from '../database';
+import { randomUUID } from 'crypto';
 
 export interface StaffRow {
   id: string;                      // staff_profiles.id (server)
@@ -11,9 +12,37 @@ export interface StaffRow {
   backend_synced_at?: string | null;
 }
 
+export interface StaffWriteInput {
+  name: string;
+  commissionRate?: number;
+  role?: string | null;
+  isActive?: boolean;
+}
+
+function normalizeStaffInput(input: StaffWriteInput, existing?: StaffRow): StaffRow {
+  const name = input.name?.trim();
+  if (!name) throw new Error('Staff name is required');
+
+  const now = new Date().toISOString();
+  return {
+    id: existing?.id ?? randomUUID(),
+    user_id: existing?.user_id ?? null,
+    name,
+    commission_rate: Math.max(0, Math.round(Number(input.commissionRate ?? existing?.commission_rate ?? 0) || 0)),
+    is_active: input.isActive === undefined ? (existing?.is_active ?? 1) : (input.isActive ? 1 : 0),
+    updated_at: now,
+    role: input.role === undefined ? (existing?.role ?? null) : (input.role?.trim() || null),
+    backend_synced_at: existing?.backend_synced_at ?? null,
+  };
+}
+
 export const staffRepo = {
   getAll(): StaffRow[] {
     return database.all<StaffRow>('SELECT * FROM pos_staff WHERE is_active = 1 ORDER BY name');
+  },
+
+  getAllForSettings(): StaffRow[] {
+    return database.all<StaffRow>('SELECT * FROM pos_staff ORDER BY is_active DESC, name');
   },
 
   getById(id: string): StaffRow | null {
@@ -30,6 +59,51 @@ export const staffRepo = {
       'SELECT * FROM pos_staff WHERE id = ? OR user_id = ?',
       [id, id],
     );
+  },
+
+  createLocal(input: StaffWriteInput): StaffRow {
+    const row = normalizeStaffInput(input);
+    database.run(
+      `INSERT INTO pos_staff (id, user_id, name, commission_rate, is_active, updated_at, role, backend_synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.user_id ?? null,
+        row.name,
+        row.commission_rate,
+        row.is_active,
+        row.updated_at,
+        row.role ?? null,
+        row.backend_synced_at ?? null,
+      ],
+    );
+    database.markDirty();
+    return row;
+  },
+
+  updateLocal(id: string, input: StaffWriteInput): StaffRow {
+    const existing = this.getById(id);
+    if (!existing) throw new Error('Staff not found');
+    const row = normalizeStaffInput(input, existing);
+    database.run(
+      `UPDATE pos_staff
+       SET name = ?, commission_rate = ?, is_active = ?, updated_at = ?, role = ?
+       WHERE id = ?`,
+      [row.name, row.commission_rate, row.is_active, row.updated_at, row.role ?? null, id],
+    );
+    database.markDirty();
+    return this.getById(id)!;
+  },
+
+  setActive(id: string, active: boolean): StaffRow {
+    const existing = this.getById(id);
+    if (!existing) throw new Error('Staff not found');
+    database.run(
+      'UPDATE pos_staff SET is_active = ?, updated_at = ? WHERE id = ?',
+      [active ? 1 : 0, new Date().toISOString(), id],
+    );
+    database.markDirty();
+    return this.getById(id)!;
   },
 
   upsertMany(staff: StaffRow[]): void {

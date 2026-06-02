@@ -220,6 +220,22 @@ interface PosStaff {
   name: string;
   commission_rate: number;
   is_active: number;
+  updated_at?: string | null;
+  role?: string | null;
+  backend_synced_at?: string | null;
+}
+
+interface PosStaffWriteInput {
+  name: string;
+  commissionRate?: number;
+  role?: string | null;
+  isActive?: boolean;
+}
+
+interface PosStaffWriteResult {
+  success: boolean;
+  staff?: PosStaff;
+  error?: string;
 }
 
 // ── ElectronAPI interface ──
@@ -864,6 +880,10 @@ interface ElectronAPI {
     };
     staff: {
       getAll: () => Promise<PosStaff[]>;
+      getAllForSettings: () => Promise<PosStaff[]>;
+      create: (input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
+      update: (id: string, input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
+      setActive: (id: string, active: boolean) => Promise<PosStaffWriteResult>;
     };
     hold: {
       create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;

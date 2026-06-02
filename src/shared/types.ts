@@ -1105,6 +1105,10 @@ export const IPC_CHANNELS = {
 
   // POS - Staff
   POS_STAFF_GET_ALL: 'pos:staff:getAll',
+  POS_STAFF_GET_ALL_FOR_SETTINGS: 'pos:staff:getAllForSettings',
+  POS_STAFF_CREATE: 'pos:staff:create',
+  POS_STAFF_UPDATE: 'pos:staff:update',
+  POS_STAFF_SET_ACTIVE: 'pos:staff:setActive',
 
   // POS - Hold Orders
   POS_HOLD_CREATE: 'pos:hold:create',
