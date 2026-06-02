@@ -4,8 +4,9 @@ import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
+import { formatProductLabelPriceText } from '../../../../utils/product-label';
 import { resolveName } from '../../../../../shared/catalog-names';
-import { classifyProductSale } from '../../../../../shared/product-sale-classifier';
+import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
@@ -180,10 +181,11 @@ interface RetailTemplateProps {
   onCreateProduct?: () => void;
   onLastLabelVariantChange?: (variantId: string) => void;
   onPrintLastCartLabelCommand?: () => void | Promise<void>;
+  onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
@@ -548,7 +550,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
         readWeight: effectiveReadWeight,
       });
       if (!result.ok) {
-        showToolbarError(formatRetailSaleError(result.error, tOr));
+        const message = formatRetailSaleError(result.error, tOr);
+        if (result.saleClass.requiresScale && onManualWeightRequired) {
+          onManualWeightRequired(product, result.saleClass, message);
+        } else {
+          showToolbarError(message);
+        }
         return;
       }
       dispatch({ type: 'cart/addItem', payload: result.item });
@@ -559,7 +566,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
@@ -569,10 +576,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
 
     try {
       const displayName = resolveName(product, lang) || product.name;
-      const priceGrosze = Number(product.retail_price) || 0;
-      const priceText = priceGrosze > 0
-        ? `${(priceGrosze / 100).toFixed(2)} ${tOr('pos.currency', 'zl')}`
-        : undefined;
+      const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
       const result = await window.electronAPI.printLabel(barcode, displayName, {
         priceText,
         sku: product.sku?.trim() || undefined,

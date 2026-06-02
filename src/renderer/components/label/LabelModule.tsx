@@ -6,6 +6,7 @@ import { useProducts } from '../../hooks/useProducts';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
+import { formatProductLabelPriceText } from '../../utils/product-label';
 
 interface LabelModuleProps {
   language: Language;
@@ -175,9 +176,13 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const printProductLabel = async (product: ProductListItem) => {
     const barcode = resolveLabelCode(product);
     const labelText = resolveName(product, language) || product.name || barcode;
+    const priceText = formatProductLabelPriceText(product, 'zl');
     setStatus({ type: 'printing', message: copy.printing, productId: product.id });
     try {
-      const result = await window.electronAPI.printLabel(barcode, labelText);
+      const result = await window.electronAPI.printLabel(barcode, labelText, {
+        priceText,
+        sku: product.sku?.trim() || undefined,
+      });
       if (!result?.success) {
         setStatus({ type: 'error', message: result?.error || 'Label printer error' });
         return;
@@ -293,6 +298,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                   const isPrinting = status.type === 'printing' && status.productId === product.id;
                   const category = product.category_id ? categoryById.get(product.category_id) : null;
                   const showImage = img && !imageErrors[product.id];
+                  const priceText = formatProductLabelPriceText(product, 'zl') || '0.00 zl';
 
                   return (
                     <button
@@ -329,8 +335,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
                       </div>
                       <div className="pt-1 flex items-center justify-between gap-2">
                         <span className="text-xs text-slate-500 truncate">{copy.tapToPrint}</span>
-                        <span className="text-sm font-black text-slate-900 tabular-nums">
-                          {(Number(product.retail_price || 0) / 100).toFixed(2)}
+                        <span className="text-sm font-black text-slate-900 tabular-nums whitespace-nowrap shrink-0">
+                          {priceText}
                         </span>
                       </div>
                     </button>
