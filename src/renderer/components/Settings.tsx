@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
+import { resolveName } from '../../shared/catalog-names';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
+import type { Category } from '../hooks/usePosDb';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
@@ -102,6 +104,23 @@ function parseScalePortNumber(value: string | number | undefined, fallback: numb
   const parsed = Number(value);
   if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) return parsed;
   return fallback;
+}
+
+function clampLabelStationCopies(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(999, Math.round(parsed)));
+}
+
+function parseLabelStationCategoryIds(value: string | null | undefined): string[] {
+  return String(value || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function serializeLabelStationCategoryIds(ids: string[]): string {
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).join(',');
 }
 
 type SalonPrinterRouteDefinition = {
@@ -529,6 +548,24 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
+  const [labelStationEnabled, setLabelStationEnabled] = useState(config?.labelStationEnabled ?? false);
+  const [labelStationCategoryIds, setLabelStationCategoryIds] = useState(config?.labelStationCategoryIds || '');
+  const [labelStationCopies, setLabelStationCopies] = useState(clampLabelStationCopies(config?.labelStationCopies ?? 1));
+  const [labelStationExitPin, setLabelStationExitPin] = useState(config?.labelStationExitPin || '');
+  const [posCategories, setPosCategories] = useState<Category[]>([]);
+  const [posCategoriesLoading, setPosCategoriesLoading] = useState(false);
+  const labelStationSelectedCategoryIds = useMemo(
+    () => new Set(parseLabelStationCategoryIds(labelStationCategoryIds)),
+    [labelStationCategoryIds],
+  );
+  const toggleLabelStationCategory = useCallback((categoryId: string) => {
+    setLabelStationCategoryIds((current) => {
+      const ids = parseLabelStationCategoryIds(current);
+      return ids.includes(categoryId)
+        ? serializeLabelStationCategoryIds(ids.filter((id) => id !== categoryId))
+        : serializeLabelStationCategoryIds([...ids, categoryId]);
+    });
+  }, []);
   const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
   const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
@@ -660,6 +697,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posEnabled,
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
+    labelStationEnabled,
+    labelStationCategoryIds: serializeLabelStationCategoryIds(parseLabelStationCategoryIds(labelStationCategoryIds)),
+    labelStationCopies: clampLabelStationCopies(labelStationCopies),
+    labelStationExitPin,
     scale: {
       enabled: scaleConnection !== 'none',
       connection: scaleConnection,
@@ -694,6 +735,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   }), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage,
+    labelStationEnabled, labelStationCategoryIds, labelStationCopies, labelStationExitPin,
     scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
@@ -902,6 +944,26 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     }
   }, [settingsTab, loadLocalPrinterRows, loadSharedPrinterRouting]);
 
+  useEffect(() => {
+    if (settingsTab !== 'pos') return;
+    let cancelled = false;
+    setPosCategoriesLoading(true);
+    window.electronAPI.pos.categories.getAll()
+      .then((rows: Category[]) => {
+        if (!cancelled) setPosCategories((rows || []) as Category[]);
+      })
+      .catch((err: any) => {
+        rlog.warn('[Settings] Failed to load POS categories for Label Station:', err?.message || err);
+        if (!cancelled) setPosCategories([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPosCategoriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsTab]);
+
   // Load available ports and Windows printers
   useEffect(() => {
     let mounted = true;
@@ -963,6 +1025,10 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosEnabled(config.posEnabled ?? false);
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
+      setLabelStationEnabled(config.labelStationEnabled ?? false);
+      setLabelStationCategoryIds(config.labelStationCategoryIds || '');
+      setLabelStationCopies(clampLabelStationCopies(config.labelStationCopies ?? 1));
+      setLabelStationExitPin(config.labelStationExitPin || '');
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
@@ -3822,6 +3888,122 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
                 ))}
               </select>
               <p className="text-xs text-slate-500 mt-1">{t('settings.posLanguageDesc')}</p>
+            </div>
+
+            {/* POS3 Label Station */}
+            <div className="border-t border-slate-200 pt-4 mt-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <Tag size={16} />
+                    Label Station
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    POS3 staff counter mode for Zebra 50x30 EAN labels.
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Configure categories/PIN first, then enable Label Station on POS3.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLabelStationEnabled(!labelStationEnabled)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
+                    labelStationEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                  }`}
+                  aria-pressed={labelStationEnabled}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      labelStationEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-600 mb-1">
+                        Default copies
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={labelStationCopies}
+                        onChange={(e) => setLabelStationCopies(clampLabelStationCopies(e.target.value))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-600 mb-1">
+                        Exit PIN
+                      </label>
+                      <input
+                        type="password"
+                        value={labelStationExitPin}
+                        onChange={(e) => setLabelStationExitPin(e.target.value)}
+                        placeholder="Optional"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-700">Allowed categories</div>
+                        <div className="text-xs text-slate-500">Empty selection shows all local POS categories.</div>
+                      </div>
+                      {labelStationSelectedCategoryIds.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setLabelStationCategoryIds('')}
+                          className="px-2.5 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {posCategoriesLoading ? (
+                      <div className="text-xs text-slate-500">Loading categories...</div>
+                    ) : posCategories.length === 0 ? (
+                      <div className="text-xs text-slate-500">No local categories found.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                        {posCategories.map((category) => {
+                          const selected = labelStationSelectedCategoryIds.has(category.id);
+                          return (
+                            <label
+                              key={category.id}
+                              className={`flex items-center gap-2 rounded-md border px-3 py-2 cursor-pointer ${
+                                selected
+                                  ? 'border-brand-400 bg-brand-50 text-brand-800'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleLabelStationCategory(category.id)}
+                                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-300"
+                              />
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                {resolveName(category, posLanguage || language)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    Label printer is configured under Printers &gt; LABEL, Zebra GK420d, 50x30.
+                  </p>
+              </div>
             </div>
 
             {/* Category priority ranking — retail browse order + size */}

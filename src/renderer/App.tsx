@@ -12,6 +12,7 @@ import InvoicingTab from './components/invoicing/InvoicingTab';
 import OrdersTab from './components/OrdersTab';
 import ProductModule from './components/products/ProductModule';
 import LabelModule from './components/label/LabelModule';
+import LabelStationTab from './components/LabelStationTab';
 import WarehouseModule from './components/warehouse/WarehouseModule';
 import ForecastOrderingTab from './components/forecast/ForecastOrderingTab';
 import SecurityTab from './components/security/SecurityTab';
@@ -82,6 +83,7 @@ export default function App() {
   const [initError, setInitError] = useState<string | null>(null);
   const [isPosFullscreen, setIsPosFullscreen] = useState(false);
   const [isCheckinFullscreen, setIsCheckinFullscreen] = useState(false);
+  const [labelStationSessionUnlocked, setLabelStationSessionUnlocked] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Hooks
@@ -99,6 +101,10 @@ export default function App() {
   }, []);
   const exitPosKiosk = useCallback(() => {
     setIsPosFullscreen(false);
+    window.electronAPI.window.setKiosk(false);
+  }, []);
+  const exitLabelStation = useCallback(() => {
+    setLabelStationSessionUnlocked(true);
     window.electronAPI.window.setKiosk(false);
   }, []);
 
@@ -304,6 +310,19 @@ export default function App() {
   // (e.g., logout → offline mode, or switching accounts), clearing all
   // in-memory state: cart, products, connection status, etc.
   const sessionKey = authUser?.id || 'anon';
+  const labelStationActive = !!config?.labelStationEnabled && !labelStationSessionUnlocked;
+
+  useEffect(() => {
+    if (!config?.labelStationEnabled) {
+      setLabelStationSessionUnlocked(false);
+    }
+  }, [config?.labelStationEnabled]);
+
+  useEffect(() => {
+    window.electronAPI.window.setKiosk(labelStationActive).catch((err: any) => {
+      rlog.warn('[App] Failed to update Label Station kiosk state:', err?.message || err);
+    });
+  }, [labelStationActive]);
 
   if (loading) {
     return (
@@ -329,6 +348,29 @@ export default function App() {
         <p className="text-xs text-slate-400 mt-4">
           Press F12 to open DevTools and see details.
         </p>
+      </div>
+    );
+  }
+
+  // POS3 Label Station machine mode: hide normal shell/tabs and unlock only
+  // for this renderer session through LabelStationTab's exit affordance.
+  if (labelStationActive) {
+    return (
+      <div key={sessionKey} className="h-screen w-screen flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0">
+          <LabelStationTab
+            config={config}
+            language={(config?.posLanguage || config?.language || 'en') as Language}
+            onExit={exitLabelStation}
+          />
+        </div>
+        <TouchKeyboard
+          visible={keyboardVisible}
+          mode={keyboardMode}
+          onKey={onKey}
+          onBackspace={onBackspace}
+          onDone={onDone}
+        />
       </div>
     );
   }
