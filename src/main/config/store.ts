@@ -364,8 +364,10 @@ const store = new Store<AgentConfig>({
     backupRestoreLastSourcePath: { type: 'string' },
     backupRestoreLastSafetyBackupPath: { type: 'string' },
     backupRestoreLastAppliedAt: { type: 'string' },
-    // User-hidden tabs
+    // User-hidden tabs (legacy; migrated into moduleOverrides)
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
+    // Per-module visibility overrides (this device only). Map of tab -> boolean.
+    moduleOverrides: { type: 'object', default: {} },
     // Check-in display toggles
     checkinShowStatsBar: { type: 'boolean', default: true },
     checkinShowQueue: { type: 'boolean', default: true },
@@ -382,6 +384,25 @@ function inferMultiPrinterMode(config: Partial<AgentConfig>): boolean {
 
 if (!store.has('multiPrinterMode')) {
   store.set('multiPrinterMode', inferMultiPrinterMode(store.store));
+}
+
+// Migrate legacy `hiddenTabs` into `moduleOverrides` (one source of truth for
+// the Module Manager). Idempotent: a hidden tab is folded in as `false` only
+// when no explicit override already exists, so a user who later force-enables a
+// module is never re-hidden on subsequent launches.
+{
+  const legacyHidden = (store.get('hiddenTabs') as string[] | undefined) || [];
+  if (legacyHidden.length > 0) {
+    const overrides = { ...(store.get('moduleOverrides') as Record<string, boolean> | undefined || {}) };
+    let changed = false;
+    for (const tab of legacyHidden) {
+      if (!(tab in overrides)) {
+        overrides[tab] = false;
+        changed = true;
+      }
+    }
+    if (changed) store.set('moduleOverrides', overrides);
+  }
 }
 
 /**

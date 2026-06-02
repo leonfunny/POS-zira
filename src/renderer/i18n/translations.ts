@@ -402,6 +402,11 @@ export const translations: Record<Language, Record<string, string>> = {
     // Settings
     'settings.posMode': 'POS Mode',
     'settings.posModeDesc': 'Select the industry mode for Point of Sale',
+    'settings.modules': 'Modules',
+    'settings.modulesDesc': 'Show or hide modules in the sidebar on this device. Changes are local and do not affect your plan.',
+    'settings.modulesReset': 'Reset to plan defaults',
+    'settings.moduleOutsidePlan': 'outside plan',
+    'settings.moduleAlwaysOn': 'always on',
 
     // Shared
     'pos.notes': 'Notes',
@@ -1806,6 +1811,11 @@ export const translations: Record<Language, Record<string, string>> = {
     // Settings
     'settings.posMode': 'Chế độ POS',
     'settings.posModeDesc': 'Chọn chế độ ngành cho máy bán hàng',
+    'settings.modules': 'Quản lý Module',
+    'settings.modulesDesc': 'Bật/tắt module hiển thị ở thanh bên trên máy này. Thay đổi cục bộ, không ảnh hưởng gói dịch vụ.',
+    'settings.modulesReset': 'Khôi phục mặc định',
+    'settings.moduleOutsidePlan': 'ngoài gói',
+    'settings.moduleAlwaysOn': 'luôn bật',
 
     // Shared
     'pos.notes': 'Ghi chú',
@@ -7831,6 +7841,11 @@ export const translations: Record<Language, Record<string, string>> = {
     // Settings
     'settings.posMode': 'Tryb POS',
     'settings.posModeDesc': 'Wybierz tryb branżowy dla kasy',
+    'settings.modules': 'Moduły',
+    'settings.modulesDesc': 'Pokaż lub ukryj moduły na pasku bocznym na tym urządzeniu. Zmiany są lokalne i nie wpływają na plan.',
+    'settings.modulesReset': 'Przywróć domyślne',
+    'settings.moduleOutsidePlan': 'poza planem',
+    'settings.moduleAlwaysOn': 'zawsze wł.',
 
     // Shared
     'pos.notes': 'Notatki',

@@ -8,7 +8,8 @@ import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
-import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale } from 'lucide-react';
+import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale, LayoutGrid } from 'lucide-react';
+import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -78,12 +79,15 @@ function PortProtocolMismatchBanner({
 interface SettingsProps {
   config: AgentConfig | null;
   onConfigChange: (config: Partial<AgentConfig>) => void | Promise<any>;
+  /** Plan/entitlement default for a tab — used by the Module Manager for the
+   *  default toggle state and the "outside plan" badge. */
+  isModuleEntitled?: (tab: Tab) => boolean;
 }
 
 // Printer types - defined locally for Vite compatibility
 const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
-type SettingsTab = 'general' | 'pos' | 'printers';
+type SettingsTab = 'general' | 'pos' | 'printers' | 'modules';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 const DEFAULT_SCALE_SHARE_PORT = 17891;
@@ -471,7 +475,7 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
   { tab: 'debug',     label: 'Debug',            icon: <Bug size={15} />,             color: 'text-yellow-600 bg-yellow-50' },
 ];
 
-export default function Settings({ config, onConfigChange }: SettingsProps) {
+export default function Settings({ config, onConfigChange, isModuleEntitled }: SettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
   const [windowsPrinters, setWindowsPrinters] = useState<WindowsPrinterOption[]>(
     () => getInitialWindowsPrinterOptions(config),
@@ -2057,6 +2061,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           { id: 'general' as const, label: t('settings.general'), icon: <LayoutDashboard size={15} /> },
           { id: 'pos' as const, label: t('settings.pos'), icon: <ShoppingCart size={15} /> },
           { id: 'printers' as const, label: t('settings.printers'), icon: <Printer size={15} /> },
+          { id: 'modules' as const, label: t('settings.modules'), icon: <LayoutGrid size={15} /> },
         ]).map((tab) => {
           const active = settingsTab === tab.id;
           return (
@@ -2078,6 +2083,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           );
         })}
       </div>
+
+      {settingsTab === 'modules' && (
+        <ModuleManager
+          config={config}
+          onConfigChange={onConfigChange}
+          isModuleEntitled={isModuleEntitled}
+          t={t}
+        />
+      )}
 
       {settingsTab === 'general' && (
         <>

@@ -39,18 +39,18 @@ interface SidebarProps {
   onFullscreen: () => void;
 }
 
-interface MenuItem {
+export interface MenuItem {
   tab: Tab;
   icon: React.ReactNode;
   labelKey: string;
 }
 
-interface MenuGroup {
+export interface MenuGroup {
   labelKey: string;
   items: MenuItem[];
 }
 
-const MENU_GROUPS: MenuGroup[] = [
+export const MENU_GROUPS: MenuGroup[] = [
   {
     labelKey: 'sidebar.sales',
     items: [

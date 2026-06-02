@@ -133,12 +133,22 @@ export default function App() {
     return true;
   }, [entitlements]);
 
-  // Get visible tabs based on entitlements and user preferences
+  // Get visible tabs. Local module overrides (Settings → Module Manager) win
+  // over plan entitlements: an explicit `true`/`false` for a tab forces it
+  // shown/hidden on THIS device regardless of plan. With no explicit choice we
+  // fall back to the entitlement default (and any legacy hiddenTabs flag).
+  // `settings` is always visible so the user can never lock themselves out.
   const visibleTabs = useMemo((): Tab[] => {
     const allTabs: Tab[] = ['pos', 'label', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
+    const overrides = (config?.moduleOverrides ?? {}) as Partial<Record<Tab, boolean>>;
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
-    return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
-  }, [isFeatureEnabled, config?.hiddenTabs]);
+    return allTabs.filter(tab => {
+      if (tab === 'settings') return true;
+      const override = overrides[tab];
+      if (typeof override === 'boolean') return override;
+      return isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab);
+    });
+  }, [isFeatureEnabled, config?.moduleOverrides, config?.hiddenTabs]);
 
   // Ensure activeTab is visible, otherwise switch to first visible tab
   useEffect(() => {
@@ -538,6 +548,7 @@ export default function App() {
                 <Settings
                   config={config}
                   onConfigChange={updateConfig}
+                  isModuleEntitled={(tab: Tab) => isFeatureEnabled(TAB_TO_FEATURE[tab])}
                 />
               )}
               {activeTab === 'debug' && isFeatureEnabled('debug') && <Debug />}

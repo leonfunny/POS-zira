@@ -573,7 +573,14 @@ export interface AgentConfig {
   backupRestoreLastAppliedAt?: string;
 
   // User-hidden tabs (locally controlled, independent of entitlements)
+  // @deprecated superseded by moduleOverrides; kept for backward-compat + migration
   hiddenTabs?: Tab[];
+
+  // Per-module visibility overrides (locally controlled, this device only).
+  // Key present => explicit user choice wins over entitlements (can force-show
+  // a module the plan does not entitle, or hide an entitled one).
+  // Key absent => fall back to entitlement default. `settings` is always shown.
+  moduleOverrides?: Partial<Record<Tab, boolean>>;
 
   // Check-in tab display toggles
   checkinShowStatsBar?: boolean;  // Show total/waiting/in-service/completed bar (default: true)
