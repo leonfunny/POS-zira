@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow, { type CartItemLabelPrintResult } from './CartItem';
 import POSNumpad from './POSNumpad';
-import { parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
+import { appendDecimal, appendDigit, appendDoubleZero, backspace, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 
@@ -112,6 +112,252 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
   );
 }
 
+interface DiscountPopupProps {
+  subtotal: number;
+  currentDiscount: number;
+  currency: string;
+  onApplyPercent: (percent: number) => void;
+  onApplyFixed: (amount: number) => void;
+  onClear: () => void;
+  onClose: () => void;
+  tOr: (key: string, fallback: string) => string;
+}
+
+function formatCompactMoney(grosze: number, currency: string): string {
+  const value = Math.max(0, Math.round(grosze));
+  const amount = value % 100 === 0
+    ? String(value / 100)
+    : (value / 100).toFixed(2);
+  return `${amount} ${currency}`;
+}
+
+function DiscountPopup({
+  subtotal,
+  currentDiscount,
+  currency,
+  onApplyPercent,
+  onApplyFixed,
+  onClear,
+  onClose,
+  tOr,
+}: DiscountPopupProps) {
+  const percentOptions = [5, 10, 15, 20];
+  const roundDownToTenDiscount = subtotal % 1000;
+  const hasRoundDiscount = roundDownToTenDiscount > 0 && roundDownToTenDiscount < subtotal;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={tOr('pos.numpad.discount', 'Discount')}
+        className="fixed left-1/2 top-1/2 z-50 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div>
+            <p className="text-sm font-extrabold text-slate-950">{tOr('pos.numpad.discount', 'Discount')}</p>
+            <p className="mt-0.5 text-xs font-semibold text-slate-500">
+              {tOr('pos.cart.subtotal', 'Subtotal')}: {formatCompactMoney(subtotal, currency)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={tOr('pos.cancel', 'Cancel')}
+            className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="grid grid-cols-2 gap-2">
+            {percentOptions.map((percent) => {
+              const amount = Math.min(Math.round(subtotal * percent / 100), subtotal);
+              return (
+                <button
+                  key={percent}
+                  type="button"
+                  onClick={() => onApplyPercent(percent)}
+                  className="h-16 rounded-lg border border-brand-200 bg-brand-50 px-3 text-left transition-colors hover:border-brand-500 hover:bg-brand-100 active:bg-brand-200"
+                >
+                  <span className="block text-lg font-black text-brand-900">-{percent}%</span>
+                  <span className="block text-xs font-bold text-brand-700">-{formatCompactMoney(amount, currency)}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => hasRoundDiscount && onApplyFixed(roundDownToTenDiscount)}
+            disabled={!hasRoundDiscount}
+            className="mt-2 flex h-14 w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-left transition-colors hover:border-emerald-500 hover:bg-emerald-100 active:bg-emerald-200 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-300"
+          >
+            <span className="text-sm font-extrabold text-emerald-900">
+              {tOr('pos.discount.roundDown', 'Round down')}
+            </span>
+            <span className="text-lg font-black tabular-nums text-emerald-800">
+              -{formatCompactMoney(roundDownToTenDiscount, currency)}
+            </span>
+          </button>
+
+          <div className="mt-3 flex gap-2">
+            {currentDiscount > 0 && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="h-11 flex-1 rounded-lg border border-red-200 bg-white px-3 text-sm font-extrabold text-red-700 hover:bg-red-50"
+              >
+                {tOr('pos.discount.clear', 'Clear discount')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-11 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.cancel', 'Cancel')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+interface PricePopupProps {
+  item: CartItem;
+  currency: string;
+  onApply: (price: number) => void;
+  onClose: () => void;
+  tOr: (key: string, fallback: string) => string;
+}
+
+function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) {
+  const [buffer, setBuffer] = useState((item.price / 100).toFixed(2));
+  const parsedPrice = parseBufferGrosze(buffer);
+  const canApply = buffer.trim().length > 0 && Number.isFinite(parsedPrice) && parsedPrice >= 0;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && canApply) onApply(parsedPrice);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [canApply, onApply, onClose, parsedPrice]);
+
+  const pressKey = (key: string) => {
+    if (key === '.') setBuffer((value) => appendDecimal(value, 'price'));
+    else if (key === '00') setBuffer((value) => appendDoubleZero(value, 'price'));
+    else setBuffer((value) => appendDigit(value, key));
+  };
+
+  const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '00'];
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={tOr('pos.price.edit', 'Edit price')}
+        className="fixed left-1/2 top-1/2 z-50 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-extrabold text-slate-950">{tOr('pos.price.edit', 'Edit price')}</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{item.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={tOr('pos.cancel', 'Cancel')}
+            className="h-9 w-9 shrink-0 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+            <p className="text-xs font-bold text-slate-500">{tOr('pos.price.new', 'New price')}</p>
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 flex-1 truncate text-3xl font-black tabular-nums text-slate-950">
+                {buffer || '0'}
+              </span>
+              <span className="text-base font-extrabold text-slate-500">{currency}</span>
+            </div>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              {tOr('pos.price.current', 'Current')}: {formatCompactMoney(item.price, currency)}
+            </p>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {keypad.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => pressKey(key)}
+                className="h-14 rounded-lg border border-slate-200 bg-white text-lg font-black tabular-nums text-slate-900 transition-colors hover:border-brand-300 hover:bg-brand-50 active:bg-brand-100"
+              >
+                {key}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setBuffer((value) => backspace(value))}
+              className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.backspace', 'Backspace')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setBuffer('')}
+              className="h-11 rounded-lg border border-red-200 bg-white px-3 text-sm font-extrabold text-red-700 hover:bg-red-50"
+            >
+              {tOr('pos.clear', 'Clear')}
+            </button>
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-12 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.cancel', 'Cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => canApply && onApply(parsedPrice)}
+              disabled={!canApply}
+              className="h-12 flex-1 rounded-lg bg-brand-600 px-3 text-sm font-extrabold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {tOr('pos.price.apply', 'Apply price')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Cart({
   cart,
   dispatch,
@@ -129,6 +375,8 @@ export default function Cart({
   const { config } = useConfig();
   const scaleEnabled = config?.scale?.enabled === true;
   const [confirmClear, setConfirmClear] = useState(false);
+  const [discountPopupOpen, setDiscountPopupOpen] = useState(false);
+  const [pricePopupItemId, setPricePopupItemId] = useState<string | null>(null);
   const [scaleBusyItemId, setScaleBusyItemId] = useState<string | null>(null);
   const [scaleErrors, setScaleErrors] = useState<Record<string, string>>({});
   const itemsScrollRef = useRef<HTMLDivElement>(null);
@@ -160,17 +408,27 @@ export default function Cart({
     [cart.items, controller],
   );
 
+  const handleOpenPricePopup = useCallback((item: CartItem) => {
+    controller.selectPayment();
+    setDiscountPopupOpen(false);
+    setPricePopupItemId(item.id);
+  }, [controller]);
+
+  const pricePopupItem = pricePopupItemId
+    ? cart.items.find((item) => item.id === pricePopupItemId) || null
+    : null;
+
   const activeFieldFor = (id: string): 'qty' | 'price' | null => {
     if (controller.target.kind !== 'cartItem') return null;
     if (controller.target.itemId !== id) return null;
     return controller.target.field;
   };
 
-  // Inline numpad is for editing line items + discount. Cash-prefill happens
+  // Inline numpad is for editing line items. Cash-prefill happens
   // in PaymentModal (which has its own keypad), so we hide the inline panel
   // whenever the controller is idle on payment — that reclaims ~280px of
   // vertical space that the old layout always reserved.
-  const showNumpad = controller.target.kind === 'cartItem' || controller.target.kind === 'discount';
+  const showNumpad = controller.target.kind === 'cartItem';
 
   const numpadLabel = (() => {
     const target = controller.target;
@@ -187,6 +445,24 @@ export default function Cart({
     controller.selectPayment();
     requestPayment(prefillCashGrosze);
   }, [controller, requestPayment]);
+
+  const applyPercentDiscount = useCallback((percent: number) => {
+    dispatch({ type: 'cart/applyDiscount', payload: { amount: percent, discountType: 'percentage' } });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
+
+  const applyFixedDiscount = useCallback((amount: number) => {
+    dispatch({ type: 'cart/applyDiscount', payload: { amount, discountType: 'fixed' } });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
+
+  const clearDiscount = useCallback(() => {
+    dispatch({ type: 'cart/clearDiscount' });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
 
   const handleClearConfirm = useCallback(() => {
     dispatch({ type: 'cart/clear' });
@@ -321,6 +597,7 @@ export default function Cart({
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
                 onPrintLabel={onPrintItemLabel}
                 onSelectField={handleSelectField}
+                onEditPrice={handleOpenPricePopup}
                 onReadScale={scaleEnabled ? handleReadScale : undefined}
                 scaleBusy={scaleBusyItemId === item.id}
                 scaleError={scaleErrors[item.id] || null}
@@ -337,16 +614,19 @@ export default function Cart({
 
       {/* ─── QUICK-ACTION CHIPS ──────────────────────────────────
           Surface the most common order-level actions one tap away
-          (industry pattern: Square / Shopify POS / Toast). The
-          discount chip mirrors numpad state — tapping again exits. */}
+          (industry pattern: Square / Shopify POS / Toast). Discount
+          opens a preset popup instead of the inline numpad. */}
       {hasItems && (
-        <div className="shrink-0 px-3 pt-2 pb-2 flex items-center gap-2 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
+        <div className="relative shrink-0 px-3 pt-2 pb-2 flex items-center gap-2 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
           <button
             type="button"
-            onClick={() => isDiscountActive ? controller.selectPayment() : controller.selectDiscount()}
-            aria-pressed={isDiscountActive}
+            onClick={() => {
+              controller.selectPayment();
+              setDiscountPopupOpen(true);
+            }}
+            aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
             className={`shrink-0 h-11 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
-              isDiscountActive
+              discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
             }`}
@@ -356,6 +636,31 @@ export default function Cart({
             </svg>
             {tOr('pos.numpad.discount', 'Discount')}
           </button>
+          {discountPopupOpen && (
+            <DiscountPopup
+              subtotal={cart.subtotal}
+              currentDiscount={cart.discount}
+              currency={currency}
+              onApplyPercent={applyPercentDiscount}
+              onApplyFixed={applyFixedDiscount}
+              onClear={clearDiscount}
+              onClose={() => setDiscountPopupOpen(false)}
+              tOr={tOr}
+            />
+          )}
+          {pricePopupItem && (
+            <PricePopup
+              item={pricePopupItem}
+              currency={currency}
+              onApply={(price) => {
+                dispatch({ type: 'cart/setItemPrice', payload: { id: pricePopupItem.id, price } });
+                setPricePopupItemId(null);
+                controller.selectPayment();
+              }}
+              onClose={() => setPricePopupItemId(null)}
+              tOr={tOr}
+            />
+          )}
           {onHold && (
             <button
               type="button"

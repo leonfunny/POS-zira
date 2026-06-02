@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Printer, Scale } from 'lucide-react';
+import { DollarSign, Printer, Scale } from 'lucide-react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
 import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
@@ -17,6 +17,7 @@ interface CartItemProps {
   onSetNotes?: (id: string, notes: string) => void;
   onPrintLabel?: (item: CartItemType) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
+  onEditPrice?: (item: CartItemType) => void;
   onReadScale?: (item: CartItemType) => void;
   scaleBusy?: boolean;
   scaleError?: string | null;
@@ -36,6 +37,7 @@ export default function CartItemRow({
   onSetNotes,
   onPrintLabel,
   onSelectField,
+  onEditPrice,
   onReadScale,
   scaleBusy,
   scaleError,
@@ -137,7 +139,7 @@ export default function CartItemRow({
         <div className="flex items-center gap-1.5 min-w-0">
           <button
             type="button"
-            onClick={() => onSelectField?.(item.id, 'price')}
+            onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
             title={tOr('pos.tapToEditPrice', 'Tap to edit price')}
             className={`min-h-[32px] text-xs tabular-nums rounded-md px-2 py-1 transition-colors cursor-pointer touch-manipulation ${
               priceHighlight
@@ -148,20 +150,35 @@ export default function CartItemRow({
             {priceDisplay} {currency}{perUnit}
           </button>
           {onPrintLabel && !editingNotes ? (
-            <button
-              type="button"
-              onClick={handlePrintLabel}
-              disabled={labelState === 'printing'}
-              aria-label={tOr('pos.label.print', 'Print barcode')}
-              title={tOr('pos.label.print', 'Print barcode')}
-              className={`min-h-[32px] w-8 flex items-center justify-center rounded-md cursor-pointer touch-manipulation transition-colors ${
-                labelState === 'printing'
-                  ? 'text-slate-400 bg-slate-100 cursor-wait'
-                  : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
-              }`}
-            >
-              <Printer size={15} strokeWidth={2.4} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handlePrintLabel}
+                disabled={labelState === 'printing'}
+                aria-label={tOr('pos.label.print', 'Print barcode')}
+                title={tOr('pos.label.print', 'Print barcode')}
+                className={`min-h-[32px] w-8 flex items-center justify-center rounded-md cursor-pointer touch-manipulation transition-colors ${
+                  labelState === 'printing'
+                    ? 'text-slate-400 bg-slate-100 cursor-wait'
+                    : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+                }`}
+              >
+                <Printer size={15} strokeWidth={2.4} />
+              </button>
+              <button
+                type="button"
+                onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
+                aria-label={tOr('pos.tapToEditPrice', 'Tap to edit price')}
+                title={tOr('pos.tapToEditPrice', 'Tap to edit price')}
+                className={`min-h-[32px] w-8 flex items-center justify-center rounded-md cursor-pointer touch-manipulation transition-colors ${
+                  priceHighlight
+                    ? 'bg-brand-100 text-brand-900 ring-1 ring-brand-400'
+                    : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+                }`}
+              >
+                <DollarSign size={15} strokeWidth={2.7} />
+              </button>
+            </>
           ) : onSetNotes && !editingNotes && (
             <button
               type="button"
