@@ -1478,7 +1478,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       window.electronAPI.pos.payment.getLatestFiscalAttempt(orderId),
     ]).then(([pa, fa]) => {
       if (cancelled) return;
-      const attempts = pa?.attempts || [];
+      const attempts = (pa?.attempts || []) as Array<{ document_type: string; printer_name: string | null; printer_target: string | null; status: string; route: string | null }>;
       const orderAttempt = attempts.find((a) => a.document_type === 'ORDER' || a.document_type === 'REPRINT') || null;
       setOrderPrint(orderAttempt
         ? { name: orderAttempt.printer_name, target: orderAttempt.printer_target, status: orderAttempt.status, route: orderAttempt.route }
