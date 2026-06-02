@@ -24,6 +24,7 @@ let testStartTime: Date;
 /** Tabs visible by default in offline mode (entitlement defaults from App.tsx) */
 const DEFAULT_TABS = [
   { id: 'pos',       label: 'POS' },
+  { id: 'billiard',  label: 'Billiard' },
   { id: 'chat',      label: 'Zira AI' },
   { id: 'status',    label: 'Status' },
   { id: 'checkin',   label: 'Check-in' },
@@ -138,6 +139,19 @@ describe('Print Agent Smoke Tests', () => {
 
     await screenshotOnFail(page, 'tab-pos');
     console.log('[smoke] POS tab: OK');
+  });
+
+  it('tab: Billiard/Bilard renders floor plan shell in offline mode', async () => {
+    let clicked = await navigateToTab(page, 'Billiard');
+    if (!clicked) clicked = await navigateToTab(page, 'Bilard');
+    expect(clicked).toBe(true);
+    await page.waitForTimeout(1_000);
+
+    const text = await page.locator('main').innerText({ timeout: 5_000 });
+    expect(text).toMatch(/Floor Plan|Plan sali|No tables yet|Brak sto/);
+
+    await screenshotOnFail(page, 'tab-billiard');
+    console.log('[smoke] Billiard tab: OK');
   });
 
   it('tab: Zira AI (Chat) — renders without crash', async () => {

@@ -75,6 +75,100 @@ function ZoomControls() {
 
 // ─── Inner component (needs ToastProvider context) ────────────────────
 
+function normalizeFloorPlan(raw: any): FloorPlanType {
+  const floorNumber = Number(raw?.floorNumber ?? raw?.floor_number ?? DEFAULT_FLOOR);
+  return {
+    ...raw,
+    id: String(raw?.id ?? `legacy-${floorNumber}`),
+    salonId: raw?.salonId ?? raw?.salon_id ?? '',
+    name: raw?.name ?? `Floor ${floorNumber}`,
+    floorNumber,
+    isDefault: Boolean(raw?.isDefault ?? raw?.is_default ?? floorNumber === DEFAULT_FLOOR),
+    isActive: raw?.isActive ?? raw?.is_active ?? true,
+    backgroundImage: raw?.backgroundImage ?? raw?.background_image ?? null,
+    roomWidthM: Number(raw?.roomWidthM ?? raw?.room_width_m ?? 16),
+    roomHeightM: Number(raw?.roomHeightM ?? raw?.room_height_m ?? 10),
+    displayOrder: Number(raw?.displayOrder ?? raw?.display_order ?? floorNumber),
+    layouts: raw?.layouts,
+  };
+}
+
+function normalizeLayout(raw: any): any {
+  if (!raw) return null;
+  return {
+    ...raw,
+    id: raw.id,
+    salonId: raw.salonId ?? raw.salon_id ?? '',
+    resourceId: raw.resourceId ?? raw.resource_id,
+    floorPlanId: raw.floorPlanId ?? raw.floor_plan_id ?? null,
+    positionX: Number(raw.positionX ?? raw.position_x ?? 50),
+    positionY: Number(raw.positionY ?? raw.position_y ?? 50),
+    rotation: Number(raw.rotation ?? 0),
+    widthPct: Number(raw.widthPct ?? raw.width_pct ?? 15.5),
+    heightPct: Number(raw.heightPct ?? raw.height_pct ?? 13),
+    zoneName: raw.zoneName ?? raw.zone_name ?? null,
+    zoneColor: raw.zoneColor ?? raw.zone_color ?? null,
+    floorPlan: raw.floorPlan ? normalizeFloorPlan(raw.floorPlan) : null,
+  };
+}
+
+function parsePricingRules(raw: any): any {
+  const value = raw?.pricingRules ?? raw?.pricing_rules;
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+function normalizeTableStatus(raw: any): TableOverview['status'] {
+  const status = String(raw?.status ?? raw?.session?.status ?? '').toLowerCase();
+  if (status === 'paused') return 'paused';
+  if (status === 'occupied' || status === 'active' || raw?.session) return 'occupied';
+  return 'free';
+}
+
+function normalizeTableOverview(raw: any): TableOverview {
+  if (raw?.resource) {
+    return {
+      ...raw,
+      status: normalizeTableStatus(raw),
+      layout: normalizeLayout(raw.layout),
+    };
+  }
+
+  const id = String(raw?.id ?? raw?.resourceId ?? raw?.resource_id ?? '');
+  return {
+    resource: {
+      id,
+      name: raw?.name ?? raw?.resourceName ?? raw?.resource_name ?? id,
+      pricingRules: parsePricingRules(raw),
+      metadata: raw?.metadata ?? {},
+    },
+    session: raw?.session ?? null,
+    status: normalizeTableStatus(raw),
+    layout: normalizeLayout(raw?.layout),
+  };
+}
+
+function normalizeTableList(rawOverview: any): TableOverview[] {
+  const rawTables = Array.isArray(rawOverview)
+    ? rawOverview
+    : rawOverview?.tables ?? rawOverview?.resources ?? [];
+  return Array.isArray(rawTables) ? rawTables.map(normalizeTableOverview) : [];
+}
+
+function normalizeFloorPlanList(rawFloorPlans: any, rawOverview: any): FloorPlanType[] {
+  const source = Array.isArray(rawFloorPlans)
+    ? rawFloorPlans
+    : rawFloorPlans?.data ?? rawOverview?.floorPlans ?? [];
+  return Array.isArray(source) ? source.map(normalizeFloorPlan) : [];
+}
+
 function FloorPlanInner({ language }: { language: Language }) {
   const { t } = useTranslation(language);
   const toast = useToast();
@@ -126,7 +220,11 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [createPending, setCreatePending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
 
-  const tables: TableOverview[] = overview || [];
+  const tables = useMemo(() => normalizeTableList(overview), [overview]);
+  const normalizedFloorPlans = useMemo(
+    () => normalizeFloorPlanList(floorPlansData, overview),
+    [floorPlansData, overview],
+  );
 
   // Floor state
   const {
@@ -137,7 +235,7 @@ function FloorPlanInner({ language }: { language: Language }) {
     tableCounts,
     addFloor,
     hasMultipleFloors,
-  } = useFloorState(tables, floorPlansData);
+  } = useFloorState(tables, normalizedFloorPlans);
 
   // Clean up conflicting states on mode toggle
   useEffect(() => {

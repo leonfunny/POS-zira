@@ -44,7 +44,7 @@ const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
   pos: true,         // Always show POS tab
   label: true,
   selfCheckout: true,
-  billiard: false,   // Not relevant for nail salon
+  billiard: true,    // POS-zira uses billiard offline/local, not only after server login
   remote: false,
   telegram: false,
   security: true,
