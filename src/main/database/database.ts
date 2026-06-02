@@ -407,6 +407,8 @@ class Database {
       'local_printers',
       // Local fiscal journal (contains order payloads and tax-device safety state)
       'fiscal_attempts',
+      // Local print journal (which printer printed each order receipt copy)
+      'print_attempts',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

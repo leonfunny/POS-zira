@@ -80,7 +80,20 @@ function markResolved(id: string, status: FiscalAttemptStatus, errorCode?: strin
 
 export const fiscalAttemptRepo: FiscalAttemptJournal & {
   markOpenSentAsUnknownOnStartup(): number;
+  findLatestByOrder(orderId: string): FiscalAttemptRow | null;
 } = {
+  // Latest fiscal attempt for an order, any status — used by Order History to
+  // render the fiscal print badge (printed / failed / needs-reconcile).
+  findLatestByOrder(orderId: string): FiscalAttemptRow | null {
+    return database.get<FiscalAttemptRow>(
+      `SELECT * FROM fiscal_attempts
+       WHERE order_id = ?
+       ORDER BY attempt_no DESC
+       LIMIT 1`,
+      [orderId],
+    );
+  },
+
   findBlockingAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null {
     const payment = paymentPredicate(paymentId);
     const placeholders = BLOCKING_STATUSES.map(() => '?').join(', ');

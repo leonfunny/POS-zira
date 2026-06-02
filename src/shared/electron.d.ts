@@ -759,6 +759,8 @@ interface ElectronAPI {
       hasFiscalPrinter: () => Promise<{ success: boolean; configured: boolean; connected: boolean }>;
       getReconcilableFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; error?: string }>;
       reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => Promise<{ success: boolean; status?: string; error?: string }>;
+      getPrintAttempts: (orderId: string) => Promise<{ success: boolean; attempts: Array<{ id: string; order_id: string; document_type: string; printer_type: string; printer_name: string | null; printer_target: string | null; route: string | null; status: string; error: string | null; created_at: string | null }>; error?: string }>;
+      getLatestFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; printer: { name: string | null; target: string | null } | null; error?: string }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       printRefundReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>;

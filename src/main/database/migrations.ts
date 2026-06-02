@@ -1281,4 +1281,23 @@ export const migrations: Migration[] = [
         AND total > 0;
     `,
   },
+  {
+    version: 38,
+    name: 'print_attempts',
+    up: `
+      CREATE TABLE IF NOT EXISTS print_attempts (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        document_type TEXT NOT NULL,   -- ORDER | REPRINT | REFUND
+        printer_type TEXT NOT NULL,    -- RECEIPT | FISCAL | A4 | LABEL
+        printer_name TEXT,             -- e.g. "Xprinter XP-80T"
+        printer_target TEXT,           -- COM port / shared printerId / windows printer
+        route TEXT,                    -- LOCAL | SHARED_NETWORK
+        status TEXT NOT NULL,          -- PRINTED | FAILED | NO_PRINTER
+        error TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_print_attempts_order ON print_attempts(order_id, created_at);
+    `,
+  },
 ];

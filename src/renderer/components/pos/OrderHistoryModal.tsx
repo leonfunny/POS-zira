@@ -102,6 +102,60 @@ function tOr(t: (key: string) => string, key: string, fallback: string): string 
   return value && value !== key ? value : fallback;
 }
 
+// ── Per-document print badges ─────────────────────────────────────────────
+type PrintBadgeView = { tone: 'ok' | 'warn' | 'err' | 'idle'; text: string };
+type Tr = (key: string, fallback: string) => string;
+
+function orderPrintBadgeView(
+  p: { name: string | null; target: string | null; status: string; route: string | null } | null,
+  tr: Tr,
+): PrintBadgeView {
+  if (!p) return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') };
+  const printer = [p.name, p.target].filter(Boolean).join(' · ') || tr('pos.history.printerGeneric', 'printer');
+  if (p.status === 'PRINTED') return { tone: 'ok', text: printer };
+  if (p.status === 'FAILED') return { tone: 'err', text: `${printer} — ${tr('pos.history.printFailed', 'failed')}` };
+  return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') }; // NO_PRINTER
+}
+
+function fiscalPrintBadgeView(
+  p: { status: string; name: string | null; target: string | null } | null,
+  tr: Tr,
+): PrintBadgeView {
+  if (!p) return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') };
+  const printer = [p.name, p.target].filter(Boolean).join(' · ') || 'Fiscal';
+  switch (p.status) {
+    case 'SUCCESS_CONFIRMED':
+      return { tone: 'ok', text: printer };
+    case 'FAILED_CONFIRMED':
+      return { tone: 'err', text: `${printer} — ${tr('pos.history.printFailed', 'failed')}` };
+    case 'UNKNOWN_NEEDS_RECONCILIATION':
+    case 'SENT':
+    case 'PENDING':
+      return { tone: 'warn', text: `${printer} — ${tr('pos.history.needsCheck', 'needs check')}` };
+    case 'BLOCKED_BY_SAFETY_GATE':
+      return { tone: 'warn', text: `${printer} — ${tr('pos.history.blocked', 'blocked')}` };
+    default:
+      return { tone: 'idle', text: printer };
+  }
+}
+
+function PrintBadge({ label, view }: { label: string; view: PrintBadgeView }) {
+  const tone =
+    view.tone === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : view.tone === 'err' ? 'border-rose-200 bg-rose-50 text-rose-800'
+    : view.tone === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-800'
+    : 'border-slate-200 bg-slate-50 text-slate-500';
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-12 shrink-0 font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className={`inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 font-medium ${tone}`}>
+        {view.tone === 'ok' && <span aria-hidden="true">✓</span>}
+        <span className="truncate">{view.text}</span>
+      </span>
+    </div>
+  );
+}
+
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1187,6 +1241,12 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   // operator confirms — on the physical printer — whether it actually printed.
   const [reconcilable, setReconcilable] = useState<{ id: string; status: string } | null>(null);
   const [reconciling, setReconciling] = useState(false);
+  // Per-document print badges: which printer printed the order copy + the
+  // fiscal receipt, and whether each succeeded. `printBadgeNonce` is bumped
+  // after any print action so the badges refresh without reopening the order.
+  const [orderPrint, setOrderPrint] = useState<{ name: string | null; target: string | null; status: string; route: string | null } | null>(null);
+  const [fiscalPrint, setFiscalPrint] = useState<{ status: string; name: string | null; target: string | null } | null>(null);
+  const [printBadgeNonce, setPrintBadgeNonce] = useState(0);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1360,6 +1420,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setReprinting(false);
+      setPrintBadgeNonce((n) => n + 1);
     }
   };
 
@@ -1384,6 +1445,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setPrintingFiscal(false);
+      setPrintBadgeNonce((n) => n + 1);
     }
   };
 
@@ -1404,6 +1466,29 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       .catch(() => { if (!cancelled) setReconcilable(null); });
     return () => { cancelled = true; };
   }, [detail?.order.id]);
+
+  // Per-document print badges (which printer printed the order copy + fiscal).
+  // Refetched on order change and after any print action (printBadgeNonce).
+  useEffect(() => {
+    const orderId = detail?.order.id;
+    if (!orderId) { setOrderPrint(null); setFiscalPrint(null); return; }
+    let cancelled = false;
+    Promise.all([
+      window.electronAPI.pos.payment.getPrintAttempts(orderId),
+      window.electronAPI.pos.payment.getLatestFiscalAttempt(orderId),
+    ]).then(([pa, fa]) => {
+      if (cancelled) return;
+      const attempts = pa?.attempts || [];
+      const orderAttempt = attempts.find((a) => a.document_type === 'ORDER' || a.document_type === 'REPRINT') || null;
+      setOrderPrint(orderAttempt
+        ? { name: orderAttempt.printer_name, target: orderAttempt.printer_target, status: orderAttempt.status, route: orderAttempt.route }
+        : null);
+      setFiscalPrint(fa?.attempt
+        ? { status: fa.attempt.status, name: fa.printer?.name ?? null, target: fa.printer?.target ?? null }
+        : null);
+    }).catch(() => { if (!cancelled) { setOrderPrint(null); setFiscalPrint(null); } });
+    return () => { cancelled = true; };
+  }, [detail?.order.id, printBadgeNonce]);
 
   const handleReconcileFiscal = async (orderId: string, didPrint: boolean) => {
     if (reconciling) return;
@@ -1789,6 +1874,19 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-extrabold text-slate-900">Printing</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">Print the fiscal receipt and the order copy separately.</p>
+
+                {/* Which printer printed each document, and whether it succeeded. */}
+                <div className="mt-3 space-y-1.5">
+                  <PrintBadge
+                    label={tOr(t, 'pos.history.docOrder', 'Order')}
+                    view={orderPrintBadgeView(orderPrint, (k, f) => tOr(t, k, f))}
+                  />
+                  <PrintBadge
+                    label={tOr(t, 'pos.history.docFiscal', 'Fiscal')}
+                    view={fiscalPrintBadgeView(fiscalPrint, (k, f) => tOr(t, k, f))}
+                  />
+                </div>
+
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
                   disabled={reprinting || printingFiscal || isMirroring}

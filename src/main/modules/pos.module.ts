@@ -16,7 +16,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
-import { PaymentController } from '../pos/payment-controller';
+import { PaymentController, ReceiptPrintJournalInput } from '../pos/payment-controller';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../pos/order-line-contract';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
@@ -39,6 +39,7 @@ import { draftProductSync } from '../sync/draft-product-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
 import { staffRepo } from '../database/repos/staff-repo';
@@ -194,6 +195,35 @@ export class PosModule extends BaseModule {
       return socket?.isConnected() || false;
     };
 
+    // Persist a print_attempts row for each non-fiscal receipt print. Resolves
+    // the configured printer's display name + target (COM port / Windows
+    // printer / shared id) so Order History can show "Order: Xprinter XP-80T".
+    const resolvePrinterMeta = (input: ReceiptPrintJournalInput): { name: string | null; target: string | null } => {
+      if (input.route === 'SHARED_NETWORK') {
+        return { name: input.printerId ? `Shared · ${input.printerId}` : 'Shared printer', target: input.printerId ?? null };
+      }
+      const cfg = getConfig();
+      const dict = (cfg.printers || {}) as Record<string, any>;
+      const p = dict[input.printerType] || (input.printerType === PrinterType.RECEIPT ? cfg.receiptPrinter : undefined);
+      if (!p) return { name: null, target: null };
+      const name = p.displayName || p.windowsPrinter || p.protocol || null;
+      const target = p.port || p.windowsPrinter || p.address || null;
+      return { name, target };
+    };
+    const recordPrintAttempt = (input: ReceiptPrintJournalInput) => {
+      const meta = resolvePrinterMeta(input);
+      printAttemptRepo.record({
+        orderId: input.orderId,
+        documentType: input.documentType,
+        printerType: input.printerType,
+        printerName: meta.name,
+        printerTarget: meta.target,
+        route: input.route,
+        status: input.status,
+        error: input.error,
+      });
+    };
+
     this.paymentController = new PaymentController(
       getPrinterForType,
       isConnected,
@@ -204,6 +234,7 @@ export class PosModule extends BaseModule {
       submitSharedReceiptPrint,
       submitSharedFiscalPrint,
       getSharedFiscalPrinterStatus,
+      recordPrintAttempt,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,
@@ -1918,6 +1949,29 @@ export class PosModule extends BaseModule {
         return { success: true, status: resolved.status };
       } catch (e: any) {
         return { success: false, error: e?.message ?? String(e) };
+      }
+    });
+
+    // Print journal (which printer printed each order copy) + latest fiscal
+    // attempt — Order History reads both to render per-document badges.
+    ipcMain.handle('pos:print-attempts:get-by-order', async (_e, orderId: string) => {
+      try {
+        return { success: true, attempts: printAttemptRepo.findByOrder(orderId) };
+      } catch (e: any) {
+        return { success: false, attempts: [], error: e?.message ?? String(e) };
+      }
+    });
+
+    ipcMain.handle('pos:fiscal:get-latest', async (_e, orderId: string) => {
+      try {
+        const cfg = getConfig();
+        const fp = (cfg.printers as Record<string, any> | undefined)?.[PrinterType.FISCAL];
+        const printer = fp
+          ? { name: fp.displayName || fp.protocol || 'Fiscal', target: fp.port || fp.address || null }
+          : null;
+        return { success: true, attempt: fiscalAttemptRepo.findLatestByOrder(orderId) ?? null, printer };
+      } catch (e: any) {
+        return { success: false, attempt: null, printer: null, error: e?.message ?? String(e) };
       }
     });
 
