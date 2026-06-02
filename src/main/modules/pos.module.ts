@@ -119,131 +119,6 @@ function normalizeOrderPaymentMethod(method: string | null | undefined): string 
   return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
 }
 
-const PHOWHISPER_DEFAULT_BASE_URL = 'http://100.111.221.25:8088';
-const PHOWHISPER_TRANSCRIBE_TIMEOUT_MS = 45_000;
-const PHOWHISPER_MAX_AUDIO_BYTES = 5 * 1024 * 1024;
-const PHOWHISPER_MAX_BASE64_CHARS = Math.ceil(PHOWHISPER_MAX_AUDIO_BYTES * 4 / 3) + 512;
-const PHOWHISPER_MODELS = new Set(['tiny', 'base', 'small', 'medium', 'large']);
-const PHOWHISPER_ALLOWED_MIME_TYPES = new Set([
-  'audio/webm',
-  'audio/mp4',
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/wav',
-  'audio/x-wav',
-  'audio/m4a',
-  'video/mp4',
-]);
-
-type PhoWhisperModel = 'tiny' | 'base' | 'small' | 'medium' | 'large';
-
-interface PosVoiceTranscribePayload {
-  audioBase64?: string;
-  mimeType?: string;
-  model?: PhoWhisperModel | string;
-  timestamps?: boolean;
-  chunkSeconds?: number;
-}
-
-function getPhoWhisperBaseUrl(): string {
-  const cfg = getConfig() as any;
-  const configured = cfg?.phowhisperBaseUrl
-    || cfg?.phoWhisperBaseUrl
-    || cfg?.voice?.phowhisperBaseUrl
-    || cfg?.voice?.phoWhisperBaseUrl;
-  return String(configured || PHOWHISPER_DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
-}
-
-function audioExtensionForMime(mimeType: string): string {
-  const lower = mimeType.toLowerCase();
-  if (lower.includes('mp4')) return 'mp4';
-  if (lower.includes('mpeg') || lower.includes('mp3')) return 'mp3';
-  if (lower.includes('wav')) return 'wav';
-  if (lower.includes('m4a')) return 'm4a';
-  return 'webm';
-}
-
-function normalizePhoWhisperMimeType(mimeType: string | undefined): string | null {
-  const normalized = String(mimeType || 'audio/webm').split(';')[0].trim().toLowerCase();
-  return PHOWHISPER_ALLOWED_MIME_TYPES.has(normalized) ? normalized : null;
-}
-
-async function transcribeWithPhoWhisper(payload: PosVoiceTranscribePayload): Promise<{
-  ok: boolean;
-  text?: string;
-  model?: string;
-  filename?: string;
-  processingSeconds?: number;
-  error?: string;
-}> {
-  const rawBase64 = String(payload?.audioBase64 || '').trim();
-  const audioBase64 = rawBase64.replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
-  if (!audioBase64) return { ok: false, error: 'missing-audio' };
-  if (audioBase64.length > PHOWHISPER_MAX_BASE64_CHARS) return { ok: false, error: 'audio-too-large' };
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(audioBase64)) return { ok: false, error: 'invalid-audio-base64' };
-
-  const buffer = Buffer.from(audioBase64, 'base64');
-  if (buffer.length < 128) return { ok: false, error: 'audio-too-short' };
-  if (buffer.length > PHOWHISPER_MAX_AUDIO_BYTES) return { ok: false, error: 'audio-too-large' };
-
-  const requestedModel = String(payload?.model || 'small').trim().toLowerCase();
-  const model = PHOWHISPER_MODELS.has(requestedModel) ? requestedModel : 'small';
-  const mimeType = normalizePhoWhisperMimeType(payload?.mimeType);
-  if (!mimeType) return { ok: false, error: 'unsupported-audio-type' };
-  const extension = audioExtensionForMime(mimeType);
-  const filename = `pos-voice-${Date.now()}.${extension}`;
-  const baseUrl = getPhoWhisperBaseUrl();
-
-  const form = new FormData();
-  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  form.append('file', new Blob([arrayBuffer], { type: mimeType }), filename);
-  form.append('model', model);
-  if (payload?.timestamps != null) form.append('timestamps', payload.timestamps ? 'true' : 'false');
-  if (payload?.chunkSeconds != null) {
-    const chunkSeconds = Math.max(5, Math.min(120, Math.round(Number(payload.chunkSeconds) || 0)));
-    form.append('chunk_seconds', String(chunkSeconds));
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PHOWHISPER_TRANSCRIBE_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${baseUrl}/v1/transcribe`, {
-      method: 'POST',
-      body: form,
-      signal: controller.signal,
-    });
-    const body = await response.text();
-    let data: any = null;
-    try {
-      data = body ? JSON.parse(body) : null;
-    } catch {
-      data = { error: body };
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        error: data?.error || data?.detail || `phowhisper-http-${response.status}`,
-      };
-    }
-
-    return {
-      ok: true,
-      text: String(data?.text || '').trim(),
-      model: data?.model,
-      filename: data?.filename || filename,
-      processingSeconds: Number(data?.processing_seconds) || undefined,
-    };
-  } catch (err: any) {
-    return {
-      ok: false,
-      error: err?.name === 'AbortError' ? 'phowhisper-timeout' : (err?.message || 'phowhisper-failed'),
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function orderMatchesPaymentFilter(order: any, paymentMethod?: string): boolean {
   if (!paymentMethod) return true;
   const isSplit = isSplitPaymentOrder(order);
@@ -1341,13 +1216,29 @@ export class PosModule extends BaseModule {
     );
 
     ipcMain.handle(
-      'pos:voice:transcribe',
-      async (_e, payload: PosVoiceTranscribePayload) => {
-        const result = await transcribeWithPhoWhisper(payload || {});
-        if (!result.ok) {
-          logger.warn(`[PosModule] PhoWhisper transcription failed: ${result.error}`);
+      'pos:recognition:scan-match',
+      async (_e, payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) => {
+        try {
+          if (!Array.isArray(payload?.images) || payload.images.length < 1 || payload.images.length > 5) {
+            return { ok: false, error: 'Capture 1 to 5 images before matching' };
+          }
+          const result = await apiClient.scanMatchProducts(payload.images, payload.language || 'vi', payload.limit || 5);
+          const data = result?.data && typeof result.data === 'object' ? result.data : null;
+          const products =
+            result?.products ??
+            result?.matches ??
+            result?.candidates ??
+            (Array.isArray(result?.data) ? result.data : undefined) ??
+            data?.products ??
+            data?.matches ??
+            data?.candidates ??
+            [];
+          return result?.ok === false
+            ? { ok: false, error: result.error || 'scan-match-failed' }
+            : { ...result, ok: true, products: Array.isArray(products) ? products : [] };
+        } catch (err: any) {
+          return { ok: false, error: err?.message ?? 'scan-match-failed' };
         }
-        return result;
       },
     );
 

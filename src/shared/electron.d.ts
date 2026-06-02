@@ -838,15 +838,14 @@ interface ElectronAPI {
         language?: string;
         error?: string;
       }>;
-    };
-    voice: {
-      transcribe: (payload: { audioBase64: string; mimeType?: string; model?: string; timestamps?: boolean; chunkSeconds?: number }) => Promise<{
+      scanMatch: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) => Promise<{
         ok: boolean;
-        text?: string;
-        model?: string;
-        filename?: string;
-        processingSeconds?: number;
+        products?: any[];
+        matches?: any[];
+        candidates?: any[];
+        language?: string;
         error?: string;
+        [key: string]: any;
       }>;
     };
     tables: {
