@@ -27,7 +27,7 @@
 - Modify `src/main/index.ts` — `.use(new AdDisplayModule(container))`.
 - Modify `src/preload/preload-pos.ts` + `src/preload/preload.ts` + `src/shared/electron.d.ts` — expose API renderer.
 - Modify `src/renderer/components/Settings.tsx` + `src/renderer/i18n/translations.ts` — section UI.
-- Tests: `tests/ad-display/*.spec.ts`.
+- Tests: `tests/ad-display/*.test.ts` (repo convention — vitest include is `tests/**/*.test.ts`).
 
 ---
 
@@ -36,12 +36,12 @@
 **Files:**
 - Modify: `src/shared/types.ts` (interface `AgentConfig`)
 - Modify: `src/main/config/store.ts` (defaults)
-- Test: `tests/ad-display/config-defaults.spec.ts`
+- Test: `tests/ad-display/config-defaults.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// tests/ad-display/config-defaults.spec.ts
+// tests/ad-display/config-defaults.test.ts
 import { describe, it, expect } from 'vitest';
 import { AD_DISPLAY_DEFAULTS } from '../../src/main/ad-display/ad-types';
 
@@ -60,7 +60,7 @@ describe('ad-display config defaults', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/config-defaults.spec.ts`
+Run: `npx vitest run tests/ad-display/config-defaults.test.ts`
 Expected: FAIL — cannot find module `ad-types` / `AD_DISPLAY_DEFAULTS`.
 
 - [ ] **Step 3: Create types + defaults**
@@ -144,13 +144,13 @@ and spread into the defaults literal:
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/config-defaults.spec.ts`
+Run: `npx vitest run tests/ad-display/config-defaults.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/main/ad-display/ad-types.ts src/shared/types.ts src/main/config/store.ts tests/ad-display/config-defaults.spec.ts
+git add src/main/ad-display/ad-types.ts src/shared/types.ts src/main/config/store.ts tests/ad-display/config-defaults.test.ts
 git commit -m "feat(tv-ads): add config schema + defaults for TV signage"
 ```
 
@@ -160,12 +160,12 @@ git commit -m "feat(tv-ads): add config schema + defaults for TV signage"
 
 **Files:**
 - Create: `src/main/ad-display/ad-playlist.ts`
-- Test: `tests/ad-display/ad-playlist.spec.ts`
+- Test: `tests/ad-display/ad-playlist.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// tests/ad-display/ad-playlist.spec.ts
+// tests/ad-display/ad-playlist.test.ts
 import { describe, it, expect } from 'vitest';
 import { buildAdPlaylistPayload, computeAdVersion } from '../../src/main/ad-display/ad-playlist';
 import { AD_DISPLAY_DEFAULTS } from '../../src/main/ad-display/ad-types';
@@ -202,7 +202,7 @@ describe('buildAdPlaylistPayload', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/ad-playlist.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-playlist.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -245,13 +245,13 @@ export function computeAdVersion(config: TvAdConfig): string {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/ad-playlist.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-playlist.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/main/ad-display/ad-playlist.ts tests/ad-display/ad-playlist.spec.ts
+git add src/main/ad-display/ad-playlist.ts tests/ad-display/ad-playlist.test.ts
 git commit -m "feat(tv-ads): playlist payload builder + version hash"
 ```
 
@@ -261,12 +261,12 @@ git commit -m "feat(tv-ads): playlist payload builder + version hash"
 
 **Files:**
 - Create: `src/main/ad-display/http-range.ts`
-- Test: `tests/ad-display/http-range.spec.ts`
+- Test: `tests/ad-display/http-range.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// tests/ad-display/http-range.spec.ts
+// tests/ad-display/http-range.test.ts
 import { describe, it, expect } from 'vitest';
 import { parseRangeHeader } from '../../src/main/ad-display/http-range';
 
@@ -296,7 +296,7 @@ describe('parseRangeHeader', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/http-range.spec.ts`
+Run: `npx vitest run tests/ad-display/http-range.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -333,13 +333,13 @@ export function parseRangeHeader(header: string | undefined, size: number): Pars
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/http-range.spec.ts`
+Run: `npx vitest run tests/ad-display/http-range.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/main/ad-display/http-range.ts tests/ad-display/http-range.spec.ts
+git add src/main/ad-display/http-range.ts tests/ad-display/http-range.test.ts
 git commit -m "feat(tv-ads): HTTP Range header parser"
 ```
 
@@ -349,14 +349,14 @@ git commit -m "feat(tv-ads): HTTP Range header parser"
 
 **Files:**
 - Create: `src/main/ad-display/ad-video-store.ts`
-- Test: `tests/ad-display/ad-video-store.spec.ts`
+- Test: `tests/ad-display/ad-video-store.test.ts`
 
 `AdVideoStore` nhận `baseDir` qua constructor (tiêm được để test với temp dir; runtime truyền `path.join(app.getPath('userData'), 'ad-videos')`).
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// tests/ad-display/ad-video-store.spec.ts
+// tests/ad-display/ad-video-store.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
@@ -405,7 +405,7 @@ describe('AdVideoStore', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/ad-video-store.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-video-store.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -456,13 +456,13 @@ export class AdVideoStore {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/ad-video-store.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-video-store.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/main/ad-display/ad-video-store.ts tests/ad-display/ad-video-store.spec.ts
+git add src/main/ad-display/ad-video-store.ts tests/ad-display/ad-video-store.test.ts
 git commit -m "feat(tv-ads): ad-videos file store (copy/remove/resolve)"
 ```
 
@@ -473,7 +473,7 @@ git commit -m "feat(tv-ads): ad-videos file store (copy/remove/resolve)"
 **Files:**
 - Create: `src/main/ad-display/ad-net.ts`
 - Create: `src/main/ad-display/ad-display-server.ts`
-- Test: `tests/ad-display/ad-display-server.spec.ts`
+- Test: `tests/ad-display/ad-display-server.test.ts`
 
 - [ ] **Step 1: Implement LAN IP helper (no separate test — covered by server test)**
 
@@ -495,7 +495,7 @@ export function getLanIpv4List(): string[] {
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-// tests/ad-display/ad-display-server.spec.ts
+// tests/ad-display/ad-display-server.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -575,7 +575,7 @@ describe('AdDisplayServer', () => {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/ad-display-server.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-display-server.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 4: Implement server**
@@ -742,13 +742,13 @@ export class AdDisplayServer {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/ad-display-server.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-display-server.test.ts`
 Expected: PASS (6 tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/main/ad-display/ad-net.ts src/main/ad-display/ad-display-server.ts tests/ad-display/ad-display-server.spec.ts
+git add src/main/ad-display/ad-net.ts src/main/ad-display/ad-display-server.ts tests/ad-display/ad-display-server.test.ts
 git commit -m "feat(tv-ads): LAN HTTP server (playlist, ranged video, SSE)"
 ```
 
@@ -762,7 +762,7 @@ git commit -m "feat(tv-ads): LAN HTTP server (playlist, ranged video, SSE)"
 **Files:**
 - Modify: `package.json` (thêm dep `bonjour-service`)
 - Create: `src/main/ad-display/ad-mdns.ts`
-- Test: `tests/ad-display/ad-mdns.spec.ts`
+- Test: `tests/ad-display/ad-mdns.test.ts`
 
 - [ ] **Step 1: Add dependency**
 
@@ -772,7 +772,7 @@ Expected: thêm vào `dependencies`. (Pure JS, không native build → an toàn 
 - [ ] **Step 2: Write the failing test (construct + lifecycle, không publish thật)**
 
 ```ts
-// tests/ad-display/ad-mdns.spec.ts
+// tests/ad-display/ad-mdns.test.ts
 import { describe, it, expect } from 'vitest';
 import { AdMdnsAdvertiser } from '../../src/main/ad-display/ad-mdns';
 
@@ -789,7 +789,7 @@ describe('AdMdnsAdvertiser', () => {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `npx vitest run tests/ad-display/ad-mdns.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-mdns.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 4: Implement**
@@ -836,13 +836,13 @@ export class AdMdnsAdvertiser {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `npx vitest run tests/ad-display/ad-mdns.spec.ts`
+Run: `npx vitest run tests/ad-display/ad-mdns.test.ts`
 Expected: PASS. (Nếu môi trường CI chặn multicast, test vẫn pass vì publish bọc try/catch và `isRunning` phản ánh việc tạo service.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json package-lock.json src/main/ad-display/ad-mdns.ts tests/ad-display/ad-mdns.spec.ts
+git add package.json package-lock.json src/main/ad-display/ad-mdns.ts tests/ad-display/ad-mdns.test.ts
 git commit -m "feat(tv-ads): mDNS advertiser for _zira-ads._tcp"
 ```
 
