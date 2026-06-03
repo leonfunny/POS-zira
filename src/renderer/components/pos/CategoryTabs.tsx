@@ -1,14 +1,16 @@
 import React from 'react';
 import type { Category } from '../../hooks/usePosDb';
+import { resolveName } from '../../../shared/catalog-names';
 
 interface CategoryTabsProps {
   categories: Category[];
   activeId: string | null;
   onSelect: (id: string | null) => void;
   allLabel?: string;
+  lang?: string;
 }
 
-export default function CategoryTabs({ categories, activeId, onSelect, allLabel }: CategoryTabsProps) {
+export default function CategoryTabs({ categories, activeId, onSelect, allLabel, lang }: CategoryTabsProps) {
   return (
     <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
       <button
@@ -36,7 +38,7 @@ export default function CategoryTabs({ categories, activeId, onSelect, allLabel 
               : undefined
           }
         >
-          {cat.name}
+          {resolveName(cat, lang)}
         </button>
       ))}
     </div>

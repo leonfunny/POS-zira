@@ -12,6 +12,7 @@ import type {
 } from '../../../../../shared/types';
 import PaymentModal from '../../PaymentModal';
 import SearchBar from '../../SearchBar';
+import { resolveName } from '../../../../../shared/catalog-names';
 
 interface StaffMember {
   id: string;
@@ -24,6 +25,7 @@ interface SalonTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
 }
 
@@ -117,7 +119,7 @@ function bookingsForStaff(schedule: PosScheduleDayResponse | null, staffId: stri
   return (schedule?.bookings || []).filter((booking) => booking.staff_profile_id === staffId);
 }
 
-export default function SalonTemplate({ state, dispatch, t, session }: SalonTemplateProps) {
+export default function SalonTemplate({ state, dispatch, t, language, session }: SalonTemplateProps) {
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [nailTurnBoard, setNailTurnBoard] = useState<NailTurnBoardResponse | null>(null);
   const [nailTurnUnavailable, setNailTurnUnavailable] = useState(false);
@@ -139,6 +141,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   const productGridRef = useRef<HTMLDivElement>(null);
 
   const cart = state.cart;
+  const lang = language || 'pl';
   const tip = state.tip ?? 0;
   const currency = t('pos.currency');
   const tOr = useCallback((key: string, fallback: string) => {
@@ -368,6 +371,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
           id: crypto.randomUUID(),
           variantId: product.id,
           name: product.name,
+          name_translations: product.name_translations ?? null,
           sku: product.sku || '',
           price: product.retail_price,
           quantity: 1,
@@ -535,7 +539,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                       : undefined
                   }
                 >
-                  {cat.name}
+                  {resolveName(cat, lang)}
                 </button>
               ))}
             </div>
@@ -776,6 +780,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
               <div className="grid grid-cols-4 gap-2.5">
                 {products.map((product) => {
                   const colorClass = placeholderColor(product.name);
+                  const displayName = resolveName(product, lang) || product.name;
                   return (
                     <div
                       key={product.id}
@@ -786,19 +791,19 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                         {product.image_url ? (
                           <img
                             src={product.image_url}
-                            alt={product.name}
+                            alt={displayName}
                             loading="lazy"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
                         ) : (
                           <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${colorClass}`}>
-                            {product.name.charAt(0).toUpperCase()}
+                            {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
                         {/* Circular add button */}
                         <button
                           onClick={() => handleAddProduct(product)}
-                          aria-label={`Add ${product.name}`}
+                          aria-label={`Add ${displayName}`}
                           className="absolute bottom-1.5 right-1.5 w-8 h-8 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer touch-manipulation"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -810,7 +815,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                       {/* Name + price */}
                       <div className="px-2.5 py-2">
                         <div className="text-xs font-medium text-gray-800 leading-snug truncate">
-                          {product.name}
+                          {displayName}
                         </div>
                         <div className="text-xs font-bold text-brand-500 mt-0.5">
                           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
@@ -856,23 +861,24 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
             ) : (
               cart.items.map((item) => {
                 const colorClass = placeholderColor(item.name);
+                const displayName = resolveName(item, lang) || item.name;
                 return (
                   <div key={item.id} className="px-4 py-3">
                     <div className="flex items-start gap-3">
                       {/* Thumbnail */}
                       <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0">
                         {item.imageUrl ? (
-                          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                          <img src={item.imageUrl} alt={displayName} className="w-full h-full object-cover" />
                         ) : (
                           <div className={`w-full h-full flex items-center justify-center text-sm font-bold ${colorClass}`}>
-                            {item.name.charAt(0).toUpperCase()}
+                            {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-gray-800 leading-snug truncate">
-                          {item.name}
+                          {displayName}
                         </div>
                         {staffList.length > 0 && (
                           <select

@@ -961,6 +961,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             state={state}
             dispatch={dispatch}
             t={t}
+            language={language}
             session={session}
             onUnknownBarcodeScanned={openScanImport}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
@@ -971,9 +972,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             homeResetKey={homeResetKey}
           />
         )}
-        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
+        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
+        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
       </div>
 
       {/* Shift modals - shared */}

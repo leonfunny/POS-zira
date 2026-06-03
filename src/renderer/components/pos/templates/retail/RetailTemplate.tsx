@@ -175,6 +175,7 @@ interface RetailTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
@@ -185,10 +186,10 @@ interface RetailTemplateProps {
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
-  const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
+  const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
