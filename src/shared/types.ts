@@ -586,6 +586,15 @@ export interface AgentConfig {
   // Check-in tab display toggles
   checkinShowStatsBar?: boolean;  // Show total/waiting/in-service/completed bar (default: true)
   checkinShowQueue?: boolean;     // Show active queue panel on the right (default: true)
+
+  // TV Ads (signage) — điều khiển màn hình quảng cáo Google TV qua LAN
+  tvAdEnabled?: boolean;
+  tvAdPort?: number;
+  tvAdPlaybackMode?: 'sequential' | 'repeat-one';
+  tvAdRepeatVideoId?: string | null;
+  tvAdMuted?: boolean;
+  tvAdVolume?: number;
+  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean }>;
 }
 
 // Agent credentials (stored securely)
