@@ -328,20 +328,20 @@ function productMatches(
 function BarcodePreview({ barcode }: { barcode: string }) {
   const bars = barcodeBars(barcode);
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3" aria-label="Barcode preview">
-      <div className="flex h-14 items-end justify-center gap-[2px] overflow-hidden rounded bg-white">
+    <div className="rounded-md border border-slate-200 bg-white px-2 py-2" aria-label="Barcode preview">
+      <div className="flex h-9 items-end justify-center gap-[2px] overflow-hidden rounded bg-white">
         {bars.map((width, index) => (
           <span
             key={`${barcode || 'empty'}-${index}`}
             className="block bg-slate-950"
             style={{
               width: `${width}px`,
-              height: `${34 + ((index * 11) % 18)}px`,
+              height: `${22 + ((index * 11) % 12)}px`,
             }}
           />
         ))}
       </div>
-      <div className="mt-2 text-center font-mono text-sm font-bold tracking-[0.12em] text-slate-800">
+      <div className="mt-1 text-center font-mono text-[11px] font-bold tracking-[0.08em] text-slate-800">
         {barcode || '------------'}
       </div>
     </div>
@@ -639,6 +639,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
         return;
       }
 
+      if (event.key === 'Escape' && settingsOpen) {
+        event.preventDefault();
+        setSettingsOpen(false);
+        return;
+      }
+
       if (event.key === 'Escape' && query) {
         event.preventDefault();
         setQuery('');
@@ -665,11 +671,11 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handlePrint, query]);
+  }, [handlePrint, query, settingsOpen]);
 
   return (
-    <div className="h-full min-h-[calc(100vh-2rem)] bg-slate-50 text-slate-900">
-      <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[380px,minmax(0,1fr)]">
+    <div className="h-[calc(100vh-2rem)] min-h-0 overflow-hidden bg-slate-50 text-slate-900">
+      <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(360px,400px),minmax(0,1fr)]">
         <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3">
             <div className="flex items-center gap-3">
@@ -683,7 +689,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="shrink-0 p-3 space-y-3">
             <div
               className={`rounded-lg border px-3 py-2 text-sm font-bold inline-flex w-full items-center gap-2 ${
                 status.type === 'success'
@@ -699,91 +705,61 @@ export default function LabelModule({ language }: LabelModuleProps) {
               <span>{statusText}</span>
             </div>
 
-            {priceMissing && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-                {copy.missingPrice}. {copy.priceMissingHint}
-              </div>
-            )}
-
             {selectedProduct ? (
               <>
                 <section className="space-y-2">
                   <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.labelPreview}</div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="rounded-lg bg-white p-3 shadow-sm">
-                      <div className="text-base font-black leading-tight text-slate-950 line-clamp-2">{selectedName}</div>
-                      <div className="mt-2 flex items-baseline justify-between gap-3">
-                        <span className={`text-2xl font-black tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <div className="mx-auto aspect-[58/40] w-full max-w-[270px] rounded-lg bg-white p-3 shadow-sm flex flex-col justify-between">
+                      <div className="text-sm font-black leading-tight text-slate-950 line-clamp-2">{selectedName}</div>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className={`text-xl font-black tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
                           {selectedPriceText || copy.noPrice}
                         </span>
                         <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-extrabold text-slate-600">{selectedUnit}</span>
                       </div>
-                      <div className="mt-3">
+                      <div>
                         <BarcodePreview barcode={selectedBarcode} />
                       </div>
                     </div>
                   </div>
                 </section>
 
-                <section className="space-y-2">
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.productInfo}</div>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-lg bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-bold text-slate-400">{copy.ean}</div>
-                      <div className={`mt-1 font-extrabold break-all ${selectedBarcode ? 'text-slate-900' : 'text-amber-700'}`}>
-                        {selectedBarcode || copy.missingEan}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-bold text-slate-400">{copy.price}</div>
-                      <div className={`mt-1 font-extrabold ${selectedPriceText ? 'text-slate-900' : 'text-amber-700'}`}>
-                        {selectedPriceText || copy.noPrice}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-bold text-slate-400">{copy.category}</div>
-                      <div className="mt-1 font-extrabold text-slate-900 truncate">
-                        {selectedCategory ? resolveName(selectedCategory, language) : '-'}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-bold text-slate-400">{copy.unit}</div>
-                      <div className="mt-1 font-extrabold text-slate-900">{selectedUnit}</div>
-                    </div>
-                    <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-bold text-slate-400">{copy.sku}</div>
-                      <div className="mt-1 font-extrabold text-slate-900 break-all">{selectedProduct.sku || '-'}</div>
-                    </div>
+                {priceMissing && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                    {copy.missingPrice}. {copy.priceMissingHint}
                   </div>
-                </section>
+                )}
 
                 <section className="space-y-2">
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.copies}</div>
-                  <div className="grid grid-cols-[44px,1fr,44px] gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setCopies((value) => clampCopies(value - 1))}
-                      className="h-11 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
-                      aria-label="Decrease copies"
-                    >
-                      <Minus size={18} />
-                    </button>
-                    <input
-                      type="number"
-                      min={1}
-                      max={999}
-                      value={copies}
-                      onChange={(event) => setCopies(clampCopies(event.target.value))}
-                      className="h-11 rounded-lg border border-slate-200 text-center text-lg font-extrabold outline-none focus:ring-2 focus:ring-emerald-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setCopies((value) => clampCopies(value + 1))}
-                      className="h-11 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
-                      aria-label="Increase copies"
-                    >
-                      <Plus size={18} />
-                    </button>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.copies}</div>
+                    <div className="grid w-40 grid-cols-[38px,1fr,38px] gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setCopies((value) => clampCopies(value - 1))}
+                        className="h-10 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
+                        aria-label="Decrease copies"
+                      >
+                        <Minus size={17} />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={copies}
+                        onChange={(event) => setCopies(clampCopies(event.target.value))}
+                        className="h-10 min-w-0 rounded-lg border border-slate-200 text-center text-base font-extrabold outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCopies((value) => clampCopies(value + 1))}
+                        className="h-10 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
+                        aria-label="Increase copies"
+                      >
+                        <Plus size={17} />
+                      </button>
+                    </div>
                   </div>
                   {normalizedCopies > HIGH_COPY_CONFIRM_THRESHOLD && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
@@ -793,49 +769,13 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 </section>
               </>
             ) : (
-              <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
+              <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
                 <Tag className="mx-auto mb-3 text-slate-300" size={36} />
                 <div className="text-sm font-extrabold text-slate-800">{copy.noSelection}</div>
                 <p className="mt-1 text-xs font-semibold text-slate-500">{copy.selectProductHint}</p>
               </div>
             )}
 
-            <section className="space-y-2">
-              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.recent}</div>
-              {recentPrints.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm font-semibold text-slate-400">
-                  {copy.noRecent}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {recentPrints.map((entry) => (
-                    <div key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-xs font-extrabold text-slate-900 truncate">{entry.productName}</div>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
-                            <Clock size={12} />
-                            <span>{formatRecentTime(entry.printedAt, language)}</span>
-                            <span>x{entry.copies}</span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickReprint(entry)}
-                          className="h-8 shrink-0 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center gap-1"
-                        >
-                          <RotateCw size={12} />
-                          {copy.reprint}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
-
-          <div className="shrink-0 border-t border-slate-200 bg-white p-4">
             <button
               type="button"
               onClick={handlePrint}
@@ -849,6 +789,72 @@ export default function LabelModule({ language }: LabelModuleProps) {
               {status.type === 'printing' ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
               {printButtonText}
             </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-200 p-3 space-y-3">
+            {selectedProduct && (
+              <section className="space-y-2">
+                <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.productInfo}</div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-bold text-slate-400">{copy.ean}</div>
+                    <div className={`mt-1 font-extrabold break-all ${selectedBarcode ? 'text-slate-900' : 'text-amber-700'}`}>
+                      {selectedBarcode || copy.missingEan}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-bold text-slate-400">{copy.price}</div>
+                    <div className={`mt-1 font-extrabold ${selectedPriceText ? 'text-slate-900' : 'text-amber-700'}`}>
+                      {selectedPriceText || copy.noPrice}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-bold text-slate-400">{copy.category}</div>
+                    <div className="mt-1 font-extrabold text-slate-900 truncate">
+                      {selectedCategory ? resolveName(selectedCategory, language) : '-'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-bold text-slate-400">{copy.unit}</div>
+                    <div className="mt-1 font-extrabold text-slate-900">{selectedUnit}</div>
+                  </div>
+                  <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs font-bold text-slate-400">{copy.sku}</div>
+                    <div className="mt-1 font-extrabold text-slate-900 break-all">{selectedProduct.sku || '-'}</div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            <section className="space-y-2">
+              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.recent}</div>
+              {recentPrints.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm font-semibold text-slate-400">
+                  {copy.noRecent}
+                </div>
+              ) : (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {recentPrints.map((entry) => (
+                    <div key={entry.id} className="w-44 shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-extrabold text-slate-900 truncate">{entry.productName}</div>
+                      <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                        <Clock size={12} />
+                        <span>{formatRecentTime(entry.printedAt, language)}</span>
+                        <span>x{entry.copies}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickReprint(entry)}
+                        className="mt-2 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center justify-center gap-1"
+                      >
+                        <RotateCw size={12} />
+                        {copy.reprint}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         </aside>
 
@@ -938,8 +944,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
             </div>
           </div>
 
-          <div className={`min-h-0 flex-1 grid gap-3 p-3 ${settingsOpen ? 'xl:grid-cols-[minmax(0,1fr),360px]' : 'grid-cols-1'}`}>
-            <div className="min-h-0 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-hidden p-3">
+            <div className="h-full min-h-0 overflow-y-auto">
               {loading ? (
                 <div className="h-full min-h-[360px] flex items-center justify-center text-sm font-semibold text-slate-500">{copy.loading}</div>
               ) : error ? (
@@ -1029,7 +1035,14 @@ export default function LabelModule({ language }: LabelModuleProps) {
             </div>
 
             {settingsOpen && (
-              <aside className="min-h-0 rounded-lg border border-slate-200 bg-slate-50 flex flex-col overflow-hidden">
+              <div
+                className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 p-3"
+                onClick={() => setSettingsOpen(false)}
+              >
+                <aside
+                  className="h-full min-h-0 w-full max-w-[420px] rounded-lg border border-slate-200 bg-slate-50 shadow-2xl flex flex-col overflow-hidden"
+                  onClick={(event) => event.stopPropagation()}
+                >
                 <div className="border-b border-slate-200 bg-white p-3 flex items-start gap-2">
                   <div className="h-9 w-9 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
                     <Settings size={18} />
@@ -1165,7 +1178,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
                     )}
                   </section>
                 </div>
-              </aside>
+                </aside>
+              </div>
             )}
           </div>
         </section>
