@@ -173,6 +173,7 @@ interface PosOrderRow {
   shift_id: string | null;
   created_at: string;
   mode: string | null;
+  has_fiscal?: number;
   _origin?: 'server';
 }
 
@@ -703,7 +704,7 @@ interface ElectronAPI {
     };
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
-      getDailyStats: (date: string) => Promise<PosDailyStats>;
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       deleteLocal: (orderId: string) => Promise<{ success: boolean; restocked?: number; error?: string }>;
@@ -780,7 +781,7 @@ interface ElectronAPI {
     };
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
-      close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any; error?: string }>;
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => Promise<{ success: boolean; report?: any; error?: string }>;
       getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
     };
     sync: {

@@ -39,6 +39,7 @@ export interface OrderRow {
   refund_reason: string | null;
   refunded_at: string | null;
   refund_lines: string | null;
+  has_fiscal?: number;
 }
 
 export interface OrderItemRow {
@@ -91,6 +92,15 @@ export interface DailyStats {
   cash_total: number;
   card_total: number;
 }
+
+const HAS_FISCAL_EXPR = `
+  EXISTS (
+    SELECT 1
+    FROM fiscal_attempts fa
+    WHERE fa.order_id = orders.id
+      AND fa.status = 'SUCCESS_CONFIRMED'
+  )
+`;
 
 export const orderRepo = {
   create(order: OrderRow, items: OrderItemRow[]): string {
@@ -387,7 +397,12 @@ export const orderRepo = {
   },
 
   getByShift(shiftId: string): OrderRow[] {
-    return database.all<OrderRow>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
+    return database.all<OrderRow>(
+      `SELECT orders.*, CAST(${HAS_FISCAL_EXPR} AS INTEGER) as has_fiscal
+       FROM orders
+       WHERE shift_id = ?`,
+      [shiftId],
+    );
   },
 
   getUnsyncedCountByShift(shiftId: string): number {
@@ -398,14 +413,16 @@ export const orderRepo = {
     return row?.cnt ?? 0;
   },
 
-  getDailyStats(date: string): DailyStats {
+  getDailyStats(date: string, fiscalOnly = false): DailyStats {
     const result = database.get<DailyStats>(
       `SELECT
          COUNT(*) as order_count,
          COALESCE(SUM(total), 0) as total_sales,
          COALESCE(SUM(CASE WHEN payment_method = 'CASH' THEN total ELSE 0 END), 0) as cash_total,
          COALESCE(SUM(CASE WHEN payment_method = 'CARD' THEN total ELSE 0 END), 0) as card_total
-       FROM orders WHERE date(created_at) = ?`,
+       FROM orders
+       WHERE date(created_at) = ?
+       ${fiscalOnly ? `AND ${HAS_FISCAL_EXPR}` : ''}`,
       [date],
     );
     return result ?? { order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 };
@@ -418,7 +435,10 @@ export const orderRepo = {
       [from, to],
     )?.cnt ?? 0;
     const orders = database.all<OrderRow>(
-      'SELECT * FROM orders WHERE date(created_at) >= date(?) AND date(created_at) <= date(?) ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      `SELECT orders.*, CAST(${HAS_FISCAL_EXPR} AS INTEGER) as has_fiscal
+       FROM orders
+       WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)
+       ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [from, to, limit, offset],
     );
     return { orders, total };

@@ -635,7 +635,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),
-      getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date, options),
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
@@ -695,7 +695,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_OPEN, data),
-      close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
       getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { translations } from '../../i18n/translations';
+import { useConfig } from '../../hooks/useConfig';
 import { describeFiscalError } from '../../lib/fiscal-error-text';
 import { buildRefundRequest } from './refund-request';
 import {
@@ -43,6 +44,7 @@ interface OrderRow {
   payment_tenders?: string | null;
   sync_error?: string | null;
   sync_attempts?: number;
+  has_fiscal?: number;
   _origin?: 'server';
 }
 
@@ -1223,6 +1225,7 @@ function OrderMutationPanel({
 }
 
 export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps) {
+  const { config } = useConfig();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
   const [page, setPage] = useState(1);
@@ -1259,6 +1262,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const detailIdRef = useRef<string | undefined>(undefined);
 
   const currency = tOr(t, 'pos.currency', 'zl');
+  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
   const hasActiveFilters = selectedPeriod !== 'today' || filterMethod !== '' || filterStaff !== '';
 
@@ -1317,6 +1321,9 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
+    if (hideNonFiscalOrders) {
+      merged = merged.filter((o) => o.has_fiscal !== 0);
+    }
     if (filterMethod === 'SPLIT') {
       merged = merged.filter(isSplit);
     } else if (filterMethod) {
@@ -1330,10 +1337,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setServerItemsMap(newItemsMap);
     setDataSource(source);
     setLoading(false);
-  }, [selectedPeriod, filterMethod, filterStaff, page]);
+  }, [selectedPeriod, filterMethod, filterStaff, page, hideNonFiscalOrders]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
-  useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff]);
+  useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff, hideNonFiscalOrders]);
   useEffect(() => {
     detailIdRef.current = detail?.order.id;
     setMirrorError(null);
@@ -2085,6 +2092,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
           <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
             {PERIOD_LABELS[selectedPeriod] || 'Today'} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} — page total {formatMoney(pageTotal, currency)}
+            {hideNonFiscalOrders && (
+              <span className="ml-2 inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-extrabold text-amber-700">
+                {tOr(t, 'pos.history.nonFiscalHidden', 'Non-fiscal orders hidden')}
+              </span>
+            )}
             <span className={`ml-2 inline-flex items-center gap-1 text-xs font-bold ${dataSource === 'local+server' ? 'text-emerald-600' : dataSource === 'server-unreachable' ? 'text-amber-600' : 'text-slate-400'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: 'currentColor' }} />
               {dataSource === 'local+server' ? 'Local + Server' : dataSource === 'server-unreachable' ? 'Server unreachable — showing local data' : 'Local only (offline)'}

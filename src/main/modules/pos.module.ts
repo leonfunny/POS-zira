@@ -1510,7 +1510,9 @@ export class PosModule extends BaseModule {
       }
       catch (e: any) { return { success: false, error: e.message }; }
     });
-    ipcMain.handle('pos:orders:getDailyStats', (_e, date: string) => orderRepo.getDailyStats(date));
+    ipcMain.handle('pos:orders:getDailyStats', (_e, date: string, options?: { fiscalOnly?: boolean }) => {
+      return orderRepo.getDailyStats(date, Boolean(options?.fiscalOnly));
+    });
 
     ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => {
       const limit = filters.limit || 20;
@@ -2460,7 +2462,7 @@ export class PosModule extends BaseModule {
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
-    ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number }) => {
+    ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
 
@@ -2486,7 +2488,7 @@ export class PosModule extends BaseModule {
         if (orderSync) {
           try { await orderSync.syncPendingOrders(); } catch { /* best-effort */ }
         }
-        const report = this.shiftController.closeShift(data.shiftId, data.closingCash);
+        const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         this.posStore?.dispatch({ type: 'session/close' });
         await this.shiftController.printZReport(report);
         return { success: true, report };

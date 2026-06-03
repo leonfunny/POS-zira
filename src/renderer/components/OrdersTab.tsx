@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Printer, RefreshCw, Search } from 'lucide-react';
 import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
+import { useConfig } from '../hooks/useConfig';
 import { compareOrdersByDisplayTimeDesc, parseOrderTimestampMs } from './pos/order-history-time';
 import rlog from '../utils/logger';
 
@@ -30,6 +31,7 @@ interface OrderRow {
   created_at: string;
   backend_id?: string | null;
   synced?: number;
+  has_fiscal?: number;
   _origin?: 'server';
 }
 
@@ -195,6 +197,7 @@ function statusBadgeClass(status: string, refundedAt?: string | null): string {
 
 export default function OrdersTab({ language }: OrdersTabProps) {
   const { t } = useTranslation(language);
+  const { config } = useConfig();
   const currency = tOr(t, 'pos.currency', 'zł');
 
   const [period, setPeriod] = useState<PeriodKey>('today');
@@ -216,6 +219,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [reprintBusyId, setReprintBusyId] = useState<string | null>(null);
   const [reprintFeedback, setReprintFeedback] = useState<ReprintFeedback>(null);
+  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
 
   const searchedOrders = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -281,6 +285,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
 
       const merged = mergeOrders(localRows, serverRows)
         .filter((order) => order.status !== 'DRAFT' && order.status !== 'POS-DRA')
+        .filter((order) => !hideNonFiscalOrders || order.has_fiscal !== 0)
         .filter((order) => orderWithinRange(order, range.from, range.to))
         .filter((order) => orderMatchesPayment(order, paymentMethod))
         .filter((order) => orderMatchesStaff(order, staffName));
@@ -297,12 +302,12 @@ export default function OrdersTab({ language }: OrdersTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [period, customFrom, customTo, paymentMethod, staffName, search]);
+  }, [period, customFrom, customTo, paymentMethod, staffName, search, hideNonFiscalOrders]);
 
   useEffect(() => { void load(); }, [load]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [period, customFrom, customTo, paymentMethod, staffName, search]);
+  useEffect(() => { setPage(1); }, [period, customFrom, customTo, paymentMethod, staffName, search, hideNonFiscalOrders]);
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);

@@ -718,6 +718,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   }, []);
 
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
+  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
 
   const handleShiftOpen = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
     if (!data.staffId || !data.staffName?.trim()) throw new Error(tOr('pos.shift.selectStaffRequired', 'Select a staff member'));
@@ -735,6 +736,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const result = await window.electronAPI.pos.shift.close({
       shiftId: session.shiftId,
       closingCash: data.closingCash ?? 0,
+      fiscalOnly: hideNonFiscalOrders,
     });
     if (!result.success) throw new Error(result.error || 'Failed to close shift');
     setShowShiftModal(null);

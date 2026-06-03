@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
-      getDailyStats: (date: string) => ipcRenderer.invoke('pos:orders:getDailyStats', date),
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:orders:getDailyStats', date, options),
       getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
@@ -101,7 +101,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke('pos:shift:open', data),
-      close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke('pos:shift:close', data),
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:shift:close', data),
       getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {
