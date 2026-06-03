@@ -50,6 +50,7 @@ const defaultConfig: AgentConfig = {
     : 'https://api.enail.pro',
   isPaired: false,
   autoStart: true,
+  allowOversell: false,
   telegram: defaultTelegramConfig,
 };
 
@@ -235,6 +236,7 @@ const store = new Store<AgentConfig>({
     // POS settings
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
+    allowOversell: { type: 'boolean', default: false },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
     labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },
     // Receipt seller info (Polish paragon compliance)

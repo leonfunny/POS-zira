@@ -23,13 +23,16 @@ export interface ProductAvailability {
   stock?: number;
 }
 
-export function getProductAvailability(product: SearchProduct): ProductAvailability {
+export function getProductAvailability(
+  product: SearchProduct,
+  opts?: { allowOversell?: boolean },
+): ProductAvailability {
   const priceGrosze = getProductPriceGrosze(product);
   const stock = getProductStock(product);
   if (priceGrosze <= 0) {
     return { canAdd: false, reason: 'no_price', priceGrosze, stock };
   }
-  if (typeof stock === 'number' && stock <= 0) {
+  if (!opts?.allowOversell && typeof stock === 'number' && stock <= 0) {
     return { canAdd: false, reason: 'out_of_stock', priceGrosze, stock };
   }
   return { canAdd: true, reason: null, priceGrosze, stock };

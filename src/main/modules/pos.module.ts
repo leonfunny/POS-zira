@@ -1456,9 +1456,10 @@ export class PosModule extends BaseModule {
 
         const id = orderRepo.create(normalizedOrder, normalizedItems);
         let stockChanged = false;
+        const allowNegativeStock = getConfig().allowOversell === true;
         for (const item of normalizedItems) {
           if (item.variant_id && item.quantity > 0) {
-            productRepo.decrementStock(item.variant_id, item.quantity);
+            productRepo.decrementStock(item.variant_id, item.quantity, { allowNegative: allowNegativeStock });
             stockChanged = true;
           }
         }

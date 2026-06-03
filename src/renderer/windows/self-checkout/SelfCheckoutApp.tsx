@@ -70,6 +70,7 @@ export default function SelfCheckoutApp() {
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [paymentProfile, setPaymentProfile] = useState<SelfCheckoutPaymentProfile>('assistedDemo');
+  const [allowOversell, setAllowOversell] = useState(false);
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
@@ -163,6 +164,7 @@ export default function SelfCheckoutApp() {
         setMode(runtime.mode);
         setProfile(resolveSelfCheckoutProfile(config?.selfCheckoutProfile));
         setPaymentProfile(runtime.paymentProfile);
+        setAllowOversell(config?.allowOversell === true);
         setUnavailableReasons(runtime.unavailableReasons);
         if (runtime.unavailableReasons.length > 0) {
           goTo('unavailable');
@@ -305,11 +307,11 @@ export default function SelfCheckoutApp() {
         (i) => i.variantId === product.id,
       );
       const alreadyInCart = existing?.quantity ?? 0;
-      if (typeof stock === 'number' && stock <= 0) {
+      if (!allowOversell && typeof stock === 'number' && stock <= 0) {
         showToast('error', formatScMessage(t.productOutOfStock, { name: displayName }));
         return false;
       }
-      if (typeof stock === 'number' && alreadyInCart + quantity > stock) {
+      if (!allowOversell && typeof stock === 'number' && alreadyInCart + quantity > stock) {
         showToast(
           'error',
           formatScMessage(t.productInsufficientStock, {
@@ -342,7 +344,7 @@ export default function SelfCheckoutApp() {
       if (quantity > 1) setScanQuantity(1);
       return true;
     },
-    [cart, lang, scanQuantity, showToast, t],
+    [allowOversell, cart, lang, scanQuantity, showToast, t],
   );
 
   const handleScan = useCallback(
@@ -587,6 +589,7 @@ export default function SelfCheckoutApp() {
           categories={catalogCategories}
           products={catalogProducts}
           catalogLoading={catalogLoading}
+          allowOversell={allowOversell}
           onAddCatalogProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
           initialDepartment={initialDepartment}
           scanQuantity={scanQuantity}
@@ -594,7 +597,7 @@ export default function SelfCheckoutApp() {
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
             if (!item) return;
-            if (typeof item.stockAtAdd === 'number' && item.quantity + 1 > item.stockAtAdd) {
+            if (!allowOversell && typeof item.stockAtAdd === 'number' && item.quantity + 1 > item.stockAtAdd) {
               showToast(
                 'error',
                 formatScMessage(t.productInsufficientStock, {

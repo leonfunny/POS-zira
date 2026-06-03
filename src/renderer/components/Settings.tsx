@@ -533,6 +533,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
+  const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
   const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
   const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
@@ -664,6 +665,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     posEnabled,
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
+    allowOversell,
     scale: {
       enabled: scaleConnection !== 'none',
       connection: scaleConnection,
@@ -697,7 +699,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     ...overrides,
   }), [
     name, autoStart, language,
-    posEnabled, posMode, posLanguage,
+    posEnabled, posMode, posLanguage, allowOversell,
     scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
@@ -967,6 +969,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setPosEnabled(config.posEnabled ?? false);
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
+      setAllowOversell(config.allowOversell ?? false);
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
@@ -3836,6 +3839,35 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 ))}
               </select>
               <p className="text-xs text-slate-500 mt-1">{t('settings.posLanguageDesc')}</p>
+            </div>
+
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex min-w-0 gap-3">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-600" />
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    {t('settings.allowOversell')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {t('settings.allowOversellDesc')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={allowOversell}
+                onClick={() => setAllowOversell(!allowOversell)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  allowOversell ? 'bg-red-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    allowOversell ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
 
             {/* Category priority ranking — retail browse order + size */}

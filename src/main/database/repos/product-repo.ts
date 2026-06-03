@@ -364,9 +364,11 @@ export const productRepo = {
     }
   },
 
-  decrementStock(variantId: string, quantity: number): void {
+  decrementStock(variantId: string, quantity: number, options?: { allowNegative?: boolean }): void {
     database.run(
-      'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ?',
+      options?.allowNegative
+        ? 'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?'
+        : 'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ?',
       [quantity, quantity, variantId],
     );
   },

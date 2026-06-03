@@ -46,6 +46,7 @@ interface ScStrings {
   productInsufficientStock: string;
   productNoPrice: string;
   soldOut: string;
+  oversoldStock: string;
   noPrice: string;
   scanFailed: string;
   emptyCart: string;
@@ -178,6 +179,7 @@ const PL: ScStrings = {
   productInsufficientStock: '{name} - dostępna ilość: {stock}. Zmień ilość albo wezwij obsługę.',
   productNoPrice: '{name} - brak ceny. Wezwij obsługę.',
   soldOut: 'Brak na stanie',
+  oversoldStock: 'Stan: {stock}',
   noPrice: 'Brak ceny',
   scanFailed: 'Skanowanie nie powiodło się. Spróbuj ponownie albo wezwij obsługę.',
   emptyCart: 'Koszyk pusty - zacznij skanować',
@@ -300,6 +302,7 @@ const EN: ScStrings = {
   productInsufficientStock: '{name} has only {stock} available. Change quantity or call staff.',
   productNoPrice: '{name} has no price. Call staff.',
   soldOut: 'Sold out',
+  oversoldStock: 'Stock: {stock}',
   noPrice: 'No price',
   scanFailed: 'Scan failed. Try again or call staff.',
   emptyCart: 'Cart is empty - start scanning',
@@ -422,6 +425,7 @@ const VI: ScStrings = {
   productInsufficientStock: '{name} chỉ còn {stock}. Đổi số lượng hoặc gọi nhân viên.',
   productNoPrice: '{name} chưa có giá. Gọi nhân viên.',
   soldOut: 'Hết hàng',
+  oversoldStock: 'Tồn: {stock}',
   noPrice: 'Chưa có giá',
   scanFailed: 'Quét không thành công. Thử lại hoặc gọi nhân viên.',
   emptyCart: 'Giỏ hàng trống - hãy quét sản phẩm',

@@ -7,13 +7,14 @@ interface ProductGridProps {
   onAddProduct: (product: Product) => void;
   onLongPressProduct?: (product: Product) => void | ProductLongPressResult | Promise<void | ProductLongPressResult>;
   t?: (key: string) => string;
+  allowOversell?: boolean;
   /** When this value changes (e.g. activeCategoryId), scroll resets to top */
   resetScrollKey?: string | null;
   /** Operator UI language — forwarded to ProductCard for display-only localization. */
   lang?: string;
 }
 
-export default function ProductGrid({ products, onAddProduct, onLongPressProduct, t, resetScrollKey, lang }: ProductGridProps) {
+export default function ProductGrid({ products, onAddProduct, onLongPressProduct, t, allowOversell = false, resetScrollKey, lang }: ProductGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export default function ProductGrid({ products, onAddProduct, onLongPressProduct
             onAdd={onAddProduct}
             onLongPress={onLongPressProduct}
             t={t}
+            allowOversell={allowOversell}
             lang={lang}
           />
         ))}

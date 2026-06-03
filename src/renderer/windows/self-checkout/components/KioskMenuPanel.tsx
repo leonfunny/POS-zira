@@ -24,6 +24,7 @@ interface KioskMenuPanelProps {
   categories: CatalogCategory[];
   products: SearchProduct[];
   catalogLoading: boolean;
+  allowOversell?: boolean;
   showDepartmentTabs?: boolean;
   onDepartmentChange: (department: CatalogDepartment) => void;
   onCategorySelect: (categoryId: string | null) => void;
@@ -39,6 +40,7 @@ export default function KioskMenuPanel({
   categories,
   products,
   catalogLoading,
+  allowOversell = false,
   showDepartmentTabs = true,
   onDepartmentChange,
   onCategorySelect,
@@ -111,6 +113,7 @@ export default function KioskMenuPanel({
                 key={product.id}
                 lang={lang}
                 product={product}
+                allowOversell={allowOversell}
                 onAdd={onAddProduct}
               />
             ))}

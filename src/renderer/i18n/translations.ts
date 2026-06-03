@@ -121,6 +121,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.posLanguage': 'POS Language',
     'settings.posLanguageSameAsMain': 'Same as main language',
     'settings.posLanguageDesc': 'Language for the POS interface. Leave default to use main language.',
+    'settings.allowOversell': 'Allow selling out-of-stock items (oversell)',
+    'settings.allowOversellDesc': 'Products with stock = 0 can still be scanned and sold; stock may go negative and must be reconciled later.',
     'settings.receiptHeader': 'Receipt (Paragon)',
     'settings.receiptHeaderDesc': 'Seller info printed on every receipt. Required for Polish fiscal compliance.',
     'settings.receiptSellerName': 'Legal entity / owner name',
@@ -377,6 +379,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/pc',
     'pos.pieces': 'pcs',
     'pos.product.soldOut': 'Sold out',
+    'pos.product.oversoldStock': 'Stock: {stock}',
     'pos.otherZone': 'Other',
 
     // Mode names
@@ -1573,6 +1576,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerNip': 'NIP (mã số thuế)',
     'settings.receiptSellerWarning': 'Tên và NIP người bán là bắt buộc trên paragon chuẩn Ba Lan.',
     'settings.posLanguageDesc': 'Ngôn ngữ cho giao diện POS. Để mặc định sẽ dùng ngôn ngữ chính.',
+    'settings.allowOversell': 'Cho phép bán khi hết tồn',
+    'settings.allowOversellDesc': 'Sản phẩm tồn = 0 vẫn scan/bán được; tồn có thể âm và cần đối soát lại sau.',
     'settings.customerDisplay': 'Màn hình khách hàng',
     'settings.customerDisplayDesc': 'Hiển thị màn hình cho khách với giỏ hàng và tổng tiền',
     'settings.customerDisplayMenuSections': 'Nhóm menu trên màn hình khách',
@@ -1818,6 +1823,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/cái',
     'pos.pieces': 'cái',
     'pos.product.soldOut': 'Hết hàng',
+    'pos.product.oversoldStock': 'Tồn: {stock}',
     'pos.otherZone': 'Khác',
 
     // Mode names
@@ -2973,6 +2979,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerWarning': 'Standart Polonya fişi (paragon niefiskalny) için satıcı adı ve NIP zorunludur.',
     'settings.posLanguageSameAsMain': 'Ana dil ile aynı',
     'settings.posLanguageDesc': 'POS arayüzü dili. Varsayılan olarak ana dili kullanır.',
+    'settings.allowOversell': 'Stokta olmayan ürünleri satmaya izin ver (oversell)',
+    'settings.allowOversellDesc': 'Stok = 0 olan ürünler yine taranıp satılabilir; stok negatife düşebilir ve sonra mutabakat gerekir.',
     'settings.customerDisplay': 'Müşteri Ekranı',
     'settings.customerDisplayDesc': 'Sepet ve toplamları gösteren müşteri ekranı',
     'settings.openCustomerDisplay': 'Müşteri Ekranını Aç',
@@ -3157,6 +3165,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/ad',
     'pos.pieces': 'ad',
     'pos.product.soldOut': 'Tükendi',
+    'pos.product.oversoldStock': 'Stok: {stock}',
     'pos.otherZone': 'Diğer',
 
     // Mode names
@@ -4148,6 +4157,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerWarning': '波兰标准小票（paragon niefiskalny）需要填写卖家名称和 NIP。',
     'settings.posLanguageSameAsMain': '与主语言相同',
     'settings.posLanguageDesc': 'POS 界面语言。默认使用主语言。',
+    'settings.allowOversell': '允许销售缺货商品（oversell）',
+    'settings.allowOversellDesc': '库存 = 0 的商品仍可扫码/销售；库存可能变为负数，之后需要核对。',
     'settings.customerDisplay': '客户显示屏',
     'settings.customerDisplayDesc': '显示购物车和总额的客户屏幕',
     'settings.openCustomerDisplay': '打开客户显示屏',
@@ -4332,6 +4343,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/件',
     'pos.pieces': '件',
     'pos.product.soldOut': '缺货',
+    'pos.product.oversoldStock': '库存: {stock}',
     'pos.otherZone': '其他',
 
     // Mode names
@@ -5323,6 +5335,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerWarning': 'Назва продавця та NIP обов’язкові для стандартного польського чека (paragon niefiskalny).',
     'settings.posLanguageSameAsMain': 'Як основна мова',
     'settings.posLanguageDesc': 'Мова інтерфейсу POS. За замовчуванням використовується основна мова.',
+    'settings.allowOversell': 'Дозволити продаж товарів без залишку (oversell)',
+    'settings.allowOversellDesc': 'Товари із залишком = 0 можна сканувати й продавати; залишок може стати від’ємним і потребуватиме звірки.',
     'settings.customerDisplay': 'Дисплей клієнта',
     'settings.customerDisplayDesc': 'Показувати екран клієнта з кошиком і підсумками',
     'settings.openCustomerDisplay': 'Відкрити дисплей клієнта',
@@ -5507,6 +5521,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/шт',
     'pos.pieces': 'шт',
     'pos.product.soldOut': 'Немає',
+    'pos.product.oversoldStock': 'Залишок: {stock}',
     'pos.otherZone': 'Інше',
 
     // Mode names
@@ -6498,6 +6513,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerWarning': 'Имя продавца и NIP обязательны для стандартного польского чека (paragon niefiskalny).',
     'settings.posLanguageSameAsMain': 'Как основной язык',
     'settings.posLanguageDesc': 'Язык интерфейса POS. По умолчанию используется основной язык.',
+    'settings.allowOversell': 'Разрешить продажу товаров без остатка (oversell)',
+    'settings.allowOversellDesc': 'Товары с остатком = 0 можно сканировать и продавать; остаток может стать отрицательным и потребует сверки.',
     'settings.customerDisplay': 'Дисплей покупателя',
     'settings.customerDisplayDesc': 'Показывать экран покупателя с корзиной и итогами',
     'settings.openCustomerDisplay': 'Открыть дисплей покупателя',
@@ -6682,6 +6699,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/шт',
     'pos.pieces': 'шт',
     'pos.product.soldOut': 'Нет в наличии',
+    'pos.product.oversoldStock': 'Остаток: {stock}',
     'pos.otherZone': 'Другое',
 
     // Mode names
@@ -7679,6 +7697,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.receiptSellerWarning': 'Nazwa i NIP sprzedawcy są wymagane na paragonie niefiskalnym.',
     'settings.posLanguageSameAsMain': 'Taki sam jak język główny',
     'settings.posLanguageDesc': 'Język interfejsu POS. Domyślnie używa języka głównego.',
+    'settings.allowOversell': 'Zezwalaj na sprzedaż przy braku stanu (oversell)',
+    'settings.allowOversellDesc': 'Produkty ze stanem = 0 nadal można skanować i sprzedawać; stan może spaść poniżej zera i wymaga późniejszego rozliczenia.',
     'settings.customerDisplay': 'Ekran klienta',
     'settings.customerDisplayDesc': 'Wyświetl ekran klienta z koszykiem i podsumowaniem',
     'settings.customerDisplayMenuSections': 'Sekcje menu na ekranie klienta',
@@ -7924,6 +7944,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.perUnit': '/szt',
     'pos.pieces': 'szt',
     'pos.product.soldOut': 'Brak',
+    'pos.product.oversoldStock': 'Stan: {stock}',
     'pos.otherZone': 'Inne',
 
     // Mode names

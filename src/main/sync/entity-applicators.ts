@@ -148,7 +148,7 @@ function applyStock(entry: SyncLogEntry): boolean {
     );
   } else if (p.delta !== undefined) {
     database.run(
-      'UPDATE product_variants SET in_stock = MAX(0, in_stock + ?), available_qty = MAX(0, available_qty + ?) WHERE id = ?',
+      'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
       [p.delta, p.delta, variantId],
     );
   }

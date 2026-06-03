@@ -86,11 +86,11 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
   };
 }
 
-function canSellImportedVariant(variant: any): string | null {
+function canSellImportedVariant(variant: any, allowOversell = false): string | null {
   const price = Number(variant?.retail_price) || 0;
   const stock = Number(variant?.available_qty ?? variant?.in_stock) || 0;
   if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
-  if (variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
+  if (!allowOversell && variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
   return null;
 }
 
@@ -204,6 +204,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   useBarcodeForwarder();
   const { state, dispatch } = usePosStore();
   const { config, saveConfig } = useConfig();
+  const allowOversell = config?.allowOversell === true;
   const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
   const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'salon');
   const [isOnline, setIsOnline] = useState(false);
@@ -535,7 +536,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       const variant = result.variant
         ?? (await window.electronAPI.pos.products.getByBarcode(ean));
       if (variant && dispatch) {
-        const sellError = canSellImportedVariant(variant);
+        const sellError = canSellImportedVariant(variant, allowOversell);
         if (sellError) {
           setScanImport((s) => ({ ...s, loading: false, error: sellError }));
           return;
@@ -568,7 +569,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [scanImport.ean, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
+  }, [allowOversell, scanImport.ean, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
 
   const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
     const code = ean.trim();
@@ -578,7 +579,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       if (!product) return false;
 
       const displayName = resolveName(product, language);
-      const sellError = canSellImportedVariant(product);
+      const sellError = canSellImportedVariant(product, allowOversell);
       if (sellError) {
         showScanToast(`${displayName} - ${sellError}`, 'err');
         return true;
@@ -610,7 +611,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       showScanToast('Scan failed', 'err');
       return true;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -631,12 +632,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             // canonical `name` + raw `name_translations` so it re-resolves on
             // language change and receipts keep canonical text.
             const displayName = resolveName(product, language);
-            const sellError = canSellImportedVariant(product);
+            const sellError = canSellImportedVariant(product, allowOversell);
             if (sellError) {
               showScanToast(`${displayName} - ${sellError}`, 'err');
               return;
             }
-            if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
+            if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
               showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
             } else {
               const result = await resolveRetailCartItem(product, {
@@ -669,7 +670,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {

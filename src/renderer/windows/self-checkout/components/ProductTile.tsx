@@ -12,22 +12,28 @@ import { formatPLN } from '../useScCart';
 interface ProductTileProps {
   lang: ScLanguage;
   product: SearchProduct;
+  allowOversell?: boolean;
   onAdd: (product: SearchProduct) => void;
 }
 
 export default function ProductTile({
   lang,
   product,
+  allowOversell = false,
   onAdd,
 }: ProductTileProps) {
   const t = getScStrings(lang);
-  const availability = getProductAvailability(product);
+  const availability = getProductAvailability(product, { allowOversell });
   const disabled = !availability.canAdd;
+  const oversoldStock = allowOversell && typeof availability.stock === 'number' && availability.stock <= 0 && availability.reason !== 'no_price';
   const imageUrl = product.thumbnail_url || product.image_url || '';
   const disabledLabel =
     availability.reason === 'out_of_stock' ? t.soldOut :
     availability.reason === 'no_price' ? t.noPrice :
     null;
+  const oversoldLabel = oversoldStock
+    ? t.oversoldStock.replace('{stock}', String(availability.stock))
+    : null;
 
   return (
     <button
@@ -59,6 +65,11 @@ export default function ProductTile({
           {disabledLabel && (
             <span className="rounded-full bg-red-50 px-2 py-1 text-xs font-black uppercase tracking-wide text-[var(--sc-danger)]">
               {disabledLabel}
+            </span>
+          )}
+          {oversoldLabel && (
+            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-black uppercase tracking-wide text-[var(--sc-danger)]">
+              {oversoldLabel}
             </span>
           )}
         </div>

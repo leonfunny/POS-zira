@@ -189,6 +189,7 @@ interface RetailTemplateProps {
 export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
+  const allowOversell = config?.allowOversell === true;
   const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
@@ -524,7 +525,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       return;
     }
     if ((Number(product.retail_price) || 0) <= 0) return;
-    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+    if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
     const saleClass = classifyProductSale(product);
     if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
     const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
@@ -567,7 +568,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
@@ -1289,6 +1290,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               onAddProduct={handleAddProduct}
               onLongPressProduct={handlePrintProductCode}
               t={t}
+              allowOversell={allowOversell}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
             />

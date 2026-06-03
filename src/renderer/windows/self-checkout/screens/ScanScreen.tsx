@@ -58,6 +58,7 @@ interface ScanScreenProps {
   categories: CatalogCategory[];
   products: SearchProduct[];
   catalogLoading?: boolean;
+  allowOversell?: boolean;
   onAddCatalogProduct: (product: SearchProduct) => Promise<unknown> | unknown;
   initialDepartment?: CatalogDepartment;
   scanQuantity: number;
@@ -83,6 +84,7 @@ export default function ScanScreen({
   categories,
   products,
   catalogLoading = false,
+  allowOversell = false,
   onAddCatalogProduct,
   initialDepartment = 'grocery',
   scanQuantity,
@@ -335,6 +337,7 @@ export default function ScanScreen({
               categories={visibleCategories}
               products={visibleProducts}
               catalogLoading={catalogLoading}
+              allowOversell={allowOversell}
               showDepartmentTabs={false}
               onDepartmentChange={handleDepartmentChange}
               onCategorySelect={setActiveCategoryId}
@@ -371,6 +374,7 @@ export default function ScanScreen({
           touched={searchTouched}
           error={searchError}
           results={searchResults}
+          allowOversell={allowOversell}
           onQueryChange={setSearchQuery}
           onSubmit={() => void runSearch()}
           onClose={closeSearch}
