@@ -1335,9 +1335,8 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             shiftBlockReason={shiftBlockedMessage}
             lang={lang}
             heldCartsCount={heldCarts.length}
-            onHold={cart.items.length > 0 ? handleHoldCart : undefined}
             onPrintItemLabel={handlePrintCartItemCode}
-            showOrderActionChips={false}
+            showOrderActionChips
           />
         </div>
       </div>

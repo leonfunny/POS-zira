@@ -153,12 +153,43 @@ function DiscountPopup({
   const percentOptions = [5, 10, 15, 20];
   const roundDownToTenDiscount = subtotal % 1000;
   const hasRoundDiscount = roundDownToTenDiscount > 0 && roundDownToTenDiscount < subtotal;
+  const [customMode, setCustomMode] = useState<'fixed' | 'percentage'>('fixed');
+  const [customValue, setCustomValue] = useState('');
+  const normalizedCustomValue = customValue.trim().replace(',', '.');
+  const parsedCustomValue = normalizedCustomValue ? Number(normalizedCustomValue) : NaN;
+  const customFixedGrosze = Number.isFinite(parsedCustomValue)
+    ? Math.max(0, Math.min(parseBufferGrosze(normalizedCustomValue), subtotal))
+    : 0;
+  const customPercent = Number.isFinite(parsedCustomValue)
+    ? Math.max(0, Math.min(parsedCustomValue, 100))
+    : 0;
+  const canApplyCustom = customMode === 'percentage'
+    ? customPercent > 0
+    : customFixedGrosze > 0;
+
+  const applyCustomDiscount = useCallback(() => {
+    if (!canApplyCustom) return;
+    if (customMode === 'percentage') onApplyPercent(customPercent);
+    else onApplyFixed(customFixedGrosze);
+  }, [canApplyCustom, customFixedGrosze, customMode, customPercent, onApplyFixed, onApplyPercent]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && canApplyCustom) {
+        if (!(e.target instanceof HTMLInputElement)) return;
+        e.preventDefault();
+        applyCustomDiscount();
+      }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [applyCustomDiscount, canApplyCustom, onClose]);
+
+  const handleCustomValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = e.target.value.trim();
+    if (/^\d*(?:[.,]\d{0,2})?$/.test(nextValue)) setCustomValue(nextValue);
+  };
 
   return (
     <>
@@ -204,6 +235,54 @@ function DiscountPopup({
                 </button>
               );
             })}
+          </div>
+
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-10 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setCustomMode('fixed')}
+                  aria-pressed={customMode === 'fixed'}
+                  className={`min-w-12 px-2 text-xs font-extrabold transition-colors ${
+                    customMode === 'fixed'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {currency}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustomMode('percentage')}
+                  aria-pressed={customMode === 'percentage'}
+                  className={`min-w-12 border-l border-slate-300 px-2 text-xs font-extrabold transition-colors ${
+                    customMode === 'percentage'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  %
+                </button>
+              </div>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={customValue}
+                onChange={handleCustomValueChange}
+                placeholder={customMode === 'fixed' ? '0.00' : '10'}
+                aria-label={tOr('pos.discount.customValue', 'Custom discount value')}
+                className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-right text-sm font-extrabold text-slate-950 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              />
+              <button
+                type="button"
+                onClick={applyCustomDiscount}
+                disabled={!canApplyCustom}
+                className="h-10 shrink-0 rounded-lg bg-slate-950 px-3 text-xs font-extrabold text-white transition-colors hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {tOr('pos.apply', 'Apply')}
+              </button>
+            </div>
           </div>
 
           <button
