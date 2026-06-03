@@ -142,6 +142,19 @@ export class AdDisplayServer {
       res.end();
       return;
     }
+    // Single stream with error handling: a read error AFTER the stream opens
+    // (file removed mid-stream, IO error, or the TV aborting the socket) must
+    // NOT bubble up as an uncaughtException — that would pop a modal on the POS.
+    const stream = range
+      ? createReadStream(full, { start: range.start, end: range.end })
+      : createReadStream(full);
+    stream.on('error', (e) => {
+      logger.error('[AdDisplay] video stream error:', (e as Error)?.message || e);
+      if (!res.headersSent) res.writeHead(404, cors);
+      res.destroy();
+    });
+    res.on('close', () => stream.destroy());
+
     if (range) {
       const { start, end } = range;
       res.writeHead(206, {
@@ -151,15 +164,14 @@ export class AdDisplayServer {
         'content-length': String(end - start + 1),
         ...cors,
       });
-      createReadStream(full, { start, end }).pipe(res);
-      return;
+    } else {
+      res.writeHead(200, {
+        'content-type': 'video/mp4',
+        'accept-ranges': 'bytes',
+        'content-length': String(size),
+        ...cors,
+      });
     }
-    res.writeHead(200, {
-      'content-type': 'video/mp4',
-      'accept-ranges': 'bytes',
-      'content-length': String(size),
-      ...cors,
-    });
-    createReadStream(full).pipe(res);
+    stream.pipe(res);
   }
 }

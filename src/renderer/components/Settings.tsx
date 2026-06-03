@@ -4771,7 +4771,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   max={100}
                   value={tvAdVolume}
                   onChange={(e) => setTvAdVolume(parseInt(e.target.value))}
+                  onPointerUp={() => void persistTvAd({ tvAdVolume })}
                   onMouseUp={() => void persistTvAd({ tvAdVolume })}
+                  onTouchEnd={() => void persistTvAd({ tvAdVolume })}
                   className="w-full accent-brand-600"
                 />
               </div>

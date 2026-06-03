@@ -43,6 +43,7 @@ class AdApiClient(private val base: String) {
                         when {
                             line.startsWith("event:") -> lastEvent = line.removePrefix("event:").trim()
                             line.startsWith("data:") && lastEvent == "playlist-changed" -> onChanged()
+                            line.isEmpty() -> lastEvent = "" // end of one SSE frame
                         }
                     }
                 }
