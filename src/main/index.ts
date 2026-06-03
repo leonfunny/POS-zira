@@ -39,6 +39,7 @@ import { SystemToolsModule } from './modules/system-tools.module';
 import { SecurityModule } from './modules/security.module';
 import { CheckinModule } from './modules/checkin.module';
 import { BackupModule } from './modules/backup.module';
+import { AdDisplayModule } from './modules/ad-display.module';
 import { ForecastModule } from './modules/forecast.module';
 
 // Check for debug mode
@@ -303,7 +304,8 @@ async function startApp() {
       .use(new SystemToolsModule(container))
       .use(new AiModule(container))
       .use(new SecurityModule(container))
-      .use(new CheckinModule(container));
+      .use(new CheckinModule(container))
+      .use(new AdDisplayModule(container));
 
     await orchestrator.initialize();
 
