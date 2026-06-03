@@ -125,7 +125,16 @@ export class AdDisplayServer {
       return;
     }
     const full = this.store.resolvePath(item.id, item.filename);
-    const size = statSync(full).size;
+    let size: number;
+    try {
+      size = statSync(full).size;
+    } catch (e) {
+      // File vanished between exists() and statSync (e.g. concurrent remove).
+      logger.error('[AdDisplay] stat video failed:', (e as Error)?.message || e);
+      res.writeHead(404, cors);
+      res.end();
+      return;
+    }
     const range = parseRangeHeader(req.headers.range, size);
 
     if (range === 'unsatisfiable') {
