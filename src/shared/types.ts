@@ -1348,7 +1348,23 @@ export const IPC_CHANNELS = {
 
   // Generic API proxy
   API_CALL: 'api:call',
+
+  // TV Ad Display (signage)
+  TV_AD_GET_STATUS: 'tvAd:getStatus',
+  TV_AD_PICK_VIDEO: 'tvAd:pickVideo',
+  TV_AD_SAVE: 'tvAd:save',
 } as const;
+
+// Shared status shape for the TV Ad Display module.
+// Mirrors AdDisplayStatus from src/main/ad-display/ but lives in shared
+// so the renderer can consume it without importing from src/main.
+export interface AdDisplayStatusLike {
+  running: boolean;
+  port: number | null;
+  ips: string[];
+  connectedClients: number;
+  error?: string;
+}
 
 // ==========================================
 // Telegram Types (Moltbot-style)
