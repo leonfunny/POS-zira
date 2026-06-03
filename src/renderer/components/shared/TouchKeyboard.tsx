@@ -8,6 +8,8 @@ interface Props {
   onKey: (key: string) => void;
   onBackspace: () => void;
   onDone: () => void;
+  doneLabel?: string;
+  spaceLabel?: string;
 }
 
 const ALPHA_ROWS = [
@@ -31,7 +33,15 @@ const BackspaceIcon = () => (
   </svg>
 );
 
-export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDone }: Props) {
+export default function TouchKeyboard({
+  visible,
+  mode,
+  onKey,
+  onBackspace,
+  onDone,
+  doneLabel = 'DONE',
+  spaceLabel = 'SPACE',
+}: Props) {
   return (
     <div
       className={`
@@ -67,7 +77,7 @@ export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDon
             onPointerDown={(e) => { e.preventDefault(); onDone(); }}
             className="w-full h-12 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 rounded-xl text-white text-sm font-bold transition-colors select-none cursor-pointer"
           >
-            DONE
+            {doneLabel}
           </button>
         </div>
       ) : (
@@ -112,14 +122,14 @@ export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDon
               onPointerDown={(e) => { e.preventDefault(); onKey(' '); }}
               className="h-12 flex-1 max-w-[280px] bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg border border-slate-300 text-slate-500 text-xs font-semibold uppercase tracking-wider transition-colors select-none cursor-pointer"
             >
-              SPACE
+              {spaceLabel}
             </button>
             <button
               type="button"
               onPointerDown={(e) => { e.preventDefault(); onDone(); }}
               className="h-12 px-6 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 rounded-lg text-white text-sm font-bold transition-colors select-none cursor-pointer"
             >
-              DONE
+              {doneLabel}
             </button>
           </div>
         </div>

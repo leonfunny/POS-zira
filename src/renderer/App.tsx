@@ -23,7 +23,7 @@ import SelfCheckoutTab from './components/SelfCheckoutTab';
 import BilliardFloorPlan from './components/billiard/BilliardFloorPlan';
 import Sidebar from './components/Sidebar';
 import TouchKeyboard from './components/shared/TouchKeyboard';
-import { Language } from './i18n/translations';
+import { getTranslation, Language } from './i18n/translations';
 import { useConfig } from './hooks/useConfig';
 import { useAuth } from './hooks/useAuth';
 import { useRemoteControl } from './hooks/useRemoteControl';
@@ -321,6 +321,10 @@ export default function App() {
   // in-memory state: cart, products, connection status, etc.
   const sessionKey = authUser?.id || 'anon';
   const labelStationActive = !!config?.labelStationEnabled && !labelStationSessionUnlocked;
+  const appLanguage = (config?.language || 'en') as Language;
+  const posUiLanguage = (config?.posLanguage || config?.language || 'en') as Language;
+  const keyboardLanguage = (activeTab === 'pos' || labelStationActive) ? posUiLanguage : appLanguage;
+  const keyboardT = getTranslation(keyboardLanguage);
 
   useEffect(() => {
     if (!config?.labelStationEnabled) {
@@ -380,6 +384,8 @@ export default function App() {
           onKey={onKey}
           onBackspace={onBackspace}
           onDone={onDone}
+          doneLabel={keyboardT('keyboard.done')}
+          spaceLabel={keyboardT('keyboard.space')}
         />
       </div>
     );
@@ -427,6 +433,8 @@ export default function App() {
           onKey={onKey}
           onBackspace={onBackspace}
           onDone={onDone}
+          doneLabel={keyboardT('keyboard.done')}
+          spaceLabel={keyboardT('keyboard.space')}
         />
       </div>
     );
@@ -564,6 +572,8 @@ export default function App() {
         onKey={onKey}
         onBackspace={onBackspace}
         onDone={onDone}
+        doneLabel={keyboardT('keyboard.done')}
+        spaceLabel={keyboardT('keyboard.space')}
       />
     </div>
   );

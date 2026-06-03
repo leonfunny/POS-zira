@@ -125,6 +125,9 @@ interface DiscountPopupProps {
   tOr: (key: string, fallback: string) => string;
 }
 
+const TOUCH_KEYBOARD_HEIGHT_PX = 300;
+const CUSTOM_INPUT_BLUR_DELAY_MS = 120;
+
 function formatCompactMoney(grosze: number, currency: string): string {
   const value = Math.max(0, Math.round(grosze));
   const amount = value % 100 === 0
@@ -155,6 +158,9 @@ function DiscountPopup({
   const hasRoundDiscount = roundDownToTenDiscount > 0 && roundDownToTenDiscount < subtotal;
   const [customMode, setCustomMode] = useState<'fixed' | 'percentage'>('fixed');
   const [customValue, setCustomValue] = useState('');
+  const [customInputFocused, setCustomInputFocused] = useState(false);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const customBlurTimerRef = useRef<number | null>(null);
   const normalizedCustomValue = customValue.trim().replace(',', '.');
   const parsedCustomValue = normalizedCustomValue ? Number(normalizedCustomValue) : NaN;
   const customFixedGrosze = Number.isFinite(parsedCustomValue)
@@ -173,6 +179,42 @@ function DiscountPopup({
     else onApplyFixed(customFixedGrosze);
   }, [canApplyCustom, customFixedGrosze, customMode, customPercent, onApplyFixed, onApplyPercent]);
 
+  const clearCustomBlurTimer = useCallback(() => {
+    if (customBlurTimerRef.current === null) return;
+    window.clearTimeout(customBlurTimerRef.current);
+    customBlurTimerRef.current = null;
+  }, []);
+
+  const handleCustomInputFocus = useCallback(() => {
+    clearCustomBlurTimer();
+    setCustomInputFocused(true);
+  }, [clearCustomBlurTimer]);
+
+  const selectCustomMode = useCallback((mode: 'fixed' | 'percentage') => {
+    clearCustomBlurTimer();
+    setCustomMode(mode);
+    setCustomInputFocused(true);
+    customInputRef.current?.focus();
+  }, [clearCustomBlurTimer]);
+
+  const handleCustomModePointerDown = useCallback((
+    e: React.PointerEvent<HTMLButtonElement>,
+    mode: 'fixed' | 'percentage',
+  ) => {
+    e.preventDefault();
+    selectCustomMode(mode);
+  }, [selectCustomMode]);
+
+  const handleCustomInputBlur = useCallback(() => {
+    clearCustomBlurTimer();
+    customBlurTimerRef.current = window.setTimeout(() => {
+      setCustomInputFocused(false);
+      customBlurTimerRef.current = null;
+    }, CUSTOM_INPUT_BLUR_DELAY_MS);
+  }, [clearCustomBlurTimer]);
+
+  useEffect(() => () => clearCustomBlurTimer(), [clearCustomBlurTimer]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -190,6 +232,12 @@ function DiscountPopup({
     const nextValue = e.target.value.trim();
     if (/^\d*(?:[.,]\d{0,2})?$/.test(nextValue)) setCustomValue(nextValue);
   };
+  const dialogTop = customInputFocused
+    ? `calc((100vh - ${TOUCH_KEYBOARD_HEIGHT_PX}px) / 2)`
+    : '50%';
+  const dialogMaxHeight = customInputFocused
+    ? `calc(100vh - ${TOUCH_KEYBOARD_HEIGHT_PX}px - 24px)`
+    : 'calc(100vh - 32px)';
 
   return (
     <>
@@ -198,9 +246,10 @@ function DiscountPopup({
         role="dialog"
         aria-modal="true"
         aria-label={tOr('pos.numpad.discount', 'Discount')}
-        className="fixed left-1/2 top-1/2 z-50 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
+        style={{ top: dialogTop, maxHeight: dialogMaxHeight }}
+        className="fixed left-1/2 z-50 flex w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <p className="text-sm font-extrabold text-slate-950">{tOr('pos.numpad.discount', 'Discount')}</p>
             <p className="mt-0.5 text-xs font-semibold text-slate-500">
@@ -219,7 +268,7 @@ function DiscountPopup({
           </button>
         </div>
 
-        <div className="p-4">
+        <div className="overflow-y-auto p-4">
           <div className="grid grid-cols-2 gap-2">
             {percentOptions.map((percent) => {
               const amount = Math.min(Math.round(subtotal * percent / 100), subtotal);
@@ -242,7 +291,8 @@ function DiscountPopup({
               <div className="flex h-10 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
                 <button
                   type="button"
-                  onClick={() => setCustomMode('fixed')}
+                  onPointerDown={(e) => handleCustomModePointerDown(e, 'fixed')}
+                  onClick={() => selectCustomMode('fixed')}
                   aria-pressed={customMode === 'fixed'}
                   className={`min-w-12 px-2 text-xs font-extrabold transition-colors ${
                     customMode === 'fixed'
@@ -254,7 +304,8 @@ function DiscountPopup({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCustomMode('percentage')}
+                  onPointerDown={(e) => handleCustomModePointerDown(e, 'percentage')}
+                  onClick={() => selectCustomMode('percentage')}
                   aria-pressed={customMode === 'percentage'}
                   className={`min-w-12 border-l border-slate-300 px-2 text-xs font-extrabold transition-colors ${
                     customMode === 'percentage'
@@ -266,10 +317,13 @@ function DiscountPopup({
                 </button>
               </div>
               <input
+                ref={customInputRef}
                 type="text"
                 inputMode="decimal"
                 value={customValue}
                 onChange={handleCustomValueChange}
+                onFocus={handleCustomInputFocus}
+                onBlur={handleCustomInputBlur}
                 placeholder={customMode === 'fixed' ? '0.00' : '10'}
                 aria-label={tOr('pos.discount.customValue', 'Custom discount value')}
                 className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-right text-sm font-extrabold text-slate-950 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
