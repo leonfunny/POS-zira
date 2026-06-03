@@ -606,6 +606,15 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
   const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
 
+  // TV Ad state
+  const [tvAdEnabled, setTvAdEnabled] = useState<boolean>((config as any)?.tvAdEnabled ?? false);
+  const [tvAdPlaylist, setTvAdPlaylist] = useState<Array<{ id: string; filename: string; order: number; enabled: boolean }>>((config as any)?.tvAdPlaylist ?? []);
+  const [tvAdMode, setTvAdMode] = useState<'sequential' | 'repeat-one'>((config as any)?.tvAdPlaybackMode ?? 'sequential');
+  const [tvAdRepeatId, setTvAdRepeatId] = useState<string | null>((config as any)?.tvAdRepeatVideoId ?? null);
+  const [tvAdMuted, setTvAdMuted] = useState<boolean>((config as any)?.tvAdMuted ?? true);
+  const [tvAdVolume, setTvAdVolume] = useState<number>((config as any)?.tvAdVolume ?? 0);
+  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; connectedClients: number } | null>(null);
+
   // Connected displays (dynamic)
   const [displays, setDisplays] = useState<Array<{
     index: number; id: number; label: string; width: number; height: number;
@@ -693,6 +702,18 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       if (timer) window.clearTimeout(timer);
     };
   }, [scaleShareEnabled, scaleSharePort]);
+
+  // TV Ad status poll
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      const s = await window.electronAPI.tvAdGetStatus().catch(() => null);
+      if (alive) setTvAdStatus(s as any);
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
@@ -1055,6 +1076,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
+      // TV Ad re-sync
+      setTvAdEnabled((config as any).tvAdEnabled ?? false);
+      setTvAdPlaylist((config as any).tvAdPlaylist ?? []);
+      setTvAdMode((config as any).tvAdPlaybackMode ?? 'sequential');
+      setTvAdRepeatId((config as any).tvAdRepeatVideoId ?? null);
+      setTvAdMuted((config as any).tvAdMuted ?? true);
+      setTvAdVolume((config as any).tvAdVolume ?? 0);
       // AI settings
       setAiEnabled((config as any).aiEnabled ?? false);
       setAiLocalMode((config as any).aiLocalMode ?? false);
@@ -1466,6 +1494,36 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setScaleTesting(false);
     }
   };
+
+  // ─── TV Ad handlers ──────────────────────────────────────────────────────────
+  const persistTvAd = async (overrides: Record<string, unknown> = {}) => {
+    const payload = {
+      tvAdEnabled, tvAdPlaybackMode: tvAdMode, tvAdRepeatVideoId: tvAdRepeatId,
+      tvAdMuted, tvAdVolume, tvAdPlaylist, ...overrides,
+    };
+    await window.electronAPI.tvAdSave(payload as any);
+  };
+
+  const handleAddTvAdVideo = async () => {
+    const rec = await window.electronAPI.tvAdPickVideo().catch(() => null);
+    if (!rec) return;
+    const next = [...tvAdPlaylist, { ...rec, order: tvAdPlaylist.length, enabled: true }];
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleRemoveTvAdVideo = async (id: string) => {
+    const next = tvAdPlaylist.filter(v => v.id !== id).map((v, i) => ({ ...v, order: i }));
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleToggleTvAdVideo = async (id: string) => {
+    const next = tvAdPlaylist.map(v => v.id === id ? { ...v, enabled: !v.enabled } : v);
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+  // ─── End TV Ad handlers ──────────────────────────────────────────────────────
 
   const handleCopyMachineId = async () => {
     if (config?.machineId) {
@@ -4599,6 +4657,139 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <p className="text-xs text-slate-500 mt-1">{t('settings.idleTimeoutDesc')}</p>
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* TV Ad Panel */}
+      <div className="panel p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {t('settings.tvAd.title')}
+          </h2>
+          <button
+            type="button"
+            onClick={async () => { setTvAdEnabled(!tvAdEnabled); await persistTvAd({ tvAdEnabled: !tvAdEnabled }); }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              tvAdEnabled ? 'bg-brand-600' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                tvAdEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        {tvAdEnabled && (
+          <div className="space-y-4">
+            {/* Playlist */}
+            <div>
+              <button
+                type="button"
+                onClick={handleAddTvAdVideo}
+                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                {t('settings.tvAd.addVideo')}
+              </button>
+              {tvAdPlaylist.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map(v => (
+                    <li key={v.id} className="flex items-center gap-2 py-1 px-2 rounded-lg border border-slate-200 bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={v.enabled}
+                        onChange={() => void handleToggleTvAdVideo(v.id)}
+                        className="w-4 h-4 accent-brand-600"
+                      />
+                      <span className="flex-1 text-sm text-slate-700 truncate">{v.filename}</span>
+                      {tvAdMode === 'repeat-one' && (
+                        <input
+                          type="radio"
+                          name="tvAdRepeat"
+                          checked={tvAdRepeatId === v.id}
+                          onChange={async () => { setTvAdRepeatId(v.id); await persistTvAd({ tvAdRepeatVideoId: v.id }); }}
+                          className="w-4 h-4 accent-brand-600"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveTvAdVideo(v.id)}
+                        className="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded transition-colors"
+                      >
+                        {t('settings.tvAd.remove')}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Playback mode */}
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">
+                {t('settings.tvAd.playbackMode')}
+              </label>
+              <select
+                value={tvAdMode}
+                onChange={async (e) => {
+                  const m = e.target.value as 'sequential' | 'repeat-one';
+                  setTvAdMode(m);
+                  await persistTvAd({ tvAdPlaybackMode: m });
+                }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+              >
+                <option value="sequential">{t('settings.tvAd.sequential')}</option>
+                <option value="repeat-one">{t('settings.tvAd.repeatOne')}</option>
+              </select>
+            </div>
+
+            {/* Muted toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="tvAdMuted"
+                checked={tvAdMuted}
+                onChange={async (e) => { setTvAdMuted(e.target.checked); await persistTvAd({ tvAdMuted: e.target.checked }); }}
+                className="w-4 h-4 accent-brand-600"
+              />
+              <label htmlFor="tvAdMuted" className="text-sm text-slate-600 cursor-pointer">
+                {t('settings.tvAd.muted')}
+              </label>
+            </div>
+
+            {/* Volume (only when not muted) */}
+            {!tvAdMuted && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  {t('settings.tvAd.volume')}: {tvAdVolume}%
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={tvAdVolume}
+                  onChange={(e) => setTvAdVolume(parseInt(e.target.value))}
+                  onMouseUp={() => void persistTvAd({ tvAdVolume })}
+                  className="w-full accent-brand-600"
+                />
+              </div>
+            )}
+
+            {/* Server status */}
+            <div className="text-xs text-slate-500">
+              {t('settings.tvAd.status')}:{' '}
+              {tvAdStatus?.running ? (
+                <span className="text-green-600 font-medium">
+                  {t('settings.tvAd.running')}
+                  {tvAdStatus.ips[0] ? ` — ${tvAdStatus.ips[0]}:${tvAdStatus.port}` : ''}
+                  {` — ${t('settings.tvAd.connectedTvs')}: ${tvAdStatus.connectedClients}`}
+                </span>
+              ) : (
+                <span className="text-slate-400">{t('settings.tvAd.stopped')}</span>
+              )}
+            </div>
           </div>
         )}
       </div>
