@@ -1362,6 +1362,7 @@ export interface AdDisplayStatusLike {
   running: boolean;
   port: number | null;
   ips: string[];
+  primaryIp?: string;
   connectedClients: number;
   error?: string;
 }

@@ -4,6 +4,9 @@ import android.app.Activity
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -25,6 +28,8 @@ import java.io.Closeable
 
 class MainActivity : Activity() {
     private lateinit var playerView: PlayerView
+    private lateinit var overlay: LinearLayout
+    private lateinit var statusText: TextView
     private var player: ExoPlayer? = null
     private lateinit var hostStore: HostStore
     private var discovery: NsdDiscovery? = null
@@ -39,14 +44,45 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         playerView = findViewById(R.id.playerView)
+        overlay = findViewById(R.id.overlay)
+        statusText = findViewById(R.id.statusText)
+        findViewById<Button>(R.id.enterIpBtn).setOnClickListener {
+            startActivity(android.content.Intent(this, PairingActivity::class.java))
+        }
+        findViewById<Button>(R.id.rescanBtn).setOnClickListener {
+            showOverlay("Đang quét lại mạng WiFi...")
+            connect()
+        }
         hostStore = HostStore(this)
         player = ExoPlayer.Builder(this).build().also { playerView.player = it }
+        player?.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) hideOverlay()
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                showOverlay("Lỗi phát video: " + (error.message ?: "") + " — thử lại...")
+            }
+        })
         connect()
+    }
+
+    private fun showOverlay(msg: String) {
+        statusText.text = msg
+        overlay.visibility = View.VISIBLE
+    }
+
+    private fun hideOverlay() {
+        overlay.visibility = View.GONE
     }
 
     private fun connect() {
         base = hostStore.lastBase
-        if (base != null) { loadAndPlay() }
+        if (base != null) {
+            showOverlay("Đang kết nối " + base + " ...")
+            loadAndPlay()
+        } else {
+            showOverlay("Đang tìm POS trên mạng WiFi...")
+        }
         discovery?.close()
         discovery = NsdDiscovery(this).apply {
             start { found ->
@@ -77,6 +113,7 @@ class MainActivity : Activity() {
                 applyPlan(PlaybackPlan.from(playlist, b))
                 openEvents(b)
             } catch (e: Exception) {
+                showOverlay("Không kết nối được " + b + " — thử lại sau 5s")
                 delay(5000)
                 if (isActive && base == b) loadAndPlay()
             }

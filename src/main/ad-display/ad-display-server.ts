@@ -4,7 +4,7 @@ import type { AddressInfo } from 'net';
 import logger from '../logger';
 import { buildAdPlaylistPayload } from './ad-playlist';
 import { parseRangeHeader } from './http-range';
-import { getLanIpv4List } from './ad-net';
+import { getLanIpv4List, pickPrimaryLanIp } from './ad-net';
 import type { AdDisplayStatus, TvAdConfig } from './ad-types';
 import type { AdVideoStore } from './ad-video-store';
 
@@ -61,10 +61,12 @@ export class AdDisplayServer {
   }
 
   getStatus(): AdDisplayStatus {
+    const ips = getLanIpv4List();
     return {
       running: !!this.server,
       port: this.activePort,
-      ips: getLanIpv4List(),
+      ips,
+      primaryIp: pickPrimaryLanIp(ips),
       connectedClients: this.sseClients.size,
       error: this.lastError,
     };

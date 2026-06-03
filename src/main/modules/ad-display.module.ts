@@ -44,7 +44,7 @@ export class AdDisplayModule extends BaseModule {
     const status = this.server.getStatus();
     if (cfg.tvAdEnabled && status.running && status.port) {
       const name = (getConfig() as any).salonName || (getConfig() as any).deviceName || 'POS';
-      this.mdns.start(status.port, String(name));
+      this.mdns.start(status.port, String(name), status.primaryIp);
     } else {
       this.mdns.stop();
     }

@@ -10,7 +10,7 @@ export class AdMdnsAdvertiser {
   private bonjour: Bonjour | null = null;
   private service: PublishedService | null = null;
 
-  start(port: number, name: string): void {
+  start(port: number, name: string, ip?: string): void {
     this.stop();
     try {
       this.bonjour = new Bonjour();
@@ -19,7 +19,7 @@ export class AdMdnsAdvertiser {
         type: 'zira-ads',
         protocol: 'tcp',
         port,
-        txt: { name },
+        txt: ip ? { name, ip } : { name },
       });
       logger.info(`[AdDisplay] mDNS advertising _zira-ads._tcp on ${port}`);
     } catch (e: any) {

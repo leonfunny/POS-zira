@@ -455,6 +455,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV Advertisement',
+    'settings.tvAd.connectAddress': 'TV connect address',
+    'settings.tvAd.connectAddressHint': 'Enter this address in the Zira TV Ads app if it does not auto-discover.',
     'settings.tvAd.enable': 'Enable TV advertisement screen',
     'settings.tvAd.addVideo': 'Add video',
     'settings.tvAd.playbackMode': 'Playback mode',
@@ -1908,6 +1910,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV Quảng cáo',
+    'settings.tvAd.connectAddress': 'Địa chỉ kết nối cho TV',
+    'settings.tvAd.connectAddressHint': 'Nhập địa chỉ này vào app Zira TV Ads nếu TV không tự tìm thấy.',
     'settings.tvAd.enable': 'Bật màn hình quảng cáo TV',
     'settings.tvAd.addVideo': 'Thêm video',
     'settings.tvAd.playbackMode': 'Chế độ phát',
@@ -3254,6 +3258,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV Reklamı',
+    'settings.tvAd.connectAddress': 'TV bağlantı adresi',
+    'settings.tvAd.connectAddressHint': 'TV otomatik bulamazsa bu adresi Zira TV Ads uygulamasına girin.',
     'settings.tvAd.enable': 'TV reklam ekranını etkinleştir',
     'settings.tvAd.addVideo': 'Video ekle',
     'settings.tvAd.playbackMode': 'Oynatma modu',
@@ -4441,6 +4447,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV广告',
+    'settings.tvAd.connectAddress': 'TV连接地址',
+    'settings.tvAd.connectAddressHint': '如果电视未自动发现，请在 Zira TV Ads 应用中输入此地址。',
     'settings.tvAd.enable': '启用TV广告屏幕',
     'settings.tvAd.addVideo': '添加视频',
     'settings.tvAd.playbackMode': '播放模式',
@@ -5628,6 +5636,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV реклама',
+    'settings.tvAd.connectAddress': 'Адрес подключения TV',
+    'settings.tvAd.connectAddressHint': 'Введите этот адрес в приложении Zira TV Ads, если TV не нашёл POS автоматически.',
     'settings.tvAd.enable': 'Увімкнути рекламний екран TV',
     'settings.tvAd.addVideo': 'Додати відео',
     'settings.tvAd.playbackMode': 'Режим відтворення',
@@ -6815,6 +6825,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'TV реклама',
+    'settings.tvAd.connectAddress': 'Адрес подключения TV',
+    'settings.tvAd.connectAddressHint': 'Введите этот адрес в приложении Zira TV Ads, если TV не нашёл POS автоматически.',
     'settings.tvAd.enable': 'Включить рекламный экран TV',
     'settings.tvAd.addVideo': 'Добавить видео',
     'settings.tvAd.playbackMode': 'Режим воспроизведения',
@@ -8074,6 +8086,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
     // TV Ad
     'settings.tvAd.title': 'Reklama TV',
+    'settings.tvAd.connectAddress': 'Adres połączenia TV',
+    'settings.tvAd.connectAddressHint': 'Wpisz ten adres w aplikacji Zira TV Ads, jeśli TV nie znajdzie POS automatycznie.',
     'settings.tvAd.enable': 'Włącz ekran reklam TV',
     'settings.tvAd.addVideo': 'Dodaj wideo',
     'settings.tvAd.playbackMode': 'Tryb odtwarzania',

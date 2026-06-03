@@ -41,6 +41,8 @@ export interface AdDisplayStatus {
   running: boolean;
   port: number | null;
   ips: string[];
+  /** Địa chỉ LAN "thật" mà TV nhiều khả năng với tới được (đã lọc adapter ảo/VPN). */
+  primaryIp?: string;
   connectedClients: number;
   error?: string;
 }

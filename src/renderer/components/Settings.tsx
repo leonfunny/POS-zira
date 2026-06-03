@@ -8,6 +8,7 @@ import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
+import QRCode from 'qrcode';
 import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale, LayoutGrid } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 
@@ -613,7 +614,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [tvAdRepeatId, setTvAdRepeatId] = useState<string | null>((config as any)?.tvAdRepeatVideoId ?? null);
   const [tvAdMuted, setTvAdMuted] = useState<boolean>((config as any)?.tvAdMuted ?? true);
   const [tvAdVolume, setTvAdVolume] = useState<number>((config as any)?.tvAdVolume ?? 0);
-  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; connectedClients: number } | null>(null);
+  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; primaryIp?: string; connectedClients: number } | null>(null);
+  const tvAdQrRef = useRef<HTMLCanvasElement | null>(null);
 
   // Connected displays (dynamic)
   const [displays, setDisplays] = useState<Array<{
@@ -714,6 +716,18 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     const id = setInterval(tick, 3000);
     return () => { alive = false; clearInterval(id); };
   }, []);
+
+  // Vẽ QR địa chỉ kết nối TV (ip:port) khi server chạy
+  useEffect(() => {
+    const ip = tvAdStatus?.primaryIp || tvAdStatus?.ips?.[0];
+    if (tvAdQrRef.current && tvAdStatus?.running && ip && tvAdStatus.port) {
+      QRCode.toCanvas(tvAdQrRef.current, `${ip}:${tvAdStatus.port}`, {
+        width: 96,
+        margin: 1,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      }).catch((err: Error) => rlog.error('[Settings] tvAd QR failed:', err));
+    }
+  }, [tvAdStatus?.running, tvAdStatus?.primaryIp, tvAdStatus?.ips?.[0], tvAdStatus?.port]);
 
   const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
@@ -4779,13 +4793,24 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               </div>
             )}
 
-            {/* Server status */}
+            {/* Server status + TV connect address */}
+            {tvAdStatus?.running && (tvAdStatus.primaryIp || tvAdStatus.ips[0]) && (
+              <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <canvas ref={tvAdQrRef} className="rounded bg-white" />
+                <div>
+                  <div className="text-xs text-slate-500">{t('settings.tvAd.connectAddress')}</div>
+                  <div className="text-2xl font-bold tracking-wide text-slate-800">
+                    {(tvAdStatus.primaryIp || tvAdStatus.ips[0])}:{tvAdStatus.port}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">{t('settings.tvAd.connectAddressHint')}</div>
+                </div>
+              </div>
+            )}
             <div className="text-xs text-slate-500">
               {t('settings.tvAd.status')}:{' '}
               {tvAdStatus?.running ? (
                 <span className="text-green-600 font-medium">
                   {t('settings.tvAd.running')}
-                  {tvAdStatus.ips[0] ? ` — ${tvAdStatus.ips[0]}:${tvAdStatus.port}` : ''}
                   {` — ${t('settings.tvAd.connectedTvs')}: ${tvAdStatus.connectedClients}`}
                 </span>
               ) : (

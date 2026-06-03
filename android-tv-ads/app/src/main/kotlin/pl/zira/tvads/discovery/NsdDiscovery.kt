@@ -22,7 +22,13 @@ class NsdDiscovery(context: Context) : Closeable {
                 nsd.resolveService(info, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(s: NsdServiceInfo, e: Int) {}
                     override fun onServiceResolved(s: NsdServiceInfo) {
-                        val host = s.host?.hostAddress ?: return
+                        // POS advertises its REAL LAN IPv4 in the TXT record ("ip").
+                        // Prefer it: multi-homed POS machines (WSL/VPN adapters) may
+                        // resolve to a virtual address the TV cannot reach.
+                        val txtIp = try {
+                            s.attributes?.get("ip")?.let { String(it) }?.takeIf { it.isNotBlank() }
+                        } catch (_: Exception) { null }
+                        val host = txtIp ?: s.host?.hostAddress ?: return
                         onFound("http://$host:${s.port}")
                     }
                 })
