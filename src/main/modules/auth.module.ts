@@ -675,7 +675,12 @@ export class AuthModule extends BaseModule {
         logger.info(
           `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
         );
-        await this.clearSalonDataWithBackup('apiKey/agent change');
+        const cleared = await this.archiveSalonThenClear(prevSalonId || '', 'apiKey/agent change');
+        if (!cleared.ok) {
+          // Fail closed: never proceed with a half-cleared tenant if we could
+          // not first save the leaving salon's data.
+          throw new Error(`Không lưu được dữ liệu salon hiện tại — huỷ kết nối: ${cleared.error || ''}`);
+        }
       }
 
       // Server-pushed printers carry their own isEnabled flag (typically false
