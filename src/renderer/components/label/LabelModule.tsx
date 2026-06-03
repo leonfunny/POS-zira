@@ -983,10 +983,6 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
                   </button>
                 );
               })}
-              <div className="min-h-10 px-3 rounded-md border border-slate-200 bg-slate-50 text-sm font-bold text-slate-600 inline-flex items-center whitespace-nowrap">
-                <span className="font-extrabold text-slate-950 tabular-nums">{visibleProducts.length}</span>
-                <span className="ml-1">{copy.products}</span>
-              </div>
             </div>
           </div>
 
