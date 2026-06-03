@@ -111,7 +111,7 @@ export default function CartItemRow({
   const isActive = !!activeField;
 
   return (
-    <div className={`px-3 py-2.5 border-b border-slate-100 last:border-b-0 transition-colors ${
+    <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
     }`}>
       <div className="flex items-start justify-between gap-3">
@@ -123,7 +123,7 @@ export default function CartItemRow({
         </span>
       </div>
 
-      <div className="mt-1 flex items-center justify-between gap-2">
+      <div className="mt-0.5 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
@@ -138,7 +138,7 @@ export default function CartItemRow({
         </button>
       </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="mt-1.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           {sellBy === 'WEIGHT' && onReadScale && (
             <button

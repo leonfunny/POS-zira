@@ -1337,6 +1337,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             heldCartsCount={heldCarts.length}
             onHold={cart.items.length > 0 ? handleHoldCart : undefined}
             onPrintItemLabel={handlePrintCartItemCode}
+            showOrderActionChips={false}
           />
         </div>
       </div>

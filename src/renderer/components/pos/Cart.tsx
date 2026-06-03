@@ -22,6 +22,7 @@ interface CartProps {
   onHold?: () => void;
   /** Retail label print action for a cart line. When provided it replaces the note button. */
   onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
+  showOrderActionChips?: boolean;
 }
 
 interface OverflowMenuProps {
@@ -378,6 +379,7 @@ export default function Cart({
   heldCartsCount = 0,
   onHold,
   onPrintItemLabel,
+  showOrderActionChips = true,
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
@@ -541,7 +543,7 @@ export default function Cart({
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-4 py-3 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
             <span className="shrink-0">{t('pos.cart')}</span>
@@ -626,12 +628,26 @@ export default function Cart({
         )}
       </div>
 
+      {pricePopupItem && !showOrderActionChips && (
+        <PricePopup
+          item={pricePopupItem}
+          currency={currency}
+          onApply={(price) => {
+            dispatch({ type: 'cart/setItemPrice', payload: { id: pricePopupItem.id, price } });
+            setPricePopupItemId(null);
+            controller.selectPayment();
+          }}
+          onClose={() => setPricePopupItemId(null)}
+          tOr={tOr}
+        />
+      )}
+
       {/* ─── QUICK-ACTION CHIPS ──────────────────────────────────
           Surface the most common order-level actions one tap away
           (industry pattern: Square / Shopify POS / Toast). Discount
           opens a preset popup instead of the inline numpad. */}
-      {hasItems && (
-        <div className="relative shrink-0 px-3 pt-2 pb-2 flex items-center gap-2 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
+      {hasItems && showOrderActionChips && (
+        <div className="relative shrink-0 px-2 py-1.5 flex items-center gap-1.5 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
           <button
             type="button"
             onClick={() => {
@@ -639,7 +655,7 @@ export default function Cart({
               setDiscountPopupOpen(true);
             }}
             aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
-            className={`shrink-0 h-11 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
+            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
               discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
@@ -679,7 +695,7 @@ export default function Cart({
             <button
               type="button"
               onClick={onHold}
-              className="shrink-0 h-11 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-amber-200 flex items-center gap-1.5"
+              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-amber-200 flex items-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -720,8 +736,8 @@ export default function Cart({
           sits in the same sticky shadow surface so the cashier's
           eye drops from total → button without re-scanning. */}
       {hasItems && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-4 pt-3 pb-3 shadow-[0_-8px_24px_-12px_rgba(15,23,42,0.12)]">
-          <div className="space-y-1.5 text-sm mb-3">
+        <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
+          <div className="space-y-1 text-xs mb-2">
             <div className="flex justify-between text-slate-700">
               <span className="font-bold">{t('pos.cart.subtotal')}</span>
               <span className="font-extrabold text-slate-900 tabular-nums">{subtotalStr}</span>
@@ -756,10 +772,10 @@ export default function Cart({
             )}
           </div>
 
-          <div className="flex items-baseline justify-between pt-3 mb-3 border-t-2 border-slate-200">
+          <div className="flex items-baseline justify-between pt-2 mb-2 border-t border-slate-200">
             <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
             <span className="text-slate-950 leading-none tabular-nums">
-              <span className="text-3xl font-black">{totalStr}</span>
+              <span className="text-2xl font-black">{totalStr}</span>
               <span className="text-base font-bold ml-1.5 text-slate-600">{currency}</span>
             </span>
           </div>
@@ -777,7 +793,7 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-16 rounded-xl bg-slate-950 text-lg font-black text-white shadow-xl shadow-slate-950/25 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
           >
             {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>

@@ -47,16 +47,16 @@ function ActionButton({ icon, label, onClick, disabled, active, tone = 'neutral'
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`h-11 px-3 rounded-lg border text-sm font-bold transition-colors flex items-center gap-2 touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+      className={`h-10 flex-none px-2.5 rounded-lg border text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
         active
           ? activeClasses
           : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
       } disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed cursor-pointer`}
     >
       <span className="w-4 h-4 shrink-0 [&>svg]:w-4 [&>svg]:h-4" aria-hidden="true">{icon}</span>
-      <span className="truncate max-w-[118px]">{label}</span>
+      <span className="truncate max-w-[96px]">{label}</span>
       {typeof badge === 'number' && badge > 0 && (
-        <span className="ml-0.5 min-w-5 h-5 px-1 rounded-full bg-slate-900 text-white text-[11px] leading-5 text-center">
+        <span className="ml-0.5 min-w-4 h-4 px-1 rounded-full bg-slate-900 text-white text-[10px] leading-4 text-center">
           {badge}
         </span>
       )}
@@ -116,19 +116,19 @@ export default function QuickActions({
   return (
     <div className="border-t border-slate-200 bg-white shadow-[0_-1px_0_rgba(15,23,42,0.04)]">
       {showHeld && heldCarts.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto border-b border-slate-200 bg-slate-50" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto border-b border-slate-200 bg-slate-50" style={{ scrollbarWidth: 'none' }}>
           {heldCarts.map((held) => (
-            <div key={held.id} className="flex items-center gap-2 px-2 py-1.5 bg-white border border-slate-300 rounded-lg shrink-0 shadow-sm">
-              <span className="text-sm text-slate-700 font-bold tabular-nums">{(held.total / 100).toFixed(2)} {t('pos.currency')}</span>
+            <div key={held.id} className="flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-300 rounded-lg shrink-0 shadow-sm">
+              <span className="text-xs text-slate-700 font-bold tabular-nums">{(held.total / 100).toFixed(2)} {t('pos.currency')}</span>
               <button
                 onClick={() => { onRecall?.(held.id); setShowHeld(false); }}
-                className="h-9 px-3 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-sm font-bold cursor-pointer"
+                className="h-8 px-2.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold cursor-pointer"
               >
                 {tOr('pos.recall', 'Use')}
               </button>
               <button
                 onClick={() => onDiscardHeld?.(held.id)}
-                className="w-9 h-9 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
+                className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
                 aria-label="Discard held cart"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,90 +140,80 @@ export default function QuickActions({
         </div>
       )}
 
-      <div className="flex items-center gap-3 px-3 py-2.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          {onHold && (
-            <ActionButton
-              icon={icons.hold}
-              label={tOr('pos.holdCart', 'Hold')}
-              onClick={onHold}
-              disabled={!hasItems}
-            />
-          )}
-          {onRecall && (
-            <ActionButton
-              icon={icons.recall}
-              label={tOr('pos.recallCart', 'Recall')}
-              onClick={() => setShowHeld((prev) => !prev)}
-              disabled={heldCarts.length === 0}
-              active={showHeld && heldCarts.length > 0}
-              tone="warning"
-              badge={heldCarts.length}
-            />
-          )}
-        </div>
-
-        <div className="h-8 w-px bg-slate-200 shrink-0" />
-
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto whitespace-nowrap scrollbar-hide" style={{ scrollbarWidth: 'none' }}>
+        {onHold && (
           <ActionButton
-            icon={icons.discount}
-            label={tOr('pos.quickDiscount', 'Discount')}
-            onClick={() => setShowDiscount(!showDiscount)}
+            icon={icons.hold}
+            label={tOr('pos.holdCart', 'Hold')}
+            onClick={onHold}
             disabled={!hasItems}
-            active={showDiscount}
           />
-          {onHistory && (
-            <ActionButton
-              icon={icons.history}
-              label={tOr('pos.history', 'History')}
-              onClick={onHistory}
-            />
-          )}
-          {onQuickAddCamera && (
-            <ActionButton
-              icon={icons.camera}
-              label={tOr('pos.quickAdd.camera', 'Camera')}
-              onClick={onQuickAddCamera}
-            />
-          )}
-          {onCreateProduct && (
-            <ActionButton
-              icon={icons.addProduct}
-              label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}
-              onClick={onCreateProduct}
-            />
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+        )}
+        {onRecall && (
           <ActionButton
-            icon={icons.display}
-            label={isCustomerDisplayOpen ? t('pos.displayOff') : t('pos.displayOn')}
-            onClick={isCustomerDisplayOpen ? onCloseCustomerDisplay : onOpenCustomerDisplay}
-            active={isCustomerDisplayOpen}
-            tone="success"
+            icon={icons.recall}
+            label={tOr('pos.recallCart', 'Recall')}
+            onClick={() => setShowHeld((prev) => !prev)}
+            disabled={heldCarts.length === 0}
+            active={showHeld && heldCarts.length > 0}
+            tone="warning"
+            badge={heldCarts.length}
           />
-          {isCustomerDisplayOpen && (
-            <ActionButton
-              icon={icons.promo}
-              label={displayMode === 'promo' ? t('pos.stopAds') : t('pos.startAds')}
-              onClick={handleToggleAds}
-              active={displayMode === 'promo'}
-              tone="warning"
-            />
-          )}
-        </div>
+        )}
+        <ActionButton
+          icon={icons.discount}
+          label={tOr('pos.quickDiscount', 'Discount')}
+          onClick={() => setShowDiscount(!showDiscount)}
+          disabled={!hasItems}
+          active={showDiscount}
+        />
+        {onHistory && (
+          <ActionButton
+            icon={icons.history}
+            label={tOr('pos.history', 'History')}
+            onClick={onHistory}
+          />
+        )}
+        {onQuickAddCamera && (
+          <ActionButton
+            icon={icons.camera}
+            label={tOr('pos.quickAdd.camera', 'Camera')}
+            onClick={onQuickAddCamera}
+          />
+        )}
+        {onCreateProduct && (
+          <ActionButton
+            icon={icons.addProduct}
+            label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}
+            onClick={onCreateProduct}
+          />
+        )}
+        <ActionButton
+          icon={icons.display}
+          label={isCustomerDisplayOpen ? t('pos.displayOff') : t('pos.displayOn')}
+          onClick={isCustomerDisplayOpen ? onCloseCustomerDisplay : onOpenCustomerDisplay}
+          active={isCustomerDisplayOpen}
+          tone="success"
+        />
+        {isCustomerDisplayOpen && (
+          <ActionButton
+            icon={icons.promo}
+            label={displayMode === 'promo' ? t('pos.stopAds') : t('pos.startAds')}
+            onClick={handleToggleAds}
+            active={displayMode === 'promo'}
+            tone="warning"
+          />
+        )}
       </div>
 
       {showDiscount && (
-        <div className="px-3 pb-3 flex items-center justify-end gap-2 border-t border-slate-100">
+        <div className="px-2 pb-2 pt-1.5 flex items-center justify-end gap-1.5 border-t border-slate-100">
           <button
             onClick={() => {
               setDiscountMode(discountMode === 'fixed' ? 'percentage' : 'fixed');
               requestAnimationFrame(() => discountInputRef.current?.focus());
             }}
-            className="h-11 min-w-14 px-3 text-sm font-extrabold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
+            className="h-10 min-w-12 px-2.5 text-xs font-extrabold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
             title={discountMode === 'fixed' ? 'Switch to percent' : 'Switch to fixed amount'}
           >
             {discountMode === 'fixed' ? t('pos.currency') : '%'}
@@ -235,13 +225,13 @@ export default function QuickActions({
             value={discountValue}
             onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setDiscountValue(e.target.value); }}
             placeholder={discountMode === 'fixed' ? '0.00' : '10'}
-            className="h-11 w-28 px-3 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 font-bold text-right focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 shadow-sm"
+            className="h-10 w-24 px-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 font-bold text-right focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 shadow-sm"
             autoFocus
             onKeyDown={(e) => e.key === 'Enter' && handleApplyDiscount()}
           />
           <button
             onClick={handleApplyDiscount}
-            className="h-11 px-5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 cursor-pointer font-bold"
+            className="h-10 px-4 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 cursor-pointer font-bold"
           >
             {t('pos.ok')}
           </button>

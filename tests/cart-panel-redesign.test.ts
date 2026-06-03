@@ -5,6 +5,8 @@ import path from 'node:path';
 const ROOT = path.resolve(__dirname, '..');
 const CART = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/Cart.tsx'), 'utf8');
 const CART_ITEM = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/CartItem.tsx'), 'utf8');
+const QUICK_ACTIONS = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/retail/QuickActions.tsx'), 'utf8');
+const RETAIL_TEMPLATE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/templates/retail/RetailTemplate.tsx'), 'utf8');
 
 describe('POS cart panel redesign', () => {
   it('shows unique item count and total quantity in the cart header', () => {
@@ -36,5 +38,16 @@ describe('POS cart panel redesign', () => {
   it('keeps the primary checkout action as a high-priority PAY button', () => {
     expect(CART).toContain("tOr('pos.payCta', 'PAY')");
     expect(CART).toContain('bg-slate-950');
+  });
+
+  it('keeps retail quick actions in one compact horizontal rail', () => {
+    expect(QUICK_ACTIONS).toContain('overflow-x-auto whitespace-nowrap scrollbar-hide');
+    expect(QUICK_ACTIONS).not.toContain('flex-wrap');
+    expect(QUICK_ACTIONS).toContain("label={tOr('pos.holdCart', 'Hold')}");
+    expect(QUICK_ACTIONS).toContain("label={tOr('pos.quickDiscount', 'Discount')}");
+    expect(QUICK_ACTIONS).toContain("label={tOr('pos.history', 'History')}");
+    expect(QUICK_ACTIONS).toContain("label={tOr('pos.quickAdd.camera', 'Camera')}");
+    expect(QUICK_ACTIONS).toContain("label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}");
+    expect(RETAIL_TEMPLATE).toContain('showOrderActionChips={false}');
   });
 });
