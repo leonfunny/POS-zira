@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { DailyReportData, PrinterStatusInfo, ReceiptData } from '../../../shared/types';
-import { toFiscalSafeText } from '../../../shared/fiscal-text';
+import { toFiscalSafeItemName, toFiscalSafeText } from '../../../shared/fiscal-text';
 import {
   fiscalAttemptRepo,
   type FiscalAttemptJournal,
@@ -28,10 +28,10 @@ function toFiscalSafeReceiptData(data: ReceiptData): ReceiptData {
   return {
     ...data,
     items: data.items.map((item) => {
-      const unit = item.unit === undefined ? undefined : toFiscalSafeText(item.unit);
+      const unit = item.unit === undefined ? undefined : toFiscalSafeText(item.unit).slice(0, 4).trim();
       return {
         ...item,
-        name: toFiscalSafeText(item.name),
+        name: toFiscalSafeItemName(item.name),
         unit: unit || undefined,
       };
     }),
