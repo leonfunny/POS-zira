@@ -223,8 +223,12 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
   it('AUTH_CHECK_TOKEN handler (Telegram login) calls setSecureRefreshToken when refresh_token is present', () => {
     const idx = source.indexOf('AUTH_CHECK_TOKEN');
     expect(idx).toBeGreaterThan(-1);
-    // Look at the next ~1500 chars — covers the whole handler body.
-    const block = source.slice(idx, idx + 1500);
+    // Slice to the next ipcMain.handle so the whole handler body is covered
+    // regardless of length (a fixed char window broke when salon-switch logic
+    // was added ahead of the token writes).
+    const after = source.slice(idx);
+    const nextHandler = after.indexOf('ipcMain.handle', 50);
+    const block = nextHandler > 0 ? after.slice(0, nextHandler) : after.slice(0, 2500);
     expect(block).toMatch(/setSecureRefreshToken\s*\(/);
     // Defence: must guard on result.refresh_token (don't blindly call
     // with undefined and clear a valid token).
