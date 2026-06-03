@@ -100,6 +100,14 @@ interface LabelCopy {
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
 
+type LabelLanguage = 'vi' | 'pl';
+
+const LABEL_LANGS: LabelLanguage[] = ['vi', 'pl'];
+
+function coerceLabelLanguage(value: unknown): LabelLanguage {
+  return LABEL_LANGS.includes(value as LabelLanguage) ? (value as LabelLanguage) : 'vi';
+}
+
 const COPY: Record<string, LabelCopy> = {
   en: {
     title: 'Label',
@@ -292,8 +300,8 @@ function productUnit(product: LabelProduct | null): string {
   return product.sell_by === 'WEIGHT' ? 'kg' : 'item';
 }
 
-function formatRecentTime(date: Date, language: Language): string {
-  const locale = language === 'pl' ? 'pl-PL' : language === 'vi' ? 'vi-VN' : 'en-US';
+function formatRecentTime(date: Date, labelLanguage: LabelLanguage): string {
+  const locale = labelLanguage === 'pl' ? 'pl-PL' : 'vi-VN';
   return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -309,18 +317,18 @@ function productMatches(
   product: LabelProduct,
   query: string,
   categoryById: Map<string, Category>,
-  language: Language,
+  labelLanguage: LabelLanguage,
 ): boolean {
   if (!query) return true;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
   const haystack = [
     product.name,
-    resolveName(product, language),
+    resolveName(product, labelLanguage),
     product.sku,
     product.barcode,
     product.ean,
     category?.name,
-    category ? resolveName(category, language) : '',
+    category ? resolveName(category, labelLanguage) : '',
   ].filter(Boolean).join(' ');
   return normalizeSearch(haystack).includes(query);
 }
@@ -348,10 +356,11 @@ function BarcodePreview({ barcode }: { barcode: string }) {
   );
 }
 
-export default function LabelModule({ language }: LabelModuleProps) {
-  const copy = COPY[language] || COPY.en;
+export default function LabelModule({ language: _language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
-  const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(language);
+  const [labelLanguage, setLabelLanguage] = useState<LabelLanguage>(() => coerceLabelLanguage(config?.posLanguage));
+  const copy = COPY[labelLanguage] || COPY.vi;
+  const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(labelLanguage);
   const products = allProducts as LabelProduct[];
   const [query, setQuery] = useState('');
   const [settingsQuery, setSettingsQuery] = useState('');
@@ -377,6 +386,10 @@ export default function LabelModule({ language }: LabelModuleProps) {
       statusResetTimeoutRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    setLabelLanguage(coerceLabelLanguage(config?.posLanguage));
+  }, [config?.posLanguage]);
 
   useEffect(() => {
     if (pendingCategoryConfigSavesRef.current > 0) return;
@@ -432,8 +445,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
     const normalized = normalizeSearch(query);
     return labelProducts
       .filter((product) => !activeCategoryId || product.category_id === activeCategoryId)
-      .filter((product) => productMatches(product, normalized, categoryById, language));
-  }, [activeCategoryId, categoryById, labelProducts, language, query]);
+      .filter((product) => productMatches(product, normalized, categoryById, labelLanguage));
+  }, [activeCategoryId, categoryById, labelLanguage, labelProducts, query]);
 
   useEffect(() => {
     if (labelProducts.length === 0) {
@@ -451,7 +464,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
   );
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
-  const selectedName = selectedProduct ? (resolveName(selectedProduct, language) || selectedProduct.name || selectedBarcode) : '';
+  const selectedName = selectedProduct ? (resolveName(selectedProduct, labelLanguage) || selectedProduct.name || selectedBarcode) : '';
   const selectedPriceText = selectedProduct ? formatProductLabelPriceText(selectedProduct, 'zl') : undefined;
   const selectedCategory = selectedProduct?.category_id ? categoryById.get(selectedProduct.category_id) : null;
   const selectedUnit = productUnit(selectedProduct);
@@ -472,9 +485,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const selectableProducts = useMemo(() => {
     const normalized = normalizeSearch(settingsQuery);
     return products
-      .filter((product) => productMatches(product, normalized, categoryById, language))
+      .filter((product) => productMatches(product, normalized, categoryById, labelLanguage))
       .slice(0, 160);
-  }, [categoryById, language, products, settingsQuery]);
+  }, [categoryById, labelLanguage, products, settingsQuery]);
 
   const selectedCategories = useMemo(
     () => categories.filter((category) => configuredCategoryIds.has(category.id)),
@@ -485,6 +498,13 @@ export default function LabelModule({ language }: LabelModuleProps) {
     () => products.filter((product) => pinnedProductIds.has(product.id)),
     [pinnedProductIds, products],
   );
+
+  const handleLabelLanguageChange = useCallback((next: LabelLanguage) => {
+    setLabelLanguage(next);
+    saveConfig({ posLanguage: next }).catch((err: any) => {
+      rlog.error('[LabelModule] Failed to save label language:', err);
+    });
+  }, [saveConfig]);
 
   const persistLabelConfig = useCallback((partial: Partial<AgentConfig>) => {
     const hasCategoryIds = Object.prototype.hasOwnProperty.call(partial, 'labelModuleCategoryIds');
@@ -552,7 +572,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
   ) => {
     const barcode = resolveLabelCode(product);
     const quantity = clampCopies(requestedCopies);
-    const displayName = resolveName(product, language) || product.name || barcode;
+    const displayName = resolveName(product, labelLanguage) || product.name || barcode;
     const priceText = formatProductLabelPriceText(product, 'zl');
     const printToken = ++printSequenceRef.current;
 
@@ -606,7 +626,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
       rlog.error('[LabelModule] printLabel failed:', err);
       setStatus({ type: 'error', message: err?.message || copy.printerError });
     }
-  }, [clearStatusResetTimeout, copy, language]);
+  }, [clearStatusResetTimeout, copy, labelLanguage]);
 
   const handlePrint = useCallback(() => {
     if (!selectedProduct) {
@@ -685,6 +705,25 @@ export default function LabelModule({ language }: LabelModuleProps) {
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
                 <p className="text-xs font-semibold text-slate-500 truncate">{copy.subtitle}</p>
+              </div>
+              <div className="shrink-0 rounded-lg border border-slate-200 bg-slate-100 p-0.5 inline-flex">
+                {LABEL_LANGS.map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    onClick={() => handleLabelLanguageChange(lang)}
+                    className={`h-8 min-w-9 rounded-md px-2 text-xs font-black uppercase transition-colors ${
+                      labelLanguage === lang
+                        ? 'bg-white text-emerald-700 shadow-sm'
+                        : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+                    }`}
+                    aria-pressed={labelLanguage === lang}
+                    aria-label={lang.toUpperCase()}
+                    title={lang.toUpperCase()}
+                  >
+                    {lang.toUpperCase()}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -811,7 +850,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                   <div className="rounded-lg bg-slate-50 px-3 py-2">
                     <div className="text-xs font-bold text-slate-400">{copy.category}</div>
                     <div className="mt-1 font-extrabold text-slate-900 truncate">
-                      {selectedCategory ? resolveName(selectedCategory, language) : '-'}
+                      {selectedCategory ? resolveName(selectedCategory, labelLanguage) : '-'}
                     </div>
                   </div>
                   <div className="rounded-lg bg-slate-50 px-3 py-2">
@@ -834,24 +873,31 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 </div>
               ) : (
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {recentPrints.map((entry) => (
-                    <div key={entry.id} className="w-44 shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                      <div className="text-xs font-extrabold text-slate-900 truncate">{entry.productName}</div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
-                        <Clock size={12} />
-                        <span>{formatRecentTime(entry.printedAt, language)}</span>
-                        <span>x{entry.copies}</span>
+                  {recentPrints.map((entry) => {
+                    const product = products.find((row) => row.id === entry.productId);
+                    const displayName = product
+                      ? (resolveName(product, labelLanguage) || product.name || entry.productName)
+                      : entry.productName;
+
+                    return (
+                      <div key={entry.id} className="w-44 shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div className="text-xs font-extrabold text-slate-900 truncate">{displayName}</div>
+                        <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                          <Clock size={12} />
+                          <span>{formatRecentTime(entry.printedAt, labelLanguage)}</span>
+                          <span>x{entry.copies}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickReprint(entry)}
+                          className="mt-2 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center justify-center gap-1"
+                        >
+                          <RotateCw size={12} />
+                          {copy.reprint}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickReprint(entry)}
-                        className="mt-2 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center justify-center gap-1"
-                      >
-                        <RotateCw size={12} />
-                        {copy.reprint}
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>
@@ -932,7 +978,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                         : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                     }`}
                   >
-                    {resolveName(category, language)}
+                    {resolveName(category, labelLanguage)}
                     <span className="ml-2 tabular-nums">{count}</span>
                   </button>
                 );
@@ -975,7 +1021,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3 pb-2">
                   {visibleProducts.map((product) => {
-                    const displayName = resolveName(product, language) || product.name;
+                    const displayName = resolveName(product, labelLanguage) || product.name;
                     const barcode = resolveLabelCode(product);
                     const priceText = formatProductLabelPriceText(product, 'zl');
                     const category = product.category_id ? categoryById.get(product.category_id) : null;
@@ -1016,7 +1062,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                             {displayName}
                           </div>
                           <div className="flex items-center justify-between gap-2 text-xs">
-                            <span className="truncate font-semibold text-slate-500">{category ? resolveName(category, language) : '-'}</span>
+                            <span className="truncate font-semibold text-slate-500">{category ? resolveName(category, labelLanguage) : '-'}</span>
                             <span className={`shrink-0 font-extrabold ${priceText ? 'text-slate-950' : 'text-amber-700'}`}>
                               {priceText || copy.noPrice}
                             </span>
@@ -1104,7 +1150,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                                 className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-300"
                               />
                               <span className="min-w-0 flex-1 truncate text-sm font-bold">
-                                {resolveName(category, language)}
+                                {resolveName(category, labelLanguage)}
                               </span>
                             </label>
                           );
@@ -1136,7 +1182,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                       <div className="space-y-1.5">
                         <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{copy.availableProducts}</div>
                         {selectableProducts.map((product) => {
-                          const displayName = resolveName(product, language) || product.name;
+                          const displayName = resolveName(product, labelLanguage) || product.name;
                           const pinned = pinnedProductIds.has(product.id);
                           const barcode = resolveLabelCode(product);
                           const category = product.category_id ? categoryById.get(product.category_id) : null;
@@ -1155,7 +1201,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-extrabold text-slate-900 line-clamp-2">{displayName}</div>
                                 <div className="mt-0.5 text-[11px] font-semibold text-slate-400 truncate">
-                                  {category ? `${resolveName(category, language)} - ` : ''}{barcode || copy.missingEan}
+                                  {category ? `${resolveName(category, labelLanguage)} - ` : ''}{barcode || copy.missingEan}
                                 </div>
                               </div>
                               <button
