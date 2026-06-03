@@ -1,9 +1,14 @@
-import { Bonjour, type Service } from 'bonjour-service';
+import Bonjour from 'bonjour-service';
 import logger from '../logger';
+
+// bonjour-service is an `export =` module: the default export is the Bonjour
+// class (usable as both value and type). Derive the published-service type from
+// publish()'s return type rather than importing the value-only `Service` name.
+type PublishedService = ReturnType<Bonjour['publish']>;
 
 export class AdMdnsAdvertiser {
   private bonjour: Bonjour | null = null;
-  private service: Service | null = null;
+  private service: PublishedService | null = null;
 
   start(port: number, name: string): void {
     this.stop();
