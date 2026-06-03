@@ -54,6 +54,7 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={tOr('pos.cart.more', 'More')}
+        title={tOr('pos.cart.more', 'More')}
         aria-haspopup="menu"
         aria-expanded={open}
         className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200"
@@ -129,6 +130,13 @@ function formatCompactMoney(grosze: number, currency: string): string {
     ? String(value / 100)
     : (value / 100).toFixed(2);
   return `${amount} ${currency}`;
+}
+
+function formatCartQuantityTotal(quantity: number): string {
+  if (!Number.isFinite(quantity)) return '0';
+  const rounded = Math.round(quantity);
+  if (Math.abs(quantity - rounded) < 0.0001) return String(rounded);
+  return quantity.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function DiscountPopup({
@@ -512,6 +520,9 @@ export default function Cart({
   const shiftWarning = shiftBlockReason || tOr('pos.shift.openRequired', 'Open a shift to accept payments');
   const subtotalStr = `${(cart.subtotal / 100).toFixed(2)} ${currency}`;
   const totalStr = (cart.total / 100).toFixed(2);
+  const totalQuantityStr = formatCartQuantityTotal(
+    cart.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+  );
 
   useEffect(() => {
     const el = itemsScrollRef.current;
@@ -532,18 +543,22 @@ export default function Cart({
           overflow menu to keep the strip clean. */}
       <div className="px-4 py-3 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-extrabold text-slate-950 truncate flex items-center gap-2">
+          <h2 className="text-sm font-extrabold text-slate-950 truncate">
+            {t('pos.cart')}
+          </h2>
+          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs font-bold text-slate-500">
             {hasItems ? (
               <>
-                <span className="tabular-nums">{cart.items.length}</span>
-                <span className="text-slate-500 font-bold">{tOr('pos.cart.items', 'items')}</span>
-                <span className="text-slate-300" aria-hidden="true">·</span>
-                <span className="text-brand-700 tabular-nums">{subtotalStr}</span>
+                <span className="text-slate-700 tabular-nums">{cart.items.length}</span>
+                <span>{tOr('pos.cart.items', 'Items')}</span>
+                <span className="text-slate-300" aria-hidden="true">•</span>
+                <span className="text-slate-700 tabular-nums">{totalQuantityStr}</span>
+                <span>{tOr('pos.cart.qty', 'Qty')}</span>
               </>
             ) : (
-              <span>{t('pos.cart')}</span>
+              <span>{t('pos.cart.empty')}</span>
             )}
-          </h2>
+          </p>
           {heldCartsCount > 0 && (
             <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center gap-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -707,10 +722,10 @@ export default function Cart({
           eye drops from total → button without re-scanning. */}
       {hasItems && (
         <div className="shrink-0 border-t border-slate-200 bg-white px-4 pt-3 pb-3 shadow-[0_-8px_24px_-12px_rgba(15,23,42,0.12)]">
-          <div className="space-y-1.5 text-xs mb-3">
-            <div className="flex justify-between text-slate-600">
-              <span className="font-medium">{t('pos.cart.subtotal')}</span>
-              <span className="font-bold text-slate-800 tabular-nums">{subtotalStr}</span>
+          <div className="space-y-1.5 text-sm mb-3">
+            <div className="flex justify-between text-slate-700">
+              <span className="font-bold">{t('pos.cart.subtotal')}</span>
+              <span className="font-extrabold text-slate-900 tabular-nums">{subtotalStr}</span>
             </div>
             {cart.discount > 0 && (
               <div className="flex justify-between items-center">
@@ -724,6 +739,7 @@ export default function Cart({
                     type="button"
                     onClick={() => dispatch({ type: 'cart/clearDiscount' })}
                     aria-label="Remove discount"
+                    title="Remove discount"
                     className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors touch-manipulation"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -734,15 +750,15 @@ export default function Cart({
               </div>
             )}
             {cart.tax > 0 && (
-              <div className="flex justify-between text-slate-400 italic">
-                <span>{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
-                <span className="tabular-nums">({(cart.tax / 100).toFixed(2)} {currency})</span>
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold">{tOr('pos.cart.vatIncluded', 'VAT Included')}</span>
+                <span className="font-extrabold tabular-nums">{(cart.tax / 100).toFixed(2)} {currency}</span>
               </div>
             )}
           </div>
 
-          <div className="flex items-baseline justify-between pt-3 mb-3 border-t border-slate-200">
-            <span className="text-[11px] font-bold uppercase text-slate-500 tracking-[0.12em]">{t('pos.cart.total')}</span>
+          <div className="flex items-baseline justify-between pt-3 mb-3 border-t-2 border-slate-200">
+            <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
             <span className="text-slate-950 leading-none tabular-nums">
               <span className="text-3xl font-black">{totalStr}</span>
               <span className="text-base font-bold ml-1.5 text-slate-600">{currency}</span>
@@ -762,9 +778,9 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-16 rounded-xl font-extrabold text-lg text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-brand-600 hover:bg-brand-700 active:bg-brand-800 shadow-lg shadow-brand-600/25 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-200 focus:ring-offset-2"
+            className="w-full h-16 rounded-xl bg-slate-950 text-lg font-black text-white shadow-xl shadow-slate-950/25 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
           >
-            {t('pos.pay')} · {totalStr} {currency}
+            {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>
         </div>
       )}
