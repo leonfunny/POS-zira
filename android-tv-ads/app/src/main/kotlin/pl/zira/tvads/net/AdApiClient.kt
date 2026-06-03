@@ -15,8 +15,12 @@ class AdApiClient(private val base: String) {
         .build()
 
     suspend fun fetchPlaylist(): Playlist = withContext(Dispatchers.IO) {
+        val fetchClient = client.newBuilder()
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .build()
         val req = Request.Builder().url(UrlBuilder.absolute(base, "/playlist.json")).build()
-        client.newCall(req).execute().use { resp ->
+        fetchClient.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: error("empty playlist body")
             if (!resp.isSuccessful) error("playlist HTTP ${resp.code}")
             PlaylistParser.parse(body)

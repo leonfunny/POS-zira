@@ -4,14 +4,18 @@ package pl.zira.tvads.discovery
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import java.io.Closeable
 
 class NsdDiscovery(context: Context) : Closeable {
     private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private var mlock: WifiManager.MulticastLock? = null
     private var listener: NsdManager.DiscoveryListener? = null
 
     /** onFound delivers "http://<host>:<port>" for the first resolved POS. */
     fun start(onFound: (String) -> Unit) {
+        mlock = wifi.createMulticastLock("zira-ads").apply { setReferenceCounted(false); acquire() }
         val l = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onServiceFound(info: NsdServiceInfo) {
@@ -35,5 +39,6 @@ class NsdDiscovery(context: Context) : Closeable {
     override fun close() {
         listener?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
         listener = null
+        mlock?.let { if (it.isHeld) it.release() }; mlock = null
     }
 }

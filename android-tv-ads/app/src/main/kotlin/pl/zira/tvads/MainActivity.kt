@@ -11,7 +11,9 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.zira.tvads.discovery.NsdDiscovery
@@ -30,6 +32,7 @@ class MainActivity : Activity() {
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var base: String? = null
     private var currentVersion: String? = null
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,7 +69,8 @@ class MainActivity : Activity() {
 
     private fun loadAndPlay() {
         val b = base ?: return
-        scope.launch {
+        loadJob?.cancel()
+        loadJob = scope.launch {
             try {
                 val playlist = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
                 currentVersion = playlist.version
@@ -74,7 +78,7 @@ class MainActivity : Activity() {
                 openEvents(b)
             } catch (e: Exception) {
                 delay(5000)
-                loadAndPlay()
+                if (isActive && base == b) loadAndPlay()
             }
         }
     }
@@ -92,7 +96,12 @@ class MainActivity : Activity() {
         sse?.close()
         sse = AdApiClient(b).openEvents(
             onChanged = { runOnUiThread { reloadIfChanged(b) } },
-            onClosed = { },
+            onClosed = {
+                scope.launch {
+                    delay(5000)
+                    if (base == b) { reloadIfChanged(b); openEvents(b) }
+                }
+            },
         )
     }
 
@@ -120,7 +129,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
+        sse?.close(); discovery?.close()
+        player?.release(); player = null
         super.onDestroy()
-        sse?.close(); discovery?.close(); player?.release()
     }
 }

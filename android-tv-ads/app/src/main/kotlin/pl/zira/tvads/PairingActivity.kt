@@ -9,6 +9,7 @@ import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -51,4 +52,9 @@ class PairingActivity : Activity() {
         val c = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).build()
         c.newCall(Request.Builder().url(UrlBuilder.absolute(base, "/health")).build()).execute().use { it.isSuccessful }
     } catch (e: Exception) { false }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
 }
