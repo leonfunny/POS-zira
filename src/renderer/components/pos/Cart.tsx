@@ -543,22 +543,21 @@ export default function Cart({
           overflow menu to keep the strip clean. */}
       <div className="px-4 py-3 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-extrabold text-slate-950 truncate">
-            {t('pos.cart')}
-          </h2>
-          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs font-bold text-slate-500">
+          <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
+            <span className="shrink-0">{t('pos.cart')}</span>
+            <span className="shrink-0 text-slate-300" aria-hidden="true">–</span>
             {hasItems ? (
-              <>
-                <span className="text-slate-700 tabular-nums">{cart.items.length}</span>
-                <span>{tOr('pos.cart.items', 'Items')}</span>
-                <span className="text-slate-300" aria-hidden="true">•</span>
-                <span className="text-slate-700 tabular-nums">{totalQuantityStr}</span>
-                <span>{tOr('pos.cart.qty', 'Qty')}</span>
-              </>
+              <span className="min-w-0 truncate text-xs font-bold text-slate-600">
+                <span className="tabular-nums text-slate-900">{cart.items.length}</span>{' '}
+                {tOr('pos.cart.items', 'Items')}
+                <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
+                <span className="tabular-nums text-slate-900">{totalQuantityStr}</span>{' '}
+                {tOr('pos.cart.qty', 'Qty')}
+              </span>
             ) : (
-              <span>{t('pos.cart.empty')}</span>
+              <span className="min-w-0 truncate text-xs font-bold text-slate-500">{t('pos.cart.empty')}</span>
             )}
-          </p>
+          </h2>
           {heldCartsCount > 0 && (
             <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center gap-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

@@ -104,14 +104,14 @@ export default function CartItemRow({
   const unitPriceText = `${priceDisplay} ${currency}${perUnit}`;
   const lineTotalText = `${(item.total / 100).toFixed(2)} ${currency}`;
   const formulaQtyText = `${qtyDisplay}${sellBy === 'WEIGHT' ? ` ${saleUnit}` : ''}`;
-  const lineFormula = `${unitPriceText} × ${formulaQtyText} = ${lineTotalText}`;
+  const unitPriceQtyText = `${unitPriceText} × ${formulaQtyText}`;
 
   const qtyHighlight = activeField === 'qty';
   const priceHighlight = activeField === 'price';
   const isActive = !!activeField;
 
   return (
-    <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
+    <div className={`px-3 py-2.5 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
     }`}>
       <div className="flex items-start justify-between gap-3">
@@ -119,7 +119,7 @@ export default function CartItemRow({
           {resolveName(item, lang)}
         </p>
         <span className="text-base font-black text-slate-950 tabular-nums leading-none shrink-0">
-          {(item.total / 100).toFixed(2)} <span className="text-xs text-slate-500 font-bold">{currency}</span>
+          {lineTotalText}
         </span>
       </div>
 
@@ -128,57 +128,18 @@ export default function CartItemRow({
           type="button"
           onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
           title={tOr('pos.cart.editPrice', 'Edit price')}
-          className={`min-h-8 min-w-0 flex-1 truncate rounded-md px-2 py-1 text-left text-xs font-bold tabular-nums transition-colors cursor-pointer touch-manipulation ${
+          className={`min-h-7 min-w-0 flex-1 truncate rounded-md px-2 py-0.5 text-left text-xs font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
             priceHighlight
               ? 'bg-brand-100 text-brand-900 ring-1 ring-brand-400'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 hover:text-brand-800'
           }`}
         >
-          <span className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] text-slate-500">
-            {tOr('pos.cart.editPriceShort', 'Price')}
-          </span>
-          {lineFormula}
+          {unitPriceQtyText}
         </button>
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {onPrintLabel && !editingNotes ? (
-            <>
-              <button
-                type="button"
-                onClick={handlePrintLabel}
-                disabled={labelState === 'printing'}
-                aria-label={tOr('pos.cart.printLabel', 'Print label')}
-                title={tOr('pos.cart.printLabel', 'Print label')}
-                className={`min-h-10 rounded-lg border px-2.5 text-xs font-extrabold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
-                  labelState === 'printing'
-                    ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-wait'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
-                }`}
-              >
-                <Printer size={15} strokeWidth={2.4} />
-                <span>{labelState === 'printing' ? tOr('pos.label.printingShort', 'Printing') : tOr('pos.cart.printLabelShort', 'Print')}</span>
-              </button>
-            </>
-          ) : onSetNotes && !editingNotes && (
-            <button
-              type="button"
-              onClick={() => setEditingNotes(true)}
-              aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
-              className={`min-h-10 rounded-lg border px-2.5 text-xs font-extrabold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
-                item.notes
-                  ? 'border-brand-300 text-brand-800 bg-brand-50 hover:bg-brand-100'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
-              }`}
-            >
-              {item.notes ? <StickyNote size={14} strokeWidth={2.4} aria-hidden="true" /> : <PencilLine size={14} strokeWidth={2.4} aria-hidden="true" />}
-              <span>{item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNoteShort', 'Note')}</span>
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
           {sellBy === 'WEIGHT' && onReadScale && (
             <button
               type="button"
@@ -191,7 +152,7 @@ export default function CartItemRow({
               <Scale size={18} strokeWidth={2.4} />
             </button>
           )}
-          <div className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden">
+          <div className="inline-flex h-10 items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden">
             {sellBy !== 'WEIGHT' && (
               <button
                 type="button"
@@ -224,15 +185,51 @@ export default function CartItemRow({
                 type="button"
                 onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
                 aria-label="Increase quantity"
-                className="w-10 h-10 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
+                className="w-10 h-10 flex items-center justify-center bg-slate-900 hover:bg-black active:bg-slate-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
               >+</button>
             )}
           </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onPrintLabel && !editingNotes ? (
+            <>
+              <button
+                type="button"
+                onClick={handlePrintLabel}
+                disabled={labelState === 'printing'}
+                aria-label={tOr('pos.cart.printLabel', 'Print label')}
+                title={tOr('pos.cart.printLabel', 'Print label')}
+                className={`h-10 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+                  labelState === 'printing'
+                    ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-wait'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
+                }`}
+              >
+                <Printer size={15} strokeWidth={2.4} />
+                <span>{labelState === 'printing' ? tOr('pos.label.printingShort', 'Printing') : tOr('pos.cart.printLabelShort', 'Print')}</span>
+              </button>
+            </>
+          ) : onSetNotes && !editingNotes && (
+            <button
+              type="button"
+              onClick={() => setEditingNotes(true)}
+              aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
+              className={`h-10 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+                item.notes
+                  ? 'border-brand-300 text-brand-800 bg-brand-50 hover:bg-brand-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
+              }`}
+            >
+              {item.notes ? <StickyNote size={14} strokeWidth={2.4} aria-hidden="true" /> : <PencilLine size={14} strokeWidth={2.4} aria-hidden="true" />}
+              <span>{item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNoteShort', 'Note')}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
-            className="min-h-10 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-extrabold text-red-700 hover:bg-red-100 active:bg-red-200 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-red-200 inline-flex items-center gap-1.5"
+            className="h-10 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-red-200 inline-flex items-center gap-1.5"
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>

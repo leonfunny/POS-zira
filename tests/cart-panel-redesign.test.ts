@@ -10,19 +10,27 @@ describe('POS cart panel redesign', () => {
   it('shows unique item count and total quantity in the cart header', () => {
     expect(CART).toContain('totalQuantityStr');
     expect(CART).toContain("tOr('pos.cart.qty', 'Qty')");
+    expect(CART).toContain('aria-hidden="true">–</span>');
   });
 
-  it('shows line math and a visible line total for each cart row', () => {
-    expect(CART_ITEM).toContain('lineFormula');
+  it('puts product identity and line total before row actions', () => {
+    const rendered = CART_ITEM.slice(CART_ITEM.indexOf('return ('));
+    expect(rendered.indexOf('resolveName(item, lang)')).toBeLessThan(rendered.indexOf("tOr('pos.cart.printLabelShort', 'Print')"));
+    expect(rendered.indexOf('{lineTotalText}')).toBeLessThan(rendered.indexOf("tOr('pos.cart.printLabelShort', 'Print')"));
+  });
+
+  it('shows unit price times quantity without repeating the line total calculation', () => {
+    expect(CART_ITEM).toContain('unitPriceQtyText');
     expect(CART_ITEM).toContain('unitPriceText');
     expect(CART_ITEM).toContain('lineTotalText');
     expect(CART_ITEM).toContain('×');
+    expect(CART_ITEM).not.toContain('= ${lineTotalText}');
   });
 
-  it('keeps row actions explicit instead of icon-only', () => {
-    expect(CART_ITEM).toContain("tOr('pos.cart.editPriceShort', 'Price')");
+  it('keeps print and delete as explicit secondary actions', () => {
     expect(CART_ITEM).toContain("tOr('pos.cart.printLabelShort', 'Print')");
     expect(CART_ITEM).toContain("tOr('pos.cart.remove', 'Remove')");
+    expect(CART_ITEM).not.toContain("tOr('pos.cart.editPriceShort', 'Price')");
   });
 
   it('keeps the primary checkout action as a high-priority PAY button', () => {
