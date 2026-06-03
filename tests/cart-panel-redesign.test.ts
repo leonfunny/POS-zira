@@ -111,7 +111,7 @@ describe('POS cart panel redesign', () => {
     expect(TOUCH_KEYBOARD).toContain('spaceLabel =');
     expect(TOUCH_KEYBOARD).toContain('{doneLabel}');
     expect(TOUCH_KEYBOARD).toContain('{spaceLabel}');
-    expect(APP).toContain('const keyboardLanguage = (activeTab === \'pos\' || labelStationActive) ? posUiLanguage : appLanguage');
+    expect(APP).toContain('const keyboardLanguage = (activeTab === \'pos\' || activeTab === \'label\') ? posUiLanguage : appLanguage');
     expect(APP).toContain("doneLabel={keyboardT('keyboard.done')}");
     expect(APP).toContain("spaceLabel={keyboardT('keyboard.space')}");
   });

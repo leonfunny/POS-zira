@@ -494,10 +494,7 @@ export interface AgentConfig {
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
   labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
-  labelStationEnabled?: boolean;        // POS3 staff label-station kiosk takeover
-  labelStationCategoryIds?: string;     // CSV category IDs. Empty means all categories.
-  labelStationCopies?: number;          // Default number of labels per print
-  labelStationExitPin?: string;         // Optional PIN required to exit station mode
+  labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
   // Receipt seller info (Polish paragon compliance)
   receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")

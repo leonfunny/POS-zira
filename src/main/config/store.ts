@@ -50,10 +50,6 @@ const defaultConfig: AgentConfig = {
     : 'https://api.enail.pro',
   isPaired: false,
   autoStart: true,
-  labelStationEnabled: false,
-  labelStationCategoryIds: '',
-  labelStationCopies: 1,
-  labelStationExitPin: '',
   telegram: defaultTelegramConfig,
 };
 
@@ -240,10 +236,7 @@ const store = new Store<AgentConfig>({
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
-    labelStationEnabled: { type: 'boolean', default: false },
-    labelStationCategoryIds: { type: 'string', default: '' },
-    labelStationCopies: { type: 'number', default: 1 },
-    labelStationExitPin: { type: 'string', default: '' },
+    labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },
     // Receipt seller info (Polish paragon compliance)
     receiptSellerName: { type: 'string' },
     receiptSellerAddress: { type: 'string' },

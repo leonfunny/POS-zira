@@ -1,9 +1,25 @@
-import React, { useMemo, useState } from 'react';
-import { Check, Plus, Printer, Search, Settings, Tag, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Clock,
+  Minus,
+  Plus,
+  Printer,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Settings,
+  Tag,
+  X,
+} from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
+import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import type { ProductListItem } from '../../hooks/useProducts';
+import type { Category } from '../../hooks/usePosDb';
 import type { Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import { formatProductLabelPriceText } from '../../utils/product-label';
@@ -12,439 +28,1147 @@ interface LabelModuleProps {
   language: Language;
 }
 
+type LabelProduct = ProductListItem & { ean?: string | null };
+
 type LabelStatus =
   | { type: 'idle'; message: string }
   | { type: 'printing'; message: string; productId: string }
   | { type: 'success'; message: string }
   | { type: 'error'; message: string };
 
-const COPY: Record<string, Record<string, string>> = {
+interface RecentPrint {
+  id: string;
+  productId: string;
+  productName: string;
+  barcode: string;
+  copies: number;
+  printedAt: Date;
+}
+
+interface LabelCopy {
+  title: string;
+  subtitle: string;
+  settings: string;
+  close: string;
+  sync: string;
+  syncing: string;
+  search: string;
+  allCategories: string;
+  products: string;
+  selected: string;
+  setupTitle: string;
+  setupHint: string;
+  openSettings: string;
+  noMatch: string;
+  loading: string;
+  loadError: string;
+  labelPreview: string;
+  productInfo: string;
+  noSelection: string;
+  selectProductHint: string;
+  ean: string;
+  sku: string;
+  category: string;
+  price: string;
+  unit: string;
+  missingEan: string;
+  missingPrice: string;
+  priceMissingHint: string;
+  noPrice: string;
+  copies: string;
+  printing: string;
+  printed: string;
+  printerError: string;
+  ready: string;
+  recent: string;
+  noRecent: string;
+  reprint: string;
+  categories: string;
+  categoryHint: string;
+  pinnedProducts: string;
+  pinSearch: string;
+  pinned: string;
+  availableProducts: string;
+  clear: string;
+  noCategories: string;
+  noProductsAvailable: string;
+  highCopyWarning: string;
+  printCopies: (quantity: number) => string;
+  highCopyConfirm: (quantity: number) => string;
+}
+
+const HIGH_COPY_CONFIRM_THRESHOLD = 10;
+const RECENT_PRINT_LIMIT = 5;
+
+const COPY: Record<string, LabelCopy> = {
   en: {
     title: 'Label',
-    subtitle: 'Quick labels for meat and seafood counter',
+    subtitle: 'Fresh-counter labels',
     settings: 'Settings',
-    sync: 'Sync products',
-    search: 'Search labels...',
-    addSearch: 'Search product to add...',
-    allCategories: 'All categories',
+    close: 'Close',
+    sync: 'Sync',
+    syncing: 'Syncing',
+    search: 'Search name, SKU, EAN, category',
+    allCategories: 'All label products',
     products: 'products',
-    selected: 'selected',
-    tapToPrint: 'Tap photo to print',
-    noProducts: 'No products in Label module',
-    noProductsHint: 'Open Settings and add the products sold at this counter.',
-    addProducts: 'Add products',
-    moduleSettings: 'Label module settings',
-    moduleSettingsHint: 'Choose products that should appear on this counter screen.',
-    availableProducts: 'Available products',
-    configuredProducts: 'Configured products',
-    remove: 'Remove',
-    added: 'Added',
-    print: 'Print',
+    selected: 'Selected',
+    setupTitle: 'Choose categories or pinned products',
+    setupHint: 'The Label tab stays empty until this counter is configured.',
+    openSettings: 'Open settings',
+    noMatch: 'No matching label products',
+    loading: 'Loading products...',
+    loadError: 'Could not load products',
+    labelPreview: 'Label preview',
+    productInfo: 'Product info',
+    noSelection: 'No product selected',
+    selectProductHint: 'Select a product card to preview its label.',
+    ean: 'EAN',
+    sku: 'SKU',
+    category: 'Category',
+    price: 'Price',
+    unit: 'Unit',
+    missingEan: 'Missing EAN',
+    missingPrice: 'Missing price',
+    priceMissingHint: 'Label can print, but the price line will be blank.',
+    noPrice: 'No price',
+    copies: 'Copies',
     printing: 'Printing label...',
     printed: 'Label sent to printer',
-    noMatch: 'No matching products',
+    printerError: 'Label printer error',
+    ready: 'Ready to print',
+    recent: 'Recent prints',
+    noRecent: 'No labels printed yet',
+    reprint: 'Reprint',
+    categories: 'Categories',
+    categoryHint: 'Selected categories are visible in the Label tab.',
+    pinnedProducts: 'Pinned products',
+    pinSearch: 'Search product to pin',
+    pinned: 'Pinned',
+    availableProducts: 'Available products',
+    clear: 'Clear',
+    noCategories: 'No local categories found',
+    noProductsAvailable: 'No products found',
+    highCopyWarning: 'Large copy count requires confirmation before printing.',
+    printCopies: (quantity) => quantity === 1 ? 'Print label' : `Print ${quantity} labels`,
+    highCopyConfirm: (quantity) => `You are about to print ${quantity} labels. Continue?`,
   },
   vi: {
     title: 'Label',
-    subtitle: 'In tem nhanh cho quầy thịt và hải sản',
+    subtitle: 'Tem cho quầy hàng tươi',
     settings: 'Cài đặt',
-    sync: 'Đồng bộ sản phẩm',
-    search: 'Tìm tem...',
-    addSearch: 'Tìm sản phẩm để thêm...',
-    allCategories: 'Tất cả nhóm',
+    close: 'Đóng',
+    sync: 'Đồng bộ',
+    syncing: 'Đang đồng bộ',
+    search: 'Tìm tên, SKU, EAN, danh mục',
+    allCategories: 'Tất cả sản phẩm tem',
     products: 'sản phẩm',
-    selected: 'đã chọn',
-    tapToPrint: 'Chạm ảnh để in',
-    noProducts: 'Chưa có sản phẩm trong Label module',
-    noProductsHint: 'Mở Cài đặt và thêm các sản phẩm bán ở quầy này.',
-    addProducts: 'Thêm sản phẩm',
-    moduleSettings: 'Cài đặt Label module',
-    moduleSettingsHint: 'Chọn sản phẩm sẽ hiện trên màn hình quầy này.',
-    availableProducts: 'Sản phẩm có thể thêm',
-    configuredProducts: 'Sản phẩm đã cấu hình',
-    remove: 'Gỡ',
-    added: 'Đã thêm',
-    print: 'In',
+    selected: 'Đang chọn',
+    setupTitle: 'Chọn danh mục hoặc ghim sản phẩm',
+    setupHint: 'Tab Label để trống cho đến khi quầy này được cấu hình.',
+    openSettings: 'Mở cài đặt',
+    noMatch: 'Không tìm thấy sản phẩm tem',
+    loading: 'Đang tải sản phẩm...',
+    loadError: 'Không tải được sản phẩm',
+    labelPreview: 'Xem trước tem',
+    productInfo: 'Thông tin sản phẩm',
+    noSelection: 'Chưa chọn sản phẩm',
+    selectProductHint: 'Chọn một thẻ sản phẩm để xem tem.',
+    ean: 'EAN',
+    sku: 'SKU',
+    category: 'Danh mục',
+    price: 'Giá',
+    unit: 'Đơn vị',
+    missingEan: 'Thiếu EAN',
+    missingPrice: 'Thiếu giá',
+    priceMissingHint: 'Tem vẫn in được, nhưng dòng giá sẽ để trống.',
+    noPrice: 'Không có giá',
+    copies: 'Số bản in',
     printing: 'Đang in tem...',
     printed: 'Đã gửi tem đến máy in',
-    noMatch: 'Không tìm thấy sản phẩm',
+    printerError: 'Lỗi máy in tem',
+    ready: 'Sẵn sàng in',
+    recent: 'Lịch sử in gần đây',
+    noRecent: 'Chưa in tem nào',
+    reprint: 'In lại',
+    categories: 'Danh mục',
+    categoryHint: 'Danh mục đã chọn sẽ hiện trong tab Label.',
+    pinnedProducts: 'Sản phẩm ghim',
+    pinSearch: 'Tìm sản phẩm để ghim',
+    pinned: 'Đã ghim',
+    availableProducts: 'Sản phẩm có thể chọn',
+    clear: 'Xóa',
+    noCategories: 'Không có danh mục cục bộ',
+    noProductsAvailable: 'Không tìm thấy sản phẩm',
+    highCopyWarning: 'Số lượng lớn sẽ cần xác nhận trước khi in.',
+    printCopies: (quantity) => quantity === 1 ? 'In tem' : `In ${quantity} tem`,
+    highCopyConfirm: (quantity) => `Bạn sắp in ${quantity} tem. Tiếp tục?`,
   },
   pl: {
     title: 'Label',
-    subtitle: 'Szybkie etykiety na ladę mięsną i owoce morza',
+    subtitle: 'Etykiety na ladę świeżą',
     settings: 'Ustawienia',
-    sync: 'Synchronizuj produkty',
-    search: 'Szukaj etykiet...',
-    addSearch: 'Szukaj produktu do dodania...',
-    allCategories: 'Wszystkie kategorie',
+    close: 'Zamknij',
+    sync: 'Synchronizuj',
+    syncing: 'Synchronizacja',
+    search: 'Szukaj nazwy, SKU, EAN, kategorii',
+    allCategories: 'Wszystkie produkty etykiet',
     products: 'produkty',
-    selected: 'wybrane',
-    tapToPrint: 'Dotknij zdjęcia, aby drukować',
-    noProducts: 'Brak produktów w module Label',
-    noProductsHint: 'Otwórz Ustawienia i dodaj produkty dla tej lady.',
-    addProducts: 'Dodaj produkty',
-    moduleSettings: 'Ustawienia modułu Label',
-    moduleSettingsHint: 'Wybierz produkty widoczne na ekranie tej lady.',
-    availableProducts: 'Dostępne produkty',
-    configuredProducts: 'Skonfigurowane produkty',
-    remove: 'Usuń',
-    added: 'Dodano',
-    print: 'Drukuj',
+    selected: 'Wybrane',
+    setupTitle: 'Wybierz kategorie albo przypięte produkty',
+    setupHint: 'Zakładka Label jest pusta, dopóki ta lada nie jest skonfigurowana.',
+    openSettings: 'Otwórz ustawienia',
+    noMatch: 'Brak pasujących produktów',
+    loading: 'Ładowanie produktów...',
+    loadError: 'Nie udało się załadować produktów',
+    labelPreview: 'Podgląd etykiety',
+    productInfo: 'Informacje o produkcie',
+    noSelection: 'Nie wybrano produktu',
+    selectProductHint: 'Wybierz kartę produktu, aby zobaczyć etykietę.',
+    ean: 'EAN',
+    sku: 'SKU',
+    category: 'Kategoria',
+    price: 'Cena',
+    unit: 'Jednostka',
+    missingEan: 'Brak EAN',
+    missingPrice: 'Brak ceny',
+    priceMissingHint: 'Etykieta może zostać wydrukowana, ale linia ceny będzie pusta.',
+    noPrice: 'Brak ceny',
+    copies: 'Kopie',
     printing: 'Drukowanie etykiety...',
     printed: 'Etykieta wysłana do drukarki',
-    noMatch: 'Brak pasujących produktów',
+    printerError: 'Błąd drukarki etykiet',
+    ready: 'Gotowe do druku',
+    recent: 'Ostatnie wydruki',
+    noRecent: 'Brak wydrukowanych etykiet',
+    reprint: 'Drukuj ponownie',
+    categories: 'Kategorie',
+    categoryHint: 'Wybrane kategorie są widoczne w zakładce Label.',
+    pinnedProducts: 'Przypięte produkty',
+    pinSearch: 'Szukaj produktu do przypięcia',
+    pinned: 'Przypięto',
+    availableProducts: 'Dostępne produkty',
+    clear: 'Wyczyść',
+    noCategories: 'Brak lokalnych kategorii',
+    noProductsAvailable: 'Nie znaleziono produktów',
+    highCopyWarning: 'Duża liczba kopii wymaga potwierdzenia przed drukiem.',
+    printCopies: (quantity) => quantity === 1 ? 'Drukuj etykietę' : `Drukuj ${quantity} etyk.`,
+    highCopyConfirm: (quantity) => `Zamierzasz wydrukować ${quantity} etykiet. Kontynuować?`,
   },
 };
 
 function normalizeSearch(value: string): string {
-  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return value
+    .replace(/[\u0110\u0111]/g, (ch) => (ch === '\u0110' ? 'D' : 'd'))
+    .replace(/[\u0141\u0142]/g, (ch) => (ch === '\u0141' ? 'L' : 'l'))
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }
 
-function resolveLabelCode(product: ProductListItem): string {
-  const raw = String(product.barcode || product.sku || product.id.replace(/^draft:/, '')).trim();
-  if (raw.length === 13 && !/^\d{13}$/.test(raw)) return `P-${raw}`;
-  return raw;
+function uniqueIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)));
 }
 
-function productMatches(product: ProductListItem, query: string, language: string): boolean {
+function clampCopies(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(999, Math.round(parsed)));
+}
+
+function resolveLabelCode(product: LabelProduct | null): string {
+  if (!product) return '';
+  return String(product.barcode ?? product.ean ?? '').trim();
+}
+
+function productImage(product: LabelProduct): string | null {
+  return (product.thumbnail_url || product.image_url || null) as string | null;
+}
+
+function productUnit(product: LabelProduct | null): string {
+  if (!product) return '-';
+  const saleUnit = String(product.sale_unit || '').trim();
+  if (saleUnit) return saleUnit;
+  return product.sell_by === 'WEIGHT' ? 'kg' : 'item';
+}
+
+function formatRecentTime(date: Date, language: Language): string {
+  const locale = language === 'pl' ? 'pl-PL' : language === 'vi' ? 'vi-VN' : 'en-US';
+  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+}
+
+function barcodeBars(barcode: string): number[] {
+  const seed = barcode || '0000000000000';
+  return Array.from(seed.slice(0, 24)).map((char, index) => {
+    const code = char.charCodeAt(0) + index * 7;
+    return 2 + (code % 4);
+  });
+}
+
+function productMatches(
+  product: LabelProduct,
+  query: string,
+  categoryById: Map<string, Category>,
+  language: Language,
+): boolean {
   if (!query) return true;
-  const haystack = [product.name, resolveName(product, language), product.sku, product.barcode]
-    .filter(Boolean)
-    .join(' ');
+  const category = product.category_id ? categoryById.get(product.category_id) : null;
+  const haystack = [
+    product.name,
+    resolveName(product, language),
+    product.sku,
+    product.barcode,
+    product.ean,
+    category?.name,
+    category ? resolveName(category, language) : '',
+  ].filter(Boolean).join(' ');
   return normalizeSearch(haystack).includes(query);
 }
 
-function productImage(product: ProductListItem): string | null {
-  return (product.thumbnail_url || product.image_url || null) as string | null;
+function BarcodePreview({ barcode }: { barcode: string }) {
+  const bars = barcodeBars(barcode);
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3" aria-label="Barcode preview">
+      <div className="flex h-14 items-end justify-center gap-[2px] overflow-hidden rounded bg-white">
+        {bars.map((width, index) => (
+          <span
+            key={`${barcode || 'empty'}-${index}`}
+            className="block bg-slate-950"
+            style={{
+              width: `${width}px`,
+              height: `${34 + ((index * 11) % 18)}px`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="mt-2 text-center font-mono text-sm font-bold tracking-[0.12em] text-slate-800">
+        {barcode || '------------'}
+      </div>
+    </div>
+  );
 }
 
 export default function LabelModule({ language }: LabelModuleProps) {
   const copy = COPY[language] || COPY.en;
   const { config, saveConfig } = useConfig();
-  const { allProducts, categories, loading, syncProducts, syncing } = useProducts(language);
+  const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(language);
+  const products = allProducts as LabelProduct[];
   const [query, setQuery] = useState('');
-  const [addQuery, setAddQuery] = useState('');
-  const [categoryId, setCategoryId] = useState('');
+  const [settingsQuery, setSettingsQuery] = useState('');
+  const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [copies, setCopies] = useState(1);
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
+  const [recentPrints, setRecentPrints] = useState<RecentPrint[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
+  const [optimisticProductIds, setOptimisticProductIds] = useState<string[]>([]);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const statusResetTimeoutRef = useRef<number | null>(null);
+  const printSequenceRef = useRef(0);
+  const configSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingCategoryConfigSavesRef = useRef(0);
+  const pendingProductConfigSavesRef = useRef(0);
 
-  const selectedIds = useMemo(
-    () => new Set((config?.labelModuleProductIds || []) as string[]),
-    [config?.labelModuleProductIds],
+  const clearStatusResetTimeout = useCallback(() => {
+    if (statusResetTimeoutRef.current !== null) {
+      window.clearTimeout(statusResetTimeoutRef.current);
+      statusResetTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (pendingCategoryConfigSavesRef.current > 0) return;
+    setOptimisticCategoryIds(uniqueIds((config?.labelModuleCategoryIds || []) as string[]));
+  }, [config?.labelModuleCategoryIds]);
+
+  useEffect(() => {
+    if (pendingProductConfigSavesRef.current > 0) return;
+    setOptimisticProductIds(uniqueIds((config?.labelModuleProductIds || []) as string[]));
+  }, [config?.labelModuleProductIds]);
+
+  useEffect(() => {
+    return () => clearStatusResetTimeout();
+  }, [clearStatusResetTimeout]);
+
+  const pinnedProductIds = useMemo(
+    () => new Set(optimisticProductIds),
+    [optimisticProductIds],
   );
 
-  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const configuredCategoryIds = useMemo(
+    () => new Set(optimisticCategoryIds),
+    [optimisticCategoryIds],
+  );
+
+  const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const setupConfigured = pinnedProductIds.size > 0 || configuredCategoryIds.size > 0;
 
   const labelProducts = useMemo(() => {
-    return allProducts
-      .filter((product) => selectedIds.has(product.id))
-      .filter((product) => !categoryId || product.category_id === categoryId)
-      .filter((product) => productMatches(product, normalizeSearch(query.trim()), language));
-  }, [allProducts, categoryId, language, query, selectedIds]);
+    if (!setupConfigured) return [];
+    return products.filter((product) => {
+      const categorySelected = !!product.category_id && configuredCategoryIds.has(product.category_id);
+      return categorySelected || pinnedProductIds.has(product.id);
+    });
+  }, [configuredCategoryIds, pinnedProductIds, products, setupConfigured]);
 
-  const addableProducts = useMemo(() => {
-    const normalized = normalizeSearch(addQuery.trim());
-    return allProducts
-      .filter((product) => productMatches(product, normalized, language))
-      .slice(0, 120);
-  }, [addQuery, allProducts, language]);
+  const filterCategories = useMemo(() => {
+    const representedCategoryIds = new Set(
+      labelProducts
+        .map((product) => product.category_id)
+        .filter((categoryId): categoryId is string => !!categoryId),
+    );
+    return categories.filter((category) => configuredCategoryIds.has(category.id) || representedCategoryIds.has(category.id));
+  }, [categories, configuredCategoryIds, labelProducts]);
 
-  const selectedProducts = useMemo(
-    () => allProducts.filter((product) => selectedIds.has(product.id)),
-    [allProducts, selectedIds],
+  useEffect(() => {
+    if (activeCategoryId && !filterCategories.some((category) => category.id === activeCategoryId)) {
+      setActiveCategoryId('');
+    }
+  }, [activeCategoryId, filterCategories]);
+
+  const visibleProducts = useMemo(() => {
+    const normalized = normalizeSearch(query);
+    return labelProducts
+      .filter((product) => !activeCategoryId || product.category_id === activeCategoryId)
+      .filter((product) => productMatches(product, normalized, categoryById, language));
+  }, [activeCategoryId, categoryById, labelProducts, language, query]);
+
+  useEffect(() => {
+    if (labelProducts.length === 0) {
+      if (selectedProductId) setSelectedProductId('');
+      return;
+    }
+    if (!selectedProductId || !labelProducts.some((product) => product.id === selectedProductId)) {
+      setSelectedProductId(labelProducts[0].id);
+    }
+  }, [labelProducts, selectedProductId]);
+
+  const selectedProduct = useMemo(
+    () => labelProducts.find((product) => product.id === selectedProductId) || null,
+    [labelProducts, selectedProductId],
   );
 
-  const persistSelectedIds = async (ids: string[]) => {
-    try {
-      await saveConfig({ labelModuleProductIds: ids });
-    } catch (err: any) {
-      rlog.error('[LabelModule] Failed to save label products:', err);
-      setStatus({ type: 'error', message: err?.message || 'Failed to save settings' });
+  const selectedBarcode = resolveLabelCode(selectedProduct);
+  const selectedName = selectedProduct ? (resolveName(selectedProduct, language) || selectedProduct.name || selectedBarcode) : '';
+  const selectedPriceText = selectedProduct ? formatProductLabelPriceText(selectedProduct, 'zl') : undefined;
+  const selectedCategory = selectedProduct?.category_id ? categoryById.get(selectedProduct.category_id) : null;
+  const selectedUnit = productUnit(selectedProduct);
+  const normalizedCopies = clampCopies(copies);
+  const priceMissing = !!selectedProduct && !selectedPriceText;
+  const canPrint = !!selectedProduct && !!selectedBarcode && status.type !== 'printing';
+  const statusText = status.message || (
+    selectedProduct ? (selectedBarcode ? copy.ready : copy.missingEan) : copy.noSelection
+  );
+  const printButtonText = status.type === 'printing'
+    ? copy.printing
+    : selectedProduct && selectedBarcode
+      ? copy.printCopies(normalizedCopies)
+      : selectedProduct
+        ? copy.missingEan
+        : copy.noSelection;
+
+  const selectableProducts = useMemo(() => {
+    const normalized = normalizeSearch(settingsQuery);
+    return products
+      .filter((product) => productMatches(product, normalized, categoryById, language))
+      .slice(0, 160);
+  }, [categoryById, language, products, settingsQuery]);
+
+  const selectedCategories = useMemo(
+    () => categories.filter((category) => configuredCategoryIds.has(category.id)),
+    [categories, configuredCategoryIds],
+  );
+
+  const pinnedProducts = useMemo(
+    () => products.filter((product) => pinnedProductIds.has(product.id)),
+    [pinnedProductIds, products],
+  );
+
+  const persistLabelConfig = useCallback((partial: Partial<AgentConfig>) => {
+    const hasCategoryIds = Object.prototype.hasOwnProperty.call(partial, 'labelModuleCategoryIds');
+    const hasProductIds = Object.prototype.hasOwnProperty.call(partial, 'labelModuleProductIds');
+    if (hasCategoryIds) pendingCategoryConfigSavesRef.current += 1;
+    if (hasProductIds) pendingProductConfigSavesRef.current += 1;
+
+    const saveNext = async () => {
+      try {
+        await saveConfig(partial);
+      } catch (err: any) {
+        clearStatusResetTimeout();
+        rlog.error('[LabelModule] Failed to save label settings:', err);
+        setStatus({ type: 'error', message: err?.message || 'Failed to save label settings' });
+      } finally {
+        if (hasCategoryIds) pendingCategoryConfigSavesRef.current = Math.max(0, pendingCategoryConfigSavesRef.current - 1);
+        if (hasProductIds) pendingProductConfigSavesRef.current = Math.max(0, pendingProductConfigSavesRef.current - 1);
+      }
+    };
+
+    const nextSave = configSaveChainRef.current.then(saveNext, saveNext);
+    configSaveChainRef.current = nextSave.catch(() => undefined);
+    return nextSave;
+  }, [clearStatusResetTimeout, saveConfig]);
+
+  const toggleCategory = (categoryId: string) => {
+    setOptimisticCategoryIds((current) => {
+      const next = current.includes(categoryId)
+        ? current.filter((id) => id !== categoryId)
+        : [...current, categoryId];
+      const uniqueNext = uniqueIds(next);
+      void persistLabelConfig({ labelModuleCategoryIds: uniqueNext });
+      return uniqueNext;
+    });
+  };
+
+  const clearCategories = () => {
+    setOptimisticCategoryIds([]);
+    void persistLabelConfig({ labelModuleCategoryIds: [] });
+  };
+
+  const togglePinnedProduct = (productId: string) => {
+    setOptimisticProductIds((current) => {
+      const next = current.includes(productId)
+        ? current.filter((id) => id !== productId)
+        : [...current, productId];
+      const uniqueNext = uniqueIds(next);
+      void persistLabelConfig({ labelModuleProductIds: uniqueNext });
+      return uniqueNext;
+    });
+  };
+
+  const selectProduct = (product: LabelProduct) => {
+    setSelectedProductId(product.id);
+    if (status.type !== 'printing') {
+      clearStatusResetTimeout();
+      setStatus({ type: 'idle', message: '' });
     }
   };
 
-  const addProduct = (productId: string) => {
-    if (selectedIds.has(productId)) return;
-    void persistSelectedIds([...Array.from(selectedIds), productId]);
-  };
-
-  const removeProduct = (productId: string) => {
-    void persistSelectedIds(Array.from(selectedIds).filter((id) => id !== productId));
-  };
-
-  const printProductLabel = async (product: ProductListItem) => {
+  const printProduct = useCallback(async (
+    product: LabelProduct,
+    requestedCopies: number,
+    options: { confirmHighCopy?: boolean } = {},
+  ) => {
     const barcode = resolveLabelCode(product);
-    const labelText = resolveName(product, language) || product.name || barcode;
+    const quantity = clampCopies(requestedCopies);
+    const displayName = resolveName(product, language) || product.name || barcode;
     const priceText = formatProductLabelPriceText(product, 'zl');
-    setStatus({ type: 'printing', message: copy.printing, productId: product.id });
-    try {
-      const result = await window.electronAPI.printLabel(barcode, labelText, {
-        priceText,
-        sku: product.sku?.trim() || undefined,
-      });
-      if (!result?.success) {
-        setStatus({ type: 'error', message: result?.error || 'Label printer error' });
+    const printToken = ++printSequenceRef.current;
+
+    clearStatusResetTimeout();
+    setSelectedProductId(product.id);
+    setCopies(quantity);
+
+    if (!barcode) {
+      setStatus({ type: 'error', message: copy.missingEan });
+      return;
+    }
+
+    if (options.confirmHighCopy !== false && quantity > HIGH_COPY_CONFIRM_THRESHOLD) {
+      const confirmed = window.confirm(copy.highCopyConfirm(quantity));
+      if (!confirmed) {
+        setStatus({ type: 'idle', message: copy.ready });
         return;
       }
-      setStatus({ type: 'success', message: `${copy.printed}: ${labelText}` });
-      window.setTimeout(() => setStatus({ type: 'idle', message: '' }), 3500);
+    }
+
+    setStatus({ type: 'printing', message: copy.printing, productId: product.id });
+    try {
+      const result = await window.electronAPI.printLabel(barcode, displayName, {
+        priceText,
+        sku: product.sku?.trim() || undefined,
+        quantity,
+      });
+      if (!result?.success) {
+        setStatus({ type: 'error', message: result?.error || copy.printerError });
+        return;
+      }
+      setStatus({ type: 'success', message: `${copy.printed}: ${displayName}` });
+      setRecentPrints((prev) => [
+        {
+          id: `${Date.now()}-${product.id}`,
+          productId: product.id,
+          productName: displayName,
+          barcode,
+          copies: quantity,
+          printedAt: new Date(),
+        },
+        ...prev,
+      ].slice(0, RECENT_PRINT_LIMIT));
+      statusResetTimeoutRef.current = window.setTimeout(() => {
+        if (printSequenceRef.current === printToken) {
+          setStatus({ type: 'idle', message: '' });
+        }
+        statusResetTimeoutRef.current = null;
+      }, 3200);
     } catch (err: any) {
       rlog.error('[LabelModule] printLabel failed:', err);
-      setStatus({ type: 'error', message: err?.message || 'Label printer error' });
+      setStatus({ type: 'error', message: err?.message || copy.printerError });
     }
-  };
+  }, [clearStatusResetTimeout, copy, language]);
+
+  const handlePrint = useCallback(() => {
+    if (!selectedProduct) {
+      clearStatusResetTimeout();
+      setStatus({ type: 'error', message: copy.noSelection });
+      return;
+    }
+    void printProduct(selectedProduct, copies);
+  }, [clearStatusResetTimeout, copies, copy.noSelection, printProduct, selectedProduct]);
+
+  const handleQuickReprint = useCallback((entry: RecentPrint) => {
+    const product = products.find((row) => row.id === entry.productId);
+    if (!product) {
+      clearStatusResetTimeout();
+      setStatus({ type: 'error', message: copy.noProductsAvailable });
+      return;
+    }
+    void printProduct(product, entry.copies);
+  }, [clearStatusResetTimeout, copy.noProductsAvailable, printProduct, products]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      const isTyping = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+
+      if (event.key === '/' || (event.ctrlKey && event.key.toLowerCase() === 'f')) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (event.key === 'Escape' && query) {
+        event.preventDefault();
+        setQuery('');
+        return;
+      }
+
+      if (isTyping) return;
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handlePrint();
+        return;
+      }
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        setCopies((value) => clampCopies(value + 1));
+        return;
+      }
+      if (event.key === '-') {
+        event.preventDefault();
+        setCopies((value) => clampCopies(value - 1));
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handlePrint, query]);
 
   return (
     <div className="h-full min-h-[calc(100vh-2rem)] bg-slate-50 text-slate-900">
-      <div className="h-full flex flex-col gap-3">
-        <header className="bg-white border border-slate-200 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-            <Tag size={22} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
-            <p className="text-xs text-slate-500">{copy.subtitle}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void syncProducts()}
-              disabled={syncing}
-              className="h-10 px-3 rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              {syncing ? '...' : copy.sync}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((v) => !v)}
-              className="h-10 px-3 rounded-md bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 inline-flex items-center gap-2"
-            >
-              <Settings size={16} />
-              {copy.settings}
-            </button>
-          </div>
-        </header>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={copy.search}
-              className="w-full h-11 rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
-            />
-          </div>
-          <select
-            value={categoryId}
-            onChange={(event) => setCategoryId(event.target.value)}
-            className="h-11 min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-emerald-200"
-          >
-            <option value="">{copy.allCategories}</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {resolveName(category, language)}
-              </option>
-            ))}
-          </select>
-          <div className="h-11 px-3 rounded-lg bg-white border border-slate-200 text-sm text-slate-600 flex items-center">
-            <span className="font-bold text-slate-900">{selectedIds.size}</span>
-            <span className="ml-1">{copy.selected}</span>
-          </div>
-        </div>
-
-        {status.message && (
-          <div
-            className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
-              status.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : status.type === 'error'
-                  ? 'bg-red-50 border-red-200 text-red-700'
-                  : 'bg-blue-50 border-blue-200 text-blue-700'
-            }`}
-          >
-            {status.message}
-          </div>
-        )}
-
-        <div className={`flex-1 min-h-0 grid gap-3 ${settingsOpen ? 'lg:grid-cols-[1fr_360px]' : 'grid-cols-1'}`}>
-          <section className="min-h-0 overflow-y-auto">
-            {loading ? (
-              <div className="h-full min-h-[360px] rounded-lg bg-white border border-slate-200 flex items-center justify-center text-sm text-slate-500">
-                Loading...
+      <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[380px,minmax(0,1fr)]">
+        <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <Tag size={22} />
               </div>
-            ) : labelProducts.length === 0 ? (
-              <div className="h-full min-h-[360px] rounded-lg bg-white border border-slate-200 flex items-center justify-center p-8 text-center">
-                <div>
-                  <Tag className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                  <h2 className="text-base font-bold text-slate-800">{copy.noProducts}</h2>
-                  <p className="mt-1 text-sm text-slate-500">{copy.noProductsHint}</p>
-                  <button
-                    type="button"
-                    onClick={() => setSettingsOpen(true)}
-                    className="mt-4 h-10 px-4 rounded-md bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 inline-flex items-center gap-2"
-                  >
-                    <Plus size={16} />
-                    {copy.addProducts}
-                  </button>
-                </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
+                <p className="text-xs font-semibold text-slate-500 truncate">{copy.subtitle}</p>
               </div>
-            ) : (
-              <div className="grid [grid-template-columns:repeat(auto-fill,minmax(168px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(190px,1fr))] gap-2 pb-3">
-                {labelProducts.map((product) => {
-                  const displayName = resolveName(product, language);
-                  const img = productImage(product);
-                  const isPrinting = status.type === 'printing' && status.productId === product.id;
-                  const category = product.category_id ? categoryById.get(product.category_id) : null;
-                  const showImage = img && !imageErrors[product.id];
-                  const priceText = formatProductLabelPriceText(product, 'zl') || '0.00 zl';
+            </div>
+          </div>
 
-                  return (
-                    <button
-                      key={product.id}
-                      type="button"
-                      onClick={() => void printProductLabel(product)}
-                      disabled={isPrinting}
-                      className="group text-left bg-white border border-slate-200 rounded-lg p-1.5 min-h-[214px] flex flex-col hover:shadow-md active:scale-[0.99] transition disabled:opacity-70"
-                    >
-                      <div className="relative rounded-md overflow-hidden bg-slate-100 aspect-[4/3] w-full">
-                        {showImage ? (
-                          <img
-                            src={img}
-                            alt={displayName}
-                            loading="lazy"
-                            onError={() => setImageErrors((prev) => ({ ...prev, [product.id]: true }))}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-emerald-50 text-emerald-700">
-                            <Tag size={32} />
-                          </div>
-                        )}
-                        <span className="absolute left-2 bottom-2 rounded-md bg-white/95 px-2 py-1 text-[11px] font-extrabold text-emerald-700 shadow-sm inline-flex items-center gap-1">
-                          <Printer size={12} />
-                          {isPrinting ? '...' : copy.print}
-                        </span>
-                      </div>
-                      <div className="pt-2 flex-1 min-w-0">
-                        <p className="text-sm font-extrabold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
-                        {category && (
-                          <p className="mt-1 text-[11px] text-slate-500 truncate">{resolveName(category, language)}</p>
-                        )}
-                      </div>
-                      <div className="pt-1 flex items-center justify-between gap-2">
-                        <span className="text-xs text-slate-500 truncate">{copy.tapToPrint}</span>
-                        <span className="text-sm font-black text-slate-900 tabular-nums whitespace-nowrap shrink-0">
-                          {priceText}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+            <div
+              className={`rounded-lg border px-3 py-2 text-sm font-bold inline-flex w-full items-center gap-2 ${
+                status.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : status.type === 'printing'
+                    ? 'border-sky-200 bg-sky-50 text-sky-800'
+                    : status.type === 'error' || (!!selectedProduct && !selectedBarcode)
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                      : 'border-slate-200 bg-slate-50 text-slate-700'
+              }`}
+            >
+              {status.type === 'success' ? <CheckCircle2 size={17} /> : status.type === 'printing' ? <RefreshCw size={17} className="animate-spin" /> : status.type === 'error' || (!!selectedProduct && !selectedBarcode) ? <AlertTriangle size={17} /> : <Printer size={17} />}
+              <span>{statusText}</span>
+            </div>
+
+            {priceMissing && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                {copy.missingPrice}. {copy.priceMissingHint}
               </div>
             )}
-          </section>
 
-          {settingsOpen && (
-            <aside className="min-h-0 bg-white border border-slate-200 rounded-lg flex flex-col">
-              <div className="p-4 border-b border-slate-200 flex items-start gap-3">
-                <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-                  <Settings size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-sm font-extrabold text-slate-900">{copy.moduleSettings}</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">{copy.moduleSettingsHint}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen(false)}
-                  className="w-8 h-8 rounded-md text-slate-500 hover:bg-slate-100 flex items-center justify-center"
-                  aria-label="Close"
-                >
-                  <X size={17} />
-                </button>
-              </div>
-
-              <div className="p-3 border-b border-slate-200">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                  <input
-                    value={addQuery}
-                    onChange={(event) => setAddQuery(event.target.value)}
-                    placeholder={copy.addSearch}
-                    className="w-full h-10 rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
-                  />
-                </div>
-              </div>
-
-              <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
-                <div className="text-[11px] uppercase tracking-wide text-slate-400 font-bold">
-                  {copy.availableProducts}
-                </div>
-                {addableProducts.length === 0 ? (
-                  <div className="text-sm text-slate-500 py-6 text-center">{copy.noMatch}</div>
-                ) : (
-                  addableProducts.map((product) => {
-                    const displayName = resolveName(product, language);
-                    const added = selectedIds.has(product.id);
-                    const img = productImage(product);
-                    return (
-                      <div key={product.id} className="flex items-center gap-2 rounded-lg border border-slate-100 p-2">
-                        <div className="w-11 h-11 rounded-md overflow-hidden bg-slate-100 shrink-0">
-                          {img ? (
-                            <img src={img} alt={displayName} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-slate-400">
-                              <Tag size={18} />
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-slate-900 line-clamp-2">{displayName}</p>
-                          <p className="text-[11px] text-slate-400 truncate">{product.sku || product.barcode || product.id}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => added ? removeProduct(product.id) : addProduct(product.id)}
-                          className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${
-                            added
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              : 'bg-slate-900 text-white hover:bg-slate-800'
-                          }`}
-                          title={added ? copy.remove : copy.addProducts}
-                        >
-                          {added ? <Check size={16} /> : <Plus size={16} />}
-                        </button>
+            {selectedProduct ? (
+              <>
+                <section className="space-y-2">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.labelPreview}</div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="rounded-lg bg-white p-3 shadow-sm">
+                      <div className="text-base font-black leading-tight text-slate-950 line-clamp-2">{selectedName}</div>
+                      <div className="mt-2 flex items-baseline justify-between gap-3">
+                        <span className={`text-2xl font-black tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
+                          {selectedPriceText || copy.noPrice}
+                        </span>
+                        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-extrabold text-slate-600">{selectedUnit}</span>
                       </div>
-                    );
-                  })
-                )}
-
-                {selectedProducts.length > 0 && (
-                  <div className="pt-3">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400 font-bold mb-2">
-                      {copy.configuredProducts}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedProducts.map((product) => (
-                        <button
-                          key={product.id}
-                          type="button"
-                          onClick={() => removeProduct(product.id)}
-                          className="max-w-full rounded-md bg-slate-100 text-slate-700 px-2 py-1 text-xs font-semibold hover:bg-red-50 hover:text-red-700 inline-flex items-center gap-1"
-                        >
-                          <span className="truncate">{resolveName(product, language)}</span>
-                          <X size={12} />
-                        </button>
-                      ))}
+                      <div className="mt-3">
+                        <BarcodePreview barcode={selectedBarcode} />
+                      </div>
                     </div>
                   </div>
+                </section>
+
+                <section className="space-y-2">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.productInfo}</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-400">{copy.ean}</div>
+                      <div className={`mt-1 font-extrabold break-all ${selectedBarcode ? 'text-slate-900' : 'text-amber-700'}`}>
+                        {selectedBarcode || copy.missingEan}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-400">{copy.price}</div>
+                      <div className={`mt-1 font-extrabold ${selectedPriceText ? 'text-slate-900' : 'text-amber-700'}`}>
+                        {selectedPriceText || copy.noPrice}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-400">{copy.category}</div>
+                      <div className="mt-1 font-extrabold text-slate-900 truncate">
+                        {selectedCategory ? resolveName(selectedCategory, language) : '-'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-400">{copy.unit}</div>
+                      <div className="mt-1 font-extrabold text-slate-900">{selectedUnit}</div>
+                    </div>
+                    <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-400">{copy.sku}</div>
+                      <div className="mt-1 font-extrabold text-slate-900 break-all">{selectedProduct.sku || '-'}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.copies}</div>
+                  <div className="grid grid-cols-[44px,1fr,44px] gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCopies((value) => clampCopies(value - 1))}
+                      className="h-11 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
+                      aria-label="Decrease copies"
+                    >
+                      <Minus size={18} />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={999}
+                      value={copies}
+                      onChange={(event) => setCopies(clampCopies(event.target.value))}
+                      className="h-11 rounded-lg border border-slate-200 text-center text-lg font-extrabold outline-none focus:ring-2 focus:ring-emerald-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCopies((value) => clampCopies(value + 1))}
+                      className="h-11 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
+                      aria-label="Increase copies"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                  {normalizedCopies > HIGH_COPY_CONFIRM_THRESHOLD && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                      {copy.highCopyWarning}
+                    </div>
+                  )}
+                </section>
+              </>
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center">
+                <Tag className="mx-auto mb-3 text-slate-300" size={36} />
+                <div className="text-sm font-extrabold text-slate-800">{copy.noSelection}</div>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{copy.selectProductHint}</p>
+              </div>
+            )}
+
+            <section className="space-y-2">
+              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.recent}</div>
+              {recentPrints.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm font-semibold text-slate-400">
+                  {copy.noRecent}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {recentPrints.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-extrabold text-slate-900 truncate">{entry.productName}</div>
+                          <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                            <Clock size={12} />
+                            <span>{formatRecentTime(entry.printedAt, language)}</span>
+                            <span>x{entry.copies}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickReprint(entry)}
+                          className="h-8 shrink-0 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center gap-1"
+                        >
+                          <RotateCw size={12} />
+                          {copy.reprint}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <div className="shrink-0 border-t border-slate-200 bg-white p-4">
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={!canPrint}
+              className={`w-full h-14 rounded-lg text-base font-black inline-flex items-center justify-center gap-2 transition-colors touch-manipulation focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 ${
+                canPrint
+                  ? 'bg-slate-950 text-white hover:bg-black active:bg-slate-800 shadow-lg shadow-slate-950/20'
+                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              {status.type === 'printing' ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
+              {printButtonText}
+            </button>
+          </div>
+        </aside>
+
+        <section className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  ref={searchInputRef}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={copy.search}
+                  className="h-11 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-11 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-200"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery('')}
+                    aria-label={copy.clear}
+                    title={copy.clear}
+                    className="absolute right-1.5 top-1/2 h-8 w-8 -translate-y-1/2 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <X size={17} className="mx-auto" />
+                  </button>
                 )}
               </div>
-            </aside>
-          )}
-        </div>
+              <button
+                type="button"
+                onClick={() => void syncProducts()}
+                disabled={syncing}
+                className="h-11 w-11 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-60 inline-flex items-center justify-center"
+                title={syncing ? copy.syncing : copy.sync}
+                aria-label={syncing ? copy.syncing : copy.sync}
+              >
+                <RefreshCw size={17} className={syncing ? 'animate-spin' : ''} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((value) => !value)}
+                className={`h-11 px-3 rounded-lg text-sm font-extrabold inline-flex items-center gap-2 ${
+                  settingsOpen
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    : 'bg-slate-950 text-white hover:bg-black'
+                }`}
+              >
+                <Settings size={17} />
+                {copy.settings}
+              </button>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              <button
+                type="button"
+                onClick={() => setActiveCategoryId('')}
+                className={`min-h-10 px-3 rounded-md border text-sm font-bold whitespace-nowrap ${
+                  activeCategoryId === ''
+                    ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {copy.allCategories}
+                <span className="ml-2 tabular-nums">{labelProducts.length}</span>
+              </button>
+              {filterCategories.map((category) => {
+                const count = labelProducts.filter((product) => product.category_id === category.id).length;
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => setActiveCategoryId(category.id)}
+                    className={`min-h-10 px-3 rounded-md border text-sm font-bold whitespace-nowrap ${
+                      activeCategoryId === category.id
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {resolveName(category, language)}
+                    <span className="ml-2 tabular-nums">{count}</span>
+                  </button>
+                );
+              })}
+              <div className="min-h-10 px-3 rounded-md border border-slate-200 bg-slate-50 text-sm font-bold text-slate-600 inline-flex items-center whitespace-nowrap">
+                <span className="font-extrabold text-slate-950 tabular-nums">{visibleProducts.length}</span>
+                <span className="ml-1">{copy.products}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`min-h-0 flex-1 grid gap-3 p-3 ${settingsOpen ? 'xl:grid-cols-[minmax(0,1fr),360px]' : 'grid-cols-1'}`}>
+            <div className="min-h-0 overflow-y-auto">
+              {loading ? (
+                <div className="h-full min-h-[360px] flex items-center justify-center text-sm font-semibold text-slate-500">{copy.loading}</div>
+              ) : error ? (
+                <div className="h-full min-h-[360px] flex items-center justify-center text-sm font-bold text-red-600">
+                  {error || copy.loadError}
+                </div>
+              ) : !setupConfigured ? (
+                <div className="h-full min-h-[360px] flex items-center justify-center p-6 text-center">
+                  <div className="max-w-sm">
+                    <Tag className="mx-auto mb-3 text-slate-300" size={42} />
+                    <h2 className="text-base font-extrabold text-slate-900">{copy.setupTitle}</h2>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">{copy.setupHint}</p>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOpen(true)}
+                      className="mt-4 h-10 px-4 rounded-lg bg-slate-950 text-white text-sm font-extrabold hover:bg-black inline-flex items-center gap-2"
+                    >
+                      <Settings size={16} />
+                      {copy.openSettings}
+                    </button>
+                  </div>
+                </div>
+              ) : visibleProducts.length === 0 ? (
+                <div className="h-full min-h-[360px] flex items-center justify-center text-sm font-semibold text-slate-500">
+                  {copy.noMatch}
+                </div>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3 pb-2">
+                  {visibleProducts.map((product) => {
+                    const displayName = resolveName(product, language) || product.name;
+                    const barcode = resolveLabelCode(product);
+                    const priceText = formatProductLabelPriceText(product, 'zl');
+                    const category = product.category_id ? categoryById.get(product.category_id) : null;
+                    const img = productImage(product);
+                    const selected = selectedProduct?.id === product.id;
+                    const showImage = img && !imageErrors[product.id];
+
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => selectProduct(product)}
+                        className={`relative min-h-[178px] rounded-lg border-2 text-left overflow-hidden transition-colors touch-manipulation focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                          selected
+                            ? 'border-emerald-600 bg-emerald-50 shadow-sm'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {selected && (
+                          <span className="absolute right-2 top-2 z-[1] rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-extrabold uppercase text-white shadow-sm">
+                            {copy.selected}
+                          </span>
+                        )}
+                        <div className="aspect-[4/3] bg-slate-100 flex items-center justify-center overflow-hidden">
+                          {showImage ? (
+                            <img
+                              src={img}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              onError={() => setImageErrors((prev) => ({ ...prev, [product.id]: true }))}
+                            />
+                          ) : (
+                            <Tag size={28} className="text-slate-300" />
+                          )}
+                        </div>
+                        <div className="p-2.5 space-y-1.5">
+                          <div className="min-h-[36px] text-sm font-extrabold leading-tight text-slate-950 line-clamp-2">
+                            {displayName}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate font-semibold text-slate-500">{category ? resolveName(category, language) : '-'}</span>
+                            <span className={`shrink-0 font-extrabold ${priceText ? 'text-slate-950' : 'text-amber-700'}`}>
+                              {priceText || copy.noPrice}
+                            </span>
+                          </div>
+                          <div className={`max-w-full text-[11px] font-bold rounded-md px-2 py-1 truncate ${
+                            barcode ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-50 text-amber-700'
+                          }`}>
+                            {barcode || copy.missingEan}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {settingsOpen && (
+              <aside className="min-h-0 rounded-lg border border-slate-200 bg-slate-50 flex flex-col overflow-hidden">
+                <div className="border-b border-slate-200 bg-white p-3 flex items-start gap-2">
+                  <div className="h-9 w-9 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                    <Settings size={18} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-sm font-extrabold text-slate-900">{copy.settings}</h2>
+                    <p className="mt-0.5 text-xs font-semibold text-slate-500">{copy.categoryHint}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(false)}
+                    className="h-8 w-8 rounded-md text-slate-500 hover:bg-slate-100 inline-flex items-center justify-center"
+                    aria-label={copy.close}
+                    title={copy.close}
+                  >
+                    <X size={17} />
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-4">
+                  <section className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.categories}</div>
+                        <div className="text-[11px] font-bold text-slate-500">{selectedCategories.length} {copy.selected}</div>
+                      </div>
+                      {configuredCategoryIds.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearCategories}
+                          className="h-8 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-600 hover:bg-slate-100"
+                        >
+                          {copy.clear}
+                        </button>
+                      )}
+                    </div>
+
+                    {categories.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-400">
+                        {copy.noCategories}
+                      </div>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                        {categories.map((category) => {
+                          const selected = configuredCategoryIds.has(category.id);
+                          return (
+                            <label
+                              key={category.id}
+                              className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer ${
+                                selected
+                                  ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleCategory(category.id)}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-300"
+                              />
+                              <span className="min-w-0 flex-1 truncate text-sm font-bold">
+                                {resolveName(category, language)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-2">
+                    <div>
+                      <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.pinnedProducts}</div>
+                      <div className="text-[11px] font-bold text-slate-500">{pinnedProducts.length} {copy.selected}</div>
+                    </div>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input
+                        value={settingsQuery}
+                        onChange={(event) => setSettingsQuery(event.target.value)}
+                        placeholder={copy.pinSearch}
+                        className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+
+                    {selectableProducts.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-400">
+                        {copy.noProductsAvailable}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{copy.availableProducts}</div>
+                        {selectableProducts.map((product) => {
+                          const displayName = resolveName(product, language) || product.name;
+                          const pinned = pinnedProductIds.has(product.id);
+                          const barcode = resolveLabelCode(product);
+                          const category = product.category_id ? categoryById.get(product.category_id) : null;
+                          const img = productImage(product);
+                          return (
+                            <div key={product.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                              <div className="h-11 w-11 rounded-md overflow-hidden bg-slate-100 shrink-0">
+                                {img ? (
+                                  <img src={img} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="h-full w-full flex items-center justify-center text-slate-400">
+                                    <Tag size={18} />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-extrabold text-slate-900 line-clamp-2">{displayName}</div>
+                                <div className="mt-0.5 text-[11px] font-semibold text-slate-400 truncate">
+                                  {category ? `${resolveName(category, language)} - ` : ''}{barcode || copy.missingEan}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => togglePinnedProduct(product.id)}
+                                className={`h-9 w-9 rounded-md flex items-center justify-center shrink-0 ${
+                                  pinned
+                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                    : 'bg-slate-950 text-white hover:bg-black'
+                                }`}
+                                aria-label={pinned ? copy.pinned : copy.openSettings}
+                                title={pinned ? copy.pinned : copy.openSettings}
+                              >
+                                {pinned ? <Check size={16} /> : <Plus size={16} />}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                </div>
+              </aside>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -1,5 +1,11 @@
 # Task: POS3 "Label Station" mode — staff meat-label terminal (no payment)
 
+# Superseded Notice (2026-06-03)
+
+This prompt is historical. POS3 Label Station kiosk mode was retired on 2026-06-03, and the canonical fresh-counter label workflow now lives in the sidebar `Label` tab (`src/renderer/components/label/LabelModule.tsx`). Do not implement this prompt as written, and do not revive `LabelStationTab` or `labelStation*`.
+
+---
+
 ## Context
 POS3 is a dedicated terminal at the meat-cutting station (Tailscale `desktop-p8err1q`, has a Zebra ZDesigner GK420d label printer on USB). Workflow: butcher cuts meat → selects the product on POS3 → prints a **50×30 EAN label** (name + price/kg) → sticks it on the bag. At checkout (POS1) the cashier puts the bag on the scale and scans the EAN.
 
