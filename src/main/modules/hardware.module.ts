@@ -1260,7 +1260,11 @@ export class HardwareModule extends BaseModule {
     if (!normalizedBarcode) return { success: false, error: 'Barcode is required' };
     const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
     if (!driver) return { success: false, error: 'No label printer configured' };
-    if (!driver.isConnected()) return { success: false, error: 'Label printer not connected' };
+    if (!driver.isConnected()) {
+      logger.warn('[HardwareModule] Label printer disconnected at print time; attempting reconnect');
+      const reconnected = await this.connectPrinterWithTimeout(driver, 'Label');
+      if (!reconnected || !driver.isConnected()) return { success: false, error: 'Label printer not connected' };
+    }
     if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Label printing requires Zebra printer' };
     try {
       const priceText = options?.priceText?.trim() || options?.text2?.trim();

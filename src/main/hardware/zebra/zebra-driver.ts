@@ -11,6 +11,10 @@ import { type RecoveryResult } from '../detection/types';
 
 const execFileAsync = promisify(execFile);
 
+type PrintRawOptions = {
+  fast?: boolean;
+};
+
 /**
  * Zebra Printer Driver
  * Prints to Zebra printers via Windows print spooler
@@ -238,7 +242,7 @@ if ($doc.PrinterSettings.IsValid) {
    * test prints all "succeed" while the printer is unplugged and then
    * suddenly all print at once on reconnect.
    */
-  private async printRaw(data: string): Promise<void> {
+  private async printRaw(data: string, options: PrintRawOptions = {}): Promise<void> {
     if (process.platform !== 'win32') {
       throw new Error('ZebraDriver only supports Windows');
     }
@@ -254,12 +258,14 @@ if ($doc.PrinterSettings.IsValid) {
     }
 
     // ─── Pre-flight: flush any leftover stuck jobs from a previous offline period ─
-    try {
-      const flushed = await flushStuckPrintJobs(this.printerName);
-      if (flushed > 0) {
-        logger.warn(`[ZebraDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerName}"`);
-      }
-    } catch { /* best-effort */ }
+    if (!options.fast) {
+      try {
+        const flushed = await flushStuckPrintJobs(this.printerName);
+        if (flushed > 0) {
+          logger.warn(`[ZebraDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerName}"`);
+        }
+      } catch { /* best-effort */ }
+    }
 
     const timestamp = Date.now();
     const tempZplFile = path.join(os.tmpdir(), `zebra_${timestamp}.zpl`);
@@ -361,6 +367,9 @@ if ($result -ne "OK") {
     throw $result
 }
 
+if (${options.fast ? '$true' : '$false'}) {
+    Write-Output "OK"
+} else {
 # Non-blocking queue check — warn if job is stuck but don't fail
 try {
     Start-Sleep -Milliseconds 1000
@@ -377,6 +386,7 @@ try {
 } catch {
     # Queue check failed — still report success since data was sent
     Write-Output "OK"
+}
 }
 `;
 
@@ -410,6 +420,8 @@ try {
         throw new Error(`Unexpected output: ${stdout}`);
       }
 
+      if (!options.fast) {
+
       // ─── Post-flight: confirm queue actually drained ──────────────────
       // The in-script check above only inspects status 1 second after WritePrinter.
       // Re-check after another short delay to catch jobs that took longer to error out.
@@ -423,6 +435,7 @@ try {
           `Printer "${this.printerName}" did not accept the job (${stuckStatus}). ` +
           `Check the printer is powered on and connected.`
         );
+      }
       }
     } catch (error: any) {
       logger.error('[ZebraDriver] Print failed:', error);
@@ -487,7 +500,7 @@ try {
     const zpl = this.formatter.formatLabel(data);
     logger.debug(`[ZebraDriver] ZPL:\n${zpl}`);
 
-    await this.printRaw(zpl);
+    await this.printRaw(zpl, { fast: true });
     logger.info('[ZebraDriver] Label printed successfully');
   }
 
