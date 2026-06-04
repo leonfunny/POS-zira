@@ -89,6 +89,7 @@ function createDefaultEntitlements(salonId: string, salonName: string): SalonEnt
     salonCode: '',
     salonName,
     plan: 'free',
+    suggestedPosMode: null, // offline/default — server has no opinion here
     features,
     fetchedAt: new Date().toISOString(),
     validUntil: new Date(Date.now() + CACHE_DURATION_MS).toISOString(),
@@ -124,11 +125,18 @@ function normalizeEntitlements(data: any): SalonEntitlements {
     }
   }
 
+  // Only accept POS modes the renderer actually has templates for.
+  const VALID_POS_MODES = ['retail', 'salon', 'b2b', 'restaurant'] as const;
+  const suggestedPosMode = VALID_POS_MODES.includes(data.suggestedPosMode)
+    ? (data.suggestedPosMode as SalonEntitlements['suggestedPosMode'])
+    : null;
+
   return {
     salonId: data.salonId || '',
     salonCode: data.salonCode || '',
     salonName: data.salonName || '',
     plan: data.plan || 'free',
+    suggestedPosMode,
     features,
     fetchedAt: new Date().toISOString(),
     validUntil: new Date(Date.now() + CACHE_DURATION_MS).toISOString(),

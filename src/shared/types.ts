@@ -2976,7 +2976,12 @@ export interface SalonEntitlements {
   salonId: string;
   salonCode: string;
   salonName: string;
-  plan: 'free' | 'basic' | 'pro' | 'enterprise';
+  plan: 'free' | 'basic' | 'pro' | 'business' | 'enterprise';
+  /**
+   * Server-suggested POS template derived from salon.niche (nail → salon,
+   * grocery → retail, ...). Applied on salon SWITCH only; null = no opinion.
+   */
+  suggestedPosMode?: 'retail' | 'salon' | 'b2b' | 'restaurant' | null;
   features: Record<FeatureKey, FeatureEntitlement>;
   fetchedAt: string;  // ISO date
   validUntil: string; // ISO date, cache validity

@@ -35,6 +35,7 @@ import {
   clearSecureTokens, clearSecureAuthTokens,
 } from '../config/store';
 import { ensureReceiptPrinterEnabledOnBoot } from '../config/ensure-receipt-enabled';
+import { fetchEntitlementsFromBackend } from '../entitlements/entitlements-controller';
 import { database } from '../database/database';
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
@@ -367,6 +368,11 @@ export class AuthModule extends BaseModule {
             customerDisplayEnabled: true,
           });
 
+          // New tenant ⇒ new POS template (must persist before any relaunch)
+          if (isSalonSwitchTg) {
+            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
+          }
+
           if (willRestartForSalonTg) {
             this.eventBus?.emit('salon:switching', { salonName: result.salon?.name || user.salon?.name || '' });
             this.scheduleSalonRestartRestore();
@@ -510,6 +516,11 @@ export class AuthModule extends BaseModule {
           }
 
           setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: user.salon?.slug || '', posEnabled: true, customerDisplayEnabled: true });
+
+          // New tenant ⇒ new POS template (must persist before any relaunch)
+          if (isSalonSwitch) {
+            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
+          }
 
           // Restoring a previously-archived salon needs a clean reload — the
           // pending restore was staged above; relaunch so it is applied at boot.
@@ -820,6 +831,30 @@ export class AuthModule extends BaseModule {
       logger.info(`[AuthModule] Synced ${result.count} Windows printer(s) to backend`);
     } catch (err: any) {
       logger.warn('[AuthModule] Windows printer sync failed:', err?.message);
+    }
+  }
+
+  /**
+   * After logging into a DIFFERENT salon, fetch its entitlements and apply
+   * the server-suggested POS template (salon.niche → retail/salon/restaurant).
+   * Without this, posMode silently carried over between tenants — a grocery
+   * store inherited the previous tenant's nail-salon template and vice versa.
+   * Re-logins into the SAME salon never reach this path, so a user's explicit
+   * Settings choice for their own salon is never overridden. Must run BEFORE
+   * the restore-relaunch so the persisted config survives the restart.
+   */
+  private async reconcilePosModeAfterSalonSwitch(newSalonId: string): Promise<void> {
+    try {
+      const entitlements = await fetchEntitlementsFromBackend(newSalonId);
+      if (!entitlements) return;
+      setConfig({ entitlements });
+      const suggested = entitlements.suggestedPosMode;
+      if (suggested && getConfigValue('posMode') !== suggested) {
+        logger.info(`[AuthModule] Salon switch: posMode → ${suggested} (niche suggestion for new salon)`);
+        setConfig({ posMode: suggested });
+      }
+    } catch (e: any) {
+      logger.warn('[AuthModule] posMode reconcile after salon switch failed:', e?.message);
     }
   }
 
