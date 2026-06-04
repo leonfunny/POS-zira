@@ -1805,7 +1805,6 @@ export class ApiClient {
   ): Promise<PosScheduleDayResponse | null> {
     return this.posScheduleRequest<PosScheduleDayResponse>(token, 'GET', '/today', {
       date,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1815,7 +1814,6 @@ export class ApiClient {
   ): Promise<PosScheduleDayResponse | null> {
     return this.posScheduleAgentRequest<PosScheduleDayResponse>(apiKey, '/today', {
       date,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1827,7 +1825,6 @@ export class ApiClient {
     return this.posScheduleRequest<PosScheduleWeekResponse>(token, 'GET', '/week', {
       from,
       days,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1839,7 +1836,6 @@ export class ApiClient {
     return this.posScheduleAgentRequest<PosScheduleWeekResponse>(apiKey, '/week', {
       from,
       days,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1853,7 +1849,7 @@ export class ApiClient {
       token,
       'PATCH',
       `/staff/${encodeURIComponent(staffProfileId)}/status`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       { status, idempotency_key: idempotencyKey },
     );
   }
@@ -1873,7 +1869,7 @@ export class ApiClient {
       token,
       'POST',
       `/checkins/${encodeURIComponent(checkinLogId)}/assign-next`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       {
         booking_id: payload.bookingId || undefined,
         customer_name: payload.customerName || undefined,
@@ -1900,7 +1896,7 @@ export class ApiClient {
       token,
       'POST',
       `/checkins/${encodeURIComponent(checkinLogId)}/request-staff`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       {
         staff_profile_id: payload.staffProfileId,
         booking_id: payload.bookingId || undefined,
