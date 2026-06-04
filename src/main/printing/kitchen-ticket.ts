@@ -63,5 +63,27 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
   }
 
   lines.push({ text: '', separator: true });
+  if (data.pickupNumber) {
+    // Hand-over matching: the same number prints on the customer's pickup
+    // slip; the kitchen gives the food to the matching number.
+    lines.push({ text: 'NR / SO:', bold: true, center: true });
+    lines.push({ text: data.pickupNumber, bold: true, center: true, textSize: 'double-size' });
+    lines.push({ text: '', separator: true });
+  }
+  return lines;
+}
+
+/**
+ * Customer pickup slip: a short strip printed right after the paragon with
+ * the SAME daily number as the kitchen ticket, in the biggest font the
+ * printer has. The customer shows it to the kitchen to collect the food.
+ */
+export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[] {
+  const lines: EscPosPlainLine[] = [];
+  lines.push({ text: 'NR ODBIORU / SO NHAN DO', bold: true, center: true });
+  lines.push({ text: data.pickupNumber || '----', bold: true, center: true, textSize: 'double-size' });
+  lines.push({ text: `#${data.orderNumber}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  lines.push({ text: 'Pokaz ten numer w kuchni', center: true });
+  lines.push({ text: '', separator: true });
   return lines;
 }

@@ -14,6 +14,8 @@ interface ReceiptScreenProps {
   receiptPrinted?: boolean;
   /** Backend is still routing the order-copy or fiscal receipt print job. */
   receiptPrinting?: boolean;
+  /** Daily kitchen pickup number — shown big so the customer can collect food. */
+  pickupNumber?: string | null;
   onComplete: () => void;
   onLangChange: (lang: ScLanguage) => void;
   onCallStaff?: () => void;
@@ -37,6 +39,7 @@ export default function ReceiptScreen({
   totalGrosze,
   receiptPrinted = true,
   receiptPrinting = false,
+  pickupNumber = null,
   onComplete,
   onLangChange,
   onCallStaff,
@@ -118,6 +121,20 @@ export default function ReceiptScreen({
                   ? t.thankYouSub
                   : t.receiptPrintFailed}
             </p>
+          )}
+
+          {pickupNumber && (
+            <div className="mx-auto mt-6 max-w-md rounded-3xl border-2 border-orange-300 bg-orange-50 px-6 py-5">
+              <div className="text-sm font-black uppercase tracking-[0.14em] text-orange-700">
+                {t.pickupNumberLabel}
+              </div>
+              <div className="sc-tabular mt-1 text-7xl font-black text-orange-800">
+                {pickupNumber}
+              </div>
+              <div className="mt-2 text-sm font-semibold text-orange-700">
+                {t.pickupNumberHint}
+              </div>
+            </div>
           )}
 
           <div className="mt-6 space-y-2 text-left">

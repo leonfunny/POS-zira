@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildKitchenTicketLines } from '../src/main/printing/kitchen-ticket';
+import { buildKitchenTicketLines, buildPickupSlipLines } from '../src/main/printing/kitchen-ticket';
 import type { KitchenTicketData } from '../src/shared/types';
 
 function readSource(relativePath: string): string {
@@ -55,6 +55,46 @@ describe('kitchen ticket builder', () => {
   it('labels the cashier POS source as KASA', () => {
     const lines = buildKitchenTicketLines({ ...baseTicket, source: 'POS' });
     expect(lines.map((l) => l.text).join('\n')).toContain('KASA');
+  });
+});
+
+describe('pickup number (so nhan do)', () => {
+  it('prints the number big on the kitchen ticket', () => {
+    const lines = buildKitchenTicketLines({ ...baseTicket, pickupNumber: '0007' });
+    const numberLine = lines.find((l) => l.text === '0007');
+    expect(numberLine?.textSize).toBe('double-size');
+    expect(numberLine?.bold).toBe(true);
+  });
+
+  it('builds a customer slip with the same number, order ref, and no prices', () => {
+    const lines = buildPickupSlipLines({ ...baseTicket, pickupNumber: '0007', kind: 'PICKUP_SLIP' });
+    const text = lines.map((l) => l.text).join('\n');
+    expect(text).toContain('NR ODBIORU');
+    expect(text).toContain('0007');
+    expect(text).toContain('#POS-0042');
+    expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/);
+  });
+
+  it('assigns a daily 4-digit number at order create when kitchen items exist', () => {
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const repoSource = readSource('src/main/database/repos/order-repo.ts');
+
+    expect(posModuleSource).toContain('normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber()');
+    expect(repoSource).toContain("date(created_at) = date('now')");
+    expect(repoSource).toContain("String(next).padStart(4, '0')");
+  });
+
+  it('routes the slip to the shared receipt printer and returns the number to the kiosk', () => {
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const sharedSource = readSource('src/main/printing/shared-kitchen-printer.ts');
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const receiptSource = readSource('src/renderer/windows/self-checkout/screens/ReceiptScreen.tsx');
+
+    expect(posModuleSource).toContain('submitSharedPickupSlip(slip)');
+    expect(posModuleSource).toContain('pickupNumber,');
+    expect(sharedSource).toContain("SHARED_SLIP_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
+    expect(appSource).toContain('setLastPickupNumber(printResult?.pickupNumber ?? null)');
+    expect(receiptSource).toContain('t.pickupNumberLabel');
   });
 });
 

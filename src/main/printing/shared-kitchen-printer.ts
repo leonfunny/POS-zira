@@ -16,6 +16,9 @@ import logger from '../logger';
 import type { KitchenTicketData } from './kitchen-ticket';
 
 const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
+// The customer pickup slip prints where the customer's paragon comes out —
+// the printer registered under the kiosk's shared receipt role (POS1).
+const SHARED_SLIP_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
 const KITCHEN_JOB_TIMEOUT_MS = 30_000;
 
@@ -44,9 +47,9 @@ function hasPhysicalTarget(printer?: SalonPrinterMapping | null): boolean {
   return !!(printer?.windowsPrinterName?.trim() || printer?.address?.trim());
 }
 
-function isReadyKitchenPrinter(printer?: SalonPrinterMapping | null): printer is SalonPrinterMapping {
+function isReadyPrinterOfType(printer: SalonPrinterMapping | null | undefined, expectedType: PrinterType): printer is SalonPrinterMapping {
   return !!printer
-    && String(printer.printerType || '').toUpperCase() === PrinterType.KITCHEN
+    && String(printer.printerType || '').toUpperCase() === expectedType
     && printer.isEnabled !== false
     && !!printer.agentIsOnline
     && !!printer.isOnline
@@ -65,6 +68,8 @@ function createClient(): ApiClient {
 async function resolveSharedKitchenPrinter(
   token: string | null,
   apiKey: string | null,
+  role: SalonPrinterRole = SHARED_KITCHEN_ROLE,
+  expectedType: PrinterType = PrinterType.KITCHEN,
 ): Promise<{ printerId?: string; ready: boolean; error?: string }> {
   if (Date.now() < kitchenEndpointUnavailableUntil) {
     return { ready: false, error: 'Backend printer assignment endpoint is unavailable' };
@@ -87,13 +92,13 @@ async function resolveSharedKitchenPrinter(
       assignments = await client.listPrinterAssignmentsWithApiKey(apiKey, config.machineId);
     }
     if (!assignments) return { ready: false };
-    printerId = assignments.assignments.find((assignment) => assignment.role === SHARED_KITCHEN_ROLE)?.printerId;
+    printerId = assignments.assignments.find((assignment) => assignment.role === role)?.printerId;
   } catch (err: any) {
     if (isBackendContractUnavailable(err)) {
       kitchenEndpointUnavailableUntil = Date.now() + ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS;
     }
     const error = err?.message || String(err);
-    logger.warn(`[SharedKitchenPrinter] ${SHARED_KITCHEN_ROLE} assignment lookup failed: ${error}`);
+    logger.warn(`[SharedKitchenPrinter] ${role} assignment lookup failed: ${error}`);
     return { ready: false, error };
   }
 
@@ -108,8 +113,8 @@ async function resolveSharedKitchenPrinter(
         })
       : await client.listSalonPrintersWithApiKey(apiKey!, {}, config.machineId);
     const printer = response.printers.find((item) => item.id === printerId) || null;
-    if (!isReadyKitchenPrinter(printer)) {
-      const error = `${SHARED_KITCHEN_ROLE} printer ${printerId} is not a ready KITCHEN printer`;
+    if (!isReadyPrinterOfType(printer, expectedType)) {
+      const error = `${role} printer ${printerId} is not a ready ${expectedType} printer`;
       logger.warn(`[SharedKitchenPrinter] ${error}`);
       return { printerId, ready: false, error };
     }
@@ -127,11 +132,34 @@ async function resolveSharedKitchenPrinter(
 export async function submitSharedKitchenPrint(
   ticket: KitchenTicketData,
 ): Promise<SharedKitchenPrintResult> {
+  return submitSharedPlainPrint(ticket, SHARED_KITCHEN_ROLE, PrinterType.KITCHEN);
+}
+
+/**
+ * Print the customer pickup slip on the shared receipt printer (where the
+ * customer's paragon comes out — POS1 at chesaigon). Payload kind must be
+ * PICKUP_SLIP so the receiving POS renders the slip layout.
+ */
+export async function submitSharedPickupSlip(
+  slip: KitchenTicketData,
+): Promise<SharedKitchenPrintResult> {
+  return submitSharedPlainPrint(
+    { ...slip, kind: 'PICKUP_SLIP' },
+    SHARED_SLIP_ROLE,
+    PrinterType.RECEIPT,
+  );
+}
+
+async function submitSharedPlainPrint(
+  ticket: KitchenTicketData,
+  role: SalonPrinterRole,
+  printerType: PrinterType,
+): Promise<SharedKitchenPrintResult> {
   const token = getSecureAuthToken();
   const apiKey = getSecureApiKey();
   if (!token && !apiKey) return { handled: false, printed: false };
 
-  const route = await resolveSharedKitchenPrinter(token, apiKey);
+  const route = await resolveSharedKitchenPrinter(token, apiKey, role, printerType);
   if (!route.printerId) {
     return { handled: false, printed: false, error: route.error };
   }
@@ -142,7 +170,7 @@ export async function submitSharedKitchenPrint(
   const client = createClient();
   const body = {
     jobType: PrintJobType.KITCHEN_TICKET,
-    printerType: PrinterType.KITCHEN,
+    printerType,
     printerId: route.printerId,
     waitForCompletion: true,
     timeoutMs: KITCHEN_JOB_TIMEOUT_MS,

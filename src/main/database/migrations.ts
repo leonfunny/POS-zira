@@ -1310,4 +1310,14 @@ export const migrations: Migration[] = [
       ALTER TABLE categories ADD COLUMN kitchen_print INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 40,
+    name: 'orders_kitchen_number',
+    // Daily pickup number (0001, 0002, ...) assigned when an order contains
+    // kitchen items. Printed on the kitchen ticket AND on a customer pickup
+    // slip so the kitchen hands food to the matching number.
+    up: `
+      ALTER TABLE orders ADD COLUMN kitchen_number TEXT;
+    `,
+  },
 ];

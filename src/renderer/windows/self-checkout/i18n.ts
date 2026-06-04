@@ -142,6 +142,9 @@ interface ScStrings {
   staffExitTitle: string;
   staffExitBody: string;
   staffExitHold: string;
+  // Kitchen pickup number
+  pickupNumberLabel: string;
+  pickupNumberHint: string;
 }
 
 const PL: ScStrings = {
@@ -270,6 +273,8 @@ const PL: ScStrings = {
   staffExitTitle: 'Zamknąć kasę samoobsługową?',
   staffExitBody: 'Funkcja dla obsługi. Przytrzymaj przycisk przez 3 sekundy, aby zamknąć kasę.',
   staffExitHold: 'Przytrzymaj, aby zamknąć',
+  pickupNumberLabel: 'TWÓJ NUMER ODBIORU',
+  pickupNumberHint: 'Pokaż ten numer w kuchni, aby odebrać jedzenie',
 };
 
 const EN: ScStrings = {
@@ -398,6 +403,8 @@ const EN: ScStrings = {
   staffExitTitle: 'Close the self-checkout?',
   staffExitBody: 'Staff only. Press and hold the button for 3 seconds to close the kiosk.',
   staffExitHold: 'Hold to close',
+  pickupNumberLabel: 'YOUR PICKUP NUMBER',
+  pickupNumberHint: 'Show this number at the kitchen to collect your food',
 };
 
 const VI: ScStrings = {
@@ -526,6 +533,8 @@ const VI: ScStrings = {
   staffExitTitle: 'Đóng quầy tự thanh toán?',
   staffExitBody: 'Chức năng dành cho nhân viên. Giữ nút 3 giây để đóng quầy.',
   staffExitHold: 'Giữ để đóng',
+  pickupNumberLabel: 'SỐ NHẬN ĐỒ CỦA BẠN',
+  pickupNumberHint: 'Đưa số này cho bếp để nhận đồ ăn',
 };
 
 const TABLE: Record<ScLanguage, ScStrings> = { pl: PL, en: EN, vi: VI };

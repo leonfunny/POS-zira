@@ -56,7 +56,7 @@ import { WindowManager } from '../windows/window-manager';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
-import { buildKitchenTicketLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
@@ -2090,7 +2090,9 @@ export class HardwareModule extends BaseModule {
           // thermal plain-line path so Vietnamese/Polish dish names raster
           // instead of printing mangled code-page text.
           const ticket = job.payload as KitchenTicketData;
-          const lines = buildKitchenTicketLines(ticket);
+          const lines = ticket?.kind === 'PICKUP_SLIP'
+            ? buildPickupSlipLines(ticket)
+            : buildKitchenTicketLines(ticket);
           if (typeof (targetPrinter as any).printPlainLines === 'function') {
             await (targetPrinter as any).printPlainLines(lines);
           } else {

@@ -39,8 +39,8 @@ import { draftProductSync } from '../sync/draft-product-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
-import { buildKitchenTicketLines, type KitchenTicketData } from '../printing/kitchen-ticket';
-import { submitSharedKitchenPrint } from '../printing/shared-kitchen-printer';
+import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
@@ -1468,6 +1468,20 @@ export class PosModule extends BaseModule {
           };
         });
 
+        // Daily pickup number: assigned once per order with kitchen items.
+        // The same number prints on the kitchen ticket and the customer
+        // pickup slip so the kitchen hands food to the matching number.
+        if (!normalizedOrder.kitchen_number) {
+          const hasKitchenItems = (normalizedItems || []).some((item: any) => {
+            if (!item.variant_id) return false;
+            const lineProduct = productRepo.getById(item.variant_id);
+            return !!lineProduct?.category_id && productRepo.isKitchenPrintCategory(lineProduct.category_id);
+          });
+          if (hasKitchenItems) {
+            normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber();
+          }
+        }
+
         const id = orderRepo.create(normalizedOrder, normalizedItems);
         let stockChanged = false;
         const allowNegativeStock = getConfig().allowOversell === true;
@@ -2494,6 +2508,41 @@ export class PosModule extends BaseModule {
           drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
         }
         const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
+
+        // Pickup slip: when the order has kitchen items, print a short strip
+        // with the big daily number right where the paragon comes out (the
+        // shared SELF_CHECKOUT_RECEIPT printer; local receipt printer as
+        // fallback). Best-effort — the kiosk also SHOWS the number on screen.
+        const finalizedOrder = orderRepo.getById(orderId);
+        const pickupNumber = finalizedOrder?.kitchen_number ?? null;
+        let slipPrinted: boolean | undefined;
+        if (pickupNumber) {
+          const slip: KitchenTicketData = {
+            orderId,
+            orderNumber: finalizedOrder?.order_number || orderId.slice(0, 8),
+            createdAt: finalizedOrder?.created_at || new Date().toISOString(),
+            source: finalizedOrder?.source || 'SELF_CHECKOUT',
+            pickupNumber,
+            kind: 'PICKUP_SLIP',
+            items: [],
+          };
+          try {
+            const sharedSlip = await submitSharedPickupSlip(slip);
+            slipPrinted = !!sharedSlip.printed;
+            if (!slipPrinted) {
+              const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
+              const localReceipt = printers[PrinterType.RECEIPT];
+              if (localReceipt?.isConnected?.() && typeof localReceipt.printPlainLines === 'function') {
+                await localReceipt.printPlainLines(buildPickupSlipLines(slip));
+                slipPrinted = true;
+              }
+            }
+          } catch (slipErr: any) {
+            logger.warn(`[PosModule] Pickup slip failed for order ${orderId}: ${slipErr?.message || slipErr}`);
+            slipPrinted = false;
+          }
+        }
+
         return {
           success: fiscalPrinted,
           printed: fiscalPrinted,
@@ -2501,6 +2550,8 @@ export class PosModule extends BaseModule {
           receiptPrinted: fiscalPrinted,
           drawerOpened,
           route: 'FISCAL_RECEIPT',
+          pickupNumber,
+          slipPrinted,
         };
       } catch (e: any) {
         return {
@@ -2741,6 +2792,7 @@ export class PosModule extends BaseModule {
         createdAt: order.created_at || new Date().toISOString(),
         source: order.source || 'POS',
         isReprint: !!opts.reprint,
+        pickupNumber: order.kitchen_number ?? null,
         items: kitchenItems.map((item) => ({
           name: item.name,
           quantity: Number(item.sale_quantity ?? item.quantity) || 1,

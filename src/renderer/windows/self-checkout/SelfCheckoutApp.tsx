@@ -82,6 +82,7 @@ export default function SelfCheckoutApp() {
   // localStorage for the next customer.
   const [lastTotalGrosze, setLastTotalGrosze] = useState(0);
   const [lastReceiptPrinted, setLastReceiptPrinted] = useState(true);
+  const [lastPickupNumber, setLastPickupNumber] = useState<string | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -145,6 +146,7 @@ export default function SelfCheckoutApp() {
     setLastPaymentMethod(null);
     setLastTotalGrosze(0);
     setLastReceiptPrinted(true);
+    setLastPickupNumber(null);
     setPaymentOpen(false);
     setPaymentStatus(null);
     setCheckoutError(null);
@@ -599,6 +601,9 @@ export default function SelfCheckoutApp() {
         () => ({ success: false, printed: false, receiptPrinted: false }),
       );
       const receiptPrinted = !!(printResult?.printed ?? printResult?.receiptPrinted ?? printResult?.fiscalPrinted);
+      // Kitchen pickup number: shown big on screen so the customer still has
+      // it even when the printed slip fails.
+      setLastPickupNumber(printResult?.pickupNumber ?? null);
       if (!receiptPrinted) {
         showToast('error', printResult?.error || t.receiptPrintFailed);
         // Paid-but-no-paragon is a fiscal/legal incident, not just a UX
@@ -757,6 +762,7 @@ export default function SelfCheckoutApp() {
         mode={mode}
         method={lastPaymentMethod}
         totalGrosze={lastTotalGrosze}
+        pickupNumber={lastPickupNumber}
         receiptPrinted={lastReceiptPrinted}
         receiptPrinting={receiptPrinting}
         onComplete={() => goTo('thankyou')}

@@ -664,6 +664,12 @@ export interface KitchenTicketData {
   /** Order source: POS | SELF_CHECKOUT | SERVER | ... */
   source: string;
   isReprint?: boolean;
+  /** Daily pickup number ('0001'...) shared between the kitchen ticket and
+   *  the customer pickup slip — the kitchen matches them at hand-over. */
+  pickupNumber?: string | null;
+  /** TICKET (default) = kitchen ticket; PICKUP_SLIP = the small customer
+   *  slip with the big pickup number, printed next to the paragon. */
+  kind?: 'TICKET' | 'PICKUP_SLIP';
   items: KitchenTicketItem[];
 }
 

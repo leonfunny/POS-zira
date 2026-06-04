@@ -40,6 +40,8 @@ export interface OrderRow {
   refunded_at: string | null;
   refund_lines: string | null;
   has_fiscal?: number;
+  /** Daily kitchen pickup number ('0001'...) — set when the order has kitchen items. */
+  kitchen_number?: string | null;
 }
 
 export interface OrderItemRow {
@@ -117,8 +119,8 @@ export const orderRepo = {
 
       const finalOrder = { ...order, order_number: finalOrderNumber };
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal ?? 0,
           finalOrder.discount ?? 0, finalOrder.tax ?? 0, finalOrder.total ?? 0,
@@ -129,7 +131,7 @@ export const orderRepo = {
           finalOrder.shift_id ?? null, finalOrder.source ?? 'POS',
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',
-          finalOrder.payment_tenders ?? null,
+          finalOrder.payment_tenders ?? null, finalOrder.kitchen_number ?? null,
         ],
       );
 
@@ -157,6 +159,21 @@ export const orderRepo = {
 
   getById(id: string): OrderRow | null {
     return database.get<OrderRow>('SELECT * FROM orders WHERE id = ?', [id]);
+  },
+
+  /**
+   * Next daily kitchen pickup number ('0001', '0002', ...). Per-machine
+   * counter derived from today's orders — single sequential main process,
+   * so MAX+1 inside the create flow is race-free.
+   */
+  nextKitchenNumber(): string {
+    const row = database.get<{ max_no: number | null }>(
+      `SELECT MAX(CAST(kitchen_number AS INTEGER)) as max_no
+       FROM orders
+       WHERE kitchen_number IS NOT NULL AND date(created_at) = date('now')`,
+    );
+    const next = (row?.max_no ?? 0) + 1;
+    return String(next).padStart(4, '0');
   },
 
   getItemsByOrderId(orderId: string): OrderItemRow[] {
