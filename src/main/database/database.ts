@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { join } from 'path';
 import { readFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import logger from '../logger';
-import { migrations } from './migrations';
+import { migrations, type Migration } from './migrations';
 import { atomicWriteFile, atomicWriteFileSync } from './atomic-write';
 import type { BackupFlushResult } from './backup-service';
 
@@ -439,8 +439,39 @@ class Database {
   }
 
   private runMigrations(): void {
-    // Ensure schema_version table exists
-    this.db!.run(`
+    const { applied, repaired } = Database.applyMigrations(this.db!, migrations);
+    if (applied > 0 || repaired > 0) {
+      logger.info(`[DB] Applied ${applied} migration(s), repaired ${repaired} diverged migration(s)`);
+      this.dirty = true;
+    }
+  }
+
+  /**
+   * Apply pending migrations. Static + parameterized so tests can drive it
+   * against an in-memory sql.js DB with synthetic migration lists.
+   *
+   * Hardened against two real failure modes:
+   *
+   * 1. LINEAGE DIVERGENCE — migrations are matched by (version, name), not
+   *    version alone. A DB created on a branch where v9–16 were billiard
+   *    migrations silently skipped main's v9–16 (checkin_wizard etc.) with
+   *    the old version-only check, leaving tables missing months later
+   *    ("no such table: customer_service_history", 2026-06-04). When the
+   *    stored name differs from the code's, the migration is re-run in
+   *    tolerant mode (IF NOT EXISTS DDL is naturally idempotent; "duplicate
+   *    column"/"already exists" errors are skipped) and the row is
+   *    re-stamped with the current name.
+   *
+   * 2. PARTIAL APPLY — each migration runs inside its own transaction. A
+   *    mid-migration crash used to leave half-applied DDL with no version
+   *    row; the retry then died forever on "duplicate column" and the app
+   *    never booted again. With a transaction the retry starts clean.
+   */
+  static applyMigrations(
+    db: SqlJsDatabase,
+    migrationList: Migration[],
+  ): { applied: number; repaired: number } {
+    db.run(`
       CREATE TABLE IF NOT EXISTS _schema_version (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -448,40 +479,88 @@ class Database {
       )
     `);
 
-    const applied = new Set<number>();
-    const stmt = this.db!.prepare('SELECT version FROM _schema_version');
+    const appliedByVersion = new Map<number, string>();
+    const stmt = db.prepare('SELECT version, name FROM _schema_version');
     while (stmt.step()) {
-      const row = stmt.getAsObject() as { version: number };
-      applied.add(row.version);
+      const row = stmt.getAsObject() as { version: number; name: string };
+      appliedByVersion.set(row.version, row.name);
     }
     stmt.free();
 
-    let count = 0;
-    for (const migration of migrations) {
-      if (applied.has(migration.version)) continue;
-
-      logger.info(`[DB] Running migration v${migration.version}: ${migration.name}`);
-      // Split by semicolons and run each statement
+    const runStatements = (migration: Migration, tolerateExisting: boolean): void => {
+      // Split by semicolons and run each statement. NOTE: this breaks on
+      // BEGIN…END trigger bodies — none exist today; add real splitting
+      // before ever shipping a CREATE TRIGGER migration.
       const statements = migration.up
         .split(';')
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
       for (const sql of statements) {
-        this.db!.run(sql);
+        try {
+          db.run(sql);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (tolerateExisting && /duplicate column name|already exists/i.test(msg)) {
+            logger.warn(
+              `[DB] Migration v${migration.version} (${migration.name}) repair: skipping already-applied statement (${msg})`,
+            );
+            continue;
+          }
+          throw err;
+        }
+      }
+    };
+
+    let applied = 0;
+    let repaired = 0;
+
+    for (const migration of migrationList) {
+      const appliedName = appliedByVersion.get(migration.version);
+      if (appliedName === migration.name) continue;
+
+      if (appliedName !== undefined) {
+        logger.warn(
+          `[DB] Migration lineage divergence at v${migration.version}: DB has "${appliedName}", code has "${migration.name}" — repairing`,
+        );
+        db.run('BEGIN');
+        try {
+          runStatements(migration, true);
+          db.run(
+            "UPDATE _schema_version SET name = ?, applied_at = datetime('now') WHERE version = ?",
+            [migration.name, migration.version],
+          );
+          db.run('COMMIT');
+        } catch (err) {
+          db.run('ROLLBACK');
+          logger.error(
+            `[DB] Repair of diverged migration v${migration.version} (${migration.name}) failed:`,
+            err,
+          );
+          throw err;
+        }
+        repaired++;
+        continue;
       }
 
-      this.db!.run('INSERT INTO _schema_version (version, name) VALUES (?, ?)', [
-        migration.version,
-        migration.name,
-      ]);
-      count++;
+      logger.info(`[DB] Running migration v${migration.version}: ${migration.name}`);
+      db.run('BEGIN');
+      try {
+        runStatements(migration, false);
+        db.run('INSERT INTO _schema_version (version, name) VALUES (?, ?)', [
+          migration.version,
+          migration.name,
+        ]);
+        db.run('COMMIT');
+      } catch (err) {
+        db.run('ROLLBACK');
+        logger.error(`[DB] Migration v${migration.version} (${migration.name}) failed (rolled back):`, err);
+        throw err;
+      }
+      applied++;
     }
 
-    if (count > 0) {
-      logger.info(`[DB] Applied ${count} migration(s)`);
-      this.dirty = true;
-    }
+    return { applied, repaired };
   }
 }
 
