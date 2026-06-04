@@ -1978,7 +1978,14 @@ export class HardwareModule extends BaseModule {
       return null;
     }
     if (config.protocol === 'POSNET') {
-      if (config.port) return new PosnetDriver(config.port, config.baudRate || 9600);
+      if (config.port) {
+        return new PosnetDriver(config.port, config.baudRate || 9600, 'POSNET', {
+          onFiscalUnknown: (info) => {
+            try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
+            catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }
+          },
+        });
+      }
       logger.warn(`[HardwareModule] POSNET printer "${name}" requires a serial port`);
       return null;
     }
@@ -1999,7 +2006,14 @@ export class HardwareModule extends BaseModule {
     const zebra = getConfigValue('zebraPrinter') as string | undefined;
     const baud = (getConfigValue('printerBaudRate') as number) || 9600;
     if (protocol === 'POSNET') {
-      if (port) return new PosnetDriver(port, baud, 'POSNET');
+      if (port) {
+        return new PosnetDriver(port, baud, 'POSNET', {
+          onFiscalUnknown: (info) => {
+            try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
+            catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }
+          },
+        });
+      }
       return null;
     }
     if (protocol === 'ELZAB_STX') {
