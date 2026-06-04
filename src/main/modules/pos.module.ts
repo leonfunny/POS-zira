@@ -1386,7 +1386,7 @@ export class PosModule extends BaseModule {
     );
 
     // Orders
-    ipcMain.handle('pos:orders:create', (_e, order, items) => {
+    ipcMain.handle('pos:orders:create', async (_e, order, items) => {
       try {
         const normalizedOrder = { ...(order || {}) };
         const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
@@ -1506,6 +1506,16 @@ export class PosModule extends BaseModule {
           this.syncNailTurnCheckoutForOrder(id, normalizedOrder, normalizedItems).catch((e: any) => {
             logger.warn(`[PosModule] Nail turn checkout sync failed for order ${id}: ${e?.message ?? e}`);
           });
+
+          // A paid order must be durable immediately — the 5s auto-save loop
+          // leaves a window where a crash/power-cut loses an already-fiscalized
+          // sale (same pattern as the check-in flush above). Don't fail the
+          // sale if the flush fails: the order is committed in memory + sync
+          // log, the auto-save loop retries, and db:save-error notifies the UI.
+          const flush = await database.save();
+          if (!flush.success) {
+            logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
+          }
 
           return { success: true, id };
       }
