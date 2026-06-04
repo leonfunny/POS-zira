@@ -585,6 +585,15 @@ export interface AgentConfig {
   // Check-in tab display toggles
   checkinShowStatsBar?: boolean;  // Show total/waiting/in-service/completed bar (default: true)
   checkinShowQueue?: boolean;     // Show active queue panel on the right (default: true)
+
+  // TV Ads (signage) — điều khiển màn hình quảng cáo Google TV qua LAN
+  tvAdEnabled?: boolean;
+  tvAdPort?: number;
+  tvAdPlaybackMode?: 'sequential' | 'repeat-one';
+  tvAdRepeatVideoId?: string | null;
+  tvAdMuted?: boolean;
+  tvAdVolume?: number;
+  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean }>;
 }
 
 // Agent credentials (stored securely)
@@ -1364,7 +1373,24 @@ export const IPC_CHANNELS = {
 
   // Generic API proxy
   API_CALL: 'api:call',
+
+  // TV Ad Display (signage)
+  TV_AD_GET_STATUS: 'tvAd:getStatus',
+  TV_AD_PICK_VIDEO: 'tvAd:pickVideo',
+  TV_AD_SAVE: 'tvAd:save',
 } as const;
+
+// Shared status shape for the TV Ad Display module.
+// Mirrors AdDisplayStatus from src/main/ad-display/ but lives in shared
+// so the renderer can consume it without importing from src/main.
+export interface AdDisplayStatusLike {
+  running: boolean;
+  port: number | null;
+  ips: string[];
+  primaryIp?: string;
+  connectedClients: number;
+  error?: string;
+}
 
 // ==========================================
 // Telegram Types (Moltbot-style)

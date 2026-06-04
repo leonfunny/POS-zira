@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "bonjour-service": "^1.4.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "grammy": "^1.21.0",

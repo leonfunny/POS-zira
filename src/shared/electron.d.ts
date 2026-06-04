@@ -1017,6 +1017,11 @@ interface ElectronAPI {
       unit?: string;
     }) => Promise<any>;
   };
+
+  // TV Ad Display
+  tvAdGetStatus: () => Promise<import('./types').AdDisplayStatusLike>;
+  tvAdPickVideo: () => Promise<{ id: string; filename: string } | null>;
+  tvAdSave: (cfg: Partial<AgentConfig>) => Promise<{ ok: boolean }>;
 }
 
 declare global {

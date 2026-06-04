@@ -830,6 +830,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_DB_SAVE_ERROR, listener);
     },
   },
+
+  // TV Ad Display
+  tvAdGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_GET_STATUS),
+  tvAdPickVideo: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_PICK_VIDEO),
+  tvAdSave: (cfg: Partial<AgentConfig>) => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_SAVE, cfg),
 });
 
 console.log('[Preload] API exposed successfully');

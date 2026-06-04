@@ -469,6 +469,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.idleTimeout': 'Idle Timeout',
     'settings.idleTimeoutDesc': 'Time before switching to promo mode after inactivity',
 
+    // TV Ad
+    'settings.tvAd.title': 'TV Advertisement',
+    'settings.tvAd.connectAddress': 'TV connect address',
+    'settings.tvAd.connectAddressHint': 'Enter this address in the Zira TV Ads app if it does not auto-discover.',
+    'settings.tvAd.enable': 'Enable TV advertisement screen',
+    'settings.tvAd.addVideo': 'Add video',
+    'settings.tvAd.playbackMode': 'Playback mode',
+    'settings.tvAd.sequential': 'Sequential (playlist)',
+    'settings.tvAd.repeatOne': 'Repeat one video',
+    'settings.tvAd.muted': 'Muted',
+    'settings.tvAd.volume': 'Volume',
+    'settings.tvAd.status': 'Server status',
+    'settings.tvAd.running': 'Running',
+    'settings.tvAd.stopped': 'Stopped',
+    'settings.tvAd.connectedTvs': 'Connected TVs',
+    'settings.tvAd.remove': 'Remove',
+
     // Invoicing
     'invoice.title': 'Invoicing',
     'invoice.setupRequired': 'Setup required',
@@ -1923,6 +1940,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.idleTimeout': 'Thời gian chờ',
     'settings.idleTimeoutDesc': 'Thời gian trước khi chuyển sang chế độ quảng cáo',
 
+    // TV Ad
+    'settings.tvAd.title': 'TV Quảng cáo',
+    'settings.tvAd.connectAddress': 'Địa chỉ kết nối cho TV',
+    'settings.tvAd.connectAddressHint': 'Nhập địa chỉ này vào app Zira TV Ads nếu TV không tự tìm thấy.',
+    'settings.tvAd.enable': 'Bật màn hình quảng cáo TV',
+    'settings.tvAd.addVideo': 'Thêm video',
+    'settings.tvAd.playbackMode': 'Chế độ phát',
+    'settings.tvAd.sequential': 'Phát lần lượt (playlist)',
+    'settings.tvAd.repeatOne': 'Lặp 1 video',
+    'settings.tvAd.muted': 'Tắt tiếng',
+    'settings.tvAd.volume': 'Âm lượng',
+    'settings.tvAd.status': 'Trạng thái server',
+    'settings.tvAd.running': 'Đang chạy',
+    'settings.tvAd.stopped': 'Đã dừng',
+    'settings.tvAd.connectedTvs': 'TV đang kết nối',
+    'settings.tvAd.remove': 'Xoá',
+
     // Invoicing
     'invoice.title': 'Hóa đơn',
     'invoice.setupRequired': 'Yêu cầu thiết lập',
@@ -3260,6 +3294,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.idleTimeout': 'Boşta Kalma Süresi',
     'settings.idleTimeoutDesc': 'Reklam moduna geçmeden önceki bekleme süresi',
 
+    // TV Ad
+    'settings.tvAd.title': 'TV Reklamı',
+    'settings.tvAd.connectAddress': 'TV bağlantı adresi',
+    'settings.tvAd.connectAddressHint': 'TV otomatik bulamazsa bu adresi Zira TV Ads uygulamasına girin.',
+    'settings.tvAd.enable': 'TV reklam ekranını etkinleştir',
+    'settings.tvAd.addVideo': 'Video ekle',
+    'settings.tvAd.playbackMode': 'Oynatma modu',
+    'settings.tvAd.sequential': 'Sıralı (çalma listesi)',
+    'settings.tvAd.repeatOne': 'Bir videoyu tekrarla',
+    'settings.tvAd.muted': 'Sessiz',
+    'settings.tvAd.volume': 'Ses düzeyi',
+    'settings.tvAd.status': 'Sunucu durumu',
+    'settings.tvAd.running': 'Çalışıyor',
+    'settings.tvAd.stopped': 'Durduruldu',
+    'settings.tvAd.connectedTvs': 'Bağlı TV\'ler',
+    'settings.tvAd.remove': 'Kaldır',
+
     // Invoicing
     'invoice.title': 'Faturalama',
     'invoice.setupRequired': 'Kurulum gerekli',
@@ -4437,6 +4488,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.promoIntervalDesc': '广告轮播中幻灯片之间的时间',
     'settings.idleTimeout': '空闲超时',
     'settings.idleTimeoutDesc': '不活动后切换到广告模式之前的时间',
+
+    // TV Ad
+    'settings.tvAd.title': 'TV广告',
+    'settings.tvAd.connectAddress': 'TV连接地址',
+    'settings.tvAd.connectAddressHint': '如果电视未自动发现，请在 Zira TV Ads 应用中输入此地址。',
+    'settings.tvAd.enable': '启用TV广告屏幕',
+    'settings.tvAd.addVideo': '添加视频',
+    'settings.tvAd.playbackMode': '播放模式',
+    'settings.tvAd.sequential': '顺序播放（播放列表）',
+    'settings.tvAd.repeatOne': '重复一个视频',
+    'settings.tvAd.muted': '静音',
+    'settings.tvAd.volume': '音量',
+    'settings.tvAd.status': '服务器状态',
+    'settings.tvAd.running': '运行中',
+    'settings.tvAd.stopped': '已停止',
+    'settings.tvAd.connectedTvs': '已连接TV',
+    'settings.tvAd.remove': '删除',
 
     // Invoicing
     'invoice.title': '开票系统',
@@ -5616,6 +5684,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.idleTimeout': 'Час очікування',
     'settings.idleTimeoutDesc': 'Час до переходу в рекламний режим після неактивності',
 
+    // TV Ad
+    'settings.tvAd.title': 'TV реклама',
+    'settings.tvAd.connectAddress': 'Адрес подключения TV',
+    'settings.tvAd.connectAddressHint': 'Введите этот адрес в приложении Zira TV Ads, если TV не нашёл POS автоматически.',
+    'settings.tvAd.enable': 'Увімкнути рекламний екран TV',
+    'settings.tvAd.addVideo': 'Додати відео',
+    'settings.tvAd.playbackMode': 'Режим відтворення',
+    'settings.tvAd.sequential': 'Послідовно (плейлист)',
+    'settings.tvAd.repeatOne': 'Повторити одне відео',
+    'settings.tvAd.muted': 'Без звуку',
+    'settings.tvAd.volume': 'Гучність',
+    'settings.tvAd.status': 'Стан сервера',
+    'settings.tvAd.running': 'Працює',
+    'settings.tvAd.stopped': 'Зупинено',
+    'settings.tvAd.connectedTvs': 'Підключені TV',
+    'settings.tvAd.remove': 'Видалити',
+
     // Invoicing
     'invoice.title': 'Виставлення рахунків',
     'invoice.setupRequired': 'Потрібне налаштування',
@@ -6793,6 +6878,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.promoIntervalDesc': 'Время между слайдами рекламной карусели',
     'settings.idleTimeout': 'Время ожидания',
     'settings.idleTimeoutDesc': 'Время до перехода в рекламный режим после неактивности',
+
+    // TV Ad
+    'settings.tvAd.title': 'TV реклама',
+    'settings.tvAd.connectAddress': 'Адрес подключения TV',
+    'settings.tvAd.connectAddressHint': 'Введите этот адрес в приложении Zira TV Ads, если TV не нашёл POS автоматически.',
+    'settings.tvAd.enable': 'Включить рекламный экран TV',
+    'settings.tvAd.addVideo': 'Добавить видео',
+    'settings.tvAd.playbackMode': 'Режим воспроизведения',
+    'settings.tvAd.sequential': 'Последовательно (плейлист)',
+    'settings.tvAd.repeatOne': 'Повторить одно видео',
+    'settings.tvAd.muted': 'Без звука',
+    'settings.tvAd.volume': 'Громкость',
+    'settings.tvAd.status': 'Состояние сервера',
+    'settings.tvAd.running': 'Работает',
+    'settings.tvAd.stopped': 'Остановлено',
+    'settings.tvAd.connectedTvs': 'Подключённые TV',
+    'settings.tvAd.remove': 'Удалить',
 
     // Invoicing
     'invoice.title': 'Выставление счетов',
@@ -8053,6 +8155,23 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.promoIntervalDesc': 'Czas między slajdami karuzeli reklamowej',
     'settings.idleTimeout': 'Czas bezczynności',
     'settings.idleTimeoutDesc': 'Czas przed przejściem w tryb reklamowy po braku aktywności',
+
+    // TV Ad
+    'settings.tvAd.title': 'Reklama TV',
+    'settings.tvAd.connectAddress': 'Adres połączenia TV',
+    'settings.tvAd.connectAddressHint': 'Wpisz ten adres w aplikacji Zira TV Ads, jeśli TV nie znajdzie POS automatycznie.',
+    'settings.tvAd.enable': 'Włącz ekran reklam TV',
+    'settings.tvAd.addVideo': 'Dodaj wideo',
+    'settings.tvAd.playbackMode': 'Tryb odtwarzania',
+    'settings.tvAd.sequential': 'Sekwencyjnie (playlista)',
+    'settings.tvAd.repeatOne': 'Powtarzaj jedno wideo',
+    'settings.tvAd.muted': 'Wyciszony',
+    'settings.tvAd.volume': 'Głośność',
+    'settings.tvAd.status': 'Status serwera',
+    'settings.tvAd.running': 'Działa',
+    'settings.tvAd.stopped': 'Zatrzymany',
+    'settings.tvAd.connectedTvs': 'Podłączone TV',
+    'settings.tvAd.remove': 'Usuń',
 
     // Invoicing
     'invoice.title': 'Faktury',

@@ -306,6 +306,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   debug: {
     openDevTools: () => ipcRenderer.invoke('debug:open-devtools'),
   },
+
+  // === TV Ad Display ===
+  tvAdGetStatus: () => ipcRenderer.invoke('tvAd:getStatus'),
+  tvAdPickVideo: () => ipcRenderer.invoke('tvAd:pickVideo'),
+  tvAdSave: (cfg: any) => ipcRenderer.invoke('tvAd:save', cfg),
 });
 
 console.log('[Preload-POS] API exposed successfully');

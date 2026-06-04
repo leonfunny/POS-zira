@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
+import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
 
 // Default Telegram configuration (moltbot-style)
 const defaultTelegramConfig: TelegramConfig = {
@@ -52,6 +53,7 @@ const defaultConfig: AgentConfig = {
   autoStart: true,
   allowOversell: false,
   telegram: defaultTelegramConfig,
+  ...AD_DISPLAY_DEFAULTS,
 };
 
 // Printer config schema
@@ -369,6 +371,14 @@ const store = new Store<AgentConfig>({
     // Check-in display toggles
     checkinShowStatsBar: { type: 'boolean', default: true },
     checkinShowQueue: { type: 'boolean', default: true },
+    // TV Ads (signage) — Google TV ad playlist served over LAN
+    tvAdEnabled: { type: 'boolean', default: false },
+    tvAdPort: { type: 'number', default: 17893 },
+    tvAdPlaybackMode: { type: 'string', enum: ['sequential', 'repeat-one'], default: 'sequential' },
+    tvAdRepeatVideoId: { type: ['string', 'null'], default: null },
+    tvAdMuted: { type: 'boolean', default: true },
+    tvAdVolume: { type: 'number', default: 0 },
+    tvAdPlaylist: { type: 'array', items: { type: 'object' }, default: [] },
   } as any,
 });
 
