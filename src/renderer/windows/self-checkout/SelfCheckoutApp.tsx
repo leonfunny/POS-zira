@@ -98,6 +98,10 @@ export default function SelfCheckoutApp() {
   const [receiptPrinting, setReceiptPrinting] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
+  // Stable order id per payment attempt: a retry after a failed/ambiguous
+  // save MUST reuse the same id so pos:orders:create can deduplicate instead
+  // of recording the sale twice. Reset when the payment overlay opens.
+  const pendingOrderIdRef = useRef<string | null>(null);
 
   const [help, setHelp] = useState<
     | { id: string; reason: string; acknowledged: boolean }
@@ -136,6 +140,7 @@ export default function SelfCheckoutApp() {
 
   const resetSession = useCallback(() => {
     cart.clear();
+    pendingOrderIdRef.current = null;
     setLastPaymentMethod(null);
     setLastTotalGrosze(0);
     setLastReceiptPrinted(true);
@@ -519,7 +524,8 @@ export default function SelfCheckoutApp() {
         fail(t.emptyCart);
       }
 
-      const orderId = crypto.randomUUID();
+      const orderId = pendingOrderIdRef.current ?? crypto.randomUUID();
+      pendingOrderIdRef.current = orderId;
       const saleTotalGrosze = cart.cart.totalGrosze;
 
       const sale = buildSelfCheckoutSale({
@@ -537,6 +543,7 @@ export default function SelfCheckoutApp() {
       // The order is durably saved — drop the localStorage cart NOW so a
       // crash/power cut during the receipt/thank-you screens can't restore
       // an already-paid cart for the next customer.
+      pendingOrderIdRef.current = null;
       setLastTotalGrosze(saleTotalGrosze);
       cart.clear();
 
@@ -649,7 +656,12 @@ export default function SelfCheckoutApp() {
             if (item) cart.setQuantity(id, item.quantity - 1);
           }}
           onRemove={(id) => cart.remove(id)}
-          onCheckout={() => setPaymentOpen(true)}
+          onCheckout={() => {
+            // New payment attempt session — retries inside the overlay reuse
+            // one order id; a fresh overlay starts clean.
+            pendingOrderIdRef.current = null;
+            setPaymentOpen(true);
+          }}
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}
           onLangChange={handleLangChange}

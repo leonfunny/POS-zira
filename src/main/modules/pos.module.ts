@@ -1519,7 +1519,19 @@ export class PosModule extends BaseModule {
 
           return { success: true, id };
       }
-      catch (e: any) { return { success: false, error: e.message }; }
+      catch (e: any) {
+        // Idempotency: kiosk/POS retries reuse the same order id, so a retry
+        // racing an already-committed create (whose IPC reply was lost) hits
+        // the orders.id primary key. If the row truly exists, the sale was
+        // saved — report success instead of pushing the cashier to retry
+        // into a duplicate order.
+        const orderId = String(order?.id || '');
+        if (orderId && /UNIQUE constraint failed: orders\.id/i.test(String(e?.message || '')) && orderRepo.getById(orderId)) {
+          logger.warn(`[PosModule] Order ${orderId} already exists — treating duplicate create as success`);
+          return { success: true, id: orderId, duplicate: true };
+        }
+        return { success: false, error: e.message };
+      }
     });
     ipcMain.handle('pos:orders:getDailyStats', (_e, date: string, options?: { fiscalOnly?: boolean }) => {
       return orderRepo.getDailyStats(date, Boolean(options?.fiscalOnly));

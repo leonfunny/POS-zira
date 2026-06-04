@@ -123,6 +123,19 @@ describe('self-checkout runtime model', () => {
     expect(posModuleSource).toContain("method === 'CASH'");
   });
 
+  it('reuses one order id per payment attempt and dedupes on the main side', () => {
+    // If the create reply is lost after the order actually committed, the
+    // staff retry must NOT record the sale twice: the renderer reuses the
+    // same order id and pos:orders:create treats the PK conflict as success.
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(appSource).toContain('pendingOrderIdRef.current ?? crypto.randomUUID()');
+    expect(appSource).toContain('pendingOrderIdRef.current = orderId');
+    expect(posModuleSource).toContain('UNIQUE constraint failed: orders\\.id');
+    expect(posModuleSource).toContain('duplicate: true');
+  });
+
   it('routes every kiosk payment method through the fiscal paragon', () => {
     // Polish fiscal law requires a paragon fiskalny for cash and BLIK sales
     // too — the kiosk must never downgrade them to a non-fiscal order copy.
