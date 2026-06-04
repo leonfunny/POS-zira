@@ -15,7 +15,7 @@ import {
   DEFAULT_ENTITLEMENTS,
   DeleteConfirmConfig,
 } from '../../shared/types';
-import { getConfig, setConfig } from '../config/store';
+import { getConfig, setConfig, getSecureAuthToken } from '../config/store';
 
 // Default delete confirmation config
 const DEFAULT_DELETE_CONFIRM: DeleteConfirmConfig = {
@@ -31,7 +31,12 @@ const CACHE_DURATION_MS = 60 * 60 * 1000;
  */
 async function fetchEntitlementsFromBackend(salonId: string): Promise<SalonEntitlements | null> {
   const config = getConfig();
-  if (!config.serverUrl || !config.authToken) {
+  // Auth tokens moved to encrypted storage long ago — config.authToken is a
+  // legacy plaintext key that's empty on every modern login, so reading it
+  // here meant the entitlements fetch NEVER fired (found 2026-06-04 while
+  // verifying the new backend endpoint end-to-end).
+  const authToken = getSecureAuthToken() || config.authToken;
+  if (!config.serverUrl || !authToken) {
     console.log('[Entitlements] No server URL or auth token, cannot fetch entitlements');
     return null;
   }
@@ -40,7 +45,7 @@ async function fetchEntitlementsFromBackend(salonId: string): Promise<SalonEntit
     const response = await fetch(`${config.serverUrl}/api/v1/admin/desktop/entitlements`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${config.authToken}`,
+        'Authorization': `Bearer ${authToken}`,
         'Content-Type': 'application/json',
       },
     });
