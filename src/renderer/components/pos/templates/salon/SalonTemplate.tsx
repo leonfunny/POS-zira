@@ -78,23 +78,25 @@ function addDays(date: string, days: number): string {
   return isoDate(new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0)));
 }
 
-function formatTime(value?: string | null): string {
+function formatTime(value?: string | null, tz?: string): string {
   if (!value) return '--:--';
   return new Date(value).toLocaleTimeString('pl-PL', {
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Prague',
+    // Salon timezone from the API response; device-local when absent.
+    ...(tz ? { timeZone: tz } : {}),
   });
 }
 
 function formatDayLabel(value?: string | null): string {
   if (!value) return '--';
   const [year, month, day] = value.split('-').map(Number);
+  // UTC-noon anchor: the rendered calendar day is stable in every timezone,
+  // so no explicit timeZone is needed (was hardcoded Europe/Prague).
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).toLocaleDateString('vi-VN', {
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
-    timeZone: 'Europe/Prague',
   });
 }
 
@@ -628,7 +630,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                         <div key={checkin.id} className="rounded-md border border-amber-200 bg-amber-50 p-3">
                           <div className="truncate text-sm font-black text-slate-900">{checkin.customer_name || 'Walk-in'}</div>
                           <div className="mt-1 truncate text-xs font-semibold text-slate-600">{checkin.service_name || 'Service'}</div>
-                          <div className="mt-2 text-xs font-bold text-amber-800">{formatTime(checkin.checked_in_at)}</div>
+                          <div className="mt-2 text-xs font-bold text-amber-800">{formatTime(checkin.checked_in_at, schedule?.salon?.timezone)}</div>
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <button
                               type="button"
@@ -676,7 +678,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                           <div key={assignment.id} className="rounded-md border border-blue-200 bg-blue-50 p-3">
                             <div className="truncate text-sm font-black text-slate-900">{assignment.customer_name || 'Walk-in'}</div>
                             <div className="mt-1 truncate text-xs font-semibold text-slate-600">{assignment.service_name || 'Service'}</div>
-                            <div className="mt-2 text-xs font-bold text-blue-800">{staff?.name || 'Staff'} · {formatTime(assignment.assigned_at)}</div>
+                            <div className="mt-2 text-xs font-bold text-blue-800">{staff?.name || 'Staff'} · {formatTime(assignment.assigned_at, schedule?.salon?.timezone)}</div>
                           </div>
                         );
                       })}
@@ -689,14 +691,14 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                     <div>
                       <div className="text-lg font-black text-slate-900">Lich tho</div>
                       <div className="text-xs font-semibold text-slate-500">
-                        {schedule?.business_date || scheduleDate} · {schedule?.bookings?.length || 0} booking · timezone Europe/Prague
+                        {schedule?.business_date || scheduleDate} · {schedule?.bookings?.length || 0} booking · timezone {schedule?.salon?.timezone || 'local'}
                       </div>
                     </div>
                     <div className="text-xs font-bold text-slate-500">
                       {schedule?.stale
-                        ? `Offline cache ${schedule.cached_at ? formatTime(schedule.cached_at) : ''}`
+                        ? `Offline cache ${schedule.cached_at ? formatTime(schedule.cached_at, schedule?.salon?.timezone) : ''}`
                         : schedule?.server_time
-                          ? `Sync ${formatTime(schedule.server_time)}`
+                          ? `Sync ${formatTime(schedule.server_time, schedule?.salon?.timezone)}`
                           : 'Chua sync'}
                     </div>
                   </div>
@@ -752,7 +754,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                             )}
                             {bookingsForStaff(schedule, staff.staff_profile_id).map((booking) => (
                               <div key={booking.id} className={`rounded-md border p-3 shadow-sm ${statusBadgeClass(booking.status)}`}>
-                                <div className="text-xs font-black text-slate-500">{formatTime(booking.starts_at)} - {formatTime(booking.ends_at)}</div>
+                                <div className="text-xs font-black text-slate-500">{formatTime(booking.starts_at, schedule?.salon?.timezone)} - {formatTime(booking.ends_at, schedule?.salon?.timezone)}</div>
                                 <div className="mt-1 truncate text-sm font-black text-slate-900">{booking.customer_name || 'Customer'}</div>
                                 <div className="mt-1 line-clamp-2 text-xs font-semibold text-slate-600">{booking.service_name || 'Service'}</div>
                                 <div className="mt-2 inline-flex rounded-full border border-current px-2 py-0.5 text-[10px] font-black uppercase">
