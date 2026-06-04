@@ -112,13 +112,27 @@ describe('self-checkout runtime model', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:finalize-print', payload)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:sync:orders')");
     expect(posModuleSource).toContain("route: 'FISCAL_RECEIPT'");
-    expect(posModuleSource).toContain("route: 'ORDER_COPY'");
     expect(posModuleSource).toContain("ipcMain.handle('self-checkout:finalize-print'");
-    expect(posModuleSource).toContain("method === 'CARD'");
     expect(posModuleSource).toContain('printFiscalReceipt(orderId)');
     expect(posModuleSource).toContain("method === 'CASH'");
-    expect(posModuleSource).toContain('printReceiptAndOpenDrawer(orderId)');
-    expect(posModuleSource).toContain('printReceipt(orderId)');
+  });
+
+  it('routes every kiosk payment method through the fiscal paragon', () => {
+    // Polish fiscal law requires a paragon fiskalny for cash and BLIK sales
+    // too — the kiosk must never downgrade them to a non-fiscal order copy.
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const finalizeStart = posModuleSource.indexOf("ipcMain.handle('self-checkout:finalize-print'");
+    const finalizeEnd = posModuleSource.indexOf("ipcMain.handle('pos:shift:open'", finalizeStart);
+    const finalizeBlock = posModuleSource.slice(finalizeStart, finalizeEnd);
+
+    expect(finalizeBlock).toContain('printFiscalReceipt(orderId)');
+    expect(finalizeBlock).toContain('openCashDrawer()');
+    expect(finalizeBlock).not.toContain("route: 'ORDER_COPY'");
+    expect(finalizeBlock).not.toContain('printReceiptAndOpenDrawer');
+
+    const receiptSource = readSource('src/renderer/windows/self-checkout/screens/ReceiptScreen.tsx');
+    expect(receiptSource).toContain('const printLabel = t.receiptPrintStep');
+    expect(receiptSource).toContain('const printingLabel = t.receiptFiscalPrinting');
   });
 
   it('locks the receipt screen on print failure instead of completing the session', () => {

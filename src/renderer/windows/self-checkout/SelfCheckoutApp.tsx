@@ -529,7 +529,8 @@ export default function SelfCheckoutApp() {
       window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
 
       // Keep the customer on the receipt screen while the backend routes the
-      // print job. Cash/BLIK use the order-copy printer; card uses fiscal.
+      // print job. ALL methods print a fiscal paragon (Polish law requires
+      // one for cash/BLIK too); CASH additionally pulses the cash drawer.
       setLastPaymentMethod(method);
       setPaymentOpen(false);
       setReceiptPrinting(true);

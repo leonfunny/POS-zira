@@ -40,8 +40,11 @@ export default function ReceiptScreen({
   // Visible countdown so the customer knows the screen will auto-advance.
   const [remainingMs, setRemainingMs] = useState(AUTO_ADVANCE_MS);
   const printFailed = !receiptPrinted && !receiptPrinting;
-  const printLabel = method === 'CARD' ? t.receiptPrintStep : t.receiptOrderPrintStep;
-  const printingLabel = method === 'CARD' ? t.receiptFiscalPrinting : t.receiptOrderPrinting;
+  // Every method routes through the fiscal printer now (Polish fiscal law
+  // requires a paragon for cash/BLIK sales too), so the labels are fiscal
+  // for all tenders.
+  const printLabel = t.receiptPrintStep;
+  const printingLabel = t.receiptFiscalPrinting;
 
   useEffect(() => {
     if (!receiptPrinted || receiptPrinting) return;

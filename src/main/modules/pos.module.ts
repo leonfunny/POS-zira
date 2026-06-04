@@ -2421,37 +2421,24 @@ export class PosModule extends BaseModule {
       }
 
       try {
-        if (method === 'CARD') {
-          const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
-          return {
-            success: fiscalPrinted,
-            printed: fiscalPrinted,
-            fiscalPrinted,
-            receiptPrinted: fiscalPrinted,
-            route: 'FISCAL_RECEIPT',
-          };
-        }
-
+        // Polish fiscal law requires a paragon fiskalny for EVERY consumer
+        // sale regardless of tender — cash and BLIK included, not just card.
+        // Route all methods through the fiscal printer (local hardware or the
+        // shared blocking backend job to the POS that owns the device).
+        // CASH additionally opens the local cash drawer (best-effort, before
+        // the print so staff can store the money even if the print fails).
+        let drawerOpened = false;
         if (method === 'CASH') {
-          const result = await this.paymentController?.printReceiptAndOpenDrawer(orderId);
-          const receiptPrinted = result?.receiptPrinted ?? false;
-          return {
-            success: receiptPrinted,
-            printed: receiptPrinted,
-            receiptPrinted,
-            drawerOpened: result?.drawerOpened ?? false,
-            route: 'ORDER_COPY',
-            error: result?.error,
-          };
+          drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
         }
-
-        const receiptPrinted = await this.paymentController?.printReceipt(orderId) ?? false;
+        const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
         return {
-          success: receiptPrinted,
-          printed: receiptPrinted,
-          receiptPrinted,
-          drawerOpened: false,
-          route: 'ORDER_COPY',
+          success: fiscalPrinted,
+          printed: fiscalPrinted,
+          fiscalPrinted,
+          receiptPrinted: fiscalPrinted,
+          drawerOpened,
+          route: 'FISCAL_RECEIPT',
         };
       } catch (e: any) {
         return {
