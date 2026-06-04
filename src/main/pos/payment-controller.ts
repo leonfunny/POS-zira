@@ -1,5 +1,6 @@
 import { ReceiptData, PrinterType } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
+import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { productRepo } from '../database/repos/product-repo';
 import { resolveName } from '../../shared/catalog-names';
 import logger from '../logger';
@@ -431,6 +432,15 @@ export class PaymentController {
       if (shared.handled) {
         if (shared.printed) {
           logger.info(`${successMessage} via shared fiscal printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
+          // Mirror the confirmation into the LOCAL fiscal journal: the
+          // paragon physically printed on another POS, but history and the
+          // fiscal-visibility filter on THIS terminal read local
+          // fiscal_attempts. Best-effort — never fail a confirmed print.
+          try {
+            fiscalAttemptRepo.recordRemoteFiscalSuccess(orderId, shared.jobId, shared.printerId);
+          } catch (journalErr) {
+            logger.warn(`[Payment] Remote fiscal journal mirror failed for ${orderId}: ${journalErr}`);
+          }
           return true;
         }
         const error = shared.error || 'Remote fiscal printer did not confirm final print completion';

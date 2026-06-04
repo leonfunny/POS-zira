@@ -5,7 +5,7 @@
  * auto-connect, salon switching, config get/set, and connection management.
  */
 
-import { ipcMain, dialog, shell, safeStorage } from 'electron';
+import { ipcMain, dialog, shell, safeStorage, BrowserWindow } from 'electron';
 import { join } from 'path';
 import { app } from 'electron';
 import { BaseModule, ModuleState } from '../core/module';
@@ -165,6 +165,16 @@ export class AuthModule extends BaseModule {
       // Notify modules (hardware reinit, telegram restart, AI key change, etc.)
       if (this.eventBus) {
         this.eventBus.emit('config:changed', { changedKeys: Object.keys(sanitized) });
+      }
+      // Notify ALL renderer windows. Settings lives in the main window while
+      // the POS window caches config at mount — without this ping a toggle
+      // (e.g. showNonFiscalOrders) silently did nothing until app restart.
+      // Ping only, no payload: each window re-fetches via get-config so the
+      // public kiosk surface never receives config contents it didn't ask for.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          try { win.webContents.send('config-updated'); } catch { /* window closing */ }
+        }
       }
       return result;
     });

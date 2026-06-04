@@ -244,6 +244,8 @@ interface PosStaffWriteResult {
 interface ElectronAPI {
   // Config
   getConfig: () => Promise<AgentConfig>;
+  /** Fires after any window changes config via set-config (ping only — re-fetch). */
+  onConfigUpdated?: (callback: () => void) => () => void;
   setConfig: (config: Partial<AgentConfig>) => Promise<AgentConfig>;
 
   // Connection
@@ -508,6 +510,8 @@ interface ElectronAPI {
     create: (data: any) => Promise<{ success: boolean; data?: any }>;
     update: (id: string, data: any) => Promise<{ success: boolean }>;
     getHistory: (customerId: string) => Promise<any[]>;
+    /** Order ids (of the given set) with a confirmed paragon in the local fiscal journal. */
+    getConfirmedFiscalIds: (orderIds: string[]) => Promise<string[]>;
     getRecommendations: (customerId: string) => Promise<any[]>;
   };
 

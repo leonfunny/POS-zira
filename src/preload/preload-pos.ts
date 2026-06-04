@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:orders:getDailyStats', date, options),
       getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
+    getConfirmedFiscalIds: (orderIds: string[]) =>
+      ipcRenderer.invoke('pos:orders:getConfirmedFiscalIds', orderIds),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
       mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),
@@ -246,6 +248,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // === Config ===
   getConfig: () => ipcRenderer.invoke('get-config'),
   setConfig: (config: any) => ipcRenderer.invoke('set-config', config),
+  onConfigUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('config-updated', listener);
+    return () => ipcRenderer.removeListener('config-updated', listener);
+  },
   saveConfig: (config: any) => ipcRenderer.invoke('set-config', config),
   printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke('print-label', barcode, text, options),

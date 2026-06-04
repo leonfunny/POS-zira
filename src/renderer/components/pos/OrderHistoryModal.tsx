@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { applyFiscalVisibility } from './order-fiscal-visibility';
 import { translations } from '../../i18n/translations';
 import { useConfig } from '../../hooks/useConfig';
 import { describeFiscalError } from '../../lib/fiscal-error-text';
@@ -1322,7 +1323,19 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
     if (hideNonFiscalOrders) {
-      merged = merged.filter((o) => o.has_fiscal !== 0);
+      // Server-sourced rows have no has_fiscal — look them up in the local
+      // fiscal journal before filtering so they can't leak through.
+      let confirmedFiscalIds = new Set<string>();
+      const unknownIds = merged
+        .filter((o) => typeof o.has_fiscal !== 'number')
+        .map((o) => o.id);
+      if (unknownIds.length > 0) {
+        const confirmed = await window.electronAPI.pos.orders
+          .getConfirmedFiscalIds?.(unknownIds)
+          .catch(() => [] as string[]);
+        confirmedFiscalIds = new Set(confirmed || []);
+      }
+      merged = applyFiscalVisibility(merged, true, confirmedFiscalIds);
     }
     if (filterMethod === 'SPLIT') {
       merged = merged.filter(isSplit);

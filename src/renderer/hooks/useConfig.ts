@@ -27,6 +27,21 @@ export function useConfig() {
       .finally(() => setLoading(false));
   }, [setConfig]);
 
+  // Cross-window staleness fix: Settings (main window) can change config
+  // while this window keeps a module-level cache. Main broadcasts a
+  // 'config-updated' ping after every set-config; re-fetch so toggles like
+  // showNonFiscalOrders take effect without an app restart.
+  useEffect(() => {
+    const unsubscribe = (window.electronAPI as any)?.onConfigUpdated?.(() => {
+      window.electronAPI.getConfig()
+        .then(setConfig)
+        .catch((err: any) => rlog.error('[useConfig] Refresh after config-updated failed:', err));
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [setConfig]);
+
   const updateConfig = useCallback(async (partial: Partial<AgentConfig>) => {
     const updated = await window.electronAPI.setConfig(partial);
     setConfig(updated);

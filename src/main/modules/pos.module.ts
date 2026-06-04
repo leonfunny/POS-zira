@@ -1562,6 +1562,21 @@ export class PosModule extends BaseModule {
       return { orders: orders.slice(offset, offset + limit), total, page, limit };
     });
 
+    // Order History fiscal-visibility: which of these order ids have a
+    // confirmed paragon in the LOCAL fiscal journal. Server-sourced history
+    // rows don't carry the SQL-computed has_fiscal flag — the renderer asks
+    // here before applying the hide-non-fiscal filter.
+    ipcMain.handle('pos:orders:getConfirmedFiscalIds', (_e, orderIds: string[]) => {
+      try {
+        const ids = Array.isArray(orderIds)
+          ? orderIds.filter((id): id is string => typeof id === 'string' && id.length > 0).slice(0, 500)
+          : [];
+        return fiscalAttemptRepo.getConfirmedOrderIds(ids);
+      } catch {
+        return [];
+      }
+    });
+
     ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {
       const order = orderRepo.getById(orderId);
       if (!order) return null;

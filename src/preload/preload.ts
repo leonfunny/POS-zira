@@ -76,6 +76,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CONFIG),
   setConfig: (config: Partial<AgentConfig>) =>
     ipcRenderer.invoke(IPC_CHANNELS.SET_CONFIG, config),
+  onConfigUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('config-updated', listener);
+    return () => ipcRenderer.removeListener('config-updated', listener);
+  },
   saveConfig: (config: Partial<AgentConfig>) =>
     ipcRenderer.invoke(IPC_CHANNELS.SET_CONFIG, config), // Alias for setConfig
 
