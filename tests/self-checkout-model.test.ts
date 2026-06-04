@@ -183,6 +183,16 @@ describe('self-checkout runtime model', () => {
     expect(appSource).toContain('STAFF_SWIPE_PX');
     expect(appSource).toContain('selfCheckout?.close?.()');
     expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:close')");
+
+    // The swipe gesture must only OPEN the hold-to-confirm dialog — a
+    // customer who discovers the gesture must not be able to close the
+    // kiosk (and reach the desktop / cashier POS) without the 3s hold.
+    const gestureStart = appSource.indexOf('const onTouchMove');
+    const gestureEnd = appSource.indexOf('const onTouchEnd');
+    const gestureBlock = appSource.slice(gestureStart, gestureEnd);
+    expect(gestureBlock).toContain('setStaffExitOpen(true)');
+    expect(gestureBlock).not.toContain('selfCheckout?.close');
+    expect(appSource).toContain('STAFF_EXIT_HOLD_MS = 3000');
   });
 
   it('keeps free bags out of self-checkout pricing and order payloads', () => {

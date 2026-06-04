@@ -138,6 +138,10 @@ interface ScStrings {
   // Thank-you
   thankYouTitle: string;
   thankYouSub: string;
+  // Staff exit (3-finger gesture confirm)
+  staffExitTitle: string;
+  staffExitBody: string;
+  staffExitHold: string;
 }
 
 const PL: ScStrings = {
@@ -263,6 +267,9 @@ const PL: ScStrings = {
   scanAgain: 'Skanuj dalej',
   thankYouTitle: 'Dziękujemy!',
   thankYouSub: 'Odbierz paragon z drukarki',
+  staffExitTitle: 'Zamknąć kasę samoobsługową?',
+  staffExitBody: 'Funkcja dla obsługi. Przytrzymaj przycisk przez 3 sekundy, aby zamknąć kasę.',
+  staffExitHold: 'Przytrzymaj, aby zamknąć',
 };
 
 const EN: ScStrings = {
@@ -388,6 +395,9 @@ const EN: ScStrings = {
   scanAgain: 'Keep scanning',
   thankYouTitle: 'Thank you!',
   thankYouSub: 'Please collect your receipt',
+  staffExitTitle: 'Close the self-checkout?',
+  staffExitBody: 'Staff only. Press and hold the button for 3 seconds to close the kiosk.',
+  staffExitHold: 'Hold to close',
 };
 
 const VI: ScStrings = {
@@ -513,6 +523,9 @@ const VI: ScStrings = {
   scanAgain: 'Tiếp tục quét',
   thankYouTitle: 'Cảm ơn quý khách!',
   thankYouSub: 'Vui lòng nhận hóa đơn từ máy in',
+  staffExitTitle: 'Đóng quầy tự thanh toán?',
+  staffExitBody: 'Chức năng dành cho nhân viên. Giữ nút 3 giây để đóng quầy.',
+  staffExitHold: 'Giữ để đóng',
 };
 
 const TABLE: Record<ScLanguage, ScStrings> = { pl: PL, en: EN, vi: VI };

@@ -93,6 +93,7 @@ export default function SelfCheckoutApp() {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
+  const [staffExitOpen, setStaffExitOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
   const [idleWarnOpen, setIdleWarnOpen] = useState(false);
   const [receiptPrinting, setReceiptPrinting] = useState(false);
@@ -263,7 +264,10 @@ export default function SelfCheckoutApp() {
         );
         if (allMovedDown) {
           staffGestureStartY.current = [];
-          void window.electronAPI?.selfCheckout?.close?.();
+          // The gesture alone must not close the kiosk: a curious customer
+          // who discovers it would land on the desktop / cashier POS window.
+          // Require an explicit hold-to-confirm step (staff only).
+          setStaffExitOpen(true);
         }
       }
     };
@@ -579,6 +583,17 @@ export default function SelfCheckoutApp() {
   );
 
   const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);
+
+  if (staffExitOpen) {
+    return (
+      <StaffExitConfirm
+        lang={lang}
+        onConfirm={() => void window.electronAPI?.selfCheckout?.close?.()}
+        onCancel={() => setStaffExitOpen(false)}
+      />
+    );
+  }
+
   if (help) {
     return (
       <HelpLockedOverlay
@@ -764,6 +779,89 @@ function AbandonConfirm({ lang, onConfirm, onCancel }: AbandonConfirmProps) {
             {t.abandonConfirm}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Hold-to-confirm staff exit. The 3-finger swipe gesture only OPENS this
+// dialog; actually closing the kiosk requires holding the button for 3
+// seconds — long enough that a customer who stumbled on the gesture won't
+// get through, short enough not to annoy staff. Auto-cancels after 15s.
+const STAFF_EXIT_HOLD_MS = 3000;
+const STAFF_EXIT_AUTO_CANCEL_MS = 15_000;
+
+interface StaffExitConfirmProps {
+  lang: ScLanguage;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function StaffExitConfirm({ lang, onConfirm, onCancel }: StaffExitConfirmProps) {
+  const t = getScStrings(lang);
+  const [heldMs, setHeldMs] = useState(0);
+  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const confirmedRef = useRef(false);
+
+  const stopHold = useCallback(() => {
+    if (holdInterval.current) clearInterval(holdInterval.current);
+    holdInterval.current = null;
+    if (!confirmedRef.current) setHeldMs(0);
+  }, []);
+
+  const startHold = useCallback(() => {
+    if (holdInterval.current || confirmedRef.current) return;
+    setHeldMs(0);
+    holdInterval.current = setInterval(() => {
+      setHeldMs((ms) => {
+        const next = ms + 100;
+        if (next >= STAFF_EXIT_HOLD_MS && !confirmedRef.current) {
+          confirmedRef.current = true;
+          onConfirm();
+        }
+        return next;
+      });
+    }, 100);
+  }, [onConfirm]);
+
+  useEffect(() => {
+    const autoCancel = setTimeout(onCancel, STAFF_EXIT_AUTO_CANCEL_MS);
+    return () => {
+      clearTimeout(autoCancel);
+      if (holdInterval.current) clearInterval(holdInterval.current);
+    };
+  }, [onCancel]);
+
+  const progress = Math.min(1, heldMs / STAFF_EXIT_HOLD_MS);
+
+  return (
+    <div className="sc-shell fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-6 select-none">
+      <div className="sc-surface w-[560px] p-9 text-center">
+        <h3 className="text-4xl font-black text-[var(--sc-ink)]">{t.staffExitTitle}</h3>
+        <p className="mt-4 text-lg leading-7 text-[var(--sc-muted)]">{t.staffExitBody}</p>
+        <button
+          type="button"
+          onPointerDown={startHold}
+          onPointerUp={stopHold}
+          onPointerLeave={stopHold}
+          onPointerCancel={stopHold}
+          onContextMenu={(e) => e.preventDefault()}
+          className="sc-focusable relative mt-8 w-full overflow-hidden rounded-[24px] border-2 border-red-700 bg-red-600 px-6 py-5 text-2xl font-black text-white"
+        >
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-0 left-0 bg-red-900/60 transition-[width] duration-100 ease-linear"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
+          <span className="relative">{t.staffExitHold}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="sc-secondary-action sc-focusable mt-4 w-full text-lg"
+        >
+          {t.cancel}
+        </button>
       </div>
     </div>
   );
