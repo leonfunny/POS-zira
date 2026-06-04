@@ -2152,7 +2152,8 @@ export class HardwareModule extends BaseModule {
           const orderNumber = String(receiptPayload.orderNumber || '');
           const paymentMethod = String(receiptPayload.payment?.method || '').toUpperCase();
           const explicitDrawerRequest = Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
-          const looksLikePosOrderCopy = referenceType === 'POS_RECEIPT' || /^POS[-\d]/i.test(orderNumber);
+          // ZAM- = the separate order-copy numbering series (non-fiscal sales).
+          const looksLikePosOrderCopy = referenceType === 'POS_RECEIPT' || /^(POS|ZAM)[-\d]/i.test(orderNumber);
           const inferredPosCashDrawerRequest = (
             !explicitDrawerRequest &&
             looksLikePosOrderCopy &&

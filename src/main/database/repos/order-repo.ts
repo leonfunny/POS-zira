@@ -42,6 +42,9 @@ export interface OrderRow {
   has_fiscal?: number;
   /** Daily kitchen pickup number ('0001'...) — set when the order has kitchen items. */
   kitchen_number?: string | null;
+  /** Input-only hint for number generation (NOT a column): which daily
+   *  series this order belongs to. Default FISCAL. */
+  number_series?: 'FISCAL' | 'ORDER' | null;
 }
 
 export interface OrderItemRow {
@@ -112,7 +115,9 @@ export const orderRepo = {
     database.transaction(() => {
       // Use atomic sequence counter for order number generation
       if (!order.order_number) {
-        finalOrderNumber = orderRepo.generateOrderNumber();
+        finalOrderNumber = orderRepo.generateOrderNumber(
+          order.number_series === 'ORDER' ? 'ORDER' : 'FISCAL',
+        );
       } else {
         finalOrderNumber = order.order_number;
       }
@@ -537,11 +542,20 @@ export const orderRepo = {
     return { inserted: true, localOrderId: dbRow.id };
   },
 
-  generateOrderNumber(): string {
+  /**
+   * Two independent daily series:
+   * - FISCAL (default): POS-YYYYMMDD-#### — orders whose payment flow prints
+   *   a fiscal paragon. Counter name unchanged so the existing sequence
+   *   continues seamlessly.
+   * - ORDER: ZAM-YYYYMMDD-#### — orders that only print the non-fiscal order
+   *   copy (cash/BLIK without fiscal). Separate counter so the order-copy
+   *   slips never interleave with (or reveal gaps in) the fiscal series.
+   */
+  generateOrderNumber(series: 'FISCAL' | 'ORDER' = 'FISCAL'): string {
     // Use atomic sequence counter to prevent race conditions
     const dateRow = database.get<{ d: string }>("SELECT strftime('%Y%m%d', 'now') as d");
     const datePrefix = dateRow?.d ?? new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const counterName = `order-${datePrefix}`;
+    const counterName = series === 'ORDER' ? `order-copy-${datePrefix}` : `order-${datePrefix}`;
 
     // Atomic increment via INSERT + UPDATE
     database.run(
@@ -558,6 +572,6 @@ export const orderRepo = {
       [counterName],
     );
     const seq = (row?.current_value ?? 1).toString().padStart(4, '0');
-    return `POS-${datePrefix}-${seq}`;
+    return `${series === 'ORDER' ? 'ZAM' : 'POS'}-${datePrefix}-${seq}`;
   },
 };

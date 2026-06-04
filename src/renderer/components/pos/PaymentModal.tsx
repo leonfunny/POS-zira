@@ -346,9 +346,20 @@ export default function PaymentModal({
       tendersJson = JSON.stringify(tenders);
     }
 
+    // Numbering series: CARD/TRANSFER auto-print the fiscal paragon -> the
+    // fiscal POS- series. CASH/BLIK print the order copy (fiscal only on
+    // explicit prompt) and INVOICE prints neither -> the separate ZAM-
+    // order-copy series, so non-fiscal slips never interleave with the
+    // fiscal numbering.
+    const seriesHasCash = splitMode ? tenders.some(t => t.method === 'CASH') : method === 'CASH';
+    const seriesHasBlik = splitMode ? tenders.some(t => t.method === 'BLIK') : method === 'BLIK';
+    const numberSeries: 'FISCAL' | 'ORDER' =
+      seriesHasCash || seriesHasBlik || method === 'INVOICE' ? 'ORDER' : 'FISCAL';
+
     const order = {
       id: orderId,
       order_number: null as string | null,
+      number_series: numberSeries,
       status: 'COMPLETED',
       subtotal: cart.subtotal,
       discount: cart.discount,
