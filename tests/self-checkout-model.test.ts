@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  PAYMENT_IDLE_TIMEOUT_MULTIPLIER,
+  resolveIdleTimeoutMs,
   resolveSelfCheckoutPaymentProfile,
   resolveSelfCheckoutProfile,
   resolveSelfCheckoutMode,
@@ -40,6 +42,22 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutPaymentProfile('demo', [])).toBe('assistedDemo');
     expect(resolveSelfCheckoutPaymentProfile('production', [])).toBe('assistedProduction');
     expect(resolveSelfCheckoutPaymentProfile('production', ['no_terminal'])).toBe('unavailable');
+  });
+
+  it('extends the idle window while the payment overlay is open', () => {
+    // A customer sending a BLIK transfer from their own phone (or waiting for
+    // staff to bring change) doesn't touch the kiosk. A 90s hard reset there
+    // would wipe a sale the customer may have already paid for.
+    expect(resolveIdleTimeoutMs(90_000, false)).toBe(90_000);
+    expect(resolveIdleTimeoutMs(90_000, true)).toBe(90_000 * PAYMENT_IDLE_TIMEOUT_MULTIPLIER);
+
+    // The app must consult the payment-aware helper, and the idle effect must
+    // still run during payment (paymentOpen is a dep, not a skip condition).
+    const appSource = readFileSync(
+      new URL('../src/renderer/windows/self-checkout/SelfCheckoutApp.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(appSource).toContain('resolveIdleTimeoutMs(idleTimeoutMs, paymentOpen)');
   });
 
   it('keeps customer checkout out of separate summary and payment routes', () => {

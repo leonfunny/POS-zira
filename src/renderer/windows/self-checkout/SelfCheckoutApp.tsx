@@ -12,6 +12,7 @@ import {
   SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
   SelfCheckoutProfile,
+  resolveIdleTimeoutMs,
   resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
@@ -275,6 +276,10 @@ export default function SelfCheckoutApp() {
   // Idle handling: two-phase — warn 15s before reset so a customer who
   // looked away can confirm they're still there. Skips screens that
   // already auto-advance or that are passive (welcome/thankyou/unavailable).
+  // While the payment overlay is open the window is extended (see
+  // resolveIdleTimeoutMs): the customer may be paying on their own phone or
+  // waiting for staff with money already handed over — a hard reset here
+  // would drop a sale that was effectively paid.
   useEffect(() => {
     if (
       screen === 'welcome'
@@ -284,10 +289,11 @@ export default function SelfCheckoutApp() {
       || help
       || idleWarnOpen
     ) return;
-    const warnDelay = Math.max(0, idleTimeoutMs - IDLE_WARN_MS);
+    const effectiveTimeoutMs = resolveIdleTimeoutMs(idleTimeoutMs, paymentOpen);
+    const warnDelay = Math.max(0, effectiveTimeoutMs - IDLE_WARN_MS);
     const warn = setTimeout(() => setIdleWarnOpen(true), warnDelay);
     return () => clearTimeout(warn);
-  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, screen]);
+  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, paymentOpen, screen]);
 
   useEffect(() => {
     if (!idleWarnOpen) return;
