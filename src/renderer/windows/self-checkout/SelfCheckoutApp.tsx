@@ -543,6 +543,13 @@ export default function SelfCheckoutApp() {
       const receiptPrinted = !!(printResult?.printed ?? printResult?.receiptPrinted ?? printResult?.fiscalPrinted);
       if (!receiptPrinted) {
         showToast('error', printResult?.error || t.receiptPrintFailed);
+        // Paid-but-no-paragon is a fiscal/legal incident, not just a UX
+        // hiccup: alert staff proactively (fire-and-forget, no UI lock) so
+        // it gets handled even if the customer walks away.
+        window.electronAPI?.selfCheckout?.helpRequest?.({
+          reason: 'PRINT_FAILED',
+          cartTotalGrosze: cart.cart.totalGrosze,
+        }).catch(() => undefined);
       }
       setLastReceiptPrinted(receiptPrinted);
       setReceiptPrinting(false);

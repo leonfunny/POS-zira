@@ -135,7 +135,7 @@ describe('self-checkout runtime model', () => {
     expect(receiptSource).toContain('const printingLabel = t.receiptFiscalPrinting');
   });
 
-  it('locks the receipt screen on print failure instead of completing the session', () => {
+  it('holds the receipt screen on print failure, alerts staff, then self-recovers', () => {
     const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
     const receiptSource = readSource('src/renderer/windows/self-checkout/screens/ReceiptScreen.tsx');
 
@@ -144,8 +144,15 @@ describe('self-checkout runtime model', () => {
     expect(receiptSource).toContain('{printFailed && onCallStaff && (');
     expect(receiptSource).not.toContain('onClick={onComplete}');
     expect(receiptSource).not.toContain('t.receiptContinue');
+    // No fast auto-advance on failure, but a long recovery timer so an
+    // abandoned failed print can't dead-end the kiosk for the next customer
+    // (the receipt screen is excluded from the global idle reset).
+    expect(receiptSource).toContain('PRINT_FAILED_AUTO_ADVANCE_MS');
+    expect(receiptSource).toContain('if (!printFailed) return');
     expect(appSource).toContain("|| screen === 'receipt'");
     expect(appSource).not.toContain("if (screen === 'receipt' && lastReceiptPrinted) return;");
+    // Paid-but-no-paragon must proactively notify staff, not just toast.
+    expect(appSource).toContain("reason: 'PRINT_FAILED'");
   });
 
   it('keeps the self-checkout staff swipe-down exit wired to its own close IPC', () => {

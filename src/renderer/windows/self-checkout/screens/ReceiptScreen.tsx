@@ -20,6 +20,11 @@ interface ReceiptScreenProps {
 }
 
 const AUTO_ADVANCE_MS = 4000;
+// When the print FAILED the screen stays up much longer (with a CALL STAFF
+// button) so the customer can get help — but it must still self-recover:
+// a paid customer who walks away would otherwise leave the kiosk dead-ended
+// on this screen forever, blocking the next customer.
+const PRINT_FAILED_AUTO_ADVANCE_MS = 120_000;
 
 function formatMessage(template: string, values: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
@@ -58,6 +63,15 @@ export default function ReceiptScreen({
       window.clearTimeout(done);
     };
   }, [onComplete, receiptPrinted, receiptPrinting]);
+
+  // Print-failure recovery: the screen is excluded from the global idle reset,
+  // so without this timer a failed print would strand the kiosk on this
+  // screen forever once the customer leaves.
+  useEffect(() => {
+    if (!printFailed) return;
+    const recover = window.setTimeout(onComplete, PRINT_FAILED_AUTO_ADVANCE_MS);
+    return () => window.clearTimeout(recover);
+  }, [onComplete, printFailed]);
 
   const secondsLeft = Math.ceil(remainingMs / 1000);
 
