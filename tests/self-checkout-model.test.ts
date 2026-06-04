@@ -107,6 +107,12 @@ describe('self-checkout runtime model', () => {
     expect(appSource).toContain('pos?.orders?.create');
     expect(appSource).toContain('selfCheckout?.finalizePrint?.({ orderId, method })');
     expect(appSource).toContain('pos?.sync?.orders');
+    // The paid cart must be dropped from localStorage as soon as the order
+    // is durably saved — a crash on the receipt/thank-you screens must not
+    // restore an already-paid cart for the next customer.
+    expect(appSource).toContain('setLastTotalGrosze(saleTotalGrosze);');
+    expect(appSource).toContain('cart.clear();');
+    expect(appSource).toContain('totalGrosze={lastTotalGrosze}');
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:payment:card', data)");
     expect(preloadSource).toContain("ipcRenderer.invoke('pos:print-receipt', orderId)");
     expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:finalize-print', payload)");

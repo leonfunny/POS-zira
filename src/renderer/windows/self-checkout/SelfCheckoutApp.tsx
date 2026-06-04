@@ -76,6 +76,11 @@ export default function SelfCheckoutApp() {
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
+  // Snapshot of the sale total for the receipt/thank-you screens. The cart
+  // itself is cleared the moment the order is durably saved, so a crash or
+  // power cut during those screens can't restore an ALREADY-PAID cart from
+  // localStorage for the next customer.
+  const [lastTotalGrosze, setLastTotalGrosze] = useState(0);
   const [lastReceiptPrinted, setLastReceiptPrinted] = useState(true);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
@@ -132,6 +137,7 @@ export default function SelfCheckoutApp() {
   const resetSession = useCallback(() => {
     cart.clear();
     setLastPaymentMethod(null);
+    setLastTotalGrosze(0);
     setLastReceiptPrinted(true);
     setPaymentOpen(false);
     setPaymentStatus(null);
@@ -497,6 +503,7 @@ export default function SelfCheckoutApp() {
       if (mode === 'demo') {
         setLastReceiptPrinted(true);
         setLastPaymentMethod(method);
+        setLastTotalGrosze(cart.cart.totalGrosze);
         setPaymentOpen(false);
         goTo('receipt');
         return;
@@ -513,6 +520,7 @@ export default function SelfCheckoutApp() {
       }
 
       const orderId = crypto.randomUUID();
+      const saleTotalGrosze = cart.cart.totalGrosze;
 
       const sale = buildSelfCheckoutSale({
         items: cart.cart.items,
@@ -525,6 +533,12 @@ export default function SelfCheckoutApp() {
       if (!orderResult?.success) {
         fail(orderResult?.error || 'Failed to save order');
       }
+
+      // The order is durably saved — drop the localStorage cart NOW so a
+      // crash/power cut during the receipt/thank-you screens can't restore
+      // an already-paid cart for the next customer.
+      setLastTotalGrosze(saleTotalGrosze);
+      cart.clear();
 
       window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
 
@@ -548,13 +562,13 @@ export default function SelfCheckoutApp() {
         // it gets handled even if the customer walks away.
         window.electronAPI?.selfCheckout?.helpRequest?.({
           reason: 'PRINT_FAILED',
-          cartTotalGrosze: cart.cart.totalGrosze,
+          cartTotalGrosze: saleTotalGrosze,
         }).catch(() => undefined);
       }
       setLastReceiptPrinted(receiptPrinted);
       setReceiptPrinting(false);
     },
-    [cart.cart.items, cart.cart.totalGrosze, goTo, kioskUserId, mode, showToast, t],
+    [cart, goTo, kioskUserId, mode, showToast, t],
   );
 
   const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);
@@ -682,7 +696,7 @@ export default function SelfCheckoutApp() {
         lang={lang}
         mode={mode}
         method={lastPaymentMethod}
-        totalGrosze={cart.cart.totalGrosze}
+        totalGrosze={lastTotalGrosze}
         receiptPrinted={lastReceiptPrinted}
         receiptPrinting={receiptPrinting}
         onComplete={() => goTo('thankyou')}
@@ -696,7 +710,7 @@ export default function SelfCheckoutApp() {
     return (
       <ThankYouScreen
         lang={lang}
-        totalGrosze={cart.cart.totalGrosze}
+        totalGrosze={lastTotalGrosze}
         onReset={resetSession}
         onLangChange={handleLangChange}
         onCallStaff={callStaffOther}
