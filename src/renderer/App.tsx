@@ -144,6 +144,13 @@ export default function App() {
     });
   }, [isFeatureEnabled, config?.moduleOverrides, config?.hiddenTabs]);
 
+  // Single source of truth for whether a tab's CONTENT may render. Must match
+  // the sidebar (visibleTabs) exactly: Module Manager overrides win over plan
+  // entitlements. Gating content on isFeatureEnabled alone renders a blank
+  // page for any tab force-enabled via Settings → Module Manager (the sidebar
+  // shows the tab but its body never mounts).
+  const isTabAvailable = useCallback((tab: Tab): boolean => visibleTabs.includes(tab), [visibleTabs]);
+
   // Ensure activeTab is visible, otherwise switch to first visible tab
   useEffect(() => {
     if (visibleTabs.length > 0 && !visibleTabs.includes(activeTab)) {
@@ -358,7 +365,7 @@ export default function App() {
 
   // Fullscreen POS mode — kiosk-style, same exit mechanism as checkin
   // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
-  if (isPosFullscreen && activeTab === 'pos' && isFeatureEnabled('pos')) {
+  if (isPosFullscreen && activeTab === 'pos' && isTabAvailable('pos')) {
     return (
       <div
         key={sessionKey}
@@ -398,7 +405,7 @@ export default function App() {
 
   // Fullscreen check-in mode — hide all chrome for customer-facing use
   // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
-  if (isCheckinFullscreen && isFeatureEnabled('checkin')) {
+  if (isCheckinFullscreen && isTabAvailable('checkin')) {
     return (
       <div
         key={sessionKey}
@@ -464,20 +471,20 @@ export default function App() {
             </div>
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
-              {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
-              {activeTab === 'label' && isFeatureEnabled('label') && (
+              {activeTab === 'pos' && isTabAvailable('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'label' && isTabAvailable('label') && (
                 <LabelModule language={posUiLanguage} />
               )}
-              {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && (
+              {activeTab === 'selfCheckout' && isTabAvailable('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'billiard' && isFeatureEnabled('billiard') && (
+              {activeTab === 'billiard' && isTabAvailable('billiard') && (
                 <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'chat' && isFeatureEnabled('chat') && (
+              {activeTab === 'chat' && isTabAvailable('chat') && (
                 <Chat language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'status' && isFeatureEnabled('status') && (
+              {activeTab === 'status' && isTabAvailable('status') && (
                 <Status
                   config={config}
                   connectionStatus={connectionStatus}
@@ -487,35 +494,35 @@ export default function App() {
                   onConfigChange={(newConfig) => setConfig(newConfig as AgentConfig)}
                 />
               )}
-              {activeTab === 'booksy' && isFeatureEnabled('booksy') && <BooksySyncTab />}
-              {activeTab === 'checkin' && isFeatureEnabled('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
-              {activeTab === 'bookings' && isFeatureEnabled('bookings') && <BookingsTodayScreen />}
-              {activeTab === 'invoicing' && isFeatureEnabled('invoicing') && (
+              {activeTab === 'booksy' && isTabAvailable('booksy') && <BooksySyncTab />}
+              {activeTab === 'checkin' && isTabAvailable('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'bookings' && isTabAvailable('bookings') && <BookingsTodayScreen />}
+              {activeTab === 'invoicing' && isTabAvailable('invoicing') && (
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'orders' && isFeatureEnabled('orders') && (
+              {activeTab === 'orders' && isTabAvailable('orders') && (
                 <OrdersTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'products' && isFeatureEnabled('products') && (
+              {activeTab === 'products' && isTabAvailable('products') && (
                 <ProductModule language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'warehouse' && isFeatureEnabled('warehouse') && (
+              {activeTab === 'warehouse' && isTabAvailable('warehouse') && (
                 <WarehouseModule language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'forecast' && isFeatureEnabled('forecast') && (
+              {activeTab === 'forecast' && isTabAvailable('forecast') && (
                 <ForecastOrderingTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'security' && isFeatureEnabled('security') && (
+              {activeTab === 'security' && isTabAvailable('security') && (
                 <SecurityTab config={config} />
               )}
-              {activeTab === 'settings' && isFeatureEnabled('settings') && (
+              {activeTab === 'settings' && isTabAvailable('settings') && (
                 <Settings
                   config={config}
                   onConfigChange={updateConfig}
                   isModuleEntitled={(tab: Tab) => isFeatureEnabled(TAB_TO_FEATURE[tab])}
                 />
               )}
-              {activeTab === 'debug' && isFeatureEnabled('debug') && <Debug />}
+              {activeTab === 'debug' && isTabAvailable('debug') && <Debug />}
             </div>
           )}
         </main>
