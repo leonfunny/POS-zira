@@ -477,6 +477,8 @@ interface ElectronAPI {
   selfCheckout: {
     helpRequest: (payload: { reason: string; cartTotalGrosze: number }) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
     checkStatus: (id: string) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
+    /** Production gate: can this kiosk actually print a fiscal paragon right now? */
+    readiness: () => Promise<{ ready: boolean; reasons: string[]; error?: string }>;
     finalizePrint: (payload: { orderId: string; method: 'CASH' | 'CARD' | 'BLIK' }) => Promise<{ success: boolean; printed?: boolean; receiptPrinted?: boolean; fiscalPrinted?: boolean; drawerOpened?: boolean; route?: string; error?: string }>;
     /** Staff intentional exit for the self-checkout kiosk gesture */
     close: () => Promise<{ success: boolean; error?: string }>;

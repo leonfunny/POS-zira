@@ -123,6 +123,36 @@ describe('self-checkout runtime model', () => {
     expect(posModuleSource).toContain("method === 'CASH'");
   });
 
+  it('gates production sessions on fiscal readiness and self-recovers', () => {
+    // A production kiosk must not invite a customer into a session it can't
+    // legally finish (no fiscal route = no paragon). The welcome screen
+    // polls readiness; the unavailable screen polls for auto-recovery so a
+    // restored printer reopens the lane without a manual restart.
+    const appSource = readSource('src/renderer/windows/self-checkout/SelfCheckoutApp.tsx');
+    const preloadSource = readSource('src/preload/preload-self-checkout.ts');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(appSource).toContain("if (mode !== 'production') return;");
+    expect(appSource).toContain('selfCheckout?.readiness?.()');
+    expect(appSource).toContain("if (screen === 'welcome') goTo('unavailable')");
+    expect(preloadSource).toContain("ipcRenderer.invoke('self-checkout:readiness')");
+    expect(posModuleSource).toContain("ipcMain.handle('self-checkout:readiness'");
+    expect(posModuleSource).toContain('hasFiscalPrinter()');
+  });
+
+  it('polls help status via the public apiKey endpoint with a legacy fallback', () => {
+    // The kiosk is unattended: the lock-release poll must not depend on a
+    // fresh staff JWT. Primary route = apiKey status endpoint; legacy
+    // Bearer /open scan remains for older backends. Unknown help reasons
+    // (e.g. PRINT_FAILED on an old backend) retry once as OTHER.
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(posModuleSource).toContain('self-checkout/help-request/status');
+    expect(posModuleSource).toContain('JSON.stringify({ apiKey, id })');
+    expect(posModuleSource).toContain('self-checkout/help-requests/open');
+    expect(posModuleSource).toContain("retrying as OTHER");
+  });
+
   it('reuses one order id per payment attempt and dedupes on the main side', () => {
     // If the create reply is lost after the order actually committed, the
     // staff retry must NOT record the sale twice: the renderer reuses the

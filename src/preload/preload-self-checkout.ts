@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('self-checkout:help-request', payload),
     checkStatus: (id: string) =>
       ipcRenderer.invoke('self-checkout:help-status', id),
+    readiness: () => ipcRenderer.invoke('self-checkout:readiness'),
     close: () => ipcRenderer.invoke('self-checkout:close'),
   },
 });

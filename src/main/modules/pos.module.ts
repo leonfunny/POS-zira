@@ -2537,7 +2537,30 @@ export class PosModule extends BaseModule {
             },
           );
           const body = await r.json().catch(() => ({}));
-          if (!r.ok) return { error: body?.message || `HTTP ${r.status}` };
+          if (!r.ok) {
+            // Backward compatibility: an older backend rejects reason codes
+            // it doesn't know yet (e.g. PRINT_FAILED) with a validation 400.
+            // Retry once as OTHER so the staff alert still goes out.
+            if (r.status === 400 && payload.reason !== 'OTHER') {
+              logger.warn(`[PosModule] Help reason ${payload.reason} rejected by backend; retrying as OTHER`);
+              const retry = await fetch(
+                `${baseUrl}/api/v1/print-agent/self-checkout/help-request`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    apiKey,
+                    terminalId,
+                    reason: 'OTHER',
+                    cartTotalGrosze: payload.cartTotalGrosze ?? null,
+                  }),
+                },
+              );
+              const retryBody = await retry.json().catch(() => ({}));
+              if (retry.ok) return retryBody;
+            }
+            return { error: body?.message || `HTTP ${r.status}` };
+          }
           return body;
         } catch (e: any) {
           return { error: e?.message || 'Network error' };
@@ -2549,9 +2572,46 @@ export class PosModule extends BaseModule {
       const apiKey = getSecureApiKey() || '';
       if (!apiKey) return null;
       const baseUrl = (getConfigValue('serverUrl') as string) || 'https://api.enail.pro';
+
+      // Preferred route: the public apiKey status endpoint. The kiosk is an
+      // unattended terminal — it must not depend on a staff JWT being fresh
+      // (an expired token used to make this poll fail forever, leaving
+      // HelpLockedOverlay locked until the staff exit gesture).
       try {
-        // The /open endpoint returns the unresolved queue; finding our id
-        // there means it's still open. Anything else (404 / not in list)
+        const r = await fetch(
+          `${baseUrl}/api/v1/print-agent/self-checkout/help-request/status`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey, id }),
+          },
+        );
+        if (r.ok) {
+          const body = await r.json().catch(() => null);
+          if (body?.id) {
+            return {
+              id: body.id,
+              acknowledgedAt: body.acknowledgedAt ?? null,
+              resolvedAt: body.resolvedAt ?? null,
+            };
+          }
+        } else if (r.status === 404) {
+          const body = await r.json().catch(() => null);
+          // Row-level 404 (request id unknown to the backend) → unlock, same
+          // as the legacy missing-from-open-list behavior. A route-level 404
+          // (older backend without the endpoint) falls through to the legacy
+          // Bearer-token route below.
+          if (body && /help request not found/i.test(String(body.message || ''))) {
+            return { id, resolvedAt: new Date().toISOString() };
+          }
+        }
+      } catch {
+        /* fall through to legacy route */
+      }
+
+      try {
+        // Legacy route: the /open endpoint returns the unresolved queue;
+        // finding our id there means it's still open. Missing from the list
         // means it was resolved.
         const r = await fetch(
           `${baseUrl}/api/v1/print-agent/self-checkout/help-requests/open`,
@@ -2574,6 +2634,27 @@ export class PosModule extends BaseModule {
         };
       } catch {
         return null;
+      }
+    });
+
+    // Self-checkout readiness: a production kiosk must not open a customer
+    // session when no fiscal route can print the paragon — local fiscal
+    // hardware or the shared FISCAL_RECEIPT backend job (POS1's printer).
+    // The renderer polls this on the welcome/unavailable screens and shows
+    // the localized "checkout closed" screen with the failing reason.
+    ipcMain.handle('self-checkout:readiness', async () => {
+      try {
+        const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+        const online = socket?.isConnected() ?? false;
+        const fiscal = await this.paymentController?.hasFiscalPrinter()
+          ?? { configured: false, connected: false };
+        const reasons: string[] = [];
+        if (!fiscal.configured || !fiscal.connected) {
+          reasons.push(online ? 'printer_offline' : 'offline');
+        }
+        return { ready: reasons.length === 0, reasons };
+      } catch (e: any) {
+        return { ready: false, reasons: ['unknown'], error: e?.message || String(e) };
       }
     });
 

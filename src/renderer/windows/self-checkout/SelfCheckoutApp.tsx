@@ -214,6 +214,39 @@ export default function SelfCheckoutApp() {
     };
   }, []);
 
+  // Production readiness gate: don't invite a customer into a session the
+  // kiosk can't legally finish. Checked on the welcome screen (gate) and on
+  // the unavailable screen (auto-recovery) — never mid-session. A backend
+  // hiccup closes the lane for at most one poll interval.
+  useEffect(() => {
+    if (mode !== 'production') return;
+    if (screen !== 'welcome' && screen !== 'unavailable') return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await window.electronAPI?.selfCheckout?.readiness?.();
+        if (cancelled || !res) return;
+        if (res.ready) {
+          if (screen === 'unavailable') {
+            setUnavailableReasons([]);
+            reset();
+          }
+          return;
+        }
+        setUnavailableReasons(res.reasons?.length ? res.reasons : ['unknown']);
+        if (screen === 'welcome') goTo('unavailable');
+      } catch {
+        /* keep current screen on transient IPC errors */
+      }
+    };
+    void check();
+    const interval = setInterval(check, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [goTo, mode, reset, screen]);
+
   // Track real inactivity, not just screen transitions.
   useEffect(() => {
     const markActivity = () => setActivityAt(Date.now());
