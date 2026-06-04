@@ -647,12 +647,32 @@ export interface DocumentData {
 }
 
 // Print job from server
+export interface KitchenTicketItem {
+  name: string;
+  quantity: number;
+  /** kg for weighted items; null/'szt' renders as a plain count. */
+  unit?: string | null;
+  notes?: string | null;
+}
+
+/** Kitchen ticket payload — what the cooks see. Deliberately NO prices. */
+export interface KitchenTicketData {
+  orderId: string;
+  orderNumber: string;
+  /** ISO timestamp of the sale. */
+  createdAt: string;
+  /** Order source: POS | SELF_CHECKOUT | SERVER | ... */
+  source: string;
+  isReprint?: boolean;
+  items: KitchenTicketItem[];
+}
+
 export interface PrintJobEvent {
   jobId: string;
   jobType: PrintJobType;
   printerType?: PrinterType;  // NEW: Explicit printer routing from server
   printerId?: string | null;  // Server printer mapping id
-  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData;
+  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData | KitchenTicketData;
   referenceType: string | null;
   referenceId: string | null;
   openDrawer?: boolean;
@@ -2773,6 +2793,8 @@ export interface ProductAdminCategoryMutationInput {
   color?: string | null;
   icon?: string | null;
   sortOrder?: number | null;
+  /** Items in this category print a kitchen ticket when sold. */
+  kitchenPrint?: boolean | null;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
   idempotencyKey?: string;

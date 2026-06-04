@@ -718,6 +718,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => unsub?.();
   }, []);
 
+  // Kitchen ticket could not print for a just-created order (no kitchen
+  // printer reachable). The sale itself is fine — alert the cashier so the
+  // kitchen learns about the order; Order History has a reprint button.
+  useEffect(() => {
+    const unsub = (window.electronAPI.pos as any).onKitchenTicketFailed?.(() => {
+      showScanToast(tOr('pos.kitchenTicketFailed', 'Kitchen ticket NOT printed — check the kitchen printer'), 'err');
+    });
+    return () => unsub?.();
+  }, [showScanToast, tOr]);
+
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
   const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
 

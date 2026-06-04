@@ -5,25 +5,9 @@
 // driver's plain-line path so Vietnamese/Polish names fall back to raster
 // instead of printing mangled code-page text.
 import type { EscPosPlainLine } from '../hardware/thermal/escpos-formatter';
+import type { KitchenTicketData, KitchenTicketItem } from '../../shared/types';
 
-export interface KitchenTicketItem {
-  name: string;
-  quantity: number;
-  /** kg for weighted items; null/'szt' renders as a plain count. */
-  unit?: string | null;
-  notes?: string | null;
-}
-
-export interface KitchenTicketData {
-  orderId: string;
-  orderNumber: string;
-  /** ISO timestamp of the sale. */
-  createdAt: string;
-  /** Order source: POS | SELF_CHECKOUT | SERVER | ... */
-  source: string;
-  isReprint?: boolean;
-  items: KitchenTicketItem[];
-}
+export type { KitchenTicketData, KitchenTicketItem };
 
 function sourceLabel(source: string): string {
   const normalized = String(source || '').toUpperCase();

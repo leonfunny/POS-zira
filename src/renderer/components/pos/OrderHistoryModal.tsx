@@ -1238,6 +1238,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [detail, setDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
+  const [printingKitchen, setPrintingKitchen] = useState(false);
   const [reprinting, setReprinting] = useState(false);
   const [printingFiscal, setPrintingFiscal] = useState(false);
   // A prior fiscal attempt left in UNKNOWN_NEEDS_RECONCILIATION (e.g. the ELZAB
@@ -1441,6 +1442,32 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     } finally {
       setReprinting(false);
       setPrintBadgeNonce((n) => n + 1);
+    }
+  };
+
+  const handlePrintKitchenTicket = async (orderId: string) => {
+    if (printingKitchen) return;
+    setPrintingKitchen(true);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.printKitchenTicket(orderId);
+      if (result?.printed) {
+        setReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.kitchenTicketPrinted', 'Kitchen ticket sent to printer') });
+      } else if (result?.error === 'no_kitchen_items') {
+        setReprintStatus({ type: 'error', message: tOr(t, 'pos.history.kitchenTicketNoItems', 'No kitchen items in this order') });
+      } else {
+        setReprintStatus({
+          type: 'error',
+          message: result?.error || tOr(t, 'pos.history.kitchenTicketFailed', 'Kitchen printer not reachable'),
+        });
+      }
+    } catch (e: any) {
+      setReprintStatus({
+        type: 'error',
+        message: e?.message || tOr(t, 'pos.history.kitchenTicketFailed', 'Kitchen printer not reachable'),
+      });
+    } finally {
+      setPrintingKitchen(false);
     }
   };
 
@@ -1954,6 +1981,17 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-800" aria-hidden="true" />
                   )}
                   {printingFiscal ? 'Sending...' : 'Print fiscal receipt'}
+                </button>
+
+                <button
+                  onClick={() => handlePrintKitchenTicket(order.id)}
+                  disabled={printingKitchen || reprinting || printingFiscal}
+                  className="mt-2 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-4 text-sm font-extrabold text-orange-800 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                >
+                  {printingKitchen && (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-orange-300 border-t-orange-800" aria-hidden="true" />
+                  )}
+                  {tOr(t, 'pos.history.printKitchenTicket', 'Print kitchen ticket')}
                 </button>
                 {refundStatus !== 'none' && (
                   <div className="mt-2 text-xs font-bold text-slate-500">

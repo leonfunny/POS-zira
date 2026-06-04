@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:state-changed', listener);
       return () => ipcRenderer.removeListener('pos:state-changed', listener);
     },
+  onKitchenTicketFailed: (callback: (data: { orderId: string; error?: string }) => void) => {
+    const listener = (_e: any, data: any) => callback(data);
+    ipcRenderer.on('pos:kitchen-ticket-failed', listener);
+    return () => ipcRenderer.removeListener('pos:kitchen-ticket-failed', listener);
+  },
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => {
       const listener = (_e: any, info: any) => callback(info);
       ipcRenderer.on('pos:fiscal-unknown', listener);
@@ -49,6 +54,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
     getConfirmedFiscalIds: (orderIds: string[]) =>
       ipcRenderer.invoke('pos:orders:getConfirmedFiscalIds', orderIds),
+    printKitchenTicket: (orderId: string) =>
+      ipcRenderer.invoke('pos:orders:printKitchenTicket', orderId),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
       mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),

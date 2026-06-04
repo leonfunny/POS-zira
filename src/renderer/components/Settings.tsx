@@ -4,6 +4,7 @@ import { resolveCustomerDisplayProfile } from '../../shared/customer-display-pro
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
+import KitchenPrintSettings from './pos/KitchenPrintSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale, LayoutGrid } from 'lucide-react';
@@ -4999,6 +5000,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           })()}
         </label>
       </div>
+
+      {/* Kitchen ticket printing — which categories print a kitchen ticket */}
+      <KitchenPrintSettings lang={config?.posLanguage || config?.language || undefined} />
 
       {/* Check-in Display */}
       <div className="panel p-4">

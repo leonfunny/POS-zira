@@ -56,6 +56,7 @@ import { WindowManager } from '../windows/window-manager';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
+import { buildKitchenTicketLines, type KitchenTicketData } from '../printing/kitchen-ticket';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
@@ -2022,6 +2023,7 @@ export class HardwareModule extends BaseModule {
     }
     if (job.printerType) return job.printerType;
     if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE || job.jobType === PrintJobType.INFO_LABEL) return PrinterType.LABEL;
+    if (job.jobType === PrintJobType.KITCHEN_TICKET) return PrinterType.KITCHEN;
     return PrinterType.RECEIPT;
   }
 
@@ -2081,8 +2083,20 @@ export class HardwareModule extends BaseModule {
         const isLabel = printerType === PrinterType.LABEL;
         const isA4 = printerType === PrinterType.A4;
         const isReport = [PrintJobType.DAILY_REPORT, PrintJobType.X_REPORT, PrintJobType.Z_REPORT].includes(job.jobType);
+        const isKitchenTicket = job.jobType === PrintJobType.KITCHEN_TICKET;
 
-        if (isLabel) {
+        if (isKitchenTicket) {
+          // Kitchen ticket: large-font item lines, no prices. Goes through the
+          // thermal plain-line path so Vietnamese/Polish dish names raster
+          // instead of printing mangled code-page text.
+          const ticket = job.payload as KitchenTicketData;
+          const lines = buildKitchenTicketLines(ticket);
+          if (typeof (targetPrinter as any).printPlainLines === 'function') {
+            await (targetPrinter as any).printPlainLines(lines);
+          } else {
+            throw new Error('Kitchen ticket requires a thermal (ESC/POS) printer');
+          }
+        } else if (isLabel) {
           if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
           if (job.jobType === PrintJobType.INFO_LABEL) {
             if (shouldRenderInfoLabelViaWindows(printerConfig)) {

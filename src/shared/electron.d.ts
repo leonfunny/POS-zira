@@ -512,6 +512,8 @@ interface ElectronAPI {
     getHistory: (customerId: string) => Promise<any[]>;
     /** Order ids (of the given set) with a confirmed paragon in the local fiscal journal. */
     getConfirmedFiscalIds: (orderIds: string[]) => Promise<string[]>;
+    /** Print/reprint the kitchen ticket for an order (items from kitchen-flagged categories). */
+    printKitchenTicket: (orderId: string) => Promise<{ success: boolean; printed: boolean; kitchenItems: number; route?: string; error?: string }>;
     getRecommendations: (customerId: string) => Promise<any[]>;
   };
 
@@ -686,6 +688,8 @@ interface ElectronAPI {
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
+  /** Kitchen ticket could not be printed for a just-created order. */
+  onKitchenTicketFailed?: (callback: (data: { orderId: string; error?: string }) => void) => () => void;
 
     products: {
       getAll: () => Promise<PosProduct[]>;

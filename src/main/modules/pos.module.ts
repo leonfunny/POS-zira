@@ -39,6 +39,8 @@ import { draftProductSync } from '../sync/draft-product-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { buildKitchenTicketLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import { submitSharedKitchenPrint } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
@@ -1051,13 +1053,25 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE,
-      async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) =>
-        withProductAdminCapability<ProductAdminCategoryMutationResponse>(
+      async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) => {
+        const result = await withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canUpdateCategory',
           'update category',
           (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
           () => refreshProductsAfterProductAdminMutation('product_admin_category_update'),
-        ),
+        );
+        // Mirror the kitchen flag locally right away: the order-time kitchen
+        // filter reads the LOCAL categories table, and the post-mutation
+        // product refresh is async — without this a sale rung up seconds
+        // after the toggle would miss the kitchen ticket.
+        if (payload && typeof payload.kitchenPrint === 'boolean' && !(result as any)?.error) {
+          try {
+            productRepo.setCategoryKitchenPrint(categoryId, payload.kitchenPrint);
+            database.markDirty();
+          } catch { /* refresh will reconcile */ }
+        }
+        return result;
+      },
     );
 
     // Draft products (server-mirrored, see DraftProductSync)
@@ -1517,6 +1531,21 @@ export class PosModule extends BaseModule {
             logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
           }
 
+          // Kitchen ticket (fire-and-forget): items from kitchen-flagged
+          // categories print to the kitchen printer. Never blocks the sale;
+          // the idempotent duplicate-create path returns earlier and thus
+          // never prints a second ticket.
+          void this.printKitchenTicketForOrder(id)
+            .then((kt) => {
+              if (kt.kitchenItems > 0 && !kt.printed) {
+                notifyPosRenderers(this.container, 'pos:kitchen-ticket-failed', {
+                  orderId: id,
+                  error: kt.error || 'kitchen_print_failed',
+                });
+              }
+            })
+            .catch(() => undefined);
+
           return { success: true, id };
       }
       catch (e: any) {
@@ -1575,6 +1604,12 @@ export class PosModule extends BaseModule {
       } catch {
         return [];
       }
+    });
+
+    // Manual kitchen-ticket print (Order History "print kitchen ticket").
+    ipcMain.handle('pos:orders:printKitchenTicket', async (_e, orderId: string) => {
+      const result = await this.printKitchenTicketForOrder(String(orderId || ''), { reprint: true });
+      return { success: result.printed, ...result };
     });
 
     ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {
@@ -2674,6 +2709,72 @@ export class PosModule extends BaseModule {
     });
 
     logger.info('[PosModule] IPC handlers registered');
+  }
+
+  /**
+   * Print the kitchen ticket for an order: items whose category is flagged
+   * kitchen_print=1, large font, no prices. Route preference:
+   *   1) the DEDICATED local KITCHEN printer (never the receipt-printer
+   *      fallback — kitchen tickets must not mix into the bill printer),
+   *   2) the salon's shared KITCHEN role via a backend KITCHEN_TICKET job.
+   * Never blocks or fails the sale — callers fire-and-forget and surface
+   * failures as a cashier notification + Order History reprint.
+   */
+  private async printKitchenTicketForOrder(
+    orderId: string,
+    opts: { reprint?: boolean } = {},
+  ): Promise<{ printed: boolean; kitchenItems: number; route?: 'LOCAL' | 'SHARED_NETWORK'; error?: string }> {
+    try {
+      const order = orderRepo.getById(orderId);
+      if (!order) return { printed: false, kitchenItems: 0, error: 'order_not_found' };
+      const items = orderRepo.getItemsByOrderId(orderId);
+      const kitchenItems = items.filter((item) => {
+        if (!item.variant_id) return false;
+        const product = productRepo.getById(item.variant_id);
+        return !!product?.category_id && productRepo.isKitchenPrintCategory(product.category_id);
+      });
+      if (kitchenItems.length === 0) return { printed: false, kitchenItems: 0, error: 'no_kitchen_items' };
+
+      const ticket: KitchenTicketData = {
+        orderId,
+        orderNumber: order.order_number || orderId.slice(0, 8),
+        createdAt: order.created_at || new Date().toISOString(),
+        source: order.source || 'POS',
+        isReprint: !!opts.reprint,
+        items: kitchenItems.map((item) => ({
+          name: item.name,
+          quantity: Number(item.sale_quantity ?? item.quantity) || 1,
+          unit: item.sale_unit ?? null,
+          notes: item.notes ?? null,
+        })),
+      };
+
+      const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
+      const localKitchen = printers[PrinterType.KITCHEN];
+      if (localKitchen?.isConnected?.() && typeof localKitchen.printPlainLines === 'function') {
+        try {
+          await localKitchen.printPlainLines(buildKitchenTicketLines(ticket));
+          logger.info(`[PosModule] Kitchen ticket printed locally for order ${ticket.orderNumber}`);
+          return { printed: true, kitchenItems: kitchenItems.length, route: 'LOCAL' };
+        } catch (err: any) {
+          logger.error(`[PosModule] Local kitchen ticket failed for ${ticket.orderNumber}: ${err?.message || err}`);
+          // fall through to the shared route
+        }
+      }
+
+      const shared = await submitSharedKitchenPrint(ticket);
+      if (shared.handled && shared.printed) {
+        return { printed: true, kitchenItems: kitchenItems.length, route: 'SHARED_NETWORK' };
+      }
+      return {
+        printed: false,
+        kitchenItems: kitchenItems.length,
+        route: shared.handled ? 'SHARED_NETWORK' : undefined,
+        error: shared.error || 'no_kitchen_printer',
+      };
+    } catch (e: any) {
+      return { printed: false, kitchenItems: 0, error: e?.message || String(e) };
+    }
   }
 
   registerEventHandlers(bus: EventBus): void {
