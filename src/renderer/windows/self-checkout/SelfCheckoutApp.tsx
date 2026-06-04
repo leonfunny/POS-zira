@@ -16,6 +16,7 @@ import {
   resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
+import { isWeightedProduct } from './catalog-model';
 import { useScreenState } from './screen-state';
 import { type ScCartItem, useScCart } from './useScCart';
 import { buildSelfCheckoutSale } from './build-sale';
@@ -308,6 +309,12 @@ export default function SelfCheckoutApp() {
       // cart row stores canonical `name` + raw translations so orders stay
       // canonical and live language switches re-render the cart correctly.
       const displayName = resolveName(product, lang);
+      // Weighted products need a scale — the kiosk has none and the order
+      // path would charge exactly 1 kg regardless of actual weight.
+      if (isWeightedProduct(product)) {
+        showToast('error', formatScMessage(t.productWeighted, { name: displayName }));
+        return false;
+      }
       const stock = getProductStock(product);
       const existing = cart.cart.items.find(
         (i) => i.variantId === product.id,

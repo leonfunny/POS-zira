@@ -14,7 +14,15 @@ export function getProductStock(product: SearchProduct): number | undefined {
   return Number.isFinite(Number(value)) ? Number(value) : undefined;
 }
 
-export type ProductAvailabilityReason = 'no_price' | 'out_of_stock' | null;
+export type ProductAvailabilityReason = 'no_price' | 'out_of_stock' | 'weighted' | null;
+
+/** Weighted products (sell_by = WEIGHT, price per kg) cannot be sold at the
+ *  kiosk: it has no scale and the order path would silently charge exactly
+ *  1 kg regardless of the actual weight. They must go through the staffed
+ *  counter. */
+export function isWeightedProduct(product: Pick<SearchProduct, 'sell_by'>): boolean {
+  return String(product.sell_by || '').toUpperCase() === 'WEIGHT';
+}
 
 export interface ProductAvailability {
   canAdd: boolean;
@@ -29,6 +37,9 @@ export function getProductAvailability(
 ): ProductAvailability {
   const priceGrosze = getProductPriceGrosze(product);
   const stock = getProductStock(product);
+  if (isWeightedProduct(product)) {
+    return { canAdd: false, reason: 'weighted', priceGrosze, stock };
+  }
   if (priceGrosze <= 0) {
     return { canAdd: false, reason: 'no_price', priceGrosze, stock };
   }

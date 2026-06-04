@@ -67,6 +67,21 @@ describe('self-checkout catalog model', () => {
     });
   });
 
+  it('blocks weighted products at the kiosk even with stock, price, and oversell', () => {
+    // The kiosk has no scale: a WEIGHT product would be charged as exactly
+    // 1 kg regardless of the actual weight. It must be weighed at the counter.
+    expect(getProductAvailability(
+      { id: 'meat', name: 'Thit ba chi', retail_price: 3500, in_stock: 8, sell_by: 'WEIGHT' },
+      { allowOversell: true },
+    )).toMatchObject({
+      canAdd: false,
+      reason: 'weighted',
+    });
+    expect(getProductAvailability(
+      { id: 'piece', name: 'Cola', retail_price: 500, in_stock: 8, sell_by: 'PIECE' },
+    )).toMatchObject({ canAdd: true, reason: null });
+  });
+
   it('allows sold-out products only when oversell is enabled', () => {
     expect(getProductAvailability(
       { id: 'sold-off', name: 'Sold off', retail_price: 500, in_stock: 0 },

@@ -174,6 +174,7 @@ export default function SearchDialog({
                 const disabledLabel =
                   availability.reason === 'out_of_stock' ? t.soldOut :
                   availability.reason === 'no_price' ? t.noPrice :
+                  availability.reason === 'weighted' ? t.weighedAtCounter :
                   null;
                 const oversoldLabel = oversoldStock
                   ? t.oversoldStock.replace('{stock}', String(availability.stock))

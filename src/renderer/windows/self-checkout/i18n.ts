@@ -45,6 +45,8 @@ interface ScStrings {
   productOutOfStock: string;
   productInsufficientStock: string;
   productNoPrice: string;
+  productWeighted: string;
+  weighedAtCounter: string;
   soldOut: string;
   oversoldStock: string;
   noPrice: string;
@@ -178,6 +180,8 @@ const PL: ScStrings = {
   productOutOfStock: '{name} - brak na stanie. Wezwij obsługę.',
   productInsufficientStock: '{name} - dostępna ilość: {stock}. Zmień ilość albo wezwij obsługę.',
   productNoPrice: '{name} - brak ceny. Wezwij obsługę.',
+  productWeighted: '{name} - produkt na wagę. Poproś obsługę o zważenie przy kasie.',
+  weighedAtCounter: 'Na wagę',
   soldOut: 'Brak na stanie',
   oversoldStock: 'Stan: {stock}',
   noPrice: 'Brak ceny',
@@ -301,6 +305,8 @@ const EN: ScStrings = {
   productOutOfStock: '{name} is out of stock. Call staff.',
   productInsufficientStock: '{name} has only {stock} available. Change quantity or call staff.',
   productNoPrice: '{name} has no price. Call staff.',
+  productWeighted: '{name} is sold by weight. Please ask staff to weigh it at the counter.',
+  weighedAtCounter: 'By weight',
   soldOut: 'Sold out',
   oversoldStock: 'Stock: {stock}',
   noPrice: 'No price',
@@ -424,6 +430,8 @@ const VI: ScStrings = {
   productOutOfStock: '{name} đã hết hàng. Gọi nhân viên.',
   productInsufficientStock: '{name} chỉ còn {stock}. Đổi số lượng hoặc gọi nhân viên.',
   productNoPrice: '{name} chưa có giá. Gọi nhân viên.',
+  productWeighted: '{name} là hàng cân. Vui lòng nhờ nhân viên cân tại quầy.',
+  weighedAtCounter: 'Hàng cân',
   soldOut: 'Hết hàng',
   oversoldStock: 'Tồn: {stock}',
   noPrice: 'Chưa có giá',
