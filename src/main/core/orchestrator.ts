@@ -85,10 +85,22 @@ function generateMachineId(): string {
 }
 
 export class AgentOrchestrator implements TrayManagerHost {
+  /**
+   * Modules the app cannot meaningfully run without: selling (pos),
+   * catalog/order sync, printers/fiscal (hardware), login/connect (auth).
+   * An init failure here still aborts boot. Every other module degrades:
+   * log + skip its later phases and keep booting — a broken Telegram bot
+   * or ad-display module must never take the store's till down (any module
+   * init throw used to end in showErrorDialog + app.exit(1)).
+   */
+  private static readonly CRITICAL_MODULES = new Set(['hardware', 'sync', 'pos', 'auth']);
+
   private container: ServiceContainer;
   private eventBus: EventBus;
   private toolRegistry: ToolRegistry;
   private modules: AppModule[] = [];
+  /** Names of non-critical modules whose init failed — skipped in later phases. */
+  private failedModules = new Set<string>();
 
   private mainWindow: BrowserWindow | null = null;
   private mainWindowFullScreen = false;
@@ -190,29 +202,60 @@ export class AgentOrchestrator implements TrayManagerHost {
           await mod.init();
         } catch (e: any) {
           logger.error(`[Orchestrator] Module "${mod.name}" init failed:`, e);
-          throw e;
+          if (AgentOrchestrator.CRITICAL_MODULES.has(mod.name)) {
+            throw e;
+          }
+          this.failedModules.add(mod.name);
+          this.logStep(`  init FAILED (non-critical, continuing): ${mod.name}`);
         }
       }
+      if (this.failedModules.size > 0) {
+        logger.error(
+          `[Orchestrator] Booting WITHOUT failed non-critical module(s): ${[...this.failedModules].join(', ')}`,
+        );
+      }
 
-      // 5. Register IPC handlers
+      // 5. Register IPC handlers (skip failed modules — their handlers would
+      // touch uninitialized state; a non-critical throw here must not kill boot)
       this.logStep('Registering IPC handlers...');
       for (const mod of this.modules) {
-        mod.registerIpcHandlers();
+        if (this.failedModules.has(mod.name)) continue;
+        try {
+          mod.registerIpcHandlers();
+        } catch (e: any) {
+          logger.error(`[Orchestrator] Module "${mod.name}" registerIpcHandlers failed:`, e);
+          if (AgentOrchestrator.CRITICAL_MODULES.has(mod.name)) throw e;
+          this.failedModules.add(mod.name);
+        }
       }
 
       // 6. Register event handlers
       this.logStep('Registering event handlers...');
       for (const mod of this.modules) {
-        mod.registerEventHandlers(this.eventBus);
+        if (this.failedModules.has(mod.name)) continue;
+        try {
+          mod.registerEventHandlers(this.eventBus);
+        } catch (e: any) {
+          logger.error(`[Orchestrator] Module "${mod.name}" registerEventHandlers failed:`, e);
+          if (AgentOrchestrator.CRITICAL_MODULES.has(mod.name)) throw e;
+          this.failedModules.add(mod.name);
+        }
       }
 
       // 6b. Wire socket handlers for modules that need direct socket events
       if (this.socket) {
         this.logStep('Wiring socket handlers...');
         for (const mod of this.modules) {
+          if (this.failedModules.has(mod.name)) continue;
           if (typeof mod.setupSocketHandlers === 'function') {
-            mod.setupSocketHandlers(this.socket);
-            logger.info(`[Orchestrator] ${mod.name}: socket handlers wired`);
+            try {
+              mod.setupSocketHandlers(this.socket);
+              logger.info(`[Orchestrator] ${mod.name}: socket handlers wired`);
+            } catch (e: any) {
+              logger.error(`[Orchestrator] Module "${mod.name}" setupSocketHandlers failed:`, e);
+              if (AgentOrchestrator.CRITICAL_MODULES.has(mod.name)) throw e;
+              this.failedModules.add(mod.name);
+            }
           }
         }
       }
@@ -220,6 +263,7 @@ export class AgentOrchestrator implements TrayManagerHost {
       // 7. Collect tools from all modules into registry
       this.logStep('Collecting tool definitions...');
       for (const mod of this.modules) {
+        if (this.failedModules.has(mod.name)) continue;
         const tools = mod.getToolDefinitions();
         if (tools.length > 0) {
           this.toolRegistry.registerMany(tools);
