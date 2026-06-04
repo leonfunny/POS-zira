@@ -156,6 +156,8 @@ export interface CategoryRow {
   customer_display_enabled?: number | null;
   customer_display_section?: string | null;
   customer_display_sort_order?: number | null;
+  /** 1 = items in this category print a kitchen ticket on sale (migration v39). */
+  kitchen_print?: number | null;
 }
 
 // Hide template rows that have variant children. The sync layer mirrors
@@ -364,6 +366,23 @@ export const productRepo = {
     }
   },
 
+  /** True when items of this category must print a kitchen ticket on sale. */
+  isKitchenPrintCategory(categoryId: string): boolean {
+    const row = database.get<{ kitchen_print: number }>(
+      'SELECT kitchen_print FROM categories WHERE id = ?',
+      [categoryId],
+    );
+    return (row?.kitchen_print ?? 0) === 1;
+  },
+
+  /** Local mirror of the backend categories.kitchen_print toggle. */
+  setCategoryKitchenPrint(categoryId: string, enabled: boolean): void {
+    database.run(
+      'UPDATE categories SET kitchen_print = ? WHERE id = ?',
+      [enabled ? 1 : 0, categoryId],
+    );
+  },
+
   decrementStock(variantId: string, quantity: number, options?: { allowNegative?: boolean }): void {
     database.run(
       options?.allowNegative
@@ -395,8 +414,11 @@ export const productRepo = {
         throw new Error(`Invalid category: missing id or name (id=${c.id})`);
       }
       database.run(
-        'INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null, c.customer_display_enabled ?? 1, c.customer_display_section ?? null, c.customer_display_sort_order ?? null],
+        // kitchen_print: COALESCE keeps the locally-known flag when an older
+        // backend payload omits it (NULL), instead of silently resetting it.
+        `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0))`,
+        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null, c.customer_display_enabled ?? 1, c.customer_display_section ?? null, c.customer_display_sort_order ?? null, c.kitchen_print ?? null, c.id],
       );
     }
   },

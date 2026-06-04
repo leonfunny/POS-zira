@@ -653,14 +653,22 @@ function applyCategory(entry: SyncLogEntry): boolean {
     customer_display_enabled: number | null;
     customer_display_section: string | null;
     customer_display_sort_order: number | null;
+    kitchen_print: number | null;
   }>(
-    'SELECT name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order FROM categories WHERE id = ?',
+    'SELECT name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print FROM categories WHERE id = ?',
     [entry.entity_id],
   );
 
+  // kitchen_print: explicit payload value wins; otherwise keep the
+  // locally-known flag so older backend payloads don't reset it.
+  const kitchenExplicit = firstOwnValue(p, ['kitchenPrint', 'kitchen_print']);
+  const kitchenPrint = kitchenExplicit.found
+    ? (kitchenExplicit.value === true || kitchenExplicit.value === 1 || kitchenExplicit.value === '1' ? 1 : 0)
+    : (existing?.kitchen_print ?? 0);
+
   database.run(
-    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.entity_id,
       p.name ?? '',
@@ -676,6 +684,7 @@ function applyCategory(entry: SyncLogEntry): boolean {
         ['customerDisplaySortOrder', 'customer_display_sort_order'],
         existing?.customer_display_sort_order ?? null,
       ),
+      kitchenPrint,
     ],
   );
 

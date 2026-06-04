@@ -1300,4 +1300,14 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_print_attempts_order ON print_attempts(order_id, created_at);
     `,
   },
+  {
+    version: 39,
+    name: 'categories_kitchen_print',
+    // Kitchen ticket printing: categories flagged kitchen_print=1 have their
+    // items printed as a kitchen ticket when an order is created. Synced from
+    // backend categories.kitchen_print; default 0 = no behavior change.
+    up: `
+      ALTER TABLE categories ADD COLUMN kitchen_print INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

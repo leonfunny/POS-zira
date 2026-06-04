@@ -54,6 +54,7 @@ export enum PrintJobType {
   DAILY_REPORT = 'DAILY_REPORT',  // Raport dobowy
   X_REPORT = 'X_REPORT',          // Raport X (niefiskalny)
   Z_REPORT = 'Z_REPORT',          // Raport Z (fiskalny)
+  KITCHEN_TICKET = 'KITCHEN_TICKET', // Phieu bep — items only, no prices
 }
 
 // Printer status returned by driver.getStatus()

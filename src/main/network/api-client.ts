@@ -1480,6 +1480,10 @@ export class ApiClient {
           sort_order: cat.displayOrder ?? 0,
           updated_at: cat.updatedAt ?? null,
           name_translations: encodeTranslations(cat.nameTranslations ?? cat.name_translations),
+          // null (not 0) when absent so the local upsert preserves the known flag.
+          kitchen_print: cat.kitchenPrint === undefined && cat.kitchen_print === undefined
+            ? null
+            : ((cat.kitchenPrint ?? cat.kitchen_print) ? 1 : 0),
         });
       }
     }
