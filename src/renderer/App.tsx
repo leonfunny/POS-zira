@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import rlog from './utils/logger';
-import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH } from '../shared/types';
+import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH, DEFAULT_ENTITLEMENTS } from '../shared/types';
 import Status from './components/Status';
 import Settings from './components/Settings';
 import Debug from './components/Debug';
@@ -29,28 +29,9 @@ import { useRemoteControl } from './hooks/useRemoteControl';
 import { useEntitlements } from './hooks/useEntitlements';
 import { useKeyboardManager } from './hooks/useKeyboardManager';
 
-// Default entitlements for when offline or not fetched yet
-const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
-  chat: true,        // Always show chat
-  status: true,      // Always enabled
-  booksy: true,
-  invoicing: true,   // Free feature
-  orders: true,      // Order history — free
-  products: true,    // Product/catalog management
-  warehouse: true,   // Warehouse documents
-  forecast: true,    // Forecast ordering
-  settings: true,    // Always enabled
-  debug: true,
-  pos: true,         // Always show POS tab
-  label: true,
-  selfCheckout: true,
-  billiard: true,    // POS-zira uses billiard offline/local, not only after server login
-  remote: false,
-  telegram: false,
-  security: true,
-  checkin: true,
-  bookings: true,    // Dashboard-synced appointments
-};
+// DEFAULT_ENTITLEMENTS now comes from shared/types — single source shared
+// with the main process (the two copies used to diverge: pos true here,
+// pos false there → blank/hidden POS depending on auth path).
 
 // Tab to feature key mapping
 const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {

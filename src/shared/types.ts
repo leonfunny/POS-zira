@@ -2982,24 +2982,35 @@ export interface SalonEntitlements {
   validUntil: string; // ISO date, cache validity
 }
 
-// Default entitlements for when offline or not fetched yet
+// Default entitlements for when offline or not fetched yet.
+//
+// SINGLE SOURCE OF TRUTH — used by BOTH the main process
+// (entitlements-controller createDefaultEntitlements/normalize fallbacks)
+// and the renderer (App.tsx isFeatureEnabled fallback). They used to be two
+// diverging copies: main said pos:false while the renderer said pos:true,
+// so JWT-logged-in machines (fetch 404 → main defaults) hid the POS tab
+// while apiKey machines (fetch null → renderer defaults) showed it.
+//
+// Defaults are deliberately PERMISSIVE (visible unless clearly remote-only):
+// real plan enforcement is the backend entitlements endpoint's job, and the
+// per-device Module Manager (config.moduleOverrides) can hide anything.
 export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
-  chat: false,
+  chat: true,
   status: true,      // Always enabled
-  booksy: false,
+  booksy: true,
   invoicing: true,   // Free feature
   settings: true,    // Always enabled
-  debug: false,
+  debug: true,
   orders: true,      // Order history — free, tied to POS sales
   products: true,    // Product/catalog management — free, tied to POS catalog
   warehouse: true,   // Warehouse documents — UI shell until backend posting exists
   forecast: true,    // Local sales forecast and daily ordering assistance
-  pos: false,
+  pos: true,         // The till itself — never hide by default
   label: true,
-  selfCheckout: false,
+  selfCheckout: true,
   remote: false,
   telegram: false,
-  security: false,
+  security: true,
   checkin: true,
   bookings: true,    // Dashboard-synced appointments — free
   billiard: true,
