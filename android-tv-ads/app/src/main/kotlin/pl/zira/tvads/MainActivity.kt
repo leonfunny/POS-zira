@@ -20,6 +20,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.zira.tvads.discovery.NsdDiscovery
+import pl.zira.tvads.discovery.SubnetScanner
 import pl.zira.tvads.net.AdApiClient
 import pl.zira.tvads.player.PlaybackPlan
 import pl.zira.tvads.player.RepeatMode
@@ -38,6 +39,9 @@ class MainActivity : Activity() {
     private var base: String? = null
     private var currentVersion: String? = null
     private var loadJob: kotlinx.coroutines.Job? = null
+    private var playerRetryJob: kotlinx.coroutines.Job? = null
+    private var consecutiveLoadFailures = 0
+    private var subnetScanning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,8 +54,11 @@ class MainActivity : Activity() {
             startActivity(android.content.Intent(this, PairingActivity::class.java))
         }
         findViewById<Button>(R.id.rescanBtn).setOnClickListener {
-            showOverlay("Đang quét lại mạng WiFi...")
+            // Rescan = restart mDNS discovery AND sweep the /24 — the sweep is
+            // what actually finds the POS when the router blocks multicast.
+            showOverlay("Đang quét lại (mDNS + dải mạng)...")
             connect()
+            runSubnetScan(manual = true)
         }
         hostStore = HostStore(this)
         player = ExoPlayer.Builder(this).build().also { playerView.player = it }
@@ -60,7 +67,15 @@ class MainActivity : Activity() {
                 if (state == Player.STATE_READY) hideOverlay()
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                showOverlay("Lỗi phát video: " + (error.message ?: "") + " — thử lại...")
+                // Real retry: a transient network blip must not strand the
+                // screen on an error overlay forever (SSE may still be alive,
+                // so nothing else would ever wake the player up again).
+                showOverlay("Lỗi phát video: " + (error.message ?: "") + " — tự thử lại sau 5s")
+                playerRetryJob?.cancel()
+                playerRetryJob = scope.launch {
+                    delay(5000)
+                    if (isActive && base != null) loadAndPlay()
+                }
             }
         })
         connect()
@@ -98,7 +113,9 @@ class MainActivity : Activity() {
         if (base == null) {
             scope.launch {
                 delay(8000)
-                if (base == null) startActivity(android.content.Intent(this@MainActivity, PairingActivity::class.java))
+                if (base == null && !subnetScanning) {
+                    startActivity(android.content.Intent(this@MainActivity, PairingActivity::class.java))
+                }
             }
         }
     }
@@ -109,19 +126,68 @@ class MainActivity : Activity() {
         loadJob = scope.launch {
             try {
                 val playlist = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
+                consecutiveLoadFailures = 0
                 currentVersion = playlist.version
                 applyPlan(PlaybackPlan.from(playlist, b))
                 openEvents(b)
             } catch (e: Exception) {
-                showOverlay("Không kết nối được " + b + " — thử lại sau 5s")
+                consecutiveLoadFailures++
+                showOverlay("Không kết nối được " + b + " — thử lại sau 5s (lần " + consecutiveLoadFailures + ")")
+                // The POS may have moved to a new DHCP address while mDNS is
+                // blocked by the router — after 3 straight failures, sweep the
+                // subnet ourselves instead of hammering a dead IP forever.
+                if (consecutiveLoadFailures >= 3) runSubnetScan(manual = false)
                 delay(5000)
                 if (isActive && base == b) loadAndPlay()
             }
         }
     }
 
+    /** Sweep local /24 subnets for the POS ad server. Adopts the first hit
+     *  that differs from the current base. Safe to call repeatedly. */
+    private fun runSubnetScan(manual: Boolean) {
+        if (subnetScanning) return
+        subnetScanning = true
+        scope.launch {
+            try {
+                val found = withContext(Dispatchers.IO) {
+                    SubnetScanner.scan { done, total ->
+                        if (done % 25 == 0 || done == total) {
+                            runOnUiThread { statusText.text = "Đang quét mạng tìm POS... $done/$total" }
+                        }
+                    }
+                }
+                val target = found.firstOrNull()
+                when {
+                    target != null && target != base -> {
+                        statusText.text = "Tìm thấy POS: " + target.removePrefix("http://")
+                        base = target
+                        hostStore.lastBase = target
+                        consecutiveLoadFailures = 0
+                        loadAndPlay()
+                    }
+                    target == null && manual ->
+                        statusText.text = "Không tìm thấy POS trong mạng (cổng ${SubnetScanner.DEFAULT_PORT})"
+                    // target == current base: host answers the sweep but the app
+                    // path is failing — keep the normal retry loop running.
+                }
+            } catch (_: Exception) {
+            } finally {
+                subnetScanning = false
+            }
+        }
+    }
+
     private fun applyPlan(plan: PlaybackPlan) {
         val p = player ?: return
+        if (plan.urls.isEmpty()) {
+            // An empty playlist never reaches STATE_READY, so the stale
+            // "connecting" overlay would sit there forever. Say what's up;
+            // the SSE playlist-changed event reloads us once videos exist.
+            p.clearMediaItems()
+            showOverlay("Chưa có video quảng cáo — thêm video trong POS → Cài đặt → TV Quảng cáo")
+            return
+        }
         p.repeatMode = if (plan.repeatMode == RepeatMode.ONE) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
         p.volume = if (plan.muted) 0f else (plan.volume / 100f)
         p.setMediaItems(plan.urls.map { MediaItem.fromUri(it) })
