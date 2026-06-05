@@ -64,6 +64,7 @@ export default function App() {
   const [isPosFullscreen, setIsPosFullscreen] = useState(false);
   const [isCheckinFullscreen, setIsCheckinFullscreen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
 
   // Hooks
   const { config, setConfig, updateConfig, saveConfig, refresh: refreshConfig } = useConfig();
@@ -306,6 +307,12 @@ export default function App() {
   const posUiLanguage = (config?.posLanguage || config?.language || 'en') as Language;
   const keyboardLanguage = (activeTab === 'pos' || activeTab === 'label') ? posUiLanguage : appLanguage;
   const keyboardT = getTranslation(keyboardLanguage);
+  const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
+  const globalKeyboardInset = showGlobalKeyboard ? touchKeyboardHeight : 0;
+  const posFullscreenKeyboardInset = keyboardVisible ? touchKeyboardHeight : 0;
+  const keyboardInsetStyle = useCallback((keyboardInset: number): React.CSSProperties => ({
+    '--touch-keyboard-inset': `${keyboardInset}px`,
+  } as React.CSSProperties), []);
 
   if (loading) {
     return (
@@ -351,6 +358,7 @@ export default function App() {
       <div
         key={sessionKey}
         className="h-screen w-screen flex flex-col select-none"
+        style={keyboardInsetStyle(posFullscreenKeyboardInset)}
         onTouchStart={(e) => {
           if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
             swipeTouchStartY.current = e.touches[0].clientY;
@@ -367,7 +375,7 @@ export default function App() {
       >
         <div
           className="flex-1 overflow-y-auto"
-          style={{ paddingBottom: keyboardVisible ? '300px' : '0' }}
+          style={{ paddingBottom: posFullscreenKeyboardInset > 0 ? `${posFullscreenKeyboardInset}px` : '0' }}
         >
           <POSLayout />
         </div>
@@ -379,6 +387,7 @@ export default function App() {
           onDone={onDone}
           doneLabel={keyboardT('keyboard.done')}
           spaceLabel={keyboardT('keyboard.space')}
+          onHeightChange={setTouchKeyboardHeight}
         />
       </div>
     );
@@ -411,10 +420,12 @@ export default function App() {
     );
   }
 
-  const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
-
   return (
-    <div key={sessionKey} className="h-screen flex flex-col overflow-hidden app-shell">
+    <div
+      key={sessionKey}
+      className="h-screen flex flex-col overflow-hidden app-shell"
+      style={keyboardInsetStyle(globalKeyboardInset)}
+    >
       {/* Remote Control Indicator */}
       <RemoteIndicator
         remoteState={remoteState}
@@ -443,7 +454,7 @@ export default function App() {
           className="flex-1 overflow-y-auto transition-[margin-left] duration-200"
           style={{
             marginLeft: sidebarCollapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded,
-            paddingBottom: showGlobalKeyboard ? '300px' : '0',
+            paddingBottom: globalKeyboardInset > 0 ? `${globalKeyboardInset}px` : '0',
           }}
         >
           {visibleTabs.length === 0 ? (
@@ -518,6 +529,7 @@ export default function App() {
         onDone={onDone}
         doneLabel={keyboardT('keyboard.done')}
         spaceLabel={keyboardT('keyboard.space')}
+        onHeightChange={setTouchKeyboardHeight}
       />
     </div>
   );

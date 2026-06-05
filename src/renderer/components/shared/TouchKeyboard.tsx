@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 export type KeyboardMode = 'alpha' | 'full' | 'numeric';
 
@@ -10,6 +10,7 @@ interface Props {
   onDone: () => void;
   doneLabel?: string;
   spaceLabel?: string;
+  onHeightChange?: (heightPx: number) => void;
 }
 
 const ALPHA_ROWS = [
@@ -41,9 +42,45 @@ export default function TouchKeyboard({
   onDone,
   doneLabel = 'DONE',
   spaceLabel = 'SPACE',
+  onHeightChange,
 }: Props) {
+  const keyboardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = keyboardRef.current;
+    if (!element) return undefined;
+
+    let frame = 0;
+    const syncHeight = () => {
+      const nextHeight = visible ? Math.ceil(element.getBoundingClientRect().height) : 0;
+      onHeightChange?.(nextHeight);
+    };
+
+    syncHeight();
+    frame = window.requestAnimationFrame(syncHeight);
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', syncHeight);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        window.removeEventListener('resize', syncHeight);
+      };
+    }
+
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(element);
+    window.addEventListener('resize', syncHeight);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', syncHeight);
+    };
+  }, [mode, onHeightChange, visible]);
+
   return (
     <div
+      ref={keyboardRef}
       className={`
         w-full bg-slate-100 border-t border-slate-300 px-3 pt-2 pb-3
         transition-all duration-300 ease-in-out overflow-hidden

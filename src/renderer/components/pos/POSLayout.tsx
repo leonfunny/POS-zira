@@ -141,8 +141,15 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-slate-200 p-4">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-4"
+      style={{ paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)' }}
+    >
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-slate-200 p-4 overflow-y-auto"
+        style={{ maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-base font-extrabold text-slate-900">{tOr('pos.scale.manualWeightTitle', 'Manual weight')}</h2>
