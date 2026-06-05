@@ -385,10 +385,28 @@ interface PricePopupProps {
   tOr: (key: string, fallback: string) => string;
 }
 
+export function applyPricePopupBufferKey(buffer: string, key: string, replaceOnNextInput: boolean): string {
+  if (replaceOnNextInput) {
+    if (key === '.') return '0.';
+    if (key === '00') return appendDoubleZero('', 'price');
+    return appendDigit('', key);
+  }
+  if (key === '.') return appendDecimal(buffer, 'price');
+  if (key === '00') return appendDoubleZero(buffer, 'price');
+  return appendDigit(buffer, key);
+}
+
 function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) {
-  const [buffer, setBuffer] = useState((item.price / 100).toFixed(2));
+  const initialBuffer = (item.price / 100).toFixed(2);
+  const [buffer, setBuffer] = useState(initialBuffer);
+  const [replaceOnNextInput, setReplaceOnNextInput] = useState(true);
   const parsedPrice = parseBufferGrosze(buffer);
   const canApply = buffer.trim().length > 0 && Number.isFinite(parsedPrice) && parsedPrice >= 0;
+
+  useEffect(() => {
+    setBuffer(initialBuffer);
+    setReplaceOnNextInput(true);
+  }, [initialBuffer, item.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -400,9 +418,8 @@ function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) 
   }, [canApply, onApply, onClose, parsedPrice]);
 
   const pressKey = (key: string) => {
-    if (key === '.') setBuffer((value) => appendDecimal(value, 'price'));
-    else if (key === '00') setBuffer((value) => appendDoubleZero(value, 'price'));
-    else setBuffer((value) => appendDigit(value, key));
+    setBuffer((value) => applyPricePopupBufferKey(value, key, replaceOnNextInput));
+    setReplaceOnNextInput(false);
   };
 
   const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '00'];
@@ -463,14 +480,20 @@ function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) 
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => setBuffer((value) => backspace(value))}
+              onClick={() => {
+                setBuffer((value) => backspace(value));
+                setReplaceOnNextInput(false);
+              }}
               className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
             >
               {tOr('pos.backspace', 'Backspace')}
             </button>
             <button
               type="button"
-              onClick={() => setBuffer('')}
+              onClick={() => {
+                setBuffer('');
+                setReplaceOnNextInput(false);
+              }}
               className="h-11 rounded-lg border border-red-200 bg-white px-3 text-sm font-extrabold text-red-700 hover:bg-red-50"
             >
               {tOr('pos.clear', 'Clear')}
