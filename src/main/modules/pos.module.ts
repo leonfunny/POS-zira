@@ -32,7 +32,11 @@ import {
 } from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
-import { lookupOpenFoodFactsProduct, normalizeEan } from '../pos/external-product-lookup';
+import {
+  lookupExternalProductByEan,
+  normalizeEan,
+  type ExternalProductLookupOptions,
+} from '../pos/external-product-lookup';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
@@ -102,6 +106,15 @@ import {
   type WalkInBookingInput,
 } from '../sync/booking-sync';
 import logger from '../logger';
+
+function getExternalProductLookupOptions(): ExternalProductLookupOptions {
+  return {
+    google: {
+      apiKey: getConfigValue('googleCustomSearchApiKey') as string | undefined,
+      cx: getConfigValue('googleCustomSearchCx') as string | undefined,
+    },
+  };
+}
 
 function parseOrderPaymentTenders(order: any): Array<{ method: string; amount: number }> {
   if (!order?.payment_tenders) return [];
@@ -1200,7 +1213,7 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle('pos:master-catalog:lookup-external-by-ean', async (_e, ean: string) => {
       try {
-        const product = await lookupOpenFoodFactsProduct(ean);
+        const product = await lookupExternalProductByEan(ean, getExternalProductLookupOptions());
         return { ok: true, product };
       } catch (err: any) {
         logger.warn(`[PosModule] external EAN lookup failed ean=${ean}: ${err?.message ?? err}`);
@@ -1236,7 +1249,7 @@ export class PosModule extends BaseModule {
         if (!token) return { ok: false, error: 'no-auth' };
 
         try {
-          const externalProduct = await lookupOpenFoodFactsProduct(ean);
+          const externalProduct = await lookupExternalProductByEan(ean, getExternalProductLookupOptions());
           if (!externalProduct) return { ok: false, error: 'external-product-not-found' };
 
           const createPayload: Record<string, unknown> = {

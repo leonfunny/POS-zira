@@ -494,10 +494,12 @@ export interface AgentConfig {
   // POS settings
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
-  allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
-  labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
-  labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
-  // Receipt seller info (Polish paragon compliance)
+    allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
+    labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
+    labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
+    googleCustomSearchApiKey?: string;    // Optional fallback for EAN lookup when public product databases miss.
+    googleCustomSearchCx?: string;        // Google Programmable Search engine id for EAN lookup.
+    // Receipt seller info (Polish paragon compliance)
   receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")

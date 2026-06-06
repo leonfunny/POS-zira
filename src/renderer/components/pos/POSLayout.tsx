@@ -89,6 +89,10 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
   };
 }
 
+function isExternalScanImportSource(source: string | undefined): boolean {
+  return source === 'open_food_facts' || source === 'google_custom_search';
+}
+
 function canSellImportedVariant(variant: any, allowOversell = false): string | null {
   const price = Number(variant?.retail_price) || 0;
   const stock = Number(variant?.available_qty ?? variant?.in_stock) || 0;
@@ -539,7 +543,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
-      const isExternal = scanImport.preview?.source === 'open_food_facts';
+      const isExternal = isExternalScanImportSource(scanImport.preview?.source);
       // Drafts keep their existing local-first path. External EAN hits go
       // through backend quick-add so the new product exists online too.
       const result = isExternal

@@ -52,6 +52,8 @@ const defaultConfig: AgentConfig = {
   isPaired: false,
   autoStart: true,
   allowOversell: false,
+  googleCustomSearchApiKey: '',
+  googleCustomSearchCx: '',
   telegram: defaultTelegramConfig,
   ...AD_DISPLAY_DEFAULTS,
 };
@@ -241,6 +243,8 @@ const store = new Store<AgentConfig>({
     allowOversell: { type: 'boolean', default: false },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
     labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },
+    googleCustomSearchApiKey: { type: 'string', default: '' },
+    googleCustomSearchCx: { type: 'string', default: '' },
     // Receipt seller info (Polish paragon compliance)
     receiptSellerName: { type: 'string' },
     receiptSellerAddress: { type: 'string' },
