@@ -2,12 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Home } from 'lucide-react';
 import { usePosStore } from '../../hooks/usePosStore';
 import type { CartItem } from '../../hooks/usePosStore';
+import type { Product } from '../../hooks/usePosDb';
 import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName } from '../../../shared/catalog-names';
 import { normalizeSellBy } from '../../../shared/pos-sale';
+import type { ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import rlog from '../../utils/logger';
+import { formatProductLabelPriceText } from '../../utils/product-label';
 import ShiftModal from './ShiftModal';
 import ShiftReportModal from './ShiftReport';
 import RetailTemplate from './templates/retail/RetailTemplate';
@@ -22,7 +25,7 @@ import QuickAddCameraModal, {
   QuickAddPreparedResult,
 } from './QuickAddCameraModal';
 import AddProductWebviewPanel from './AddProductWebviewPanel';
-import { formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
+import { buildRetailCartItem, formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -61,6 +64,7 @@ function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
     vat_rate: Number(draft.vat_rate) || 23,
     image_url: draft.image_url,
     status: draft.status,
+    source: 'draft',
   };
 }
 
@@ -70,30 +74,136 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
   const source = draft ?? existing;
   if (!source) return null;
   const image = Array.isArray(source.images) ? source.images[0] : source.imageUrl ?? source.image_url;
+  const previewSource = response?.source ?? source.source;
   return {
     id: source.draftId ?? source.draft_id ?? source.id ?? source.variantId ?? source.variant_id,
     name: source.namePreferred ?? source.name ?? source.productName ?? source.product_name ?? source.title ?? fallbackEan,
     barcode: source.ean ?? source.barcode ?? fallbackEan,
-    retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price),
+    retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price ?? source.retailPriceGrosze),
     purchase_price: moneyToGrosze(source.suggestedPurchasePrice ?? source.purchasePrice ?? source.purchase_price),
     stock_qty: Number(source.stockQty ?? source.stock_qty ?? source.currentStock ?? 0) || 0,
     vat_rate: Number(source.taxRate ?? source.vat_rate ?? source.vatRate ?? 23) || 23,
     image_url: image ?? null,
     status: response?.mode ?? source.status,
+    source: previewSource,
   };
 }
 
-function canSellImportedVariant(variant: any): string | null {
+function canSellImportedVariant(variant: any, allowOversell = false): string | null {
   const price = Number(variant?.retail_price) || 0;
   const stock = Number(variant?.available_qty ?? variant?.in_stock) || 0;
   if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
-  if (variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
+  if (!allowOversell && variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
   return null;
 }
 
 function labelCopiesForCartItem(item: CartItem): number {
   if (normalizeSellBy(item.sellBy) === 'WEIGHT') return 1;
   return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
+}
+
+function parseManualWeightInput(value: string): number {
+  const parsed = Number.parseFloat(value.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatManualWeight(value: number, unit: string): string {
+  const text = value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return `${text} ${unit}`;
+}
+
+type TOr = (key: string, fallback: string) => string;
+
+interface ManualWeightPrompt {
+  product: Product;
+  saleClass: ProductSaleClassification;
+  displayName: string;
+  error?: string;
+}
+
+interface ManualWeightModalProps {
+  prompt: ManualWeightPrompt;
+  tOr: TOr;
+  onClose: () => void;
+  onSubmit: (weightKg: number) => void;
+}
+
+function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModalProps) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const unit = prompt.saleClass.saleUnit || 'kg';
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const weightKg = parseManualWeightInput(value);
+    if (weightKg <= 0 || weightKg > 999) {
+      setError(tOr('pos.scale.manualWeightInvalid', 'Enter a valid weight'));
+      return;
+    }
+    onSubmit(weightKg);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-4"
+      style={{ paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)' }}
+    >
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-slate-200 p-4 overflow-y-auto"
+        style={{ maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-extrabold text-slate-900">{tOr('pos.scale.manualWeightTitle', 'Manual weight')}</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-700 truncate">{prompt.displayName}</p>
+            {prompt.error && <p className="mt-1 text-xs text-amber-700">{prompt.error}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 rounded-md text-slate-500 hover:bg-slate-100 flex items-center justify-center shrink-0"
+            aria-label={tOr('common.close', 'Close')}
+          >
+            &times;
+          </button>
+        </div>
+
+        <label className="block mt-4">
+          <span className="text-xs font-bold uppercase text-slate-500">{unit}</span>
+          <input
+            autoFocus
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+              if (error) setError(null);
+            }}
+            inputMode="decimal"
+            placeholder="0.000"
+            className="mt-1 w-full h-12 rounded-md border border-slate-300 px-3 text-lg font-black tabular-nums outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+          />
+        </label>
+
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 px-4 rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            {tOr('common.cancel', 'Cancel')}
+          </button>
+          <button
+            type="submit"
+            className="h-10 px-4 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
+          >
+            {tOr('pos.scale.addManualWeight', 'Add')}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 interface POSLayoutProps {
@@ -104,6 +214,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   useBarcodeForwarder();
   const { state, dispatch } = usePosStore();
   const { config, saveConfig } = useConfig();
+  const allowOversell = config?.allowOversell === true;
   const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
   const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'salon');
   const [isOnline, setIsOnline] = useState(false);
@@ -111,6 +222,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
+  const [manualWeightPrompt, setManualWeightPrompt] = useState<ManualWeightPrompt | null>(null);
   const [scanImport, setScanImport] = useState<{
     open: boolean;
     ean: string;
@@ -230,6 +342,32 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (variantId) lastLabelVariantIdRef.current = variantId;
   }, []);
 
+  const openManualWeightPrompt = useCallback((product: Product, saleClass: ProductSaleClassification, error?: string) => {
+    setManualWeightPrompt({
+      product,
+      saleClass,
+      displayName: resolveName(product, language) || product.name,
+      error,
+    });
+  }, [language]);
+
+  const closeManualWeightPrompt = useCallback(() => {
+    setManualWeightPrompt(null);
+    document.dispatchEvent(new CustomEvent('pos:focus-search'));
+  }, []);
+
+  const submitManualWeight = useCallback((weightKg: number) => {
+    const prompt = manualWeightPrompt;
+    if (!prompt || !dispatch) return;
+    const item = buildRetailCartItem(prompt.product, prompt.saleClass, weightKg, crypto.randomUUID());
+    dispatch({ type: 'cart/addItem', payload: item });
+    rememberLastLabelVariant(item.variantId);
+    setShowAddProduct(false);
+    setManualWeightPrompt(null);
+    showScanToast(`+ ${prompt.displayName} (${formatManualWeight(weightKg, prompt.saleClass.saleUnit || 'kg')})`, 'ok');
+    document.dispatchEvent(new CustomEvent('pos:focus-search'));
+  }, [dispatch, manualWeightPrompt, rememberLastLabelVariant, showScanToast]);
+
   const printCartItemLabel = useCallback(async (item: CartItem) => {
     try {
       const product = await window.electronAPI.pos.products.getById(item.variantId);
@@ -245,10 +383,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       }
 
       const displayName = resolveName(product, language) || product.name;
-      const priceGrosze = Number(product.retail_price) || 0;
-      const priceText = priceGrosze > 0
-        ? `${(priceGrosze / 100).toFixed(2)} ${tOr('pos.currency', 'zl')}`
-        : undefined;
+      const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
       const result = await window.electronAPI.printLabel(barcode, displayName, {
         priceText,
         sku: product.sku?.trim() || undefined,
@@ -296,6 +431,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       if (!preview) {
         const remote = await window.electronAPI.pos.masterCatalog.lookupByEan(code);
         if (remote?.ok) preview = draftPreviewFromLookup(remote.draft, code);
+      }
+
+      if (!preview) {
+        const external = await window.electronAPI.pos.masterCatalog.lookupExternalByEan(code);
+        if (external?.ok) preview = draftPreviewFromLookup(external, code);
       }
 
       if (!preview) {
@@ -399,11 +539,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
-      // Local-first import: copy the draft into product_variants right here
-      // so the cashier can ring it up without waiting on the master-catalog
-      // server. A background worker (and any natural delta sync that brings
-      // the same product down later) reconciles the row with the server.
-      const result = await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
+      const isExternal = scanImport.preview?.source === 'open_food_facts';
+      // Drafts keep their existing local-first path. External EAN hits go
+      // through backend quick-add so the new product exists online too.
+      const result = isExternal
+        ? await window.electronAPI.pos.masterCatalog.importExternal({ ean, retailPriceGrosze, quantity: 1 })
+        : await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
@@ -411,7 +552,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       const variant = result.variant
         ?? (await window.electronAPI.pos.products.getByBarcode(ean));
       if (variant && dispatch) {
-        const sellError = canSellImportedVariant(variant);
+        const sellError = canSellImportedVariant(variant, allowOversell);
         if (sellError) {
           setScanImport((s) => ({ ...s, loading: false, error: sellError }));
           return;
@@ -444,7 +585,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [scanImport.ean, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
+  }, [allowOversell, scanImport.ean, scanImport.preview?.source, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
 
   const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
     const code = ean.trim();
@@ -454,7 +595,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       if (!product) return false;
 
       const displayName = resolveName(product, language);
-      const sellError = canSellImportedVariant(product);
+      const sellError = canSellImportedVariant(product, allowOversell);
       if (sellError) {
         showScanToast(`${displayName} - ${sellError}`, 'err');
         return true;
@@ -466,7 +607,13 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
       });
       if (!result.ok) {
-        showScanToast(formatRetailSaleError(result.error, tOr), 'err');
+        const message = formatRetailSaleError(result.error, tOr);
+        if (result.saleClass.requiresScale) {
+          openManualWeightPrompt(product, result.saleClass, message);
+          setShowAddProduct(false);
+        } else {
+          showScanToast(message, 'err');
+        }
         return true;
       }
 
@@ -480,7 +627,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       showScanToast('Scan failed', 'err');
       return true;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, language, rememberLastLabelVariant, showScanToast, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -501,12 +648,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             // canonical `name` + raw `name_translations` so it re-resolves on
             // language change and receipts keep canonical text.
             const displayName = resolveName(product, language);
-            const sellError = canSellImportedVariant(product);
+            const sellError = canSellImportedVariant(product, allowOversell);
             if (sellError) {
               showScanToast(`${displayName} - ${sellError}`, 'err');
               return;
             }
-            if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
+            if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
               showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
             } else {
               const result = await resolveRetailCartItem(product, {
@@ -515,7 +662,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
               });
               if (!result.ok) {
-                showScanToast(formatRetailSaleError(result.error, tOr), 'err');
+                const message = formatRetailSaleError(result.error, tOr);
+                if (result.saleClass.requiresScale) {
+                  openManualWeightPrompt(product, result.saleClass, message);
+                } else {
+                  showScanToast(message, 'err');
+                }
                 return;
               }
               dispatch({ type: 'cart/addItem', payload: result.item });
@@ -534,7 +686,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openScanImport]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {
@@ -582,23 +734,36 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => unsub?.();
   }, []);
 
-  const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
+  // Kitchen ticket could not print for a just-created order (no kitchen
+  // printer reachable). The sale itself is fine — alert the cashier so the
+  // kitchen learns about the order; Order History has a reprint button.
+  useEffect(() => {
+    const unsub = (window.electronAPI.pos as any).onKitchenTicketFailed?.(() => {
+      showScanToast(tOr('pos.kitchenTicketFailed', 'Kitchen ticket NOT printed — check the kitchen printer'), 'err');
+    });
+    return () => unsub?.();
+  }, [showScanToast, tOr]);
 
-  const handleShiftOpen = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
+  const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
+  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
+
+  const handleShiftOpen = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
+    if (!data.staffId || !data.staffName?.trim()) throw new Error(tOr('pos.shift.selectStaffRequired', 'Select a staff member'));
     const result = await window.electronAPI.pos.shift.open({
-      staffId: crypto.randomUUID(),
-      staffName: data.staffName || t('pos.cashier'),
+      staffId: data.staffId,
+      staffName: data.staffName,
       openingCash: data.openingCash ?? 0,
     });
     if (!result.success) throw new Error(result.error || 'Failed to open shift');
     setShowShiftModal(null);
   };
 
-  const handleShiftClose = async (data: { staffName?: string; openingCash?: number; closingCash?: number }) => {
+  const handleShiftClose = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
     if (!session.shiftId) throw new Error('No active shift');
     const result = await window.electronAPI.pos.shift.close({
       shiftId: session.shiftId,
       closingCash: data.closingCash ?? 0,
+      fiscalOnly: hideNonFiscalOrders,
     });
     if (!result.success) throw new Error(result.error || 'Failed to close shift');
     setShowShiftModal(null);
@@ -823,18 +988,20 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             state={state}
             dispatch={dispatch}
             t={t}
+            language={language}
             session={session}
             onUnknownBarcodeScanned={openScanImport}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
             onCreateProduct={() => setShowAddProduct(true)}
             onLastLabelVariantChange={rememberLastLabelVariant}
             onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
+            onManualWeightRequired={openManualWeightPrompt}
             homeResetKey={homeResetKey}
           />
         )}
-        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} session={session} />}
-        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} session={session} />}
+        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
+        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
+        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
       </div>
 
       {/* Shift modals - shared */}
@@ -860,6 +1027,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           report={shiftReport}
           onClose={() => setShiftReport(null)}
           t={t}
+        />
+      )}
+      {manualWeightPrompt && (
+        <ManualWeightModal
+          prompt={manualWeightPrompt}
+          tOr={tOr}
+          onClose={closeManualWeightPrompt}
+          onSubmit={submitManualWeight}
         />
       )}
     </div>

@@ -1,11 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
+import KitchenPrintSettings from './pos/KitchenPrintSettings';
+import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
-import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale } from 'lucide-react';
+import QRCode from 'qrcode';
+import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale, LayoutGrid } from 'lucide-react';
+import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -75,12 +79,15 @@ function PortProtocolMismatchBanner({
 interface SettingsProps {
   config: AgentConfig | null;
   onConfigChange: (config: Partial<AgentConfig>) => void | Promise<any>;
+  /** Plan/entitlement default for a tab — used by the Module Manager for the
+   *  default toggle state and the "outside plan" badge. */
+  isModuleEntitled?: (tab: Tab) => boolean;
 }
 
 // Printer types - defined locally for Vite compatibility
 const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
-type SettingsTab = 'general' | 'pos' | 'printers';
+type SettingsTab = 'general' | 'pos' | 'printers' | 'modules';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 const DEFAULT_SCALE_SHARE_PORT = 17891;
@@ -434,6 +441,7 @@ function getWindowsPrinterOptionsForSelect(
 
 const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
   { tab: 'pos',          label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
+  { tab: 'label',        label: 'Label',           icon: <Tag size={15} />,            color: 'text-emerald-700 bg-emerald-50' },
   { tab: 'selfCheckout', label: 'Self-Checkout',   icon: <ScanBarcode size={15} />,    color: 'text-emerald-600 bg-emerald-50' },
   { tab: 'billiard',     label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
   { tab: 'orders',     label: 'Orders',           icon: <ClipboardList size={15} />,   color: 'text-slate-600 bg-slate-100' },
@@ -450,7 +458,7 @@ const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; c
   { tab: 'debug',     label: 'Debug',            icon: <Bug size={15} />,             color: 'text-yellow-600 bg-yellow-50' },
 ];
 
-export default function Settings({ config, onConfigChange }: SettingsProps) {
+export default function Settings({ config, onConfigChange, isModuleEntitled }: SettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
   const [windowsPrinters, setWindowsPrinters] = useState<WindowsPrinterOption[]>(
     () => getInitialWindowsPrinterOptions(config),
@@ -527,6 +535,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
+  const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
   const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
   const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
@@ -562,6 +571,16 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
   const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
   const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
   const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
+
+  // TV Ad state
+  const [tvAdEnabled, setTvAdEnabled] = useState<boolean>((config as any)?.tvAdEnabled ?? false);
+  const [tvAdPlaylist, setTvAdPlaylist] = useState<Array<{ id: string; filename: string; order: number; enabled: boolean }>>((config as any)?.tvAdPlaylist ?? []);
+  const [tvAdMode, setTvAdMode] = useState<'sequential' | 'repeat-one'>((config as any)?.tvAdPlaybackMode ?? 'sequential');
+  const [tvAdRepeatId, setTvAdRepeatId] = useState<string | null>((config as any)?.tvAdRepeatVideoId ?? null);
+  const [tvAdMuted, setTvAdMuted] = useState<boolean>((config as any)?.tvAdMuted ?? true);
+  const [tvAdVolume, setTvAdVolume] = useState<number>((config as any)?.tvAdVolume ?? 0);
+  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; primaryIp?: string; connectedClients: number } | null>(null);
+  const tvAdQrRef = useRef<HTMLCanvasElement | null>(null);
 
   // Connected displays (dynamic)
   const [displays, setDisplays] = useState<Array<{
@@ -651,6 +670,30 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     };
   }, [scaleShareEnabled, scaleSharePort]);
 
+  // TV Ad status poll
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      const s = await window.electronAPI.tvAdGetStatus().catch(() => null);
+      if (alive) setTvAdStatus(s as any);
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Vẽ QR địa chỉ kết nối TV (ip:port) khi server chạy
+  useEffect(() => {
+    const ip = tvAdStatus?.primaryIp || tvAdStatus?.ips?.[0];
+    if (tvAdQrRef.current && tvAdStatus?.running && ip && tvAdStatus.port) {
+      QRCode.toCanvas(tvAdQrRef.current, `${ip}:${tvAdStatus.port}`, {
+        width: 96,
+        margin: 1,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      }).catch((err: Error) => rlog.error('[Settings] tvAd QR failed:', err));
+    }
+  }, [tvAdStatus?.running, tvAdStatus?.primaryIp, tvAdStatus?.ips?.[0], tvAdStatus?.port]);
+
   const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
     autoStart,
@@ -658,6 +701,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     posEnabled,
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
+    allowOversell,
     scale: {
       enabled: scaleConnection !== 'none',
       connection: scaleConnection,
@@ -691,7 +735,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
     ...overrides,
   }), [
     name, autoStart, language,
-    posEnabled, posMode, posLanguage,
+    posEnabled, posMode, posLanguage, allowOversell,
     scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
@@ -961,6 +1005,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPosEnabled(config.posEnabled ?? false);
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
+      setAllowOversell(config.allowOversell ?? false);
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
@@ -983,6 +1028,13 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setPromoFolder((config as any).customerDisplayPromoFolder || '');
       setPromoInterval((config as any).customerDisplayPromoInterval ?? 5000);
       setIdleTimeout((config as any).customerDisplayIdleTimeout ?? 120000);
+      // TV Ad re-sync
+      setTvAdEnabled((config as any).tvAdEnabled ?? false);
+      setTvAdPlaylist((config as any).tvAdPlaylist ?? []);
+      setTvAdMode((config as any).tvAdPlaybackMode ?? 'sequential');
+      setTvAdRepeatId((config as any).tvAdRepeatVideoId ?? null);
+      setTvAdMuted((config as any).tvAdMuted ?? true);
+      setTvAdVolume((config as any).tvAdVolume ?? 0);
       // AI settings
       setAiEnabled((config as any).aiEnabled ?? false);
       setAiLocalMode((config as any).aiLocalMode ?? false);
@@ -1394,6 +1446,36 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
       setScaleTesting(false);
     }
   };
+
+  // ─── TV Ad handlers ──────────────────────────────────────────────────────────
+  const persistTvAd = async (overrides: Record<string, unknown> = {}) => {
+    const payload = {
+      tvAdEnabled, tvAdPlaybackMode: tvAdMode, tvAdRepeatVideoId: tvAdRepeatId,
+      tvAdMuted, tvAdVolume, tvAdPlaylist, ...overrides,
+    };
+    await window.electronAPI.tvAdSave(payload as any);
+  };
+
+  const handleAddTvAdVideo = async () => {
+    const rec = await window.electronAPI.tvAdPickVideo().catch(() => null);
+    if (!rec) return;
+    const next = [...tvAdPlaylist, { ...rec, order: tvAdPlaylist.length, enabled: true }];
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleRemoveTvAdVideo = async (id: string) => {
+    const next = tvAdPlaylist.filter(v => v.id !== id).map((v, i) => ({ ...v, order: i }));
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleToggleTvAdVideo = async (id: string) => {
+    const next = tvAdPlaylist.map(v => v.id === id ? { ...v, enabled: !v.enabled } : v);
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+  // ─── End TV Ad handlers ──────────────────────────────────────────────────────
 
   const handleCopyMachineId = async () => {
     if (config?.machineId) {
@@ -1989,6 +2071,7 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           { id: 'general' as const, label: t('settings.general'), icon: <LayoutDashboard size={15} /> },
           { id: 'pos' as const, label: t('settings.pos'), icon: <ShoppingCart size={15} /> },
           { id: 'printers' as const, label: t('settings.printers'), icon: <Printer size={15} /> },
+          { id: 'modules' as const, label: t('settings.modules'), icon: <LayoutGrid size={15} /> },
         ]).map((tab) => {
           const active = settingsTab === tab.id;
           return (
@@ -2010,6 +2093,15 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           );
         })}
       </div>
+
+      {settingsTab === 'modules' && (
+        <ModuleManager
+          config={config}
+          onConfigChange={onConfigChange}
+          isModuleEntitled={isModuleEntitled}
+          t={t}
+        />
+      )}
 
       {settingsTab === 'general' && (
         <>
@@ -3822,9 +3914,43 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
               <p className="text-xs text-slate-500 mt-1">{t('settings.posLanguageDesc')}</p>
             </div>
 
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex min-w-0 gap-3">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-600" />
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    {t('settings.allowOversell')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {t('settings.allowOversellDesc')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={allowOversell}
+                onClick={() => setAllowOversell(!allowOversell)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  allowOversell ? 'bg-red-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    allowOversell ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
             {/* Category priority ranking — retail browse order + size */}
             <div className="border-t border-slate-200 pt-4 mt-4">
               <CategoryRankingSettings lang={posLanguage || undefined} />
+            </div>
+
+            {/* Staff Management */}
+            <div className="border-t border-slate-200 pt-4 mt-4">
+              <StaffManagementSettings />
             </div>
 
             {/* Scale Settings */}
@@ -4400,6 +4526,152 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
         )}
       </div>
 
+      {/* TV Ad Panel */}
+      <div className="panel p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {t('settings.tvAd.title')}
+          </h2>
+          <button
+            type="button"
+            onClick={async () => { setTvAdEnabled(!tvAdEnabled); await persistTvAd({ tvAdEnabled: !tvAdEnabled }); }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              tvAdEnabled ? 'bg-brand-600' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                tvAdEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        {tvAdEnabled && (
+          <div className="space-y-4">
+            {/* Playlist */}
+            <div>
+              <button
+                type="button"
+                onClick={handleAddTvAdVideo}
+                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                {t('settings.tvAd.addVideo')}
+              </button>
+              {tvAdPlaylist.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map(v => (
+                    <li key={v.id} className="flex items-center gap-2 py-1 px-2 rounded-lg border border-slate-200 bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={v.enabled}
+                        onChange={() => void handleToggleTvAdVideo(v.id)}
+                        className="w-4 h-4 accent-brand-600"
+                      />
+                      <span className="flex-1 text-sm text-slate-700 truncate">{v.filename}</span>
+                      {tvAdMode === 'repeat-one' && (
+                        <input
+                          type="radio"
+                          name="tvAdRepeat"
+                          checked={tvAdRepeatId === v.id}
+                          onChange={async () => { setTvAdRepeatId(v.id); await persistTvAd({ tvAdRepeatVideoId: v.id }); }}
+                          className="w-4 h-4 accent-brand-600"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveTvAdVideo(v.id)}
+                        className="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded transition-colors"
+                      >
+                        {t('settings.tvAd.remove')}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Playback mode */}
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">
+                {t('settings.tvAd.playbackMode')}
+              </label>
+              <select
+                value={tvAdMode}
+                onChange={async (e) => {
+                  const m = e.target.value as 'sequential' | 'repeat-one';
+                  setTvAdMode(m);
+                  await persistTvAd({ tvAdPlaybackMode: m });
+                }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+              >
+                <option value="sequential">{t('settings.tvAd.sequential')}</option>
+                <option value="repeat-one">{t('settings.tvAd.repeatOne')}</option>
+              </select>
+            </div>
+
+            {/* Muted toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="tvAdMuted"
+                checked={tvAdMuted}
+                onChange={async (e) => { setTvAdMuted(e.target.checked); await persistTvAd({ tvAdMuted: e.target.checked }); }}
+                className="w-4 h-4 accent-brand-600"
+              />
+              <label htmlFor="tvAdMuted" className="text-sm text-slate-600 cursor-pointer">
+                {t('settings.tvAd.muted')}
+              </label>
+            </div>
+
+            {/* Volume (only when not muted) */}
+            {!tvAdMuted && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">
+                  {t('settings.tvAd.volume')}: {tvAdVolume}%
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={tvAdVolume}
+                  onChange={(e) => setTvAdVolume(parseInt(e.target.value))}
+                  onPointerUp={() => void persistTvAd({ tvAdVolume })}
+                  onMouseUp={() => void persistTvAd({ tvAdVolume })}
+                  onTouchEnd={() => void persistTvAd({ tvAdVolume })}
+                  className="w-full accent-brand-600"
+                />
+              </div>
+            )}
+
+            {/* Server status + TV connect address */}
+            {tvAdStatus?.running && (tvAdStatus.primaryIp || tvAdStatus.ips[0]) && (
+              <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <canvas ref={tvAdQrRef} className="rounded bg-white" />
+                <div>
+                  <div className="text-xs text-slate-500">{t('settings.tvAd.connectAddress')}</div>
+                  <div className="text-2xl font-bold tracking-wide text-slate-800">
+                    {(tvAdStatus.primaryIp || tvAdStatus.ips[0])}:{tvAdStatus.port}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">{t('settings.tvAd.connectAddressHint')}</div>
+                </div>
+              </div>
+            )}
+            <div className="text-xs text-slate-500">
+              {t('settings.tvAd.status')}:{' '}
+              {tvAdStatus?.running ? (
+                <span className="text-green-600 font-medium">
+                  {t('settings.tvAd.running')}
+                  {` — ${t('settings.tvAd.connectedTvs')}: ${tvAdStatus.connectedClients}`}
+                </span>
+              ) : (
+                <span className="text-slate-400">{t('settings.tvAd.stopped')}</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
         </>
       )}
 
@@ -4920,6 +5192,35 @@ export default function Settings({ config, onConfigChange }: SettingsProps) {
           })}
         </div>
       </div>
+
+      {/* POS Fiscal Visibility */}
+      <div className="panel p-4">
+        <h2 className="text-sm font-semibold text-slate-700 mb-1">{t('settings.fiscalHistory')}</h2>
+        <p className="text-xs text-slate-400 mb-4">{t('settings.fiscalHistoryDesc')}</p>
+        <label className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+          <div>
+            <div className="text-sm text-slate-700">{t('settings.showNonFiscalOrders')}</div>
+            <div className="text-xs text-slate-400">{t('settings.showNonFiscalOrdersDesc')}</div>
+          </div>
+          {(() => {
+            const enabled = config?.showNonFiscalOrders ?? true;
+            return (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enabled}
+                onClick={() => onConfigChange({ showNonFiscalOrders: !enabled })}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${enabled ? 'bg-brand-600' : 'bg-slate-200'}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            );
+          })()}
+        </label>
+      </div>
+
+      {/* Kitchen ticket printing — which categories print a kitchen ticket */}
+      <KitchenPrintSettings lang={config?.posLanguage || config?.language || undefined} />
 
       {/* Check-in Display */}
       <div className="panel p-4">

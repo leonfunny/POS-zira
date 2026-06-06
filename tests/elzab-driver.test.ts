@@ -238,6 +238,60 @@ describe('ElzabDriver fail-closed behavior', () => {
     }
   });
 
+  it('sends fiscal-safe item names and units to the bridge and journal', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const printReceipt = vi.fn(async () => ({ ok: true }));
+    const { journal, attempts } = createJournal();
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: journal });
+    const unsafeReceipt: ReceiptData = {
+      ...receipt,
+      orderId: 'order-safe',
+      orderNumber: 'POS-SAFE',
+      items: [
+        { name: 'Chả', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23, unit: 'cái' },
+        { name: 'Sól Mąka Żółty ryż', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23, unit: 'kg' },
+        { name: 'Fähre Straße', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23, unit: 'szt' },
+        { name: 'Sól Mąka Żółty ryż trójkątne opakowanie jęczmienia ekstra', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23, unit: 'opakowanie' },
+      ],
+      payment: { method: 'CASH', amount: 4000 },
+      subtotal: 4000,
+      total: 4000,
+    };
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printReceipt(unsafeReceipt)).resolves.toBeUndefined();
+
+      const sentData = printReceipt.mock.calls[0][1] as ReceiptData;
+      expect(sentData.items.map((item) => ({ name: item.name, unit: item.unit }))).toEqual([
+        { name: 'Cha', unit: 'cai' },
+        { name: 'Sol Maka Zolty ryz', unit: 'kg' },
+        { name: 'Fahre Strasse', unit: 'szt' },
+        { name: 'Sol Maka Zolty ryz trojkatne opakowanie', unit: 'opak' },
+      ]);
+      expect(unsafeReceipt.items[0]).toMatchObject({ name: 'Chả', unit: 'cái' });
+
+      const journalPayload = JSON.parse(attempts[0].payload_json) as ReceiptData;
+      expect(journalPayload.items.map((item) => ({ name: item.name, unit: item.unit }))).toEqual([
+        { name: 'Cha', unit: 'cai' },
+        { name: 'Sol Maka Zolty ryz', unit: 'kg' },
+        { name: 'Fahre Strasse', unit: 'szt' },
+        { name: 'Sol Maka Zolty ryz trojkatne opakowanie', unit: 'opak' },
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
   it('blocks automatic retry when a prior receipt attempt is unknown', async () => {
     const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
     process.env.ALLOW_REAL_FISCAL_PRINT = 'true';

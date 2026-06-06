@@ -16,7 +16,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
-import { PaymentController } from '../pos/payment-controller';
+import { PaymentController, ReceiptPrintJournalInput } from '../pos/payment-controller';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../pos/order-line-contract';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
@@ -32,6 +32,7 @@ import {
 } from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
+import { lookupOpenFoodFactsProduct, normalizeEan } from '../pos/external-product-lookup';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
@@ -39,6 +40,9 @@ import { draftProductSync } from '../sync/draft-product-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
+import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
 import { staffRepo } from '../database/repos/staff-repo';
@@ -194,6 +198,35 @@ export class PosModule extends BaseModule {
       return socket?.isConnected() || false;
     };
 
+    // Persist a print_attempts row for each non-fiscal receipt print. Resolves
+    // the configured printer's display name + target (COM port / Windows
+    // printer / shared id) so Order History can show "Order: Xprinter XP-80T".
+    const resolvePrinterMeta = (input: ReceiptPrintJournalInput): { name: string | null; target: string | null } => {
+      if (input.route === 'SHARED_NETWORK') {
+        return { name: input.printerId ? `Shared · ${input.printerId}` : 'Shared printer', target: input.printerId ?? null };
+      }
+      const cfg = getConfig();
+      const dict = (cfg.printers || {}) as Record<string, any>;
+      const p = dict[input.printerType] || (input.printerType === PrinterType.RECEIPT ? cfg.receiptPrinter : undefined);
+      if (!p) return { name: null, target: null };
+      const name = p.displayName || p.windowsPrinter || p.protocol || null;
+      const target = p.port || p.windowsPrinter || p.address || null;
+      return { name, target };
+    };
+    const recordPrintAttempt = (input: ReceiptPrintJournalInput) => {
+      const meta = resolvePrinterMeta(input);
+      printAttemptRepo.record({
+        orderId: input.orderId,
+        documentType: input.documentType,
+        printerType: input.printerType,
+        printerName: meta.name,
+        printerTarget: meta.target,
+        route: input.route,
+        status: input.status,
+        error: input.error,
+      });
+    };
+
     this.paymentController = new PaymentController(
       getPrinterForType,
       isConnected,
@@ -204,6 +237,7 @@ export class PosModule extends BaseModule {
       submitSharedReceiptPrint,
       submitSharedFiscalPrint,
       getSharedFiscalPrinterStatus,
+      recordPrintAttempt,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,
@@ -1020,13 +1054,25 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE,
-      async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) =>
-        withProductAdminCapability<ProductAdminCategoryMutationResponse>(
+      async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) => {
+        const result = await withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canUpdateCategory',
           'update category',
           (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
           () => refreshProductsAfterProductAdminMutation('product_admin_category_update'),
-        ),
+        );
+        // Mirror the kitchen flag locally right away: the order-time kitchen
+        // filter reads the LOCAL categories table, and the post-mutation
+        // product refresh is async — without this a sale rung up seconds
+        // after the toggle would miss the kitchen ticket.
+        if (payload && typeof payload.kitchenPrint === 'boolean' && !(result as any)?.error) {
+          try {
+            productRepo.setCategoryKitchenPrint(categoryId, payload.kitchenPrint);
+            database.markDirty();
+          } catch { /* refresh will reconcile */ }
+        }
+        return result;
+      },
     );
 
     // Draft products (server-mirrored, see DraftProductSync)
@@ -1151,6 +1197,128 @@ export class PosModule extends BaseModule {
         return { ok: false, error: err?.message ?? 'lookup-failed', draft: null };
       }
     });
+
+    ipcMain.handle('pos:master-catalog:lookup-external-by-ean', async (_e, ean: string) => {
+      try {
+        const product = await lookupOpenFoodFactsProduct(ean);
+        return { ok: true, product };
+      } catch (err: any) {
+        logger.warn(`[PosModule] external EAN lookup failed ean=${ean}: ${err?.message ?? err}`);
+        return { ok: false, error: err?.message ?? 'external-lookup-failed', product: null };
+      }
+    });
+
+    ipcMain.handle(
+      'pos:master-catalog:import-external',
+      async (_e, payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) => {
+        const ean = normalizeEan(payload?.ean);
+        if (!ean) return { ok: false, error: 'invalid-ean' };
+
+        const requestedRetailPrice = Number(payload?.retailPriceGrosze);
+        const retailPriceGrosze = Number.isFinite(requestedRetailPrice)
+          ? Math.round(requestedRetailPrice)
+          : 0;
+        if (!(retailPriceGrosze >= 1)) {
+          return { ok: false, error: 'missing-price' };
+        }
+
+        const requestedQuantity = Number(payload?.quantity);
+        const quantity = Number.isFinite(requestedQuantity) && requestedQuantity > 0
+          ? requestedQuantity
+          : 1;
+
+        const existing = productRepo.getByBarcode(ean);
+        if (existing) {
+          return { ok: true, outcome: 'EXISTING_VARIANT', variant: existing };
+        }
+
+        const token = getSecureAuthToken();
+        if (!token) return { ok: false, error: 'no-auth' };
+
+        try {
+          const externalProduct = await lookupOpenFoodFactsProduct(ean);
+          if (!externalProduct) return { ok: false, error: 'external-product-not-found' };
+
+          const createPayload: Record<string, unknown> = {
+            name: externalProduct.name,
+            ean: externalProduct.ean,
+          };
+          if (externalProduct.imageUrl) createPayload.imageUrl = externalProduct.imageUrl;
+
+          const prepared = await apiClient.quickAddCreate(token, createPayload, `external-ean-prepare-${externalProduct.ean}`);
+
+          const productId = prepared.product?.id ?? prepared.productId ?? prepared.product_id;
+          const variantId =
+            prepared.variant?.id
+            ?? prepared.variantId
+            ?? prepared.variant_id
+            ?? prepared.product?.variant?.id;
+          if (!productId || !variantId) {
+            return { ok: false, error: 'quick-add-create-returned-no-product-ids' };
+          }
+
+          const finalized = await apiClient.quickAddCreate(token, {
+            productId,
+            variantId,
+            name: externalProduct.name,
+            retailPrice: retailPriceGrosze / 100,
+            quantity,
+          }, `external-ean-finalize-${externalProduct.ean}-${retailPriceGrosze}`);
+
+          const productForLocal = {
+            ...(prepared.product ?? {}),
+            ...(finalized.product ?? {}),
+            id: finalized.product?.id ?? prepared.product?.id ?? productId,
+            name: externalProduct.name,
+            ean: externalProduct.ean,
+            barcode: externalProduct.ean,
+            imageUrl: finalized.product?.imageUrl ?? prepared.product?.imageUrl ?? externalProduct.imageUrl,
+            image_url: finalized.product?.image_url ?? prepared.product?.image_url ?? externalProduct.imageUrl,
+          };
+          const variantForLocal = {
+            ...(prepared.variant ?? {}),
+            ...(finalized.variant ?? {}),
+            id: finalized.variant?.id ?? prepared.variant?.id ?? variantId,
+            name: externalProduct.name,
+            barcode: finalized.variant?.barcode ?? prepared.variant?.barcode ?? externalProduct.ean,
+            imageUrl: finalized.variant?.imageUrl ?? prepared.variant?.imageUrl ?? externalProduct.imageUrl,
+            image_url: finalized.variant?.image_url ?? prepared.variant?.image_url ?? externalProduct.imageUrl,
+          };
+          const localVariant = toQuickAddVariantRow(productForLocal, variantForLocal, {
+            retailPriceGrosze,
+            quantity,
+          });
+
+          if (localVariant) {
+            productRepo.upsertMany([localVariant]);
+            database.markDirty();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+
+          let syncPending = false;
+          try {
+            const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+            await syncMod?.deltaSync?.();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          } catch (syncErr: any) {
+            syncPending = true;
+            logger.debug(`[PosModule] post-external-import product sync skipped: ${syncErr?.message ?? syncErr}`);
+          }
+
+          return {
+            ok: true,
+            outcome: 'EXTERNAL_IMPORT',
+            product: finalized.product ?? prepared.product ?? null,
+            variant: localVariant ?? finalized.variant ?? prepared.variant ?? null,
+            source: externalProduct.source,
+            syncPending,
+          };
+        } catch (err: any) {
+          logger.error(`[PosModule] external EAN import failed ean=${ean}: ${err?.message ?? err}`);
+          return { ok: false, error: err?.message ?? 'external-import-failed' };
+        }
+      },
+    );
     ipcMain.handle(
       'pos:master-catalog:scan-create',
       async (_e, payload: {
@@ -1355,7 +1523,7 @@ export class PosModule extends BaseModule {
     );
 
     // Orders
-    ipcMain.handle('pos:orders:create', (_e, order, items) => {
+    ipcMain.handle('pos:orders:create', async (_e, order, items) => {
       try {
         const normalizedOrder = { ...(order || {}) };
         const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
@@ -1423,11 +1591,26 @@ export class PosModule extends BaseModule {
           };
         });
 
+        // Daily pickup number: assigned once per order with kitchen items.
+        // The same number prints on the kitchen ticket and the customer
+        // pickup slip so the kitchen hands food to the matching number.
+        if (!normalizedOrder.kitchen_number) {
+          const hasKitchenItems = (normalizedItems || []).some((item: any) => {
+            if (!item.variant_id) return false;
+            const lineProduct = productRepo.getById(item.variant_id);
+            return !!lineProduct?.category_id && productRepo.isKitchenPrintCategory(lineProduct.category_id);
+          });
+          if (hasKitchenItems) {
+            normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber();
+          }
+        }
+
         const id = orderRepo.create(normalizedOrder, normalizedItems);
         let stockChanged = false;
+        const allowNegativeStock = getConfig().allowOversell === true;
         for (const item of normalizedItems) {
           if (item.variant_id && item.quantity > 0) {
-            productRepo.decrementStock(item.variant_id, item.quantity);
+            productRepo.decrementStock(item.variant_id, item.quantity, { allowNegative: allowNegativeStock });
             stockChanged = true;
           }
         }
@@ -1475,11 +1658,50 @@ export class PosModule extends BaseModule {
             logger.warn(`[PosModule] Nail turn checkout sync failed for order ${id}: ${e?.message ?? e}`);
           });
 
+          // A paid order must be durable immediately — the 5s auto-save loop
+          // leaves a window where a crash/power-cut loses an already-fiscalized
+          // sale (same pattern as the check-in flush above). Don't fail the
+          // sale if the flush fails: the order is committed in memory + sync
+          // log, the auto-save loop retries, and db:save-error notifies the UI.
+          const flush = await database.save();
+          if (!flush.success) {
+            logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
+          }
+
+          // Kitchen ticket (fire-and-forget): items from kitchen-flagged
+          // categories print to the kitchen printer. Never blocks the sale;
+          // the idempotent duplicate-create path returns earlier and thus
+          // never prints a second ticket.
+          void this.printKitchenTicketForOrder(id)
+            .then((kt) => {
+              if (kt.kitchenItems > 0 && !kt.printed) {
+                notifyPosRenderers(this.container, 'pos:kitchen-ticket-failed', {
+                  orderId: id,
+                  error: kt.error || 'kitchen_print_failed',
+                });
+              }
+            })
+            .catch(() => undefined);
+
           return { success: true, id };
       }
-      catch (e: any) { return { success: false, error: e.message }; }
+      catch (e: any) {
+        // Idempotency: kiosk/POS retries reuse the same order id, so a retry
+        // racing an already-committed create (whose IPC reply was lost) hits
+        // the orders.id primary key. If the row truly exists, the sale was
+        // saved — report success instead of pushing the cashier to retry
+        // into a duplicate order.
+        const orderId = String(order?.id || '');
+        if (orderId && /UNIQUE constraint failed: orders\.id/i.test(String(e?.message || '')) && orderRepo.getById(orderId)) {
+          logger.warn(`[PosModule] Order ${orderId} already exists — treating duplicate create as success`);
+          return { success: true, id: orderId, duplicate: true };
+        }
+        return { success: false, error: e.message };
+      }
     });
-    ipcMain.handle('pos:orders:getDailyStats', (_e, date: string) => orderRepo.getDailyStats(date));
+    ipcMain.handle('pos:orders:getDailyStats', (_e, date: string, options?: { fiscalOnly?: boolean }) => {
+      return orderRepo.getDailyStats(date, Boolean(options?.fiscalOnly));
+    });
 
     ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => {
       const limit = filters.limit || 20;
@@ -1504,6 +1726,27 @@ export class PosModule extends BaseModule {
       const total = orders.length;
       const offset = (page - 1) * limit;
       return { orders: orders.slice(offset, offset + limit), total, page, limit };
+    });
+
+    // Order History fiscal-visibility: which of these order ids have a
+    // confirmed paragon in the LOCAL fiscal journal. Server-sourced history
+    // rows don't carry the SQL-computed has_fiscal flag — the renderer asks
+    // here before applying the hide-non-fiscal filter.
+    ipcMain.handle('pos:orders:getConfirmedFiscalIds', (_e, orderIds: string[]) => {
+      try {
+        const ids = Array.isArray(orderIds)
+          ? orderIds.filter((id): id is string => typeof id === 'string' && id.length > 0).slice(0, 500)
+          : [];
+        return fiscalAttemptRepo.getConfirmedOrderIds(ids);
+      } catch {
+        return [];
+      }
+    });
+
+    // Manual kitchen-ticket print (Order History "print kitchen ticket").
+    ipcMain.handle('pos:orders:printKitchenTicket', async (_e, orderId: string) => {
+      const result = await this.printKitchenTicketForOrder(String(orderId || ''), { reprint: true });
+      return { success: result.printed, ...result };
     });
 
     ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {
@@ -1654,6 +1897,28 @@ export class PosModule extends BaseModule {
 
     // Staff
     ipcMain.handle('pos:staff:getAll', () => staffRepo.getAll());
+    ipcMain.handle('pos:staff:getAllForSettings', () => staffRepo.getAllForSettings());
+    ipcMain.handle('pos:staff:create', (_e, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+      try {
+        return { success: true, staff: staffRepo.createLocal(input) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to create staff' };
+      }
+    });
+    ipcMain.handle('pos:staff:update', (_e, id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+      try {
+        return { success: true, staff: staffRepo.updateLocal(id, input) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to update staff' };
+      }
+    });
+    ipcMain.handle('pos:staff:setActive', (_e, id: string, active: boolean) => {
+      try {
+        return { success: true, staff: staffRepo.setActive(id, active) };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? 'Failed to update staff status' };
+      }
+    });
 
     // Nail turn board (backend-driven module; dark-launch safe)
     ipcMain.handle('pos:nail-turns:getToday', async () => {
@@ -1896,6 +2161,29 @@ export class PosModule extends BaseModule {
         return { success: true, status: resolved.status };
       } catch (e: any) {
         return { success: false, error: e?.message ?? String(e) };
+      }
+    });
+
+    // Print journal (which printer printed each order copy) + latest fiscal
+    // attempt — Order History reads both to render per-document badges.
+    ipcMain.handle('pos:print-attempts:get-by-order', async (_e, orderId: string) => {
+      try {
+        return { success: true, attempts: printAttemptRepo.findByOrder(orderId) };
+      } catch (e: any) {
+        return { success: false, attempts: [], error: e?.message ?? String(e) };
+      }
+    });
+
+    ipcMain.handle('pos:fiscal:get-latest', async (_e, orderId: string) => {
+      try {
+        const cfg = getConfig();
+        const fp = (cfg.printers as Record<string, any> | undefined)?.[PrinterType.FISCAL];
+        const printer = fp
+          ? { name: fp.displayName || fp.protocol || 'Fiscal', target: fp.port || fp.address || null }
+          : null;
+        return { success: true, attempt: fiscalAttemptRepo.findLatestByOrder(orderId) ?? null, printer };
+      } catch (e: any) {
+        return { success: false, attempt: null, printer: null, error: e?.message ?? String(e) };
       }
     });
 
@@ -2332,37 +2620,61 @@ export class PosModule extends BaseModule {
       }
 
       try {
-        if (method === 'CARD') {
-          const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
-          return {
-            success: fiscalPrinted,
-            printed: fiscalPrinted,
-            fiscalPrinted,
-            receiptPrinted: fiscalPrinted,
-            route: 'FISCAL_RECEIPT',
-          };
-        }
-
+        // Polish fiscal law requires a paragon fiskalny for EVERY consumer
+        // sale regardless of tender — cash and BLIK included, not just card.
+        // Route all methods through the fiscal printer (local hardware or the
+        // shared blocking backend job to the POS that owns the device).
+        // CASH additionally opens the local cash drawer (best-effort, before
+        // the print so staff can store the money even if the print fails).
+        let drawerOpened = false;
         if (method === 'CASH') {
-          const result = await this.paymentController?.printReceiptAndOpenDrawer(orderId);
-          const receiptPrinted = result?.receiptPrinted ?? false;
-          return {
-            success: receiptPrinted,
-            printed: receiptPrinted,
-            receiptPrinted,
-            drawerOpened: result?.drawerOpened ?? false,
-            route: 'ORDER_COPY',
-            error: result?.error,
+          drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
+        }
+        const fiscalPrinted = await this.paymentController?.printFiscalReceipt(orderId) ?? false;
+
+        // Pickup slip: when the order has kitchen items, print a short strip
+        // with the big daily number right where the paragon comes out (the
+        // shared SELF_CHECKOUT_RECEIPT printer; local receipt printer as
+        // fallback). Best-effort — the kiosk also SHOWS the number on screen.
+        const finalizedOrder = orderRepo.getById(orderId);
+        const pickupNumber = finalizedOrder?.kitchen_number ?? null;
+        let slipPrinted: boolean | undefined;
+        if (pickupNumber) {
+          const slip: KitchenTicketData = {
+            orderId,
+            orderNumber: finalizedOrder?.order_number || orderId.slice(0, 8),
+            createdAt: finalizedOrder?.created_at || new Date().toISOString(),
+            source: finalizedOrder?.source || 'SELF_CHECKOUT',
+            pickupNumber,
+            kind: 'PICKUP_SLIP',
+            items: [],
           };
+          try {
+            const sharedSlip = await submitSharedPickupSlip(slip);
+            slipPrinted = !!sharedSlip.printed;
+            if (!slipPrinted) {
+              const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
+              const localReceipt = printers[PrinterType.RECEIPT];
+              if (localReceipt?.isConnected?.() && typeof localReceipt.printPlainLines === 'function') {
+                await localReceipt.printPlainLines(buildPickupSlipLines(slip));
+                slipPrinted = true;
+              }
+            }
+          } catch (slipErr: any) {
+            logger.warn(`[PosModule] Pickup slip failed for order ${orderId}: ${slipErr?.message || slipErr}`);
+            slipPrinted = false;
+          }
         }
 
-        const receiptPrinted = await this.paymentController?.printReceipt(orderId) ?? false;
         return {
-          success: receiptPrinted,
-          printed: receiptPrinted,
-          receiptPrinted,
-          drawerOpened: false,
-          route: 'ORDER_COPY',
+          success: fiscalPrinted,
+          printed: fiscalPrinted,
+          fiscalPrinted,
+          receiptPrinted: fiscalPrinted,
+          drawerOpened,
+          route: 'FISCAL_RECEIPT',
+          pickupNumber,
+          slipPrinted,
         };
       } catch (e: any) {
         return {
@@ -2384,7 +2696,7 @@ export class PosModule extends BaseModule {
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
-    ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number }) => {
+    ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
 
@@ -2410,7 +2722,7 @@ export class PosModule extends BaseModule {
         if (orderSync) {
           try { await orderSync.syncPendingOrders(); } catch { /* best-effort */ }
         }
-        const report = this.shiftController.closeShift(data.shiftId, data.closingCash);
+        const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         this.posStore?.dispatch({ type: 'session/close' });
         await this.shiftController.printZReport(report);
         return { success: true, report };
@@ -2449,7 +2761,30 @@ export class PosModule extends BaseModule {
             },
           );
           const body = await r.json().catch(() => ({}));
-          if (!r.ok) return { error: body?.message || `HTTP ${r.status}` };
+          if (!r.ok) {
+            // Backward compatibility: an older backend rejects reason codes
+            // it doesn't know yet (e.g. PRINT_FAILED) with a validation 400.
+            // Retry once as OTHER so the staff alert still goes out.
+            if (r.status === 400 && payload.reason !== 'OTHER') {
+              logger.warn(`[PosModule] Help reason ${payload.reason} rejected by backend; retrying as OTHER`);
+              const retry = await fetch(
+                `${baseUrl}/api/v1/print-agent/self-checkout/help-request`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    apiKey,
+                    terminalId,
+                    reason: 'OTHER',
+                    cartTotalGrosze: payload.cartTotalGrosze ?? null,
+                  }),
+                },
+              );
+              const retryBody = await retry.json().catch(() => ({}));
+              if (retry.ok) return retryBody;
+            }
+            return { error: body?.message || `HTTP ${r.status}` };
+          }
           return body;
         } catch (e: any) {
           return { error: e?.message || 'Network error' };
@@ -2461,9 +2796,46 @@ export class PosModule extends BaseModule {
       const apiKey = getSecureApiKey() || '';
       if (!apiKey) return null;
       const baseUrl = (getConfigValue('serverUrl') as string) || 'https://api.enail.pro';
+
+      // Preferred route: the public apiKey status endpoint. The kiosk is an
+      // unattended terminal — it must not depend on a staff JWT being fresh
+      // (an expired token used to make this poll fail forever, leaving
+      // HelpLockedOverlay locked until the staff exit gesture).
       try {
-        // The /open endpoint returns the unresolved queue; finding our id
-        // there means it's still open. Anything else (404 / not in list)
+        const r = await fetch(
+          `${baseUrl}/api/v1/print-agent/self-checkout/help-request/status`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey, id }),
+          },
+        );
+        if (r.ok) {
+          const body = await r.json().catch(() => null);
+          if (body?.id) {
+            return {
+              id: body.id,
+              acknowledgedAt: body.acknowledgedAt ?? null,
+              resolvedAt: body.resolvedAt ?? null,
+            };
+          }
+        } else if (r.status === 404) {
+          const body = await r.json().catch(() => null);
+          // Row-level 404 (request id unknown to the backend) → unlock, same
+          // as the legacy missing-from-open-list behavior. A route-level 404
+          // (older backend without the endpoint) falls through to the legacy
+          // Bearer-token route below.
+          if (body && /help request not found/i.test(String(body.message || ''))) {
+            return { id, resolvedAt: new Date().toISOString() };
+          }
+        }
+      } catch {
+        /* fall through to legacy route */
+      }
+
+      try {
+        // Legacy route: the /open endpoint returns the unresolved queue;
+        // finding our id there means it's still open. Missing from the list
         // means it was resolved.
         const r = await fetch(
           `${baseUrl}/api/v1/print-agent/self-checkout/help-requests/open`,
@@ -2489,7 +2861,95 @@ export class PosModule extends BaseModule {
       }
     });
 
+    // Self-checkout readiness: a production kiosk must not open a customer
+    // session when no fiscal route can print the paragon — local fiscal
+    // hardware or the shared FISCAL_RECEIPT backend job (POS1's printer).
+    // The renderer polls this on the welcome/unavailable screens and shows
+    // the localized "checkout closed" screen with the failing reason.
+    ipcMain.handle('self-checkout:readiness', async () => {
+      try {
+        const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+        const online = socket?.isConnected() ?? false;
+        const fiscal = await this.paymentController?.hasFiscalPrinter()
+          ?? { configured: false, connected: false };
+        const reasons: string[] = [];
+        if (!fiscal.configured || !fiscal.connected) {
+          reasons.push(online ? 'printer_offline' : 'offline');
+        }
+        return { ready: reasons.length === 0, reasons };
+      } catch (e: any) {
+        return { ready: false, reasons: ['unknown'], error: e?.message || String(e) };
+      }
+    });
+
     logger.info('[PosModule] IPC handlers registered');
+  }
+
+  /**
+   * Print the kitchen ticket for an order: items whose category is flagged
+   * kitchen_print=1, large font, no prices. Route preference:
+   *   1) the DEDICATED local KITCHEN printer (never the receipt-printer
+   *      fallback — kitchen tickets must not mix into the bill printer),
+   *   2) the salon's shared KITCHEN role via a backend KITCHEN_TICKET job.
+   * Never blocks or fails the sale — callers fire-and-forget and surface
+   * failures as a cashier notification + Order History reprint.
+   */
+  private async printKitchenTicketForOrder(
+    orderId: string,
+    opts: { reprint?: boolean } = {},
+  ): Promise<{ printed: boolean; kitchenItems: number; route?: 'LOCAL' | 'SHARED_NETWORK'; error?: string }> {
+    try {
+      const order = orderRepo.getById(orderId);
+      if (!order) return { printed: false, kitchenItems: 0, error: 'order_not_found' };
+      const items = orderRepo.getItemsByOrderId(orderId);
+      const kitchenItems = items.filter((item) => {
+        if (!item.variant_id) return false;
+        const product = productRepo.getById(item.variant_id);
+        return !!product?.category_id && productRepo.isKitchenPrintCategory(product.category_id);
+      });
+      if (kitchenItems.length === 0) return { printed: false, kitchenItems: 0, error: 'no_kitchen_items' };
+
+      const ticket: KitchenTicketData = {
+        orderId,
+        orderNumber: order.order_number || orderId.slice(0, 8),
+        createdAt: order.created_at || new Date().toISOString(),
+        source: order.source || 'POS',
+        isReprint: !!opts.reprint,
+        pickupNumber: order.kitchen_number ?? null,
+        items: kitchenItems.map((item) => ({
+          name: item.name,
+          quantity: Number(item.sale_quantity ?? item.quantity) || 1,
+          unit: item.sale_unit ?? null,
+          notes: item.notes ?? null,
+        })),
+      };
+
+      const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
+      const localKitchen = printers[PrinterType.KITCHEN];
+      if (localKitchen?.isConnected?.() && typeof localKitchen.printPlainLines === 'function') {
+        try {
+          await localKitchen.printPlainLines(buildKitchenTicketLines(ticket));
+          logger.info(`[PosModule] Kitchen ticket printed locally for order ${ticket.orderNumber}`);
+          return { printed: true, kitchenItems: kitchenItems.length, route: 'LOCAL' };
+        } catch (err: any) {
+          logger.error(`[PosModule] Local kitchen ticket failed for ${ticket.orderNumber}: ${err?.message || err}`);
+          // fall through to the shared route
+        }
+      }
+
+      const shared = await submitSharedKitchenPrint(ticket);
+      if (shared.handled && shared.printed) {
+        return { printed: true, kitchenItems: kitchenItems.length, route: 'SHARED_NETWORK' };
+      }
+      return {
+        printed: false,
+        kitchenItems: kitchenItems.length,
+        route: shared.handled ? 'SHARED_NETWORK' : undefined,
+        error: shared.error || 'no_kitchen_printer',
+      };
+    } catch (e: any) {
+      return { printed: false, kitchenItems: 0, error: e?.message || String(e) };
+    }
   }
 
   registerEventHandlers(bus: EventBus): void {

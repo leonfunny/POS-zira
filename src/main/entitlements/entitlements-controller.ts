@@ -15,7 +15,7 @@ import {
   DEFAULT_ENTITLEMENTS,
   DeleteConfirmConfig,
 } from '../../shared/types';
-import { getConfig, setConfig } from '../config/store';
+import { getConfig, setConfig, getSecureAuthToken } from '../config/store';
 
 // Default delete confirmation config
 const DEFAULT_DELETE_CONFIRM: DeleteConfirmConfig = {
@@ -31,7 +31,12 @@ const CACHE_DURATION_MS = 60 * 60 * 1000;
  */
 async function fetchEntitlementsFromBackend(salonId: string): Promise<SalonEntitlements | null> {
   const config = getConfig();
-  if (!config.serverUrl || !config.authToken) {
+  // Auth tokens moved to encrypted storage long ago — config.authToken is a
+  // legacy plaintext key that's empty on every modern login, so reading it
+  // here meant the entitlements fetch NEVER fired (found 2026-06-04 while
+  // verifying the new backend endpoint end-to-end).
+  const authToken = getSecureAuthToken() || config.authToken;
+  if (!config.serverUrl || !authToken) {
     console.log('[Entitlements] No server URL or auth token, cannot fetch entitlements');
     return null;
   }
@@ -40,7 +45,7 @@ async function fetchEntitlementsFromBackend(salonId: string): Promise<SalonEntit
     const response = await fetch(`${config.serverUrl}/api/v1/admin/desktop/entitlements`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${config.authToken}`,
+        'Authorization': `Bearer ${authToken}`,
         'Content-Type': 'application/json',
       },
     });
@@ -84,6 +89,7 @@ function createDefaultEntitlements(salonId: string, salonName: string): SalonEnt
     salonCode: '',
     salonName,
     plan: 'free',
+    suggestedPosMode: null, // offline/default — server has no opinion here
     features,
     fetchedAt: new Date().toISOString(),
     validUntil: new Date(Date.now() + CACHE_DURATION_MS).toISOString(),
@@ -119,11 +125,18 @@ function normalizeEntitlements(data: any): SalonEntitlements {
     }
   }
 
+  // Only accept POS modes the renderer actually has templates for.
+  const VALID_POS_MODES = ['retail', 'salon', 'b2b', 'restaurant'] as const;
+  const suggestedPosMode = VALID_POS_MODES.includes(data.suggestedPosMode)
+    ? (data.suggestedPosMode as SalonEntitlements['suggestedPosMode'])
+    : null;
+
   return {
     salonId: data.salonId || '',
     salonCode: data.salonCode || '',
     salonName: data.salonName || '',
     plan: data.plan || 'free',
+    suggestedPosMode,
     features,
     fetchedAt: new Date().toISOString(),
     validUntil: new Date(Date.now() + CACHE_DURATION_MS).toISOString(),

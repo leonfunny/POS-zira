@@ -320,6 +320,91 @@ export class LocalBackupService {
     }
   }
 
+  // ===== Per-salon data persistence =====
+  // Each salon's full DB snapshot lives at <userData>/salons/<salonId>.db so a
+  // cross-salon login never destroys the leaving salon's data. Reuses the same
+  // flush + atomic-copy + pending-restore machinery as disaster recovery.
+
+  private salonsDir(): string {
+    return path.join(this.deps.userDataDir, 'salons');
+  }
+
+  salonArchivePath(salonId: string): string {
+    const safe = String(salonId).replace(/[^a-zA-Z0-9._-]/g, '_');
+    return path.join(this.salonsDir(), `${safe}.db`);
+  }
+
+  hasSalonArchive(salonId: string): boolean {
+    if (!salonId) return false;
+    try {
+      return this.deps.fs.existsSync(this.salonArchivePath(salonId));
+    } catch {
+      return false;
+    }
+  }
+
+  /** Flush the live DB and atomically snapshot it to salons/<salonId>.db. */
+  async archiveSalon(salonId: string): Promise<{ success: boolean; path?: string; error?: string }> {
+    if (!salonId) return { success: false, error: 'archiveSalon: empty salonId' };
+    const flush = await this.deps.flushDatabase();
+    if (!flush.success || !flush.dbPath) {
+      return { success: false, error: flush.error || 'Database flush failed before salon archive' };
+    }
+    try {
+      this.deps.fs.mkdirSync(this.salonsDir(), { recursive: true });
+      const dest = this.salonArchivePath(salonId);
+      // Atomic: copy to .tmp then rename, so a crash mid-copy never corrupts the
+      // salon's existing snapshot.
+      const tmp = `${dest}.tmp`;
+      this.deps.fs.copyFileSync(flush.dbPath, tmp);
+      this.deps.fs.renameSync(tmp, dest);
+      this.deps.logger.info(`[Backup] Salon data archived: ${dest}`);
+      return { success: true, path: dest };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.deps.logger.error('[Backup] Salon archive failed:', message);
+      return { success: false, error: message };
+    }
+  }
+
+  /**
+   * Stage a salon's archive as the pending restore so the next boot loads it
+   * via the existing applyPendingDatabaseRestore path (which re-validates the
+   * SQLite header and safety-backs-up the current pos.db before replacing).
+   * Returns success:false if the archive is missing/invalid — the caller then
+   * degrades to a fresh sync rather than restoring (the current salon is
+   * already safely archived, so nothing is lost).
+   */
+  async stageSalonRestore(salonId: string): Promise<{ success: boolean; error?: string }> {
+    const src = this.salonArchivePath(salonId);
+    if (!this.deps.fs.existsSync(src)) {
+      return { success: false, error: `No archive for salon ${salonId}` };
+    }
+    if (this.deps.validateDatabaseFile) {
+      const validation = await this.deps.validateDatabaseFile(src);
+      if (!validation.valid) {
+        return { success: false, error: validation.error || 'Salon archive failed validation' };
+      }
+    }
+    const pendingRestorePath = path.join(this.deps.userDataDir, PENDING_RESTORE_FILENAME);
+    try {
+      this.deps.fs.mkdirSync(this.deps.userDataDir, { recursive: true });
+      this.deps.fs.copyFileSync(src, pendingRestorePath);
+      this.deps.setConfig({
+        backupPendingRestorePath: pendingRestorePath,
+        backupPendingRestoreSourcePath: src,
+        backupPendingRestoreRequestedAt: this.deps.now().toISOString(),
+        backupRestoreLastStatus: 'pending',
+        backupRestoreLastError: '',
+      });
+      this.deps.logger.info(`[Backup] Salon restore staged from ${src}`);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
   private async validateRestoreCandidate(requestedPath: string): Promise<BackupRestoreResult & { path?: string }> {
     const resolved = path.resolve(requestedPath);
     if (!isPathInsideDirectory(resolved, this.deps.backupDir)) {

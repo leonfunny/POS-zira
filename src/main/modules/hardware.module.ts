@@ -56,6 +56,7 @@ import { WindowManager } from '../windows/window-manager';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
+import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
@@ -1260,7 +1261,11 @@ export class HardwareModule extends BaseModule {
     if (!normalizedBarcode) return { success: false, error: 'Barcode is required' };
     const driver = this.printers[PrinterType.LABEL] || this.labelPrinter;
     if (!driver) return { success: false, error: 'No label printer configured' };
-    if (!driver.isConnected()) return { success: false, error: 'Label printer not connected' };
+    if (!driver.isConnected()) {
+      logger.warn('[HardwareModule] Label printer disconnected at print time; attempting reconnect');
+      const reconnected = await this.connectPrinterWithTimeout(driver, 'Label');
+      if (!reconnected || !driver.isConnected()) return { success: false, error: 'Label printer not connected' };
+    }
     if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Label printing requires Zebra printer' };
     try {
       const priceText = options?.priceText?.trim() || options?.text2?.trim();
@@ -1973,7 +1978,14 @@ export class HardwareModule extends BaseModule {
       return null;
     }
     if (config.protocol === 'POSNET') {
-      if (config.port) return new PosnetDriver(config.port, config.baudRate || 9600);
+      if (config.port) {
+        return new PosnetDriver(config.port, config.baudRate || 9600, 'POSNET', {
+          onFiscalUnknown: (info) => {
+            try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
+            catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }
+          },
+        });
+      }
       logger.warn(`[HardwareModule] POSNET printer "${name}" requires a serial port`);
       return null;
     }
@@ -1994,7 +2006,14 @@ export class HardwareModule extends BaseModule {
     const zebra = getConfigValue('zebraPrinter') as string | undefined;
     const baud = (getConfigValue('printerBaudRate') as number) || 9600;
     if (protocol === 'POSNET') {
-      if (port) return new PosnetDriver(port, baud, 'POSNET');
+      if (port) {
+        return new PosnetDriver(port, baud, 'POSNET', {
+          onFiscalUnknown: (info) => {
+            try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
+            catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }
+          },
+        });
+      }
       return null;
     }
     if (protocol === 'ELZAB_STX') {
@@ -2018,6 +2037,7 @@ export class HardwareModule extends BaseModule {
     }
     if (job.printerType) return job.printerType;
     if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE || job.jobType === PrintJobType.INFO_LABEL) return PrinterType.LABEL;
+    if (job.jobType === PrintJobType.KITCHEN_TICKET) return PrinterType.KITCHEN;
     return PrinterType.RECEIPT;
   }
 
@@ -2077,8 +2097,22 @@ export class HardwareModule extends BaseModule {
         const isLabel = printerType === PrinterType.LABEL;
         const isA4 = printerType === PrinterType.A4;
         const isReport = [PrintJobType.DAILY_REPORT, PrintJobType.X_REPORT, PrintJobType.Z_REPORT].includes(job.jobType);
+        const isKitchenTicket = job.jobType === PrintJobType.KITCHEN_TICKET;
 
-        if (isLabel) {
+        if (isKitchenTicket) {
+          // Kitchen ticket: large-font item lines, no prices. Goes through the
+          // thermal plain-line path so Vietnamese/Polish dish names raster
+          // instead of printing mangled code-page text.
+          const ticket = job.payload as KitchenTicketData;
+          const lines = ticket?.kind === 'PICKUP_SLIP'
+            ? buildPickupSlipLines(ticket)
+            : buildKitchenTicketLines(ticket);
+          if (typeof (targetPrinter as any).printPlainLines === 'function') {
+            await (targetPrinter as any).printPlainLines(lines);
+          } else {
+            throw new Error('Kitchen ticket requires a thermal (ESC/POS) printer');
+          }
+        } else if (isLabel) {
           if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
           if (job.jobType === PrintJobType.INFO_LABEL) {
             if (shouldRenderInfoLabelViaWindows(printerConfig)) {
@@ -2118,7 +2152,8 @@ export class HardwareModule extends BaseModule {
           const orderNumber = String(receiptPayload.orderNumber || '');
           const paymentMethod = String(receiptPayload.payment?.method || '').toUpperCase();
           const explicitDrawerRequest = Boolean(job.openDrawer || (job.payload as any)?.openDrawer);
-          const looksLikePosOrderCopy = referenceType === 'POS_RECEIPT' || /^POS[-\d]/i.test(orderNumber);
+          // ZAM- = the separate order-copy numbering series (non-fiscal sales).
+          const looksLikePosOrderCopy = referenceType === 'POS_RECEIPT' || /^(POS|ZAM)[-\d]/i.test(orderNumber);
           const inferredPosCashDrawerRequest = (
             !explicitDrawerRequest &&
             looksLikePosOrderCopy &&

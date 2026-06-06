@@ -173,6 +173,7 @@ interface PosOrderRow {
   shift_id: string | null;
   created_at: string;
   mode: string | null;
+  has_fiscal?: number;
   _origin?: 'server';
 }
 
@@ -220,6 +221,22 @@ interface PosStaff {
   name: string;
   commission_rate: number;
   is_active: number;
+  updated_at?: string | null;
+  role?: string | null;
+  backend_synced_at?: string | null;
+}
+
+interface PosStaffWriteInput {
+  name: string;
+  commissionRate?: number;
+  role?: string | null;
+  isActive?: boolean;
+}
+
+interface PosStaffWriteResult {
+  success: boolean;
+  staff?: PosStaff;
+  error?: string;
 }
 
 // ── ElectronAPI interface ──
@@ -227,6 +244,8 @@ interface PosStaff {
 interface ElectronAPI {
   // Config
   getConfig: () => Promise<AgentConfig>;
+  /** Fires after any window changes config via set-config (ping only — re-fetch). */
+  onConfigUpdated?: (callback: () => void) => () => void;
   setConfig: (config: Partial<AgentConfig>) => Promise<AgentConfig>;
 
   // Connection
@@ -460,7 +479,9 @@ interface ElectronAPI {
   selfCheckout: {
     helpRequest: (payload: { reason: string; cartTotalGrosze: number }) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
     checkStatus: (id: string) => Promise<{ id?: string; acknowledgedAt?: string | null; resolvedAt?: string | null }>;
-    finalizePrint: (payload: { orderId: string; method: 'CASH' | 'CARD' | 'BLIK' }) => Promise<{ success: boolean; printed?: boolean; receiptPrinted?: boolean; fiscalPrinted?: boolean; drawerOpened?: boolean; route?: string; error?: string }>;
+    /** Production gate: can this kiosk actually print a fiscal paragon right now? */
+    readiness: () => Promise<{ ready: boolean; reasons: string[]; error?: string }>;
+    finalizePrint: (payload: { orderId: string; method: 'CASH' | 'CARD' | 'BLIK' }) => Promise<{ success: boolean; printed?: boolean; receiptPrinted?: boolean; fiscalPrinted?: boolean; drawerOpened?: boolean; route?: string; error?: string; pickupNumber?: string | null; slipPrinted?: boolean }>;
     /** Staff intentional exit for the self-checkout kiosk gesture */
     close: () => Promise<{ success: boolean; error?: string }>;
   };
@@ -489,6 +510,10 @@ interface ElectronAPI {
     create: (data: any) => Promise<{ success: boolean; data?: any }>;
     update: (id: string, data: any) => Promise<{ success: boolean }>;
     getHistory: (customerId: string) => Promise<any[]>;
+    /** Order ids (of the given set) with a confirmed paragon in the local fiscal journal. */
+    getConfirmedFiscalIds: (orderIds: string[]) => Promise<string[]>;
+    /** Print/reprint the kitchen ticket for an order (items from kitchen-flagged categories). */
+    printKitchenTicket: (orderId: string) => Promise<{ success: boolean; printed: boolean; kitchenItems: number; route?: string; error?: string }>;
     getRecommendations: (customerId: string) => Promise<any[]>;
   };
 
@@ -663,6 +688,8 @@ interface ElectronAPI {
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
+  /** Kitchen ticket could not be printed for a just-created order. */
+  onKitchenTicketFailed?: (callback: (data: { orderId: string; error?: string }) => void) => () => void;
 
     products: {
       getAll: () => Promise<PosProduct[]>;
@@ -687,7 +714,7 @@ interface ElectronAPI {
     };
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
-      getDailyStats: (date: string) => Promise<PosDailyStats>;
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       deleteLocal: (orderId: string) => Promise<{ success: boolean; restocked?: number; error?: string }>;
@@ -743,6 +770,8 @@ interface ElectronAPI {
       hasFiscalPrinter: () => Promise<{ success: boolean; configured: boolean; connected: boolean }>;
       getReconcilableFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; error?: string }>;
       reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => Promise<{ success: boolean; status?: string; error?: string }>;
+      getPrintAttempts: (orderId: string) => Promise<{ success: boolean; attempts: Array<{ id: string; order_id: string; document_type: string; printer_type: string; printer_name: string | null; printer_target: string | null; route: string | null; status: string; error: string | null; created_at: string | null }>; error?: string }>;
+      getLatestFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; printer: { name: string | null; target: string | null } | null; error?: string }>;
       reprintReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       printRefundReceipt: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; error?: string }>;
       openCashDrawer: () => Promise<{ success: boolean; drawerOpened: boolean; error?: string }>;
@@ -762,7 +791,7 @@ interface ElectronAPI {
     };
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
-      close: (data: { shiftId: string; closingCash: number }) => Promise<{ success: boolean; report?: any; error?: string }>;
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => Promise<{ success: boolean; report?: any; error?: string }>;
       getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
     };
     sync: {
@@ -789,6 +818,7 @@ interface ElectronAPI {
     };
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
+      lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
@@ -810,6 +840,15 @@ interface ElectronAPI {
         ok: boolean;
         outcome?: string;
         variant?: any;
+        syncPending?: boolean;
+        error?: string;
+      }>;
+      importExternal: (payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) => Promise<{
+        ok: boolean;
+        outcome?: string;
+        product?: any;
+        variant?: any;
+        source?: string;
         syncPending?: boolean;
         error?: string;
       }>;
@@ -864,6 +903,10 @@ interface ElectronAPI {
     };
     staff: {
       getAll: () => Promise<PosStaff[]>;
+      getAllForSettings: () => Promise<PosStaff[]>;
+      create: (input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
+      update: (id: string, input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
+      setActive: (id: string, active: boolean) => Promise<PosStaffWriteResult>;
     };
     hold: {
       create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;
@@ -984,6 +1027,11 @@ interface ElectronAPI {
       unit?: string;
     }) => Promise<any>;
   };
+
+  // TV Ad Display
+  tvAdGetStatus: () => Promise<import('./types').AdDisplayStatusLike>;
+  tvAdPickVideo: () => Promise<{ id: string; filename: string } | null>;
+  tvAdSave: (cfg: Partial<AgentConfig>) => Promise<{ ok: boolean }>;
 }
 
 declare global {

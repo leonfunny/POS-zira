@@ -14,12 +14,19 @@ interface ReceiptScreenProps {
   receiptPrinted?: boolean;
   /** Backend is still routing the order-copy or fiscal receipt print job. */
   receiptPrinting?: boolean;
+  /** Daily kitchen pickup number — shown big so the customer can collect food. */
+  pickupNumber?: string | null;
   onComplete: () => void;
   onLangChange: (lang: ScLanguage) => void;
   onCallStaff?: () => void;
 }
 
 const AUTO_ADVANCE_MS = 4000;
+// When the print FAILED the screen stays up much longer (with a CALL STAFF
+// button) so the customer can get help — but it must still self-recover:
+// a paid customer who walks away would otherwise leave the kiosk dead-ended
+// on this screen forever, blocking the next customer.
+const PRINT_FAILED_AUTO_ADVANCE_MS = 120_000;
 
 function formatMessage(template: string, values: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
@@ -32,6 +39,7 @@ export default function ReceiptScreen({
   totalGrosze,
   receiptPrinted = true,
   receiptPrinting = false,
+  pickupNumber = null,
   onComplete,
   onLangChange,
   onCallStaff,
@@ -40,8 +48,11 @@ export default function ReceiptScreen({
   // Visible countdown so the customer knows the screen will auto-advance.
   const [remainingMs, setRemainingMs] = useState(AUTO_ADVANCE_MS);
   const printFailed = !receiptPrinted && !receiptPrinting;
-  const printLabel = method === 'CARD' ? t.receiptPrintStep : t.receiptOrderPrintStep;
-  const printingLabel = method === 'CARD' ? t.receiptFiscalPrinting : t.receiptOrderPrinting;
+  // Every method routes through the fiscal printer now (Polish fiscal law
+  // requires a paragon for cash/BLIK sales too), so the labels are fiscal
+  // for all tenders.
+  const printLabel = t.receiptPrintStep;
+  const printingLabel = t.receiptFiscalPrinting;
 
   useEffect(() => {
     if (!receiptPrinted || receiptPrinting) return;
@@ -55,6 +66,15 @@ export default function ReceiptScreen({
       window.clearTimeout(done);
     };
   }, [onComplete, receiptPrinted, receiptPrinting]);
+
+  // Print-failure recovery: the screen is excluded from the global idle reset,
+  // so without this timer a failed print would strand the kiosk on this
+  // screen forever once the customer leaves.
+  useEffect(() => {
+    if (!printFailed) return;
+    const recover = window.setTimeout(onComplete, PRINT_FAILED_AUTO_ADVANCE_MS);
+    return () => window.clearTimeout(recover);
+  }, [onComplete, printFailed]);
 
   const secondsLeft = Math.ceil(remainingMs / 1000);
 
@@ -101,6 +121,20 @@ export default function ReceiptScreen({
                   ? t.thankYouSub
                   : t.receiptPrintFailed}
             </p>
+          )}
+
+          {pickupNumber && (
+            <div className="mx-auto mt-6 max-w-md rounded-3xl border-2 border-orange-300 bg-orange-50 px-6 py-5">
+              <div className="text-sm font-black uppercase tracking-[0.14em] text-orange-700">
+                {t.pickupNumberLabel}
+              </div>
+              <div className="sc-tabular mt-1 text-7xl font-black text-orange-800">
+                {pickupNumber}
+              </div>
+              <div className="mt-2 text-sm font-semibold text-orange-700">
+                {t.pickupNumberHint}
+              </div>
+            </div>
           )}
 
           <div className="mt-6 space-y-2 text-left">

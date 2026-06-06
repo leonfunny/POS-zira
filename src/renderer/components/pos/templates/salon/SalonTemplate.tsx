@@ -12,6 +12,7 @@ import type {
 } from '../../../../../shared/types';
 import PaymentModal from '../../PaymentModal';
 import SearchBar from '../../SearchBar';
+import { resolveName } from '../../../../../shared/catalog-names';
 
 interface StaffMember {
   id: string;
@@ -24,6 +25,7 @@ interface SalonTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
 }
 
@@ -76,23 +78,25 @@ function addDays(date: string, days: number): string {
   return isoDate(new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0)));
 }
 
-function formatTime(value?: string | null): string {
+function formatTime(value?: string | null, tz?: string): string {
   if (!value) return '--:--';
   return new Date(value).toLocaleTimeString('pl-PL', {
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Prague',
+    // Salon timezone from the API response; device-local when absent.
+    ...(tz ? { timeZone: tz } : {}),
   });
 }
 
 function formatDayLabel(value?: string | null): string {
   if (!value) return '--';
   const [year, month, day] = value.split('-').map(Number);
+  // UTC-noon anchor: the rendered calendar day is stable in every timezone,
+  // so no explicit timeZone is needed (was hardcoded Europe/Prague).
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).toLocaleDateString('vi-VN', {
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
-    timeZone: 'Europe/Prague',
   });
 }
 
@@ -117,7 +121,7 @@ function bookingsForStaff(schedule: PosScheduleDayResponse | null, staffId: stri
   return (schedule?.bookings || []).filter((booking) => booking.staff_profile_id === staffId);
 }
 
-export default function SalonTemplate({ state, dispatch, t, session }: SalonTemplateProps) {
+export default function SalonTemplate({ state, dispatch, t, language, session }: SalonTemplateProps) {
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [nailTurnBoard, setNailTurnBoard] = useState<NailTurnBoardResponse | null>(null);
   const [nailTurnUnavailable, setNailTurnUnavailable] = useState(false);
@@ -139,6 +143,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
   const productGridRef = useRef<HTMLDivElement>(null);
 
   const cart = state.cart;
+  const lang = language || 'pl';
   const tip = state.tip ?? 0;
   const currency = t('pos.currency');
   const tOr = useCallback((key: string, fallback: string) => {
@@ -368,6 +373,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
           id: crypto.randomUUID(),
           variantId: product.id,
           name: product.name,
+          name_translations: product.name_translations ?? null,
           sku: product.sku || '',
           price: product.retail_price,
           quantity: 1,
@@ -535,7 +541,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                       : undefined
                   }
                 >
-                  {cat.name}
+                  {resolveName(cat, lang)}
                 </button>
               ))}
             </div>
@@ -624,7 +630,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                         <div key={checkin.id} className="rounded-md border border-amber-200 bg-amber-50 p-3">
                           <div className="truncate text-sm font-black text-slate-900">{checkin.customer_name || 'Walk-in'}</div>
                           <div className="mt-1 truncate text-xs font-semibold text-slate-600">{checkin.service_name || 'Service'}</div>
-                          <div className="mt-2 text-xs font-bold text-amber-800">{formatTime(checkin.checked_in_at)}</div>
+                          <div className="mt-2 text-xs font-bold text-amber-800">{formatTime(checkin.checked_in_at, schedule?.salon?.timezone)}</div>
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <button
                               type="button"
@@ -672,7 +678,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                           <div key={assignment.id} className="rounded-md border border-blue-200 bg-blue-50 p-3">
                             <div className="truncate text-sm font-black text-slate-900">{assignment.customer_name || 'Walk-in'}</div>
                             <div className="mt-1 truncate text-xs font-semibold text-slate-600">{assignment.service_name || 'Service'}</div>
-                            <div className="mt-2 text-xs font-bold text-blue-800">{staff?.name || 'Staff'} · {formatTime(assignment.assigned_at)}</div>
+                            <div className="mt-2 text-xs font-bold text-blue-800">{staff?.name || 'Staff'} · {formatTime(assignment.assigned_at, schedule?.salon?.timezone)}</div>
                           </div>
                         );
                       })}
@@ -685,14 +691,14 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                     <div>
                       <div className="text-lg font-black text-slate-900">Lich tho</div>
                       <div className="text-xs font-semibold text-slate-500">
-                        {schedule?.business_date || scheduleDate} · {schedule?.bookings?.length || 0} booking · timezone Europe/Prague
+                        {schedule?.business_date || scheduleDate} · {schedule?.bookings?.length || 0} booking · timezone {schedule?.salon?.timezone || 'local'}
                       </div>
                     </div>
                     <div className="text-xs font-bold text-slate-500">
                       {schedule?.stale
-                        ? `Offline cache ${schedule.cached_at ? formatTime(schedule.cached_at) : ''}`
+                        ? `Offline cache ${schedule.cached_at ? formatTime(schedule.cached_at, schedule?.salon?.timezone) : ''}`
                         : schedule?.server_time
-                          ? `Sync ${formatTime(schedule.server_time)}`
+                          ? `Sync ${formatTime(schedule.server_time, schedule?.salon?.timezone)}`
                           : 'Chua sync'}
                     </div>
                   </div>
@@ -748,7 +754,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                             )}
                             {bookingsForStaff(schedule, staff.staff_profile_id).map((booking) => (
                               <div key={booking.id} className={`rounded-md border p-3 shadow-sm ${statusBadgeClass(booking.status)}`}>
-                                <div className="text-xs font-black text-slate-500">{formatTime(booking.starts_at)} - {formatTime(booking.ends_at)}</div>
+                                <div className="text-xs font-black text-slate-500">{formatTime(booking.starts_at, schedule?.salon?.timezone)} - {formatTime(booking.ends_at, schedule?.salon?.timezone)}</div>
                                 <div className="mt-1 truncate text-sm font-black text-slate-900">{booking.customer_name || 'Customer'}</div>
                                 <div className="mt-1 line-clamp-2 text-xs font-semibold text-slate-600">{booking.service_name || 'Service'}</div>
                                 <div className="mt-2 inline-flex rounded-full border border-current px-2 py-0.5 text-[10px] font-black uppercase">
@@ -776,6 +782,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
               <div className="grid grid-cols-4 gap-2.5">
                 {products.map((product) => {
                   const colorClass = placeholderColor(product.name);
+                  const displayName = resolveName(product, lang) || product.name;
                   return (
                     <div
                       key={product.id}
@@ -786,19 +793,19 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                         {product.image_url ? (
                           <img
                             src={product.image_url}
-                            alt={product.name}
+                            alt={displayName}
                             loading="lazy"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
                         ) : (
                           <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${colorClass}`}>
-                            {product.name.charAt(0).toUpperCase()}
+                            {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
                         {/* Circular add button */}
                         <button
                           onClick={() => handleAddProduct(product)}
-                          aria-label={`Add ${product.name}`}
+                          aria-label={`Add ${displayName}`}
                           className="absolute bottom-1.5 right-1.5 w-8 h-8 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer touch-manipulation"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -810,7 +817,7 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
                       {/* Name + price */}
                       <div className="px-2.5 py-2">
                         <div className="text-xs font-medium text-gray-800 leading-snug truncate">
-                          {product.name}
+                          {displayName}
                         </div>
                         <div className="text-xs font-bold text-brand-500 mt-0.5">
                           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
@@ -856,23 +863,24 @@ export default function SalonTemplate({ state, dispatch, t, session }: SalonTemp
             ) : (
               cart.items.map((item) => {
                 const colorClass = placeholderColor(item.name);
+                const displayName = resolveName(item, lang) || item.name;
                 return (
                   <div key={item.id} className="px-4 py-3">
                     <div className="flex items-start gap-3">
                       {/* Thumbnail */}
                       <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0">
                         {item.imageUrl ? (
-                          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                          <img src={item.imageUrl} alt={displayName} className="w-full h-full object-cover" />
                         ) : (
                           <div className={`w-full h-full flex items-center justify-center text-sm font-bold ${colorClass}`}>
-                            {item.name.charAt(0).toUpperCase()}
+                            {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-gray-800 leading-snug truncate">
-                          {item.name}
+                          {displayName}
                         </div>
                         {staffList.length > 0 && (
                           <select

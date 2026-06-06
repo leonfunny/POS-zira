@@ -5,6 +5,10 @@ export interface SearchProduct {
   sku?: string | null;
   barcode?: string | null;
   category_id?: string | null;
+  /** PIECE | WEIGHT — weighted products need a scale and are sold at the
+   *  staffed counter, never at the kiosk. */
+  sell_by?: string | null;
+  sale_unit?: string | null;
   retail_price?: number;
   price?: number;
   price_gross?: number;

@@ -12,9 +12,11 @@ import {
   SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
   SelfCheckoutProfile,
+  resolveIdleTimeoutMs,
   resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
+import { isWeightedProduct } from './catalog-model';
 import { useScreenState } from './screen-state';
 import { type ScCartItem, useScCart } from './useScCart';
 import { buildSelfCheckoutSale } from './build-sale';
@@ -70,10 +72,17 @@ export default function SelfCheckoutApp() {
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [paymentProfile, setPaymentProfile] = useState<SelfCheckoutPaymentProfile>('assistedDemo');
+  const [allowOversell, setAllowOversell] = useState(false);
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(DEFAULT_IDLE_TIMEOUT_MS);
   const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod | null>(null);
+  // Snapshot of the sale total for the receipt/thank-you screens. The cart
+  // itself is cleared the moment the order is durably saved, so a crash or
+  // power cut during those screens can't restore an ALREADY-PAID cart from
+  // localStorage for the next customer.
+  const [lastTotalGrosze, setLastTotalGrosze] = useState(0);
   const [lastReceiptPrinted, setLastReceiptPrinted] = useState(true);
+  const [lastPickupNumber, setLastPickupNumber] = useState<string | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -85,11 +94,16 @@ export default function SelfCheckoutApp() {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
+  const [staffExitOpen, setStaffExitOpen] = useState(false);
   const [activityAt, setActivityAt] = useState(Date.now());
   const [idleWarnOpen, setIdleWarnOpen] = useState(false);
   const [receiptPrinting, setReceiptPrinting] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staffGestureStartY = useRef<number[]>([]);
+  // Stable order id per payment attempt: a retry after a failed/ambiguous
+  // save MUST reuse the same id so pos:orders:create can deduplicate instead
+  // of recording the sale twice. Reset when the payment overlay opens.
+  const pendingOrderIdRef = useRef<string | null>(null);
 
   const [help, setHelp] = useState<
     | { id: string; reason: string; acknowledged: boolean }
@@ -128,8 +142,11 @@ export default function SelfCheckoutApp() {
 
   const resetSession = useCallback(() => {
     cart.clear();
+    pendingOrderIdRef.current = null;
     setLastPaymentMethod(null);
+    setLastTotalGrosze(0);
     setLastReceiptPrinted(true);
+    setLastPickupNumber(null);
     setPaymentOpen(false);
     setPaymentStatus(null);
     setCheckoutError(null);
@@ -163,6 +180,7 @@ export default function SelfCheckoutApp() {
         setMode(runtime.mode);
         setProfile(resolveSelfCheckoutProfile(config?.selfCheckoutProfile));
         setPaymentProfile(runtime.paymentProfile);
+        setAllowOversell(config?.allowOversell === true);
         setUnavailableReasons(runtime.unavailableReasons);
         if (runtime.unavailableReasons.length > 0) {
           goTo('unavailable');
@@ -197,6 +215,39 @@ export default function SelfCheckoutApp() {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
+
+  // Production readiness gate: don't invite a customer into a session the
+  // kiosk can't legally finish. Checked on the welcome screen (gate) and on
+  // the unavailable screen (auto-recovery) — never mid-session. A backend
+  // hiccup closes the lane for at most one poll interval.
+  useEffect(() => {
+    if (mode !== 'production') return;
+    if (screen !== 'welcome' && screen !== 'unavailable') return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await window.electronAPI?.selfCheckout?.readiness?.();
+        if (cancelled || !res) return;
+        if (res.ready) {
+          if (screen === 'unavailable') {
+            setUnavailableReasons([]);
+            reset();
+          }
+          return;
+        }
+        setUnavailableReasons(res.reasons?.length ? res.reasons : ['unknown']);
+        if (screen === 'welcome') goTo('unavailable');
+      } catch {
+        /* keep current screen on transient IPC errors */
+      }
+    };
+    void check();
+    const interval = setInterval(check, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [goTo, mode, reset, screen]);
 
   // Track real inactivity, not just screen transitions.
   useEffect(() => {
@@ -248,7 +299,10 @@ export default function SelfCheckoutApp() {
         );
         if (allMovedDown) {
           staffGestureStartY.current = [];
-          void window.electronAPI?.selfCheckout?.close?.();
+          // The gesture alone must not close the kiosk: a curious customer
+          // who discovers it would land on the desktop / cashier POS window.
+          // Require an explicit hold-to-confirm step (staff only).
+          setStaffExitOpen(true);
         }
       }
     };
@@ -273,6 +327,10 @@ export default function SelfCheckoutApp() {
   // Idle handling: two-phase — warn 15s before reset so a customer who
   // looked away can confirm they're still there. Skips screens that
   // already auto-advance or that are passive (welcome/thankyou/unavailable).
+  // While the payment overlay is open the window is extended (see
+  // resolveIdleTimeoutMs): the customer may be paying on their own phone or
+  // waiting for staff with money already handed over — a hard reset here
+  // would drop a sale that was effectively paid.
   useEffect(() => {
     if (
       screen === 'welcome'
@@ -282,10 +340,11 @@ export default function SelfCheckoutApp() {
       || help
       || idleWarnOpen
     ) return;
-    const warnDelay = Math.max(0, idleTimeoutMs - IDLE_WARN_MS);
+    const effectiveTimeoutMs = resolveIdleTimeoutMs(idleTimeoutMs, paymentOpen);
+    const warnDelay = Math.max(0, effectiveTimeoutMs - IDLE_WARN_MS);
     const warn = setTimeout(() => setIdleWarnOpen(true), warnDelay);
     return () => clearTimeout(warn);
-  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, screen]);
+  }, [activityAt, help, idleTimeoutMs, idleWarnOpen, paymentOpen, screen]);
 
   useEffect(() => {
     if (!idleWarnOpen) return;
@@ -300,16 +359,22 @@ export default function SelfCheckoutApp() {
       // cart row stores canonical `name` + raw translations so orders stay
       // canonical and live language switches re-render the cart correctly.
       const displayName = resolveName(product, lang);
+      // Weighted products need a scale — the kiosk has none and the order
+      // path would charge exactly 1 kg regardless of actual weight.
+      if (isWeightedProduct(product)) {
+        showToast('error', formatScMessage(t.productWeighted, { name: displayName }));
+        return false;
+      }
       const stock = getProductStock(product);
       const existing = cart.cart.items.find(
         (i) => i.variantId === product.id,
       );
       const alreadyInCart = existing?.quantity ?? 0;
-      if (typeof stock === 'number' && stock <= 0) {
+      if (!allowOversell && typeof stock === 'number' && stock <= 0) {
         showToast('error', formatScMessage(t.productOutOfStock, { name: displayName }));
         return false;
       }
-      if (typeof stock === 'number' && alreadyInCart + quantity > stock) {
+      if (!allowOversell && typeof stock === 'number' && alreadyInCart + quantity > stock) {
         showToast(
           'error',
           formatScMessage(t.productInsufficientStock, {
@@ -342,7 +407,7 @@ export default function SelfCheckoutApp() {
       if (quantity > 1) setScanQuantity(1);
       return true;
     },
-    [cart, lang, scanQuantity, showToast, t],
+    [allowOversell, cart, lang, scanQuantity, showToast, t],
   );
 
   const handleScan = useCallback(
@@ -482,6 +547,7 @@ export default function SelfCheckoutApp() {
       if (mode === 'demo') {
         setLastReceiptPrinted(true);
         setLastPaymentMethod(method);
+        setLastTotalGrosze(cart.cart.totalGrosze);
         setPaymentOpen(false);
         goTo('receipt');
         return;
@@ -497,7 +563,9 @@ export default function SelfCheckoutApp() {
         fail(t.emptyCart);
       }
 
-      const orderId = crypto.randomUUID();
+      const orderId = pendingOrderIdRef.current ?? crypto.randomUUID();
+      pendingOrderIdRef.current = orderId;
+      const saleTotalGrosze = cart.cart.totalGrosze;
 
       const sale = buildSelfCheckoutSale({
         items: cart.cart.items,
@@ -511,10 +579,18 @@ export default function SelfCheckoutApp() {
         fail(orderResult?.error || 'Failed to save order');
       }
 
+      // The order is durably saved — drop the localStorage cart NOW so a
+      // crash/power cut during the receipt/thank-you screens can't restore
+      // an already-paid cart for the next customer.
+      pendingOrderIdRef.current = null;
+      setLastTotalGrosze(saleTotalGrosze);
+      cart.clear();
+
       window.electronAPI?.pos?.sync?.orders?.().catch(() => undefined);
 
       // Keep the customer on the receipt screen while the backend routes the
-      // print job. Cash/BLIK use the order-copy printer; card uses fiscal.
+      // print job. ALL methods print a fiscal paragon (Polish law requires
+      // one for cash/BLIK too); CASH additionally pulses the cash drawer.
       setLastPaymentMethod(method);
       setPaymentOpen(false);
       setReceiptPrinting(true);
@@ -525,16 +601,37 @@ export default function SelfCheckoutApp() {
         () => ({ success: false, printed: false, receiptPrinted: false }),
       );
       const receiptPrinted = !!(printResult?.printed ?? printResult?.receiptPrinted ?? printResult?.fiscalPrinted);
+      // Kitchen pickup number: shown big on screen so the customer still has
+      // it even when the printed slip fails.
+      setLastPickupNumber(printResult?.pickupNumber ?? null);
       if (!receiptPrinted) {
         showToast('error', printResult?.error || t.receiptPrintFailed);
+        // Paid-but-no-paragon is a fiscal/legal incident, not just a UX
+        // hiccup: alert staff proactively (fire-and-forget, no UI lock) so
+        // it gets handled even if the customer walks away.
+        window.electronAPI?.selfCheckout?.helpRequest?.({
+          reason: 'PRINT_FAILED',
+          cartTotalGrosze: saleTotalGrosze,
+        }).catch(() => undefined);
       }
       setLastReceiptPrinted(receiptPrinted);
       setReceiptPrinting(false);
     },
-    [cart.cart.items, cart.cart.totalGrosze, goTo, kioskUserId, mode, showToast, t],
+    [cart, goTo, kioskUserId, mode, showToast, t],
   );
 
   const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);
+
+  if (staffExitOpen) {
+    return (
+      <StaffExitConfirm
+        lang={lang}
+        onConfirm={() => void window.electronAPI?.selfCheckout?.close?.()}
+        onCancel={() => setStaffExitOpen(false)}
+      />
+    );
+  }
+
   if (help) {
     return (
       <HelpLockedOverlay
@@ -587,6 +684,7 @@ export default function SelfCheckoutApp() {
           categories={catalogCategories}
           products={catalogProducts}
           catalogLoading={catalogLoading}
+          allowOversell={allowOversell}
           onAddCatalogProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
           initialDepartment={initialDepartment}
           scanQuantity={scanQuantity}
@@ -594,7 +692,7 @@ export default function SelfCheckoutApp() {
           onIncrement={(id) => {
             const item = cart.cart.items.find((i) => i.variantId === id);
             if (!item) return;
-            if (typeof item.stockAtAdd === 'number' && item.quantity + 1 > item.stockAtAdd) {
+            if (!allowOversell && typeof item.stockAtAdd === 'number' && item.quantity + 1 > item.stockAtAdd) {
               showToast(
                 'error',
                 formatScMessage(t.productInsufficientStock, {
@@ -611,7 +709,12 @@ export default function SelfCheckoutApp() {
             if (item) cart.setQuantity(id, item.quantity - 1);
           }}
           onRemove={(id) => cart.remove(id)}
-          onCheckout={() => setPaymentOpen(true)}
+          onCheckout={() => {
+            // New payment attempt session — retries inside the overlay reuse
+            // one order id; a fresh overlay starts clean.
+            pendingOrderIdRef.current = null;
+            setPaymentOpen(true);
+          }}
           onCallStaff={() => callStaff('OTHER')}
           onAbandon={() => setAbandonOpen(true)}
           onLangChange={handleLangChange}
@@ -658,7 +761,8 @@ export default function SelfCheckoutApp() {
         lang={lang}
         mode={mode}
         method={lastPaymentMethod}
-        totalGrosze={cart.cart.totalGrosze}
+        totalGrosze={lastTotalGrosze}
+        pickupNumber={lastPickupNumber}
         receiptPrinted={lastReceiptPrinted}
         receiptPrinting={receiptPrinting}
         onComplete={() => goTo('thankyou')}
@@ -672,7 +776,7 @@ export default function SelfCheckoutApp() {
     return (
       <ThankYouScreen
         lang={lang}
-        totalGrosze={cart.cart.totalGrosze}
+        totalGrosze={lastTotalGrosze}
         onReset={resetSession}
         onLangChange={handleLangChange}
         onCallStaff={callStaffOther}
@@ -714,6 +818,89 @@ function AbandonConfirm({ lang, onConfirm, onCancel }: AbandonConfirmProps) {
             {t.abandonConfirm}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Hold-to-confirm staff exit. The 3-finger swipe gesture only OPENS this
+// dialog; actually closing the kiosk requires holding the button for 3
+// seconds — long enough that a customer who stumbled on the gesture won't
+// get through, short enough not to annoy staff. Auto-cancels after 15s.
+const STAFF_EXIT_HOLD_MS = 3000;
+const STAFF_EXIT_AUTO_CANCEL_MS = 15_000;
+
+interface StaffExitConfirmProps {
+  lang: ScLanguage;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function StaffExitConfirm({ lang, onConfirm, onCancel }: StaffExitConfirmProps) {
+  const t = getScStrings(lang);
+  const [heldMs, setHeldMs] = useState(0);
+  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const confirmedRef = useRef(false);
+
+  const stopHold = useCallback(() => {
+    if (holdInterval.current) clearInterval(holdInterval.current);
+    holdInterval.current = null;
+    if (!confirmedRef.current) setHeldMs(0);
+  }, []);
+
+  const startHold = useCallback(() => {
+    if (holdInterval.current || confirmedRef.current) return;
+    setHeldMs(0);
+    holdInterval.current = setInterval(() => {
+      setHeldMs((ms) => {
+        const next = ms + 100;
+        if (next >= STAFF_EXIT_HOLD_MS && !confirmedRef.current) {
+          confirmedRef.current = true;
+          onConfirm();
+        }
+        return next;
+      });
+    }, 100);
+  }, [onConfirm]);
+
+  useEffect(() => {
+    const autoCancel = setTimeout(onCancel, STAFF_EXIT_AUTO_CANCEL_MS);
+    return () => {
+      clearTimeout(autoCancel);
+      if (holdInterval.current) clearInterval(holdInterval.current);
+    };
+  }, [onCancel]);
+
+  const progress = Math.min(1, heldMs / STAFF_EXIT_HOLD_MS);
+
+  return (
+    <div className="sc-shell fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-6 select-none">
+      <div className="sc-surface w-[560px] p-9 text-center">
+        <h3 className="text-4xl font-black text-[var(--sc-ink)]">{t.staffExitTitle}</h3>
+        <p className="mt-4 text-lg leading-7 text-[var(--sc-muted)]">{t.staffExitBody}</p>
+        <button
+          type="button"
+          onPointerDown={startHold}
+          onPointerUp={stopHold}
+          onPointerLeave={stopHold}
+          onPointerCancel={stopHold}
+          onContextMenu={(e) => e.preventDefault()}
+          className="sc-focusable relative mt-8 w-full overflow-hidden rounded-[24px] border-2 border-red-700 bg-red-600 px-6 py-5 text-2xl font-black text-white"
+        >
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-0 left-0 bg-red-900/60 transition-[width] duration-100 ease-linear"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
+          <span className="relative">{t.staffExitHold}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="sc-secondary-action sc-focusable mt-4 w-full text-lg"
+        >
+          {t.cancel}
+        </button>
       </div>
     </div>
   );

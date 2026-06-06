@@ -51,7 +51,7 @@ describe('self-checkout catalog model', () => {
     expect(getProductStock({ id: 'e', name: 'E' })).toBeUndefined();
   });
 
-  it('marks no-price and sold-out products as unavailable for customer add actions', () => {
+  it('marks no-price and sold-out products as unavailable for customer add actions by default', () => {
     expect(getProductAvailability({ id: 'ok', name: 'OK', retail_price: 500 })).toMatchObject({
       canAdd: true,
       reason: null,
@@ -64,6 +64,53 @@ describe('self-checkout catalog model', () => {
     expect(getProductAvailability({ id: 'sold', name: 'Sold', retail_price: 500, in_stock: 0 })).toMatchObject({
       canAdd: false,
       reason: 'out_of_stock',
+    });
+  });
+
+  it('blocks weighted products at the kiosk even with stock, price, and oversell', () => {
+    // The kiosk has no scale: a WEIGHT product would be charged as exactly
+    // 1 kg regardless of the actual weight. It must be weighed at the counter.
+    expect(getProductAvailability(
+      { id: 'meat', name: 'Thit ba chi', retail_price: 3500, in_stock: 8, sell_by: 'WEIGHT' },
+      { allowOversell: true },
+    )).toMatchObject({
+      canAdd: false,
+      reason: 'weighted',
+    });
+    expect(getProductAvailability(
+      { id: 'piece', name: 'Cola', retail_price: 500, in_stock: 8, sell_by: 'PIECE' },
+    )).toMatchObject({ canAdd: true, reason: null });
+  });
+
+  it('allows sold-out products only when oversell is enabled', () => {
+    expect(getProductAvailability(
+      { id: 'sold-off', name: 'Sold off', retail_price: 500, in_stock: 0 },
+      { allowOversell: false },
+    )).toMatchObject({
+      canAdd: false,
+      reason: 'out_of_stock',
+      stock: 0,
+    });
+
+    expect(getProductAvailability(
+      { id: 'sold-on', name: 'Sold on', retail_price: 500, in_stock: -2 },
+      { allowOversell: true },
+    )).toMatchObject({
+      canAdd: true,
+      reason: null,
+      stock: -2,
+    });
+  });
+
+  it('keeps no-price products unavailable even when oversell is enabled', () => {
+    expect(getProductAvailability(
+      { id: 'free-sold', name: 'Free sold', in_stock: -1 },
+      { allowOversell: true },
+    )).toMatchObject({
+      canAdd: false,
+      reason: 'no_price',
+      priceGrosze: 0,
+      stock: -1,
     });
   });
 });

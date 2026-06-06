@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow, { type CartItemLabelPrintResult } from './CartItem';
 import POSNumpad from './POSNumpad';
-import { parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
+import { appendDecimal, appendDigit, appendDoubleZero, backspace, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 
@@ -22,6 +22,7 @@ interface CartProps {
   onHold?: () => void;
   /** Retail label print action for a cart line. When provided it replaces the note button. */
   onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
+  showOrderActionChips?: boolean;
 }
 
 interface OverflowMenuProps {
@@ -54,6 +55,7 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={tOr('pos.cart.more', 'More')}
+        title={tOr('pos.cart.more', 'More')}
         aria-haspopup="menu"
         aria-expanded={open}
         className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200"
@@ -112,6 +114,415 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
   );
 }
 
+interface DiscountPopupProps {
+  subtotal: number;
+  currentDiscount: number;
+  currency: string;
+  onApplyPercent: (percent: number) => void;
+  onApplyFixed: (amount: number) => void;
+  onClear: () => void;
+  onClose: () => void;
+  tOr: (key: string, fallback: string) => string;
+}
+
+const TOUCH_KEYBOARD_HEIGHT_PX = 300;
+const CUSTOM_INPUT_BLUR_DELAY_MS = 120;
+
+function formatCompactMoney(grosze: number, currency: string): string {
+  const value = Math.max(0, Math.round(grosze));
+  const amount = value % 100 === 0
+    ? String(value / 100)
+    : (value / 100).toFixed(2);
+  return `${amount} ${currency}`;
+}
+
+function formatCartQuantityTotal(quantity: number): string {
+  if (!Number.isFinite(quantity)) return '0';
+  const rounded = Math.round(quantity);
+  if (Math.abs(quantity - rounded) < 0.0001) return String(rounded);
+  return quantity.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function DiscountPopup({
+  subtotal,
+  currentDiscount,
+  currency,
+  onApplyPercent,
+  onApplyFixed,
+  onClear,
+  onClose,
+  tOr,
+}: DiscountPopupProps) {
+  const percentOptions = [5, 10, 15, 20];
+  const roundDownToTenDiscount = subtotal % 1000;
+  const hasRoundDiscount = roundDownToTenDiscount > 0 && roundDownToTenDiscount < subtotal;
+  const [customMode, setCustomMode] = useState<'fixed' | 'percentage'>('fixed');
+  const [customValue, setCustomValue] = useState('');
+  const [customInputFocused, setCustomInputFocused] = useState(false);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const customBlurTimerRef = useRef<number | null>(null);
+  const normalizedCustomValue = customValue.trim().replace(',', '.');
+  const parsedCustomValue = normalizedCustomValue ? Number(normalizedCustomValue) : NaN;
+  const customFixedGrosze = Number.isFinite(parsedCustomValue)
+    ? Math.max(0, Math.min(parseBufferGrosze(normalizedCustomValue), subtotal))
+    : 0;
+  const customPercent = Number.isFinite(parsedCustomValue)
+    ? Math.max(0, Math.min(parsedCustomValue, 100))
+    : 0;
+  const canApplyCustom = customMode === 'percentage'
+    ? customPercent > 0
+    : customFixedGrosze > 0;
+
+  const applyCustomDiscount = useCallback(() => {
+    if (!canApplyCustom) return;
+    if (customMode === 'percentage') onApplyPercent(customPercent);
+    else onApplyFixed(customFixedGrosze);
+  }, [canApplyCustom, customFixedGrosze, customMode, customPercent, onApplyFixed, onApplyPercent]);
+
+  const clearCustomBlurTimer = useCallback(() => {
+    if (customBlurTimerRef.current === null) return;
+    window.clearTimeout(customBlurTimerRef.current);
+    customBlurTimerRef.current = null;
+  }, []);
+
+  const handleCustomInputFocus = useCallback(() => {
+    clearCustomBlurTimer();
+    setCustomInputFocused(true);
+  }, [clearCustomBlurTimer]);
+
+  const selectCustomMode = useCallback((mode: 'fixed' | 'percentage') => {
+    clearCustomBlurTimer();
+    setCustomMode(mode);
+    setCustomInputFocused(true);
+    customInputRef.current?.focus();
+  }, [clearCustomBlurTimer]);
+
+  const handleCustomModePointerDown = useCallback((
+    e: React.PointerEvent<HTMLButtonElement>,
+    mode: 'fixed' | 'percentage',
+  ) => {
+    e.preventDefault();
+    selectCustomMode(mode);
+  }, [selectCustomMode]);
+
+  const handleCustomInputBlur = useCallback(() => {
+    clearCustomBlurTimer();
+    customBlurTimerRef.current = window.setTimeout(() => {
+      setCustomInputFocused(false);
+      customBlurTimerRef.current = null;
+    }, CUSTOM_INPUT_BLUR_DELAY_MS);
+  }, [clearCustomBlurTimer]);
+
+  useEffect(() => () => clearCustomBlurTimer(), [clearCustomBlurTimer]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && canApplyCustom) {
+        if (!(e.target instanceof HTMLInputElement)) return;
+        e.preventDefault();
+        applyCustomDiscount();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [applyCustomDiscount, canApplyCustom, onClose]);
+
+  const handleCustomValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = e.target.value.trim();
+    if (/^\d*(?:[.,]\d{0,2})?$/.test(nextValue)) setCustomValue(nextValue);
+  };
+  const dialogTop = customInputFocused
+    ? `calc((100vh - ${TOUCH_KEYBOARD_HEIGHT_PX}px) / 2)`
+    : '50%';
+  const dialogMaxHeight = customInputFocused
+    ? `calc(100vh - ${TOUCH_KEYBOARD_HEIGHT_PX}px - 24px)`
+    : 'calc(100vh - 32px)';
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={tOr('pos.numpad.discount', 'Discount')}
+        style={{ top: dialogTop, maxHeight: dialogMaxHeight }}
+        className="fixed left-1/2 z-50 flex w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div>
+            <p className="text-sm font-extrabold text-slate-950">{tOr('pos.numpad.discount', 'Discount')}</p>
+            <p className="mt-0.5 text-xs font-semibold text-slate-500">
+              {tOr('pos.cart.subtotal', 'Subtotal')}: {formatCompactMoney(subtotal, currency)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={tOr('pos.cancel', 'Cancel')}
+            className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-4">
+          <div className="grid grid-cols-2 gap-2">
+            {percentOptions.map((percent) => {
+              const amount = Math.min(Math.round(subtotal * percent / 100), subtotal);
+              return (
+                <button
+                  key={percent}
+                  type="button"
+                  onClick={() => onApplyPercent(percent)}
+                  className="h-16 rounded-lg border border-brand-200 bg-brand-50 px-3 text-left transition-colors hover:border-brand-500 hover:bg-brand-100 active:bg-brand-200"
+                >
+                  <span className="block text-lg font-black text-brand-900">-{percent}%</span>
+                  <span className="block text-xs font-bold text-brand-700">-{formatCompactMoney(amount, currency)}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-10 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
+                <button
+                  type="button"
+                  onPointerDown={(e) => handleCustomModePointerDown(e, 'fixed')}
+                  onClick={() => selectCustomMode('fixed')}
+                  aria-pressed={customMode === 'fixed'}
+                  className={`min-w-12 px-2 text-xs font-extrabold transition-colors ${
+                    customMode === 'fixed'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {currency}
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={(e) => handleCustomModePointerDown(e, 'percentage')}
+                  onClick={() => selectCustomMode('percentage')}
+                  aria-pressed={customMode === 'percentage'}
+                  className={`min-w-12 border-l border-slate-300 px-2 text-xs font-extrabold transition-colors ${
+                    customMode === 'percentage'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  %
+                </button>
+              </div>
+              <input
+                ref={customInputRef}
+                type="text"
+                inputMode="decimal"
+                value={customValue}
+                onChange={handleCustomValueChange}
+                onFocus={handleCustomInputFocus}
+                onBlur={handleCustomInputBlur}
+                placeholder={customMode === 'fixed' ? '0.00' : '10'}
+                aria-label={tOr('pos.discount.customValue', 'Custom discount value')}
+                className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-right text-sm font-extrabold text-slate-950 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              />
+              <button
+                type="button"
+                onClick={applyCustomDiscount}
+                disabled={!canApplyCustom}
+                className="h-10 shrink-0 rounded-lg bg-slate-950 px-3 text-xs font-extrabold text-white transition-colors hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {tOr('pos.apply', 'Apply')}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => hasRoundDiscount && onApplyFixed(roundDownToTenDiscount)}
+            disabled={!hasRoundDiscount}
+            className="mt-2 flex h-14 w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-left transition-colors hover:border-emerald-500 hover:bg-emerald-100 active:bg-emerald-200 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-300"
+          >
+            <span className="text-sm font-extrabold text-emerald-900">
+              {tOr('pos.discount.roundDown', 'Round down')}
+            </span>
+            <span className="text-lg font-black tabular-nums text-emerald-800">
+              -{formatCompactMoney(roundDownToTenDiscount, currency)}
+            </span>
+          </button>
+
+          <div className="mt-3 flex gap-2">
+            {currentDiscount > 0 && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="h-11 flex-1 rounded-lg border border-red-200 bg-white px-3 text-sm font-extrabold text-red-700 hover:bg-red-50"
+              >
+                {tOr('pos.discount.clear', 'Clear discount')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-11 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.cancel', 'Cancel')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+interface PricePopupProps {
+  item: CartItem;
+  currency: string;
+  onApply: (price: number) => void;
+  onClose: () => void;
+  tOr: (key: string, fallback: string) => string;
+}
+
+export function applyPricePopupBufferKey(buffer: string, key: string, replaceOnNextInput: boolean): string {
+  if (replaceOnNextInput) {
+    if (key === '.') return '0.';
+    if (key === '00') return appendDoubleZero('', 'price');
+    return appendDigit('', key);
+  }
+  if (key === '.') return appendDecimal(buffer, 'price');
+  if (key === '00') return appendDoubleZero(buffer, 'price');
+  return appendDigit(buffer, key);
+}
+
+function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) {
+  const initialBuffer = (item.price / 100).toFixed(2);
+  const [buffer, setBuffer] = useState(initialBuffer);
+  const [replaceOnNextInput, setReplaceOnNextInput] = useState(true);
+  const parsedPrice = parseBufferGrosze(buffer);
+  const canApply = buffer.trim().length > 0 && Number.isFinite(parsedPrice) && parsedPrice >= 0;
+
+  useEffect(() => {
+    setBuffer(initialBuffer);
+    setReplaceOnNextInput(true);
+  }, [initialBuffer, item.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Enter' && canApply) onApply(parsedPrice);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [canApply, onApply, onClose, parsedPrice]);
+
+  const pressKey = (key: string) => {
+    setBuffer((value) => applyPricePopupBufferKey(value, key, replaceOnNextInput));
+    setReplaceOnNextInput(false);
+  };
+
+  const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '00'];
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={tOr('pos.price.edit', 'Edit price')}
+        className="fixed left-1/2 top-1/2 z-50 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-extrabold text-slate-950">{tOr('pos.price.edit', 'Edit price')}</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{item.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={tOr('pos.cancel', 'Cancel')}
+            className="h-9 w-9 shrink-0 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+            <p className="text-xs font-bold text-slate-500">{tOr('pos.price.new', 'New price')}</p>
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 flex-1 truncate text-3xl font-black tabular-nums text-slate-950">
+                {buffer || '0'}
+              </span>
+              <span className="text-base font-extrabold text-slate-500">{currency}</span>
+            </div>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              {tOr('pos.price.current', 'Current')}: {formatCompactMoney(item.price, currency)}
+            </p>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {keypad.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => pressKey(key)}
+                className="h-14 rounded-lg border border-slate-200 bg-white text-lg font-black tabular-nums text-slate-900 transition-colors hover:border-brand-300 hover:bg-brand-50 active:bg-brand-100"
+              >
+                {key}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setBuffer((value) => backspace(value));
+                setReplaceOnNextInput(false);
+              }}
+              className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.backspace', 'Backspace')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setBuffer('');
+                setReplaceOnNextInput(false);
+              }}
+              className="h-11 rounded-lg border border-red-200 bg-white px-3 text-sm font-extrabold text-red-700 hover:bg-red-50"
+            >
+              {tOr('pos.clear', 'Clear')}
+            </button>
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-12 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+            >
+              {tOr('pos.cancel', 'Cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => canApply && onApply(parsedPrice)}
+              disabled={!canApply}
+              className="h-12 flex-1 rounded-lg bg-brand-600 px-3 text-sm font-extrabold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {tOr('pos.price.apply', 'Apply price')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Cart({
   cart,
   dispatch,
@@ -124,11 +535,14 @@ export default function Cart({
   heldCartsCount = 0,
   onHold,
   onPrintItemLabel,
+  showOrderActionChips = true,
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
   const scaleEnabled = config?.scale?.enabled === true;
   const [confirmClear, setConfirmClear] = useState(false);
+  const [discountPopupOpen, setDiscountPopupOpen] = useState(false);
+  const [pricePopupItemId, setPricePopupItemId] = useState<string | null>(null);
   const [scaleBusyItemId, setScaleBusyItemId] = useState<string | null>(null);
   const [scaleErrors, setScaleErrors] = useState<Record<string, string>>({});
   const itemsScrollRef = useRef<HTMLDivElement>(null);
@@ -160,17 +574,27 @@ export default function Cart({
     [cart.items, controller],
   );
 
+  const handleOpenPricePopup = useCallback((item: CartItem) => {
+    controller.selectPayment();
+    setDiscountPopupOpen(false);
+    setPricePopupItemId(item.id);
+  }, [controller]);
+
+  const pricePopupItem = pricePopupItemId
+    ? cart.items.find((item) => item.id === pricePopupItemId) || null
+    : null;
+
   const activeFieldFor = (id: string): 'qty' | 'price' | null => {
     if (controller.target.kind !== 'cartItem') return null;
     if (controller.target.itemId !== id) return null;
     return controller.target.field;
   };
 
-  // Inline numpad is for editing line items + discount. Cash-prefill happens
+  // Inline numpad is for editing line items. Cash-prefill happens
   // in PaymentModal (which has its own keypad), so we hide the inline panel
   // whenever the controller is idle on payment — that reclaims ~280px of
   // vertical space that the old layout always reserved.
-  const showNumpad = controller.target.kind === 'cartItem' || controller.target.kind === 'discount';
+  const showNumpad = controller.target.kind === 'cartItem';
 
   const numpadLabel = (() => {
     const target = controller.target;
@@ -187,6 +611,24 @@ export default function Cart({
     controller.selectPayment();
     requestPayment(prefillCashGrosze);
   }, [controller, requestPayment]);
+
+  const applyPercentDiscount = useCallback((percent: number) => {
+    dispatch({ type: 'cart/applyDiscount', payload: { amount: percent, discountType: 'percentage' } });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
+
+  const applyFixedDiscount = useCallback((amount: number) => {
+    dispatch({ type: 'cart/applyDiscount', payload: { amount, discountType: 'fixed' } });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
+
+  const clearDiscount = useCallback(() => {
+    dispatch({ type: 'cart/clearDiscount' });
+    setDiscountPopupOpen(false);
+    controller.selectPayment();
+  }, [dispatch, controller]);
 
   const handleClearConfirm = useCallback(() => {
     dispatch({ type: 'cart/clear' });
@@ -236,6 +678,9 @@ export default function Cart({
   const shiftWarning = shiftBlockReason || tOr('pos.shift.openRequired', 'Open a shift to accept payments');
   const subtotalStr = `${(cart.subtotal / 100).toFixed(2)} ${currency}`;
   const totalStr = (cart.total / 100).toFixed(2);
+  const totalQuantityStr = formatCartQuantityTotal(
+    cart.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+  );
 
   useEffect(() => {
     const el = itemsScrollRef.current;
@@ -254,18 +699,21 @@ export default function Cart({
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-4 py-3 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-extrabold text-slate-950 truncate flex items-center gap-2">
+          <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
+            <span className="shrink-0">{t('pos.cart')}</span>
+            <span className="shrink-0 text-slate-300" aria-hidden="true">–</span>
             {hasItems ? (
-              <>
-                <span className="tabular-nums">{cart.items.length}</span>
-                <span className="text-slate-500 font-bold">{tOr('pos.cart.items', 'items')}</span>
-                <span className="text-slate-300" aria-hidden="true">·</span>
-                <span className="text-brand-700 tabular-nums">{subtotalStr}</span>
-              </>
+              <span className="min-w-0 truncate text-xs font-bold text-slate-600">
+                <span className="tabular-nums text-slate-900">{cart.items.length}</span>{' '}
+                {tOr('pos.cart.items', 'Items')}
+                <span className="mx-1.5 text-slate-300" aria-hidden="true">·</span>
+                <span className="tabular-nums text-slate-900">{totalQuantityStr}</span>{' '}
+                {tOr('pos.cart.qty', 'Qty')}
+              </span>
             ) : (
-              <span>{t('pos.cart')}</span>
+              <span className="min-w-0 truncate text-xs font-bold text-slate-500">{t('pos.cart.empty')}</span>
             )}
           </h2>
           {heldCartsCount > 0 && (
@@ -321,6 +769,7 @@ export default function Cart({
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
                 onPrintLabel={onPrintItemLabel}
                 onSelectField={handleSelectField}
+                onEditPrice={handleOpenPricePopup}
                 onReadScale={scaleEnabled ? handleReadScale : undefined}
                 scaleBusy={scaleBusyItemId === item.id}
                 scaleError={scaleErrors[item.id] || null}
@@ -335,18 +784,35 @@ export default function Cart({
         )}
       </div>
 
+      {pricePopupItem && !showOrderActionChips && (
+        <PricePopup
+          item={pricePopupItem}
+          currency={currency}
+          onApply={(price) => {
+            dispatch({ type: 'cart/setItemPrice', payload: { id: pricePopupItem.id, price } });
+            setPricePopupItemId(null);
+            controller.selectPayment();
+          }}
+          onClose={() => setPricePopupItemId(null)}
+          tOr={tOr}
+        />
+      )}
+
       {/* ─── QUICK-ACTION CHIPS ──────────────────────────────────
           Surface the most common order-level actions one tap away
-          (industry pattern: Square / Shopify POS / Toast). The
-          discount chip mirrors numpad state — tapping again exits. */}
-      {hasItems && (
-        <div className="shrink-0 px-3 pt-2 pb-2 flex items-center gap-2 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
+          (industry pattern: Square / Shopify POS / Toast). Discount
+          opens a preset popup instead of the inline numpad. */}
+      {hasItems && showOrderActionChips && (
+        <div className="relative shrink-0 px-2 py-1.5 flex items-center gap-1.5 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
           <button
             type="button"
-            onClick={() => isDiscountActive ? controller.selectPayment() : controller.selectDiscount()}
-            aria-pressed={isDiscountActive}
-            className={`shrink-0 h-11 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
-              isDiscountActive
+            onClick={() => {
+              controller.selectPayment();
+              setDiscountPopupOpen(true);
+            }}
+            aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
+            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
+              discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
             }`}
@@ -356,11 +822,36 @@ export default function Cart({
             </svg>
             {tOr('pos.numpad.discount', 'Discount')}
           </button>
+          {discountPopupOpen && (
+            <DiscountPopup
+              subtotal={cart.subtotal}
+              currentDiscount={cart.discount}
+              currency={currency}
+              onApplyPercent={applyPercentDiscount}
+              onApplyFixed={applyFixedDiscount}
+              onClear={clearDiscount}
+              onClose={() => setDiscountPopupOpen(false)}
+              tOr={tOr}
+            />
+          )}
+          {pricePopupItem && (
+            <PricePopup
+              item={pricePopupItem}
+              currency={currency}
+              onApply={(price) => {
+                dispatch({ type: 'cart/setItemPrice', payload: { id: pricePopupItem.id, price } });
+                setPricePopupItemId(null);
+                controller.selectPayment();
+              }}
+              onClose={() => setPricePopupItemId(null)}
+              tOr={tOr}
+            />
+          )}
           {onHold && (
             <button
               type="button"
               onClick={onHold}
-              className="shrink-0 h-11 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-amber-200 flex items-center gap-1.5"
+              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-amber-200 flex items-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -401,11 +892,11 @@ export default function Cart({
           sits in the same sticky shadow surface so the cashier's
           eye drops from total → button without re-scanning. */}
       {hasItems && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-4 pt-3 pb-3 shadow-[0_-8px_24px_-12px_rgba(15,23,42,0.12)]">
-          <div className="space-y-1.5 text-xs mb-3">
-            <div className="flex justify-between text-slate-600">
-              <span className="font-medium">{t('pos.cart.subtotal')}</span>
-              <span className="font-bold text-slate-800 tabular-nums">{subtotalStr}</span>
+        <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
+          <div className="space-y-1 text-xs mb-2">
+            <div className="flex justify-between text-slate-700">
+              <span className="font-bold">{t('pos.cart.subtotal')}</span>
+              <span className="font-extrabold text-slate-900 tabular-nums">{subtotalStr}</span>
             </div>
             {cart.discount > 0 && (
               <div className="flex justify-between items-center">
@@ -419,6 +910,7 @@ export default function Cart({
                     type="button"
                     onClick={() => dispatch({ type: 'cart/clearDiscount' })}
                     aria-label="Remove discount"
+                    title="Remove discount"
                     className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors touch-manipulation"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -429,17 +921,17 @@ export default function Cart({
               </div>
             )}
             {cart.tax > 0 && (
-              <div className="flex justify-between text-slate-400 italic">
-                <span>{t('pos.cart.inclVat') || 'Incl. VAT'}</span>
-                <span className="tabular-nums">({(cart.tax / 100).toFixed(2)} {currency})</span>
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold">{tOr('pos.cart.vatIncluded', 'VAT Included')}</span>
+                <span className="font-extrabold tabular-nums">{(cart.tax / 100).toFixed(2)} {currency}</span>
               </div>
             )}
           </div>
 
-          <div className="flex items-baseline justify-between pt-3 mb-3 border-t border-slate-200">
-            <span className="text-[11px] font-bold uppercase text-slate-500 tracking-[0.12em]">{t('pos.cart.total')}</span>
+          <div className="flex items-baseline justify-between pt-2 mb-2 border-t border-slate-200">
+            <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
             <span className="text-slate-950 leading-none tabular-nums">
-              <span className="text-3xl font-black">{totalStr}</span>
+              <span className="text-2xl font-black">{totalStr}</span>
               <span className="text-base font-bold ml-1.5 text-slate-600">{currency}</span>
             </span>
           </div>
@@ -457,9 +949,9 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-16 rounded-xl font-extrabold text-lg text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-brand-600 hover:bg-brand-700 active:bg-brand-800 shadow-lg shadow-brand-600/25 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-200 focus:ring-offset-2"
+            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
           >
-            {t('pos.pay')} · {totalStr} {currency}
+            {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>
         </div>
       )}

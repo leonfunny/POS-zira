@@ -23,10 +23,11 @@ interface B2BTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
 }
 
-export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplateProps) {
+export default function B2BTemplate({ state, dispatch, t, language, session }: B2BTemplateProps) {
   const [customers, setCustomers] = useState<B2BCustomer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<B2BCustomer | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
   const [products, setProducts] = useState<Product[]>([]);
 
   const cart = state.cart;
+  const lang = language || 'pl';
   const canSell = !!selectedCustomer;
   const tOr = useCallback((key: string, fallback: string) => {
     const value = t(key);
@@ -112,6 +114,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
         id: crypto.randomUUID(),
         variantId: product.id,
         name: product.name,
+        name_translations: product.name_translations ?? null,
         sku: product.sku || '',
         price: product.retail_price,
         quantity: 1,
@@ -183,9 +186,10 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
             activeId={activeCategoryId}
             onSelect={setActiveCategoryId}
             allLabel={t('pos.allCategories')}
+            lang={lang}
           />
           <div className="relative flex-1 overflow-hidden">
-            <ProductGrid products={products} onAddProduct={handleAddProduct} t={t} />
+            <ProductGrid products={products} onAddProduct={handleAddProduct} t={t} lang={lang} />
             {!canSell && (
               <div className="absolute inset-0 bg-slate-900/70 flex items-center justify-center text-sm text-slate-300">
                 {t('pos.b2b.locked') || 'Select customer to enable ordering'}
@@ -239,6 +243,7 @@ export default function B2BTemplate({ state, dispatch, t, session }: B2BTemplate
             t={t}
             shiftOpen={shiftPaymentOpen}
             shiftBlockReason={shiftBlockedMessage}
+            lang={lang}
           />
           {/* Invoice credit warning */}
           {selectedCustomer && !canPayInvoice && cart.total > 0 && (

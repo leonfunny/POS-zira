@@ -14,6 +14,7 @@ interface ProductCardProps {
   onAdd: (product: Product) => void;
   onLongPress?: (product: Product) => void | ProductLongPressResult | Promise<void | ProductLongPressResult>;
   t?: (key: string) => string;
+  allowOversell?: boolean;
   /** Operator UI language — drives display-name resolution. Canonical
    *  `product.name` is still used for placeholder-color stability and for
    *  persisted order/fiscal lines; paper receipts localize at print time. */
@@ -38,7 +39,11 @@ function placeholderColor(name: string): string {
   return PLACEHOLDER_COLORS[Math.abs(hash) % PLACEHOLDER_COLORS.length];
 }
 
-function ProductCard({ product, onAdd, onLongPress, t, lang }: ProductCardProps) {
+function formatTemplate(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
+}
+
+function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [longPressMessage, setLongPressMessage] = useState('');
@@ -51,11 +56,13 @@ function ProductCard({ product, onAdd, onLongPress, t, lang }: ProductCardProps)
   const stockQty = product.available_qty ?? product.in_stock;
   // Drafts are click-to-import — stock is informational at best, so don't
   // gate the click or surface "Sold out" / "Low stock" chrome on them.
-  const soldOut = !isDraft && !isService && stockQty <= 0;
+  const soldOut = !allowOversell && !isDraft && !isService && stockQty <= 0;
   const lowStock = !isDraft && !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';
   const saleClass = classifyProductSale(product);
+  const oversoldStock = allowOversell && !isDraft && !isService && typeof stockQty === 'number' && stockQty <= 0;
+  const stockUnit = saleClass.isWeighted ? saleClass.saleUnit : pieces;
   // Placeholder color hashes canonical `name` so the same product keeps the
   // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
@@ -192,6 +199,11 @@ function ProductCard({ product, onAdd, onLongPress, t, lang }: ProductCardProps)
         {lowStock && (
           <span className="absolute top-2 left-2 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             {stockQty} {saleClass.isWeighted ? saleClass.saleUnit : pieces}
+          </span>
+        )}
+        {oversoldStock && (
+          <span className="absolute top-2 left-2 text-[10px] text-red-800 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+            {formatTemplate(t?.('pos.product.oversoldStock') ?? 'Stock: {stock}', { stock: stockQty })} {stockUnit}
           </span>
         )}
         {saleClass.isWeighted && !soldOut && (

@@ -33,6 +33,17 @@ interface Tender {
   amount: number; // grosze
 }
 
+type PaymentSnapshot = {
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  tip: number;
+  grandTotal: number;
+  cashAmountGrosze: number;
+  changeGrosze: number;
+};
+
 type ReceiptRecovery = {
   orderId: string;
   nextAction: 'close' | 'fiscalPrompt';
@@ -95,6 +106,7 @@ export default function PaymentModal({
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
+  const [paymentSnapshot, setPaymentSnapshot] = useState<PaymentSnapshot | null>(null);
   const [customerNip, setCustomerNip] = useState(() =>
     String(extraOrderFields?.customer_nip ?? '').replace(/\D/g, '').slice(0, 10),
   );
@@ -178,13 +190,22 @@ export default function PaymentModal({
   }, []);
 
   const tip = extraOrderFields?.tip ?? 0;
-  const grandTotal = cart.total + tip;
-  const totalZl = grandTotal / 100;
+  const liveGrandTotal = cart.total + tip;
   const parsedCash = parseFloat(cashAmount || '0');
   const cashAmountGrosze = Number.isFinite(parsedCash) ? Math.round(parsedCash * 100) : 0;
-  const changeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - grandTotal) : 0;
-  const cashShortfall = method === 'CASH' && !splitMode && cashAmountGrosze > 0 && cashAmountGrosze < grandTotal
-    ? grandTotal - cashAmountGrosze
+  const liveChangeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - liveGrandTotal) : 0;
+  const displaySubtotal = paymentSnapshot?.subtotal ?? cart.subtotal;
+  const displayDiscount = paymentSnapshot?.discount ?? cart.discount;
+  const displayTax = paymentSnapshot?.tax ?? cart.tax;
+  const displayTip = paymentSnapshot?.tip ?? tip;
+  const displayGrandTotal = paymentSnapshot?.grandTotal ?? liveGrandTotal;
+  const displayCashAmountGrosze = paymentSnapshot?.cashAmountGrosze ?? cashAmountGrosze;
+  const displayChangeGrosze = paymentSnapshot?.changeGrosze ?? liveChangeGrosze;
+  const grandTotal = displayGrandTotal;
+  const totalZl = grandTotal / 100;
+  const changeGrosze = displayChangeGrosze;
+  const cashShortfall = method === 'CASH' && !splitMode && displayCashAmountGrosze > 0 && displayCashAmountGrosze < grandTotal
+    ? grandTotal - displayCashAmountGrosze
     : 0;
   const customerNipValid = customerNip.length === 0 || customerNip.length === 10;
   const customerNipForOrder = customerNip.length === 10 ? customerNip : null;
@@ -325,9 +346,20 @@ export default function PaymentModal({
       tendersJson = JSON.stringify(tenders);
     }
 
+    // Numbering series: CARD/TRANSFER auto-print the fiscal paragon -> the
+    // fiscal POS- series. CASH/BLIK print the order copy (fiscal only on
+    // explicit prompt) and INVOICE prints neither -> the separate ZAM-
+    // order-copy series, so non-fiscal slips never interleave with the
+    // fiscal numbering.
+    const seriesHasCash = splitMode ? tenders.some(t => t.method === 'CASH') : method === 'CASH';
+    const seriesHasBlik = splitMode ? tenders.some(t => t.method === 'BLIK') : method === 'BLIK';
+    const numberSeries: 'FISCAL' | 'ORDER' =
+      seriesHasCash || seriesHasBlik || method === 'INVOICE' ? 'ORDER' : 'FISCAL';
+
     const order = {
       id: orderId,
       order_number: null as string | null,
+      number_series: numberSeries,
       status: 'COMPLETED',
       subtotal: cart.subtotal,
       discount: cart.discount,
@@ -447,6 +479,16 @@ export default function PaymentModal({
     }
 
     const outcome = deriveReceiptOutcome(printResult, t);
+    setPaymentSnapshot({
+      subtotal: cart.subtotal,
+      discount: cart.discount,
+      tax: cart.tax,
+      total: cart.total,
+      tip,
+      grandTotal: cart.total + tip,
+      cashAmountGrosze: method === 'CASH' && !splitMode ? paymentAmount : cashAmountGrosze,
+      changeGrosze: splitMode ? 0 : (method === 'CASH' ? Math.max(0, paymentAmount - (cart.total + tip)) : 0),
+    });
     dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
     dispatch({ type: 'cart/clear' });
 
@@ -628,6 +670,25 @@ export default function PaymentModal({
   const completeButtonLabel = method === 'CARD' && !splitMode
     ? tOr('pos.payment.cardReceived', 'Card payment received')
     : t('pos.payment.complete');
+  const completeButtonShortLabel = tOr('pos.payment.completeShort', completeButtonLabel);
+  const cashHasChange = method === 'CASH' && !splitMode && changeGrosze > 0;
+  const cashHasShortfall = method === 'CASH' && !splitMode && cashShortfall > 0;
+  const cashStatusLabel = cashHasShortfall
+    ? tOr('pos.payment.shortfall', 'Shortfall')
+    : t('pos.payment.change');
+  const cashStatusAmount = cashHasShortfall ? cashShortfall : changeGrosze;
+  const cashStatusTone = cashHasShortfall
+    ? 'shortfall'
+    : cashHasChange
+      ? 'change'
+      : displayCashAmountGrosze > 0
+        ? 'covered'
+        : 'idle';
+  const completeButtonText = saving
+    ? (savingLabel || t('pos.payment.saving'))
+    : cashHasChange
+      ? `${completeButtonShortLabel} · ${tOr('pos.payment.returnChange', 'return')} ${money(changeGrosze)}`
+      : `${completeButtonLabel} ${money(grandTotal)}`;
   const splitProgress = grandTotal > 0
     ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
     : 0;
@@ -840,7 +901,7 @@ export default function PaymentModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
       onClick={(saving || fiscalPrompt || receiptRecovery) ? undefined : onClose}
     >
       {fiscalPromptOverlay}
@@ -848,10 +909,10 @@ export default function PaymentModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-modal-title"
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+        <div className="shrink-0 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase text-slate-500">{activeMethodLabel}</p>
             <h2 id="payment-modal-title" className="truncate text-xl font-semibold text-slate-950">{t('pos.payment')}</h2>
@@ -882,33 +943,33 @@ export default function PaymentModal({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-slate-100 p-4">
-          <div className="grid min-h-[520px] gap-4 lg:grid-cols-[0.9fr_1.35fr]">
-            <aside className="space-y-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-950 p-5 text-white shadow-sm">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-3">
+          <div className="grid min-h-0 gap-3 lg:grid-cols-[0.8fr_1.4fr]">
+            <aside className="space-y-3">
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-4 text-white shadow-sm">
                 <p className="text-xs font-semibold uppercase text-slate-300">{t('pos.cart.total')}</p>
-                <p className="mt-2 text-5xl font-semibold leading-none">{money(grandTotal)}</p>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-200">
+                <p className="mt-1 text-4xl font-semibold leading-none">{money(grandTotal)}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-200">
                   <div>
                     <p className="text-xs text-slate-400">{t('pos.cart.subtotal')}</p>
-                    <p className="font-semibold">{money(cart.subtotal)}</p>
+                    <p className="font-semibold">{money(displaySubtotal)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">{t('pos.cart.inclVat')}</p>
-                    <p className="font-semibold">{money(cart.tax)}</p>
+                    <p className="font-semibold">{money(displayTax)}</p>
                   </div>
-                  {(cart.discount > 0 || tip > 0) && (
+                  {(displayDiscount > 0 || displayTip > 0) && (
                     <>
-                      {cart.discount > 0 && (
+                      {displayDiscount > 0 && (
                         <div>
                           <p className="text-xs text-slate-400">{t('pos.cart.discount')}</p>
-                          <p className="font-semibold text-amber-200">-{money(cart.discount)}</p>
+                          <p className="font-semibold text-amber-200">-{money(displayDiscount)}</p>
                         </div>
                       )}
-                      {tip > 0 && (
+                      {displayTip > 0 && (
                         <div>
                           <p className="text-xs text-slate-400">{tOr('pos.tip', 'Tip')}</p>
-                          <p className="font-semibold">{money(tip)}</p>
+                          <p className="font-semibold">{money(displayTip)}</p>
                         </div>
                       )}
                     </>
@@ -916,9 +977,9 @@ export default function PaymentModal({
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <p className="text-xs font-semibold uppercase text-slate-500">{t('pos.payment')}</p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-2 grid grid-cols-2 gap-2">
                   {availableMethods.map(pm => {
                     const disabled = pm === 'INVOICE' && !canPayInvoice;
                     const selected = !splitMode && method === pm;
@@ -928,7 +989,7 @@ export default function PaymentModal({
                         type="button"
                         onClick={() => !disabled && setMethod(pm)}
                         disabled={saving || disabled}
-                        className={`flex min-h-[72px] min-w-0 items-center gap-3 rounded-md border p-3 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed ${
+                        className={`flex min-h-[60px] min-w-0 items-center gap-2 rounded-md border p-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed ${
                           selected
                             ? 'border-brand-700 bg-brand-50 text-brand-900 shadow-sm'
                             : disabled
@@ -936,7 +997,7 @@ export default function PaymentModal({
                               : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:bg-brand-50'
                         }`}
                       >
-                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md border ${
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${
                           selected ? 'border-brand-300 bg-white text-brand-700' : 'border-slate-200 bg-slate-50 text-slate-500'
                         }`}>
                           {PM_ICONS[pm]}
@@ -953,7 +1014,7 @@ export default function PaymentModal({
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-xs font-semibold uppercase text-slate-500">
@@ -1103,7 +1164,7 @@ export default function PaymentModal({
                 )}
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span id="payment-customer-nip-label" className="text-sm font-semibold text-slate-900">
                     {tOr('pos.payment.customerNipLabel', 'Buyer NIP (optional)')}
@@ -1202,21 +1263,21 @@ export default function PaymentModal({
             </aside>
 
             <section className="flex min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-200 px-5 py-4">
+              <div className="border-b border-slate-200 px-4 py-3">
                 <p className="text-xs font-semibold uppercase text-slate-500">{activeMethodLabel}</p>
                 <p className="mt-1 text-sm text-slate-600">
                   {splitMode
                     ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
                     : method === 'CASH'
-                      ? `${t('pos.payment.received')}: ${cashAmount ? money(cashAmountGrosze) : money(0)}`
+                      ? `${t('pos.payment.received')}: ${displayCashAmountGrosze > 0 ? money(displayCashAmountGrosze) : money(0)}`
                       : `${t('pos.cart.total')}: ${money(grandTotal)}`}
                 </p>
               </div>
-              <div className="flex-1 space-y-4 p-5">
+              <div className="flex-1 space-y-3 p-4">
 
           {/* ─── SPLIT MODE ─────────────────────────────────── */}
           {splitMode ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className={`rounded-lg border p-4 ${
                 splitComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
               }`}>
@@ -1330,10 +1391,10 @@ export default function PaymentModal({
               </div>
             </div>
           ) : method === 'CASH' ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* ─── SINGLE MODE ──────────────────────────────── */}
               <label className="block" htmlFor="payment-cash-received">
-                <span className="mb-2 block text-sm font-semibold text-slate-700">{t('pos.payment.received')}</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">{t('pos.payment.received')}</span>
                 <input
                   id="payment-cash-received"
                   ref={inputRef}
@@ -1347,9 +1408,46 @@ export default function PaymentModal({
                     setDenomCounts({});
                   }}
                   placeholder={totalZl.toFixed(2)}
-                  className="h-16 w-full rounded-md border border-slate-300 bg-white px-4 text-right text-3xl font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-14 w-full rounded-md border border-slate-300 bg-white px-4 text-right text-3xl font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </label>
+
+              <div aria-live="polite" className={`rounded-lg border p-3 ${
+                cashStatusTone === 'shortfall'
+                  ? 'border-red-300 bg-red-50'
+                  : cashStatusTone === 'change'
+                    ? 'border-emerald-300 bg-emerald-50'
+                    : cashStatusTone === 'covered'
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-slate-200 bg-slate-50'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className={`text-sm font-semibold ${
+                      cashStatusTone === 'shortfall'
+                        ? 'text-red-800'
+                        : cashStatusTone === 'idle'
+                          ? 'text-slate-600'
+                          : 'text-emerald-800'
+                    }`}>
+                      {cashStatusLabel}
+                    </p>
+                    <p className={`mt-1 text-3xl font-semibold leading-none ${
+                      cashStatusTone === 'shortfall'
+                        ? 'text-red-800'
+                        : cashStatusTone === 'idle'
+                          ? 'text-slate-500'
+                          : 'text-emerald-800'
+                    }`}>
+                      {money(cashStatusAmount)}
+                    </p>
+                  </div>
+                  <div className="text-right text-sm text-slate-600">
+                    <p>{t('pos.cart.total')}: {money(grandTotal)}</p>
+                    <p>{t('pos.payment.received')}: {money(displayCashAmountGrosze)}</p>
+                  </div>
+                </div>
+              </div>
 
               {renderNumericKeypad('exact')}
 
@@ -1373,7 +1471,7 @@ export default function PaymentModal({
                     type="button"
                     onClick={selectBlikPayment}
                     aria-label="Pay by BLIK"
-                    className="min-h-[64px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-300"
+                    className="min-h-[52px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-300"
                   >
                     <span className="block text-sm font-extrabold leading-none">BLIK</span>
                     <span className="mt-1 block text-[11px] font-bold leading-none tabular-nums text-slate-200">
@@ -1389,7 +1487,7 @@ export default function PaymentModal({
                           type="button"
                           onClick={() => updateDenom(denom, +1)}
                           aria-label={`Add ${denom / 100} ${currency} bill`}
-                          className={`w-full min-h-[64px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-300 ${
+                          className={`w-full min-h-[52px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-300 ${
                             active
                               ? 'border-brand-500 bg-brand-50 text-brand-900'
                               : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
@@ -1420,36 +1518,6 @@ export default function PaymentModal({
                 </div>
               </div>
 
-              <div aria-live="polite" className={`rounded-lg border p-4 ${
-                cashShortfall > 0
-                  ? 'border-red-300 bg-red-50'
-                  : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
-                    ? 'border-emerald-300 bg-emerald-50'
-                    : 'border-slate-200 bg-slate-50'
-              }`}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">
-                      {cashShortfall > 0
-                        ? tOr('pos.payment.insufficient', 'Insufficient cash')
-                        : t('pos.payment.change')}
-                    </p>
-                    <p className={`mt-1 text-3xl font-semibold leading-none ${
-                      cashShortfall > 0
-                        ? 'text-red-800'
-                        : cashAmountGrosze >= grandTotal && cashAmountGrosze > 0
-                          ? 'text-emerald-800'
-                          : 'text-slate-500'
-                    }`}>
-                      {cashShortfall > 0 ? money(cashShortfall) : money(changeGrosze)}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm text-slate-600">
-                    <p>{t('pos.cart.total')}: {money(grandTotal)}</p>
-                    <p>{t('pos.payment.received')}: {money(cashAmountGrosze)}</p>
-                  </div>
-                </div>
-              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -1513,7 +1581,7 @@ export default function PaymentModal({
           </div>
         </div>
 
-        <div className="space-y-3 border-t border-slate-200 bg-white px-5 py-4">
+        <div className="shrink-0 space-y-2 border-t border-slate-200 bg-white px-4 py-3">
           {error && (
             <div aria-live="assertive" className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-3">
               <svg className="h-5 w-5 shrink-0 text-red-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1531,18 +1599,40 @@ export default function PaymentModal({
             </div>
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 text-sm text-slate-600">
-              <p className="font-semibold text-slate-950">{activeMethodLabel}</p>
-              <p className="truncate">
-                {receiptRecovery
-                  ? tOr('pos.payment.orderSavedPrintPending', 'Order saved - receipt still needs printing')
-                  : splitMode
-                  ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
-                  : method === 'CASH'
-                    ? `${t('pos.payment.change')}: ${money(changeGrosze)}`
+            {method === 'CASH' && !splitMode && !receiptRecovery ? (
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
+                  <p className="whitespace-nowrap">
+                    <span className="font-semibold text-slate-500">{t('pos.cart.total')}:</span>{' '}
+                    <span className="font-bold tabular-nums text-slate-950">{money(grandTotal)}</span>
+                  </p>
+                  <p className="whitespace-nowrap">
+                    <span className="font-semibold text-slate-500">{t('pos.payment.received')}:</span>{' '}
+                    <span className="font-bold tabular-nums text-slate-950">{money(displayCashAmountGrosze)}</span>
+                  </p>
+                  <p className={`min-w-0 max-w-full break-words text-lg font-bold tabular-nums ${
+                    cashStatusTone === 'shortfall'
+                      ? 'text-red-700'
+                      : cashStatusTone === 'change'
+                        ? 'text-emerald-700'
+                        : 'text-slate-700'
+                  }`}>
+                    {cashStatusLabel}: {money(cashStatusAmount)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="min-w-0 text-sm text-slate-600">
+                <p className="font-semibold text-slate-950">{activeMethodLabel}</p>
+                <p className="truncate">
+                  {receiptRecovery
+                    ? tOr('pos.payment.orderSavedPrintPending', 'Order saved - receipt still needs printing')
+                    : splitMode
+                    ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
                     : `${t('pos.cart.total')}: ${money(grandTotal)}`}
-              </p>
-            </div>
+                </p>
+              </div>
+            )}
             {receiptRecovery ? (
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[360px] sm:flex-row">
                 <button
@@ -1567,9 +1657,9 @@ export default function PaymentModal({
                 type="button"
                 onClick={handleComplete}
                 disabled={!canComplete}
-                className="min-h-[56px] w-full rounded-md bg-brand-600 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[240px]"
+                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-600 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
               >
-                {saving ? (savingLabel || t('pos.payment.saving')) : `${completeButtonLabel} ${money(grandTotal)}`}
+                {completeButtonText}
               </button>
             )}
           </div>

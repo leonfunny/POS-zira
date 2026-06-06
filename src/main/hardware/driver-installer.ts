@@ -16,6 +16,17 @@ const HP_VID     = '03F0';   // HP printers
 
 /** All known printer VIDs from brand patterns (for PnP scan) */
 const ALL_PRINTER_VIDS = [...new Set(BRAND_PATTERNS.flatMap(bp => bp.vids))];
+const PNP_PRINTER_KEYWORDS = [
+  ...new Set([
+    'printer',
+    'print',
+    'label',
+    'receipt',
+    'pos',
+    'drukarka',
+    ...BRAND_PATTERNS.flatMap(bp => bp.namePatterns),
+  ]),
+];
 
 export interface DetectedDevice {
   vid: string;
@@ -176,7 +187,7 @@ try {
 # Media, Monitor, System, Multimedia, ...) is dropped.
 Write-Output '---PNPDEVICES---'
 $vids = @(${vids.map(v => `'${v}'`).join(',')})
-$printerKeywords = @('printer','print','label','receipt','pos','ZDesigner','LaserJet','OfficeJet','DeskJet','EPSON','TM-','TSP','Bixolon','SRP','POSNET')
+$printerKeywords = @(${PNP_PRINTER_KEYWORDS.map(k => `'${k.replace(/'/g, "''")}'`).join(',')})
 foreach ($vid in $vids) {
   $devs = Get-PnpDevice -PresentOnly -Status OK -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match "VID_$vid" }
   foreach ($d in $devs) {

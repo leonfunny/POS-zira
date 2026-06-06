@@ -46,4 +46,17 @@ describe('database migrations', () => {
     expect(statements[1]).toBe('CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_order_payment ON fiscal_attempts(order_id, payment_id)');
     expect(statements[2]).toBe('CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_status ON fiscal_attempts(status)');
   });
+
+  it('repairs only mirrored server cash payment amounts that stored applied paidAmount', () => {
+    const migration = migrations.find((m) => m.name === 'repair_server_cash_received_amount');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(37);
+    expect(migration!.up).toContain('UPDATE orders');
+    expect(migration!.up).toContain('SET payment_amount = total + change_amount');
+    expect(migration!.up).toContain("source = 'SERVER'");
+    expect(migration!.up).toContain("payment_method = 'CASH'");
+    expect(migration!.up).toContain('change_amount > 0');
+    expect(migration!.up).toContain('payment_amount <= total');
+  });
 });

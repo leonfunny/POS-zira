@@ -22,6 +22,7 @@ export interface ShiftReport {
   totalDiscounts: number;
   difference: number; // closingCash - (openingCash + cashTotal)
   unsyncedOrders: number;
+  fiscalOnlySales?: boolean;
 }
 
 type PrinterDriver = {
@@ -61,7 +62,7 @@ export class ShiftController {
   /**
    * Close a shift and generate report
    */
-  closeShift(shiftId: string, closingCash: number): ShiftReport {
+  closeShift(shiftId: string, closingCash: number, fiscalOnly = false): ShiftReport {
     const shift = database.get<{
       id: string;
       staff_id: string | null;
@@ -74,7 +75,8 @@ export class ShiftController {
 
     // Get orders for this shift — handle split payments
     const orders = orderRepo.getByShift(shiftId);
-    const grossSales = orders.reduce((sum, o) => sum + o.total, 0);
+    const salesOrders = fiscalOnly ? orders.filter((o) => o.has_fiscal === 1) : orders;
+    const grossSales = salesOrders.reduce((sum, o) => sum + o.total, 0);
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
@@ -101,13 +103,14 @@ export class ShiftController {
       else if (isTransferMethod(o.payment_method)) transferTotal += o.total;
     }
 
-    const totalDiscounts = orders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
+    const totalDiscounts = salesOrders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
+    const totalRefunds = salesOrders.reduce(
+      (sum, o) => sum + (o.refund_amount && o.refund_amount > 0 ? o.refund_amount : 0),
+      0,
+    );
 
-    let totalRefunds = 0;
     for (const o of orders) {
       if (o.refund_amount && o.refund_amount > 0) {
-        totalRefunds += o.refund_amount;
-
         const tendersJson = o.payment_tenders;
         if (tendersJson) {
           try {
@@ -143,7 +146,7 @@ export class ShiftController {
 
     database.run(
       "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ? WHERE id = ?",
-      [closingCash, totalSales, orders.length, shiftId],
+      [closingCash, totalSales, salesOrders.length, shiftId],
     );
     database.markDirty();
 
@@ -155,7 +158,7 @@ export class ShiftController {
       openingCash: shift.opening_cash,
       closingCash,
       totalSales,
-      totalOrders: orders.length,
+      totalOrders: salesOrders.length,
       cashTotal,
       cardTotal,
       blikTotal,
@@ -164,13 +167,14 @@ export class ShiftController {
       totalDiscounts,
       difference,
       unsyncedOrders,
+      fiscalOnlySales: fiscalOnly,
     };
 
     // Async sync to backend (non-blocking)
     this.syncShiftClose(shiftId, closingCash);
 
     logger.info(
-      `[Shift] Closed shift ${shiftId}: ${orders.length} orders, total ${totalSales}, diff ${difference}`,
+      `[Shift] Closed shift ${shiftId}: ${salesOrders.length} sales orders, total ${totalSales}, diff ${difference}`,
     );
 
     return report;

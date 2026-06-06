@@ -446,3 +446,82 @@ describe('applyPendingDatabaseRestore', () => {
     });
   });
 });
+
+const salonArchive = (id: string): string => `${userDataDir}\\salons\\${id}.db`;
+
+describe('LocalBackupService — per-salon persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('archiveSalon flushes then atomically snapshots pos.db to salons/<id>.db', async () => {
+    const { service, calls, files } = makeService();
+
+    const result = await service.archiveSalon('salonA');
+
+    expect(result).toEqual({ success: true, path: salonArchive('salonA') });
+    expect(calls[0]).toBe('flush');
+    expect(calls).toContain(`copy:${dbPath}->${salonArchive('salonA')}.tmp`);
+    expect(calls).toContain(`rename:${salonArchive('salonA')}.tmp->${salonArchive('salonA')}`);
+    expect(files.has(salonArchive('salonA'))).toBe(true);
+  });
+
+  it('archiveSalon fails (and does not copy) when the flush fails', async () => {
+    const { service, calls } = makeService({ flush: () => ({ success: false, error: 'flush boom' }) });
+
+    const result = await service.archiveSalon('salonA');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('flush boom');
+    expect(calls.some((c) => c.startsWith('copy:'))).toBe(false);
+  });
+
+  it('archiveSalon rejects an empty salonId', async () => {
+    const { service } = makeService();
+    const result = await service.archiveSalon('');
+    expect(result.success).toBe(false);
+  });
+
+  it('hasSalonArchive reflects whether the snapshot exists', () => {
+    const { service } = makeService({ files: [{ path: salonArchive('salonB'), mtimeMs: 1 }] });
+    expect(service.hasSalonArchive('salonB')).toBe(true);
+    expect(service.hasSalonArchive('salonC')).toBe(false);
+    expect(service.hasSalonArchive('')).toBe(false);
+  });
+
+  it('stageSalonRestore copies the archive to pending-restore.db and flags the restore', async () => {
+    const { service, deps, files } = makeService({ files: [{ path: salonArchive('salonB'), mtimeMs: 1 }] });
+
+    const result = await service.stageSalonRestore('salonB');
+
+    expect(result.success).toBe(true);
+    expect(files.has(pendingRestorePath)).toBe(true);
+    expect(deps.setConfig).toHaveBeenCalledWith(expect.objectContaining({
+      backupPendingRestorePath: pendingRestorePath,
+      backupPendingRestoreSourcePath: salonArchive('salonB'),
+      backupRestoreLastStatus: 'pending',
+    }));
+  });
+
+  it('stageSalonRestore fails (no pending flagged) when the archive is missing', async () => {
+    const { service, deps } = makeService();
+
+    const result = await service.stageSalonRestore('ghost');
+
+    expect(result.success).toBe(false);
+    expect(deps.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('stageSalonRestore fails when the archive does not validate as a database', async () => {
+    const { service, deps } = makeService({
+      files: [{ path: salonArchive('salonB'), mtimeMs: 1 }],
+      validateDatabaseFile: () => ({ valid: false, error: 'not a db' }),
+    });
+
+    const result = await service.stageSalonRestore('salonB');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not a db');
+    expect(deps.setConfig).not.toHaveBeenCalled();
+  });
+});

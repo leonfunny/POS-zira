@@ -76,6 +76,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CONFIG),
   setConfig: (config: Partial<AgentConfig>) =>
     ipcRenderer.invoke(IPC_CHANNELS.SET_CONFIG, config),
+  onConfigUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('config-updated', listener);
+    return () => ipcRenderer.removeListener('config-updated', listener);
+  },
   saveConfig: (config: Partial<AgentConfig>) =>
     ipcRenderer.invoke(IPC_CHANNELS.SET_CONFIG, config), // Alias for setConfig
 
@@ -635,7 +640,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),
-      getDailyStats: (date: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date),
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date, options),
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
@@ -683,6 +688,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       printRefundReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-refund-receipt', orderId),
       getReconcilableFiscalAttempt: (orderId: string) => ipcRenderer.invoke('pos:fiscal:get-reconcilable', orderId),
       reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => ipcRenderer.invoke('pos:fiscal:reconcile', orderId, didPrint),
+      getPrintAttempts: (orderId: string) => ipcRenderer.invoke('pos:print-attempts:get-by-order', orderId),
+      getLatestFiscalAttempt: (orderId: string) => ipcRenderer.invoke('pos:fiscal:get-latest', orderId),
       openCashDrawer: () => ipcRenderer.invoke(IPC_CHANNELS.POS_OPEN_CASH_DRAWER),
       cardPayment: (data: { amount: number; orderId: string }) => ipcRenderer.invoke(IPC_CHANNELS.POS_PAYMENT_CARD, data),
       onElavonStatus: (callback: (data: any) => void) => {
@@ -693,7 +700,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_OPEN, data),
-      close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
       getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {
@@ -744,10 +751,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
+      lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
         importDraft: (payload: { ean: string; retailPriceGrosze?: number }) =>
           ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
+        importExternal: (payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) =>
+          ipcRenderer.invoke('pos:master-catalog:import-external', payload),
     },
     quickAdd: {
       prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
@@ -780,6 +790,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     staff: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL),
+      getAllForSettings: () => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_GET_ALL_FOR_SETTINGS),
+      create: (input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_CREATE, input),
+      update: (id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_UPDATE, id, input),
+      setActive: (id: string, active: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_SET_ACTIVE, id, active),
     },
     hold: {
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_CREATE, id, title, payload),
@@ -817,6 +833,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_DB_SAVE_ERROR, listener);
     },
   },
+
+  // TV Ad Display
+  tvAdGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_GET_STATUS),
+  tvAdPickVideo: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_PICK_VIDEO),
+  tvAdSave: (cfg: Partial<AgentConfig>) => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_SAVE, cfg),
 });
 
 console.log('[Preload] API exposed successfully');

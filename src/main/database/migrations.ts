@@ -1268,4 +1268,56 @@ export const migrations: Migration[] = [
         ON pos_schedule_cache(business_date, updated_at);
     `,
   },
+  {
+    version: 37,
+    name: 'repair_server_cash_received_amount',
+    up: `
+      UPDATE orders
+      SET payment_amount = total + change_amount
+      WHERE source = 'SERVER'
+        AND payment_method = 'CASH'
+        AND change_amount > 0
+        AND payment_amount <= total
+        AND total > 0;
+    `,
+  },
+  {
+    version: 38,
+    name: 'print_attempts',
+    up: `
+      CREATE TABLE IF NOT EXISTS print_attempts (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        document_type TEXT NOT NULL,   -- ORDER | REPRINT | REFUND
+        printer_type TEXT NOT NULL,    -- RECEIPT | FISCAL | A4 | LABEL
+        printer_name TEXT,             -- e.g. "Xprinter XP-80T"
+        printer_target TEXT,           -- COM port / shared printerId / windows printer
+        route TEXT,                    -- LOCAL | SHARED_NETWORK
+        status TEXT NOT NULL,          -- PRINTED | FAILED | NO_PRINTER
+        error TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_print_attempts_order ON print_attempts(order_id, created_at);
+    `,
+  },
+  {
+    version: 39,
+    name: 'categories_kitchen_print',
+    // Kitchen ticket printing: categories flagged kitchen_print=1 have their
+    // items printed as a kitchen ticket when an order is created. Synced from
+    // backend categories.kitchen_print; default 0 = no behavior change.
+    up: `
+      ALTER TABLE categories ADD COLUMN kitchen_print INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 40,
+    name: 'orders_kitchen_number',
+    // Daily pickup number (0001, 0002, ...) assigned when an order contains
+    // kitchen items. Printed on the kitchen ticket AND on a customer pickup
+    // slip so the kitchen hands food to the matching number.
+    up: `
+      ALTER TABLE orders ADD COLUMN kitchen_number TEXT;
+    `,
+  },
 ];

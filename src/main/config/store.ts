@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
+import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
 
 // Default Telegram configuration (moltbot-style)
 const defaultTelegramConfig: TelegramConfig = {
@@ -50,7 +51,9 @@ const defaultConfig: AgentConfig = {
     : 'https://api.enail.pro',
   isPaired: false,
   autoStart: true,
+  allowOversell: false,
   telegram: defaultTelegramConfig,
+  ...AD_DISPLAY_DEFAULTS,
 };
 
 // Printer config schema
@@ -235,6 +238,9 @@ const store = new Store<AgentConfig>({
     // POS settings
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
+    allowOversell: { type: 'boolean', default: false },
+    labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
+    labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },
     // Receipt seller info (Polish paragon compliance)
     receiptSellerName: { type: 'string' },
     receiptSellerAddress: { type: 'string' },
@@ -355,11 +361,24 @@ const store = new Store<AgentConfig>({
     backupRestoreLastSourcePath: { type: 'string' },
     backupRestoreLastSafetyBackupPath: { type: 'string' },
     backupRestoreLastAppliedAt: { type: 'string' },
-    // User-hidden tabs
+    // POS history/statistics visibility. True preserves the legacy "show all"
+    // behavior; false hides orders without a successful fiscal print.
+    showNonFiscalOrders: { type: 'boolean', default: true },
+    // User-hidden tabs (legacy; migrated into moduleOverrides)
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
+    // Per-module visibility overrides (this device only). Map of tab -> boolean.
+    moduleOverrides: { type: 'object', default: {} },
     // Check-in display toggles
     checkinShowStatsBar: { type: 'boolean', default: true },
     checkinShowQueue: { type: 'boolean', default: true },
+    // TV Ads (signage) — Google TV ad playlist served over LAN
+    tvAdEnabled: { type: 'boolean', default: false },
+    tvAdPort: { type: 'number', default: 17893 },
+    tvAdPlaybackMode: { type: 'string', enum: ['sequential', 'repeat-one'], default: 'sequential' },
+    tvAdRepeatVideoId: { type: ['string', 'null'], default: null },
+    tvAdMuted: { type: 'boolean', default: true },
+    tvAdVolume: { type: 'number', default: 0 },
+    tvAdPlaylist: { type: 'array', items: { type: 'object' }, default: [] },
   } as any,
 });
 
@@ -373,6 +392,25 @@ function inferMultiPrinterMode(config: Partial<AgentConfig>): boolean {
 
 if (!store.has('multiPrinterMode')) {
   store.set('multiPrinterMode', inferMultiPrinterMode(store.store));
+}
+
+// Migrate legacy `hiddenTabs` into `moduleOverrides` (one source of truth for
+// the Module Manager). Idempotent: a hidden tab is folded in as `false` only
+// when no explicit override already exists, so a user who later force-enables a
+// module is never re-hidden on subsequent launches.
+{
+  const legacyHidden = (store.get('hiddenTabs') as string[] | undefined) || [];
+  if (legacyHidden.length > 0) {
+    const overrides = { ...(store.get('moduleOverrides') as Record<string, boolean> | undefined || {}) };
+    let changed = false;
+    for (const tab of legacyHidden) {
+      if (!(tab in overrides)) {
+        overrides[tab] = false;
+        changed = true;
+      }
+    }
+    if (changed) store.set('moduleOverrides', overrides);
+  }
 }
 
 /**

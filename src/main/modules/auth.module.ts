@@ -5,7 +5,7 @@
  * auto-connect, salon switching, config get/set, and connection management.
  */
 
-import { ipcMain, dialog, shell, safeStorage } from 'electron';
+import { ipcMain, dialog, shell, safeStorage, BrowserWindow } from 'electron';
 import { join } from 'path';
 import { app } from 'electron';
 import { BaseModule, ModuleState } from '../core/module';
@@ -35,6 +35,7 @@ import {
   clearSecureTokens, clearSecureAuthTokens,
 } from '../config/store';
 import { ensureReceiptPrinterEnabledOnBoot } from '../config/ensure-receipt-enabled';
+import { fetchEntitlementsFromBackend } from '../entitlements/entitlements-controller';
 import { database } from '../database/database';
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
@@ -165,6 +166,16 @@ export class AuthModule extends BaseModule {
       if (this.eventBus) {
         this.eventBus.emit('config:changed', { changedKeys: Object.keys(sanitized) });
       }
+      // Notify ALL renderer windows. Settings lives in the main window while
+      // the POS window caches config at mount — without this ping a toggle
+      // (e.g. showNonFiscalOrders) silently did nothing until app restart.
+      // Ping only, no payload: each window re-fetches via get-config so the
+      // public kiosk surface never receives config contents it didn't ask for.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          try { win.webContents.send('config-updated'); } catch { /* window closing */ }
+        }
+      }
       return result;
     });
 
@@ -269,7 +280,11 @@ export class AuthModule extends BaseModule {
       try {
         const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
         socket?.disconnect();
-        await this.clearSalonDataWithBackup('change salon');
+        // Archive the leaving salon before clearing — abort if it can't be saved.
+        const cleared = await this.archiveSalonThenClear(getConfig().salonId || '', 'change salon');
+        if (!cleared.ok) {
+          return { success: false, error: cleared.error || 'Không lưu được dữ liệu salon hiện tại — huỷ đổi salon' };
+        }
         setSecureApiKey('');
         setConfig({
           apiKey: '', agentId: '', salonId: '', salonName: '', salonSlug: '',
@@ -330,9 +345,16 @@ export class AuthModule extends BaseModule {
             return { success: false, error: 'Login response missing salon id' };
           }
 
-          // Multi-tenant isolation: clear if switching salons
-          if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            await this.clearSalonDataWithBackup('telegram login salon switch');
+          // Multi-tenant: archive the leaving salon (abort if it can't be saved),
+          // then restore the target or start fresh. See email login for rationale.
+          const isSalonSwitchTg = !!(currentSalonId && newSalonId && currentSalonId !== newSalonId);
+          let willRestartForSalonTg = false;
+          if (isSalonSwitchTg) {
+            const sw = await this.switchSalonForLogin(currentSalonId, newSalonId, 'telegram login salon switch');
+            if (!sw.ok) {
+              return { success: false, error: sw.error || 'Không lưu được dữ liệu salon hiện tại — huỷ đổi salon' };
+            }
+            willRestartForSalonTg = sw.willRestart;
           }
 
           if (!setSecureAuthToken(result.access_token)) {
@@ -355,6 +377,17 @@ export class AuthModule extends BaseModule {
             posEnabled: true,
             customerDisplayEnabled: true,
           });
+
+          // New tenant ⇒ new POS template (must persist before any relaunch)
+          if (isSalonSwitchTg) {
+            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
+          }
+
+          if (willRestartForSalonTg) {
+            this.eventBus?.emit('salon:switching', { salonName: result.salon?.name || user.salon?.name || '' });
+            this.scheduleSalonRestartRestore();
+            return { success: true, data: { status: 'VERIFIED', restarting: true } };
+          }
 
           // Auto-connect Socket.IO (same as email login)
           try {
@@ -411,7 +444,12 @@ export class AuthModule extends BaseModule {
       const newSalonId = resolvedUser?.salonId || '';
       const currentSalonId = config.salonId || '';
       if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-        await this.clearSalonDataWithBackup('startup auth salon switch');
+        // At startup we can't relaunch-restore (would loop), so archive + clear
+        // fresh. Archive failure skips the clear to preserve data (logged).
+        const cleared = await this.archiveSalonThenClear(currentSalonId, 'startup auth salon switch');
+        if (!cleared.ok) {
+          logger.error(`[AuthModule] startup salon switch: could not archive ${currentSalonId} (${cleared.error}); kept existing data, skipped clear`);
+        }
       }
       if (newSalonId) {
         setConfig({
@@ -456,9 +494,17 @@ export class AuthModule extends BaseModule {
             return { success: false, error: 'Login response missing salon id' };
           }
 
-          // Multi-tenant isolation: only clear if switching to a genuinely different salon
-          if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
-            await this.clearSalonDataWithBackup('email login salon switch');
+          // Multi-tenant: never wipe the leaving salon — archive it, then either
+          // restore the target salon's saved data (via restart) or start fresh.
+          // Abort the whole switch if the current salon cannot be saved.
+          const isSalonSwitch = !!(currentSalonId && newSalonId && currentSalonId !== newSalonId);
+          let willRestartForSalon = false;
+          if (isSalonSwitch) {
+            const sw = await this.switchSalonForLogin(currentSalonId, newSalonId, 'email login salon switch');
+            if (!sw.ok) {
+              return { success: false, error: sw.error || 'Không lưu được dữ liệu salon hiện tại — huỷ đổi salon' };
+            }
+            willRestartForSalon = sw.willRestart;
           }
 
           const authUser: AuthUser = {
@@ -480,6 +526,19 @@ export class AuthModule extends BaseModule {
           }
 
           setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: user.salon?.slug || '', posEnabled: true, customerDisplayEnabled: true });
+
+          // New tenant ⇒ new POS template (must persist before any relaunch)
+          if (isSalonSwitch) {
+            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
+          }
+
+          // Restoring a previously-archived salon needs a clean reload — the
+          // pending restore was staged above; relaunch so it is applied at boot.
+          if (willRestartForSalon) {
+            this.eventBus?.emit('salon:switching', { salonName: authUser.salonName || '' });
+            this.scheduleSalonRestartRestore();
+            return { success: true, data: { user: authUser }, restarting: true };
+          }
 
           // Auto-connect
           try {
@@ -637,7 +696,12 @@ export class AuthModule extends BaseModule {
         logger.info(
           `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
         );
-        await this.clearSalonDataWithBackup('apiKey/agent change');
+        const cleared = await this.archiveSalonThenClear(prevSalonId || '', 'apiKey/agent change');
+        if (!cleared.ok) {
+          // Fail closed: never proceed with a half-cleared tenant if we could
+          // not first save the leaving salon's data.
+          throw new Error(`Không lưu được dữ liệu salon hiện tại — huỷ kết nối: ${cleared.error || ''}`);
+        }
       }
 
       // Server-pushed printers carry their own isEnabled flag (typically false
@@ -780,9 +844,95 @@ export class AuthModule extends BaseModule {
     }
   }
 
-  private async clearSalonDataWithBackup(context: string): Promise<void> {
-    await this.createRestorePoint('pre-clear-salon-data', context);
+  /**
+   * After logging into a DIFFERENT salon, fetch its entitlements and apply
+   * the server-suggested POS template (salon.niche → retail/salon/restaurant).
+   * Without this, posMode silently carried over between tenants — a grocery
+   * store inherited the previous tenant's nail-salon template and vice versa.
+   * Re-logins into the SAME salon never reach this path, so a user's explicit
+   * Settings choice for their own salon is never overridden. Must run BEFORE
+   * the restore-relaunch so the persisted config survives the restart.
+   */
+  private async reconcilePosModeAfterSalonSwitch(newSalonId: string): Promise<void> {
+    try {
+      const entitlements = await fetchEntitlementsFromBackend(newSalonId);
+      if (!entitlements) return;
+      setConfig({ entitlements });
+      const suggested = entitlements.suggestedPosMode;
+      if (suggested && getConfigValue('posMode') !== suggested) {
+        logger.info(`[AuthModule] Salon switch: posMode → ${suggested} (niche suggestion for new salon)`);
+        setConfig({ posMode: suggested });
+      }
+    } catch (e: any) {
+      logger.warn('[AuthModule] posMode reconcile after salon switch failed:', e?.message);
+    }
+  }
+
+  /**
+   * Login-path salon switch. Archives the leaving salon's full DB (MUST succeed
+   * — otherwise the switch is aborted so nothing is lost), then either stages
+   * the target salon's previously-archived DB for a restart-restore, or starts
+   * fresh (first time for that salon). The caller persists the new session only
+   * when this returns { ok: true }, and relaunches when { willRestart: true }.
+   */
+  private async switchSalonForLogin(
+    oldSalonId: string,
+    newSalonId: string,
+    context: string,
+  ): Promise<{ ok: boolean; willRestart: boolean; error?: string }> {
+    const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
+    if (!backup) {
+      logger.error(`[AuthModule] ${context}: backup service unavailable — aborting switch to protect salon ${oldSalonId}`);
+      return { ok: false, willRestart: false, error: 'Backup service unavailable — không thể lưu dữ liệu salon hiện tại' };
+    }
+    const archived = await backup.archiveSalon(oldSalonId);
+    if (!archived.success) {
+      logger.error(`[AuthModule] ${context}: archive of leaving salon ${oldSalonId} failed: ${archived.error}`);
+      return { ok: false, willRestart: false, error: `Không lưu được dữ liệu salon hiện tại: ${archived.error}` };
+    }
+    if (backup.hasSalonArchive(newSalonId)) {
+      const staged = await backup.stageSalonRestore(newSalonId);
+      if (staged.success) {
+        logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, staged restore of ${newSalonId} — relaunching`);
+        return { ok: true, willRestart: true };
+      }
+      logger.warn(`[AuthModule] ${context}: stage restore for ${newSalonId} failed (${staged.error}); starting fresh + full sync`);
+    }
     database.clearSalonData();
+    logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, no usable archive for ${newSalonId} — fresh + full sync`);
+    return { ok: true, willRestart: false };
+  }
+
+  /**
+   * Non-restoring salon clear (explicit change-salon, startup mismatch). Archives
+   * the leaving salon first and ONLY clears if that succeeded — never wipes
+   * without a saved copy.
+   */
+  private async archiveSalonThenClear(oldSalonId: string, context: string): Promise<{ ok: boolean; error?: string }> {
+    if (!oldSalonId) {
+      database.clearSalonData();
+      return { ok: true };
+    }
+    const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
+    if (!backup) {
+      logger.error(`[AuthModule] ${context}: backup service unavailable; skipping clear to avoid data loss`);
+      return { ok: false, error: 'Backup service unavailable' };
+    }
+    const archived = await backup.archiveSalon(oldSalonId);
+    if (!archived.success) {
+      logger.error(`[AuthModule] ${context}: salon archive failed (${archived.error}); skipping clear to avoid data loss`);
+      return { ok: false, error: archived.error };
+    }
+    database.clearSalonData();
+    return { ok: true };
+  }
+
+  private scheduleSalonRestartRestore(delayMs = 1200): void {
+    logger.info('[AuthModule] Relaunching app to load restored salon database...');
+    setTimeout(() => {
+      try { app.relaunch(); } catch (e) { logger.error('[AuthModule] app.relaunch failed:', e); }
+      app.exit(0);
+    }, delayMs);
   }
 
   private async createRestorePoint(reason: BackupRunReason, context: string): Promise<void> {

@@ -39,6 +39,12 @@ export interface OrderRow {
   refund_reason: string | null;
   refunded_at: string | null;
   refund_lines: string | null;
+  has_fiscal?: number;
+  /** Daily kitchen pickup number ('0001'...) — set when the order has kitchen items. */
+  kitchen_number?: string | null;
+  /** Input-only hint for number generation (NOT a column): which daily
+   *  series this order belongs to. Default FISCAL. */
+  number_series?: 'FISCAL' | 'ORDER' | null;
 }
 
 export interface OrderItemRow {
@@ -92,6 +98,15 @@ export interface DailyStats {
   card_total: number;
 }
 
+const HAS_FISCAL_EXPR = `
+  EXISTS (
+    SELECT 1
+    FROM fiscal_attempts fa
+    WHERE fa.order_id = orders.id
+      AND fa.status = 'SUCCESS_CONFIRMED'
+  )
+`;
+
 export const orderRepo = {
   create(order: OrderRow, items: OrderItemRow[]): string {
     // Generate order number INSIDE transaction for atomicity (prevents race condition)
@@ -100,15 +115,17 @@ export const orderRepo = {
     database.transaction(() => {
       // Use atomic sequence counter for order number generation
       if (!order.order_number) {
-        finalOrderNumber = orderRepo.generateOrderNumber();
+        finalOrderNumber = orderRepo.generateOrderNumber(
+          order.number_series === 'ORDER' ? 'ORDER' : 'FISCAL',
+        );
       } else {
         finalOrderNumber = order.order_number;
       }
 
       const finalOrder = { ...order, order_number: finalOrderNumber };
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal ?? 0,
           finalOrder.discount ?? 0, finalOrder.tax ?? 0, finalOrder.total ?? 0,
@@ -119,7 +136,7 @@ export const orderRepo = {
           finalOrder.shift_id ?? null, finalOrder.source ?? 'POS',
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',
-          finalOrder.payment_tenders ?? null,
+          finalOrder.payment_tenders ?? null, finalOrder.kitchen_number ?? null,
         ],
       );
 
@@ -147,6 +164,21 @@ export const orderRepo = {
 
   getById(id: string): OrderRow | null {
     return database.get<OrderRow>('SELECT * FROM orders WHERE id = ?', [id]);
+  },
+
+  /**
+   * Next daily kitchen pickup number ('0001', '0002', ...). Per-machine
+   * counter derived from today's orders — single sequential main process,
+   * so MAX+1 inside the create flow is race-free.
+   */
+  nextKitchenNumber(): string {
+    const row = database.get<{ max_no: number | null }>(
+      `SELECT MAX(CAST(kitchen_number AS INTEGER)) as max_no
+       FROM orders
+       WHERE kitchen_number IS NOT NULL AND date(created_at) = date('now')`,
+    );
+    const next = (row?.max_no ?? 0) + 1;
+    return String(next).padStart(4, '0');
   },
 
   getItemsByOrderId(orderId: string): OrderItemRow[] {
@@ -387,7 +419,12 @@ export const orderRepo = {
   },
 
   getByShift(shiftId: string): OrderRow[] {
-    return database.all<OrderRow>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
+    return database.all<OrderRow>(
+      `SELECT orders.*, CAST(${HAS_FISCAL_EXPR} AS INTEGER) as has_fiscal
+       FROM orders
+       WHERE shift_id = ?`,
+      [shiftId],
+    );
   },
 
   getUnsyncedCountByShift(shiftId: string): number {
@@ -398,14 +435,16 @@ export const orderRepo = {
     return row?.cnt ?? 0;
   },
 
-  getDailyStats(date: string): DailyStats {
+  getDailyStats(date: string, fiscalOnly = false): DailyStats {
     const result = database.get<DailyStats>(
       `SELECT
          COUNT(*) as order_count,
          COALESCE(SUM(total), 0) as total_sales,
          COALESCE(SUM(CASE WHEN payment_method = 'CASH' THEN total ELSE 0 END), 0) as cash_total,
          COALESCE(SUM(CASE WHEN payment_method = 'CARD' THEN total ELSE 0 END), 0) as card_total
-       FROM orders WHERE date(created_at) = ?`,
+       FROM orders
+       WHERE date(created_at) = ?
+       ${fiscalOnly ? `AND ${HAS_FISCAL_EXPR}` : ''}`,
       [date],
     );
     return result ?? { order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 };
@@ -418,7 +457,10 @@ export const orderRepo = {
       [from, to],
     )?.cnt ?? 0;
     const orders = database.all<OrderRow>(
-      'SELECT * FROM orders WHERE date(created_at) >= date(?) AND date(created_at) <= date(?) ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      `SELECT orders.*, CAST(${HAS_FISCAL_EXPR} AS INTEGER) as has_fiscal
+       FROM orders
+       WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)
+       ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [from, to, limit, offset],
     );
     return { orders, total };
@@ -500,11 +542,20 @@ export const orderRepo = {
     return { inserted: true, localOrderId: dbRow.id };
   },
 
-  generateOrderNumber(): string {
+  /**
+   * Two independent daily series:
+   * - FISCAL (default): POS-YYYYMMDD-#### — orders whose payment flow prints
+   *   a fiscal paragon. Counter name unchanged so the existing sequence
+   *   continues seamlessly.
+   * - ORDER: ZAM-YYYYMMDD-#### — orders that only print the non-fiscal order
+   *   copy (cash/BLIK without fiscal). Separate counter so the order-copy
+   *   slips never interleave with (or reveal gaps in) the fiscal series.
+   */
+  generateOrderNumber(series: 'FISCAL' | 'ORDER' = 'FISCAL'): string {
     // Use atomic sequence counter to prevent race conditions
     const dateRow = database.get<{ d: string }>("SELECT strftime('%Y%m%d', 'now') as d");
     const datePrefix = dateRow?.d ?? new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const counterName = `order-${datePrefix}`;
+    const counterName = series === 'ORDER' ? `order-copy-${datePrefix}` : `order-${datePrefix}`;
 
     // Atomic increment via INSERT + UPDATE
     database.run(
@@ -521,6 +572,6 @@ export const orderRepo = {
       [counterName],
     );
     const seq = (row?.current_value ?? 1).toString().padStart(4, '0');
-    return `POS-${datePrefix}-${seq}`;
+    return `${series === 'ORDER' ? 'ZAM' : 'POS'}-${datePrefix}-${seq}`;
   },
 };

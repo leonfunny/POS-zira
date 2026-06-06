@@ -27,10 +27,11 @@ interface RestaurantTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
 }
 
-export default function RestaurantTemplate({ state, dispatch, t, session }: RestaurantTemplateProps) {
+export default function RestaurantTemplate({ state, dispatch, t, language, session }: RestaurantTemplateProps) {
   const [tables, setTables] = useState<TableState[]>([]);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
   const [activeCourse, setActiveCourse] = useState(1);
@@ -44,6 +45,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
   const [products, setProducts] = useState<Product[]>([]);
 
   const cart = state.cart;
+  const lang = language || 'pl';
   const openTables = tables.filter((t) => t.status !== 'free');
   const tOr = useCallback((key: string, fallback: string) => {
     const value = t(key);
@@ -112,6 +114,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
         id: crypto.randomUUID(),
         variantId: product.id,
         name: product.name,
+        name_translations: product.name_translations ?? null,
         sku: product.sku || '',
         price: product.retail_price,
         quantity: 1,
@@ -242,8 +245,9 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
                 activeId={activeCategoryId}
                 onSelect={setActiveCategoryId}
                 allLabel={t('pos.allCategories')}
+                lang={lang}
               />
-              <ProductGrid products={products} onAddProduct={handleAddProduct} t={t} />
+              <ProductGrid products={products} onAddProduct={handleAddProduct} t={t} lang={lang} />
             </>
           )}
         </div>
@@ -280,6 +284,7 @@ export default function RestaurantTemplate({ state, dispatch, t, session }: Rest
             t={t}
             shiftOpen={shiftPaymentOpen}
             shiftBlockReason={shiftBlockedMessage}
+            lang={lang}
             renderItemExtra={(item: CartItem) => (
               item.course ? (
                 <span className="text-xs text-amber-400 ml-1">

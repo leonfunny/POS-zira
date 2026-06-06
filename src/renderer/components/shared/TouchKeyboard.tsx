@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 export type KeyboardMode = 'alpha' | 'full' | 'numeric';
 
@@ -8,6 +8,9 @@ interface Props {
   onKey: (key: string) => void;
   onBackspace: () => void;
   onDone: () => void;
+  doneLabel?: string;
+  spaceLabel?: string;
+  onHeightChange?: (heightPx: number) => void;
 }
 
 const ALPHA_ROWS = [
@@ -31,9 +34,53 @@ const BackspaceIcon = () => (
   </svg>
 );
 
-export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDone }: Props) {
+export default function TouchKeyboard({
+  visible,
+  mode,
+  onKey,
+  onBackspace,
+  onDone,
+  doneLabel = 'DONE',
+  spaceLabel = 'SPACE',
+  onHeightChange,
+}: Props) {
+  const keyboardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = keyboardRef.current;
+    if (!element) return undefined;
+
+    let frame = 0;
+    const syncHeight = () => {
+      const nextHeight = visible ? Math.ceil(element.getBoundingClientRect().height) : 0;
+      onHeightChange?.(nextHeight);
+    };
+
+    syncHeight();
+    frame = window.requestAnimationFrame(syncHeight);
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', syncHeight);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        window.removeEventListener('resize', syncHeight);
+      };
+    }
+
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(element);
+    window.addEventListener('resize', syncHeight);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', syncHeight);
+    };
+  }, [mode, onHeightChange, visible]);
+
   return (
     <div
+      ref={keyboardRef}
       className={`
         w-full bg-slate-100 border-t border-slate-300 px-3 pt-2 pb-3
         transition-all duration-300 ease-in-out overflow-hidden
@@ -67,7 +114,7 @@ export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDon
             onPointerDown={(e) => { e.preventDefault(); onDone(); }}
             className="w-full h-12 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 rounded-xl text-white text-sm font-bold transition-colors select-none cursor-pointer"
           >
-            DONE
+            {doneLabel}
           </button>
         </div>
       ) : (
@@ -112,14 +159,14 @@ export default function TouchKeyboard({ visible, mode, onKey, onBackspace, onDon
               onPointerDown={(e) => { e.preventDefault(); onKey(' '); }}
               className="h-12 flex-1 max-w-[280px] bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg border border-slate-300 text-slate-500 text-xs font-semibold uppercase tracking-wider transition-colors select-none cursor-pointer"
             >
-              SPACE
+              {spaceLabel}
             </button>
             <button
               type="button"
               onPointerDown={(e) => { e.preventDefault(); onDone(); }}
               className="h-12 px-6 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 rounded-lg text-white text-sm font-bold transition-colors select-none cursor-pointer"
             >
-              DONE
+              {doneLabel}
             </button>
           </div>
         </div>

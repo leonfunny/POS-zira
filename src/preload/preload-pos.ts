@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:state-changed', listener);
       return () => ipcRenderer.removeListener('pos:state-changed', listener);
     },
+  onKitchenTicketFailed: (callback: (data: { orderId: string; error?: string }) => void) => {
+    const listener = (_e: any, data: any) => callback(data);
+    ipcRenderer.on('pos:kitchen-ticket-failed', listener);
+    return () => ipcRenderer.removeListener('pos:kitchen-ticket-failed', listener);
+  },
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => {
       const listener = (_e: any, info: any) => callback(info);
       ipcRenderer.on('pos:fiscal-unknown', listener);
@@ -45,8 +50,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
-      getDailyStats: (date: string) => ipcRenderer.invoke('pos:orders:getDailyStats', date),
+      getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:orders:getDailyStats', date, options),
       getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
+    getConfirmedFiscalIds: (orderIds: string[]) =>
+      ipcRenderer.invoke('pos:orders:getConfirmedFiscalIds', orderIds),
+    printKitchenTicket: (orderId: string) =>
+      ipcRenderer.invoke('pos:orders:printKitchenTicket', orderId),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
       mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),
@@ -85,6 +94,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       hasFiscalPrinter: () => ipcRenderer.invoke('pos:has-fiscal-printer'),
       getReconcilableFiscalAttempt: (orderId: string) => ipcRenderer.invoke('pos:fiscal:get-reconcilable', orderId),
       reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => ipcRenderer.invoke('pos:fiscal:reconcile', orderId, didPrint),
+      getPrintAttempts: (orderId: string) => ipcRenderer.invoke('pos:print-attempts:get-by-order', orderId),
+      getLatestFiscalAttempt: (orderId: string) => ipcRenderer.invoke('pos:fiscal:get-latest', orderId),
       openCashDrawer: () => ipcRenderer.invoke('pos:open-cash-drawer'),
       cardPayment: (data: { amount: number; orderId: string }) => ipcRenderer.invoke('pos:payment:card', data),
       onElavonStatus: (callback: (data: any) => void) => {
@@ -99,7 +110,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     shift: {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke('pos:shift:open', data),
-      close: (data: { shiftId: string; closingCash: number }) => ipcRenderer.invoke('pos:shift:close', data),
+      close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:shift:close', data),
       getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
     },
     sync: {
@@ -145,10 +156,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
+      lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
       importDraft: (payload: { ean: string; retailPriceGrosze?: number }) =>
         ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
+      importExternal: (payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) =>
+        ipcRenderer.invoke('pos:master-catalog:import-external', payload),
     },
     quickAdd: {
       prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
@@ -186,6 +200,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Mode-specific: Staff (Salon)
     staff: {
       getAll: () => ipcRenderer.invoke('pos:staff:getAll'),
+      getAllForSettings: () => ipcRenderer.invoke('pos:staff:getAllForSettings'),
+      create: (input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke('pos:staff:create', input),
+      update: (id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) =>
+        ipcRenderer.invoke('pos:staff:update', id, input),
+      setActive: (id: string, active: boolean) => ipcRenderer.invoke('pos:staff:setActive', id, active),
     },
     // Hold Orders (park/recall)
     hold: {
@@ -238,6 +258,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // === Config ===
   getConfig: () => ipcRenderer.invoke('get-config'),
   setConfig: (config: any) => ipcRenderer.invoke('set-config', config),
+  onConfigUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('config-updated', listener);
+    return () => ipcRenderer.removeListener('config-updated', listener);
+  },
   saveConfig: (config: any) => ipcRenderer.invoke('set-config', config),
   printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke('print-label', barcode, text, options),
@@ -284,6 +309,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   debug: {
     openDevTools: () => ipcRenderer.invoke('debug:open-devtools'),
   },
+
+  // === TV Ad Display ===
+  tvAdGetStatus: () => ipcRenderer.invoke('tvAd:getStatus'),
+  tvAdPickVideo: () => ipcRenderer.invoke('tvAd:pickVideo'),
+  tvAdSave: (cfg: any) => ipcRenderer.invoke('tvAd:save', cfg),
 });
 
 console.log('[Preload-POS] API exposed successfully');

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ShoppingCart,
   ScanBarcode,
+  Tag,
   FileText,
   CalendarDays,
   ClipboardList,
@@ -38,22 +39,23 @@ interface SidebarProps {
   onFullscreen: () => void;
 }
 
-interface MenuItem {
+export interface MenuItem {
   tab: Tab;
   icon: React.ReactNode;
   labelKey: string;
 }
 
-interface MenuGroup {
+export interface MenuGroup {
   labelKey: string;
   items: MenuItem[];
 }
 
-const MENU_GROUPS: MenuGroup[] = [
+export const MENU_GROUPS: MenuGroup[] = [
   {
     labelKey: 'sidebar.sales',
     items: [
       { tab: 'pos', icon: <ShoppingCart size={18} />, labelKey: 'sidebar.pos' },
+      { tab: 'label', icon: <Tag size={18} />, labelKey: 'sidebar.label' },
       { tab: 'selfCheckout', icon: <ScanBarcode size={18} />, labelKey: 'sidebar.selfCheckout' },
       { tab: 'billiard', icon: <LayoutDashboard size={18} />, labelKey: 'sidebar.billiard' },
       { tab: 'orders', icon: <ClipboardList size={18} />, labelKey: 'sidebar.orders' },

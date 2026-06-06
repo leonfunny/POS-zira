@@ -1,6 +1,6 @@
 {
   "name": "zira-ai",
-  "version": "1.0.8",
+  "version": "1.0.14",
   "description": "Zira AI - Desktop application for connecting POS with thermal printers and barcode scanners",
   "author": "Zira AI <contact@zira-ai.com>",
   "license": "MIT",
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "bonjour-service": "^1.4.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "grammy": "^1.21.0",

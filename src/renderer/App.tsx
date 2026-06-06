@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import rlog from './utils/logger';
-import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH } from '../shared/types';
+import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH, DEFAULT_ENTITLEMENTS } from '../shared/types';
 import Status from './components/Status';
 import Settings from './components/Settings';
 import Debug from './components/Debug';
@@ -11,6 +11,7 @@ import AuthScreen from './components/AuthScreen';
 import InvoicingTab from './components/invoicing/InvoicingTab';
 import OrdersTab from './components/OrdersTab';
 import ProductModule from './components/products/ProductModule';
+import LabelModule from './components/label/LabelModule';
 import WarehouseModule from './components/warehouse/WarehouseModule';
 import ForecastOrderingTab from './components/forecast/ForecastOrderingTab';
 import SecurityTab from './components/security/SecurityTab';
@@ -21,38 +22,21 @@ import SelfCheckoutTab from './components/SelfCheckoutTab';
 import BilliardFloorPlan from './components/billiard/BilliardFloorPlan';
 import Sidebar from './components/Sidebar';
 import TouchKeyboard from './components/shared/TouchKeyboard';
-import { Language } from './i18n/translations';
+import { getTranslation, Language } from './i18n/translations';
 import { useConfig } from './hooks/useConfig';
 import { useAuth } from './hooks/useAuth';
 import { useRemoteControl } from './hooks/useRemoteControl';
 import { useEntitlements } from './hooks/useEntitlements';
 import { useKeyboardManager } from './hooks/useKeyboardManager';
 
-// Default entitlements for when offline or not fetched yet
-const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
-  chat: true,        // Always show chat
-  status: true,      // Always enabled
-  booksy: true,
-  invoicing: true,   // Free feature
-  orders: true,      // Order history — free
-  products: true,    // Product/catalog management
-  warehouse: true,   // Warehouse documents
-  forecast: true,    // Forecast ordering
-  settings: true,    // Always enabled
-  debug: true,
-  pos: true,         // Always show POS tab
-  selfCheckout: true,
-  billiard: false,   // Not relevant for nail salon
-  remote: false,
-  telegram: false,
-  security: true,
-  checkin: true,
-  bookings: true,    // Dashboard-synced appointments
-};
+// DEFAULT_ENTITLEMENTS now comes from shared/types — single source shared
+// with the main process (the two copies used to diverge: pos true here,
+// pos false there → blank/hidden POS depending on auth path).
 
 // Tab to feature key mapping
 const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   pos: 'pos',
+  label: 'label',
   selfCheckout: 'selfCheckout',
   billiard: 'billiard',
   chat: 'chat',
@@ -80,6 +64,7 @@ export default function App() {
   const [isPosFullscreen, setIsPosFullscreen] = useState(false);
   const [isCheckinFullscreen, setIsCheckinFullscreen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
 
   // Hooks
   const { config, setConfig, updateConfig, saveConfig, refresh: refreshConfig } = useConfig();
@@ -124,12 +109,29 @@ export default function App() {
     return true;
   }, [entitlements]);
 
-  // Get visible tabs based on entitlements and user preferences
+  // Get visible tabs. Local module overrides (Settings → Module Manager) win
+  // over plan entitlements: an explicit `true`/`false` for a tab forces it
+  // shown/hidden on THIS device regardless of plan. With no explicit choice we
+  // fall back to the entitlement default (and any legacy hiddenTabs flag).
+  // `settings` is always visible so the user can never lock themselves out.
   const visibleTabs = useMemo((): Tab[] => {
-    const allTabs: Tab[] = ['pos', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
+    const allTabs: Tab[] = ['pos', 'label', 'selfCheckout', 'billiard', 'chat', 'status', 'booksy', 'checkin', 'bookings', 'invoicing', 'orders', 'products', 'warehouse', 'forecast', 'security', 'settings', 'debug'];
+    const overrides = (config?.moduleOverrides ?? {}) as Partial<Record<Tab, boolean>>;
     const hiddenTabs: Tab[] = (config?.hiddenTabs as Tab[]) ?? [];
-    return allTabs.filter(tab => isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab));
-  }, [isFeatureEnabled, config?.hiddenTabs]);
+    return allTabs.filter(tab => {
+      if (tab === 'settings') return true;
+      const override = overrides[tab];
+      if (typeof override === 'boolean') return override;
+      return isFeatureEnabled(TAB_TO_FEATURE[tab]) && !hiddenTabs.includes(tab);
+    });
+  }, [isFeatureEnabled, config?.moduleOverrides, config?.hiddenTabs]);
+
+  // Single source of truth for whether a tab's CONTENT may render. Must match
+  // the sidebar (visibleTabs) exactly: Module Manager overrides win over plan
+  // entitlements. Gating content on isFeatureEnabled alone renders a blank
+  // page for any tab force-enabled via Settings → Module Manager (the sidebar
+  // shows the tab but its body never mounts).
+  const isTabAvailable = useCallback((tab: Tab): boolean => visibleTabs.includes(tab), [visibleTabs]);
 
   // Ensure activeTab is visible, otherwise switch to first visible tab
   useEffect(() => {
@@ -301,6 +303,16 @@ export default function App() {
   // (e.g., logout → offline mode, or switching accounts), clearing all
   // in-memory state: cart, products, connection status, etc.
   const sessionKey = authUser?.id || 'anon';
+  const appLanguage = (config?.language || 'en') as Language;
+  const posUiLanguage = (config?.posLanguage || config?.language || 'en') as Language;
+  const keyboardLanguage = (activeTab === 'pos' || activeTab === 'label') ? posUiLanguage : appLanguage;
+  const keyboardT = getTranslation(keyboardLanguage);
+  const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
+  const globalKeyboardInset = showGlobalKeyboard ? touchKeyboardHeight : 0;
+  const posFullscreenKeyboardInset = keyboardVisible ? touchKeyboardHeight : 0;
+  const keyboardInsetStyle = useCallback((keyboardInset: number): React.CSSProperties => ({
+    '--touch-keyboard-inset': `${keyboardInset}px`,
+  } as React.CSSProperties), []);
 
   if (loading) {
     return (
@@ -341,11 +353,12 @@ export default function App() {
 
   // Fullscreen POS mode — kiosk-style, same exit mechanism as checkin
   // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
-  if (isPosFullscreen && activeTab === 'pos' && isFeatureEnabled('pos')) {
+  if (isPosFullscreen && activeTab === 'pos' && isTabAvailable('pos')) {
     return (
       <div
         key={sessionKey}
         className="h-screen w-screen flex flex-col select-none"
+        style={keyboardInsetStyle(posFullscreenKeyboardInset)}
         onTouchStart={(e) => {
           if (e.touches.length === 3 && e.touches[0].clientY <= 80) {
             swipeTouchStartY.current = e.touches[0].clientY;
@@ -362,7 +375,7 @@ export default function App() {
       >
         <div
           className="flex-1 overflow-y-auto"
-          style={{ paddingBottom: keyboardVisible ? '300px' : '0' }}
+          style={{ paddingBottom: posFullscreenKeyboardInset > 0 ? `${posFullscreenKeyboardInset}px` : '0' }}
         >
           <POSLayout />
         </div>
@@ -372,6 +385,9 @@ export default function App() {
           onKey={onKey}
           onBackspace={onBackspace}
           onDone={onDone}
+          doneLabel={keyboardT('keyboard.done')}
+          spaceLabel={keyboardT('keyboard.space')}
+          onHeightChange={setTouchKeyboardHeight}
         />
       </div>
     );
@@ -379,7 +395,7 @@ export default function App() {
 
   // Fullscreen check-in mode — hide all chrome for customer-facing use
   // Exit via 3-finger swipe down from top (≥150px) or Ctrl+Shift+Q
-  if (isCheckinFullscreen && isFeatureEnabled('checkin')) {
+  if (isCheckinFullscreen && isTabAvailable('checkin')) {
     return (
       <div
         key={sessionKey}
@@ -404,10 +420,12 @@ export default function App() {
     );
   }
 
-  const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
-
   return (
-    <div key={sessionKey} className="h-screen flex flex-col overflow-hidden app-shell">
+    <div
+      key={sessionKey}
+      className="h-screen flex flex-col overflow-hidden app-shell"
+      style={keyboardInsetStyle(globalKeyboardInset)}
+    >
       {/* Remote Control Indicator */}
       <RemoteIndicator
         remoteState={remoteState}
@@ -436,7 +454,7 @@ export default function App() {
           className="flex-1 overflow-y-auto transition-[margin-left] duration-200"
           style={{
             marginLeft: sidebarCollapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded,
-            paddingBottom: showGlobalKeyboard ? '300px' : '0',
+            paddingBottom: globalKeyboardInset > 0 ? `${globalKeyboardInset}px` : '0',
           }}
         >
           {visibleTabs.length === 0 ? (
@@ -445,17 +463,20 @@ export default function App() {
             </div>
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
-              {activeTab === 'pos' && isFeatureEnabled('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
-              {activeTab === 'selfCheckout' && isFeatureEnabled('selfCheckout') && (
+              {activeTab === 'pos' && isTabAvailable('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'label' && isTabAvailable('label') && (
+                <LabelModule language={posUiLanguage} />
+              )}
+              {activeTab === 'selfCheckout' && isTabAvailable('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'billiard' && isFeatureEnabled('billiard') && (
+              {activeTab === 'billiard' && isTabAvailable('billiard') && (
                 <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'chat' && isFeatureEnabled('chat') && (
+              {activeTab === 'chat' && isTabAvailable('chat') && (
                 <Chat language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'status' && isFeatureEnabled('status') && (
+              {activeTab === 'status' && isTabAvailable('status') && (
                 <Status
                   config={config}
                   connectionStatus={connectionStatus}
@@ -465,34 +486,35 @@ export default function App() {
                   onConfigChange={(newConfig) => setConfig(newConfig as AgentConfig)}
                 />
               )}
-              {activeTab === 'booksy' && isFeatureEnabled('booksy') && <BooksySyncTab />}
-              {activeTab === 'checkin' && isFeatureEnabled('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
-              {activeTab === 'bookings' && isFeatureEnabled('bookings') && <BookingsTodayScreen />}
-              {activeTab === 'invoicing' && isFeatureEnabled('invoicing') && (
+              {activeTab === 'booksy' && isTabAvailable('booksy') && <BooksySyncTab />}
+              {activeTab === 'checkin' && isTabAvailable('checkin') && <CheckinWizard onFullscreen={() => { setIsCheckinFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'bookings' && isTabAvailable('bookings') && <BookingsTodayScreen />}
+              {activeTab === 'invoicing' && isTabAvailable('invoicing') && (
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'orders' && isFeatureEnabled('orders') && (
+              {activeTab === 'orders' && isTabAvailable('orders') && (
                 <OrdersTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'products' && isFeatureEnabled('products') && (
+              {activeTab === 'products' && isTabAvailable('products') && (
                 <ProductModule language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'warehouse' && isFeatureEnabled('warehouse') && (
+              {activeTab === 'warehouse' && isTabAvailable('warehouse') && (
                 <WarehouseModule language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'forecast' && isFeatureEnabled('forecast') && (
+              {activeTab === 'forecast' && isTabAvailable('forecast') && (
                 <ForecastOrderingTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'security' && isFeatureEnabled('security') && (
+              {activeTab === 'security' && isTabAvailable('security') && (
                 <SecurityTab config={config} />
               )}
-              {activeTab === 'settings' && isFeatureEnabled('settings') && (
+              {activeTab === 'settings' && isTabAvailable('settings') && (
                 <Settings
                   config={config}
                   onConfigChange={updateConfig}
+                  isModuleEntitled={(tab: Tab) => isFeatureEnabled(TAB_TO_FEATURE[tab])}
                 />
               )}
-              {activeTab === 'debug' && isFeatureEnabled('debug') && <Debug />}
+              {activeTab === 'debug' && isTabAvailable('debug') && <Debug />}
             </div>
           )}
         </main>
@@ -505,6 +527,9 @@ export default function App() {
         onKey={onKey}
         onBackspace={onBackspace}
         onDone={onDone}
+        doneLabel={keyboardT('keyboard.done')}
+        spaceLabel={keyboardT('keyboard.space')}
+        onHeightChange={setTouchKeyboardHeight}
       />
     </div>
   );

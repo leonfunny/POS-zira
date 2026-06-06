@@ -10,6 +10,7 @@ export interface ScanImportDraftPreview {
   vat_rate: number;
   image_url: string | null;
   status?: string;
+  source?: string;
 }
 
 interface ScanImportModalProps {

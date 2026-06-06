@@ -18,6 +18,7 @@ export interface AppEvents {
   // Auth
   'user:logged-in': { userId: string; salonId: string; salonName?: string };
   'user:logged-out': { reason?: string };
+  'salon:switching': { salonName?: string };
 
   // Print jobs
   'print:job-received': {

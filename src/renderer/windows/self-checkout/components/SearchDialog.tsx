@@ -23,6 +23,7 @@ interface SearchDialogProps {
   touched: boolean;
   error: string | null;
   results: SearchProduct[];
+  allowOversell?: boolean;
   onQueryChange: (query: string) => void;
   onSubmit: () => void;
   onClose: () => void;
@@ -38,6 +39,7 @@ export default function SearchDialog({
   touched,
   error,
   results,
+  allowOversell = false,
   onQueryChange,
   onSubmit,
   onClose,
@@ -167,11 +169,16 @@ export default function SearchDialog({
             <ul className="space-y-3">
               {results.map((product) => {
                 const imageUrl = product.thumbnail_url || product.image_url || '';
-                const availability = getProductAvailability(product);
+                const availability = getProductAvailability(product, { allowOversell });
+                const oversoldStock = allowOversell && typeof availability.stock === 'number' && availability.stock <= 0 && availability.reason !== 'no_price';
                 const disabledLabel =
                   availability.reason === 'out_of_stock' ? t.soldOut :
                   availability.reason === 'no_price' ? t.noPrice :
+                  availability.reason === 'weighted' ? t.weighedAtCounter :
                   null;
+                const oversoldLabel = oversoldStock
+                  ? t.oversoldStock.replace('{stock}', String(availability.stock))
+                  : null;
                 return (
                   <li
                     key={product.id}
@@ -203,6 +210,11 @@ export default function SearchDialog({
                         {disabledLabel && (
                           <span className="rounded-full bg-red-50 px-2 py-1 text-xs font-black uppercase tracking-wide text-[var(--sc-danger)]">
                             {disabledLabel}
+                          </span>
+                        )}
+                        {oversoldLabel && (
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-black uppercase tracking-wide text-[var(--sc-danger)]">
+                            {oversoldLabel}
                           </span>
                         )}
                       </div>

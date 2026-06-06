@@ -45,7 +45,10 @@ interface ScStrings {
   productOutOfStock: string;
   productInsufficientStock: string;
   productNoPrice: string;
+  productWeighted: string;
+  weighedAtCounter: string;
   soldOut: string;
+  oversoldStock: string;
   noPrice: string;
   scanFailed: string;
   emptyCart: string;
@@ -135,6 +138,13 @@ interface ScStrings {
   // Thank-you
   thankYouTitle: string;
   thankYouSub: string;
+  // Staff exit (3-finger gesture confirm)
+  staffExitTitle: string;
+  staffExitBody: string;
+  staffExitHold: string;
+  // Kitchen pickup number
+  pickupNumberLabel: string;
+  pickupNumberHint: string;
 }
 
 const PL: ScStrings = {
@@ -177,7 +187,10 @@ const PL: ScStrings = {
   productOutOfStock: '{name} - brak na stanie. Wezwij obsługę.',
   productInsufficientStock: '{name} - dostępna ilość: {stock}. Zmień ilość albo wezwij obsługę.',
   productNoPrice: '{name} - brak ceny. Wezwij obsługę.',
+  productWeighted: '{name} - produkt na wagę. Poproś obsługę o zważenie przy kasie.',
+  weighedAtCounter: 'Na wagę',
   soldOut: 'Brak na stanie',
+  oversoldStock: 'Stan: {stock}',
   noPrice: 'Brak ceny',
   scanFailed: 'Skanowanie nie powiodło się. Spróbuj ponownie albo wezwij obsługę.',
   emptyCart: 'Koszyk pusty - zacznij skanować',
@@ -257,6 +270,11 @@ const PL: ScStrings = {
   scanAgain: 'Skanuj dalej',
   thankYouTitle: 'Dziękujemy!',
   thankYouSub: 'Odbierz paragon z drukarki',
+  staffExitTitle: 'Zamknąć kasę samoobsługową?',
+  staffExitBody: 'Funkcja dla obsługi. Przytrzymaj przycisk przez 3 sekundy, aby zamknąć kasę.',
+  staffExitHold: 'Przytrzymaj, aby zamknąć',
+  pickupNumberLabel: 'TWÓJ NUMER ODBIORU',
+  pickupNumberHint: 'Pokaż ten numer w kuchni, aby odebrać jedzenie',
 };
 
 const EN: ScStrings = {
@@ -299,7 +317,10 @@ const EN: ScStrings = {
   productOutOfStock: '{name} is out of stock. Call staff.',
   productInsufficientStock: '{name} has only {stock} available. Change quantity or call staff.',
   productNoPrice: '{name} has no price. Call staff.',
+  productWeighted: '{name} is sold by weight. Please ask staff to weigh it at the counter.',
+  weighedAtCounter: 'By weight',
   soldOut: 'Sold out',
+  oversoldStock: 'Stock: {stock}',
   noPrice: 'No price',
   scanFailed: 'Scan failed. Try again or call staff.',
   emptyCart: 'Cart is empty - start scanning',
@@ -379,6 +400,11 @@ const EN: ScStrings = {
   scanAgain: 'Keep scanning',
   thankYouTitle: 'Thank you!',
   thankYouSub: 'Please collect your receipt',
+  staffExitTitle: 'Close the self-checkout?',
+  staffExitBody: 'Staff only. Press and hold the button for 3 seconds to close the kiosk.',
+  staffExitHold: 'Hold to close',
+  pickupNumberLabel: 'YOUR PICKUP NUMBER',
+  pickupNumberHint: 'Show this number at the kitchen to collect your food',
 };
 
 const VI: ScStrings = {
@@ -421,7 +447,10 @@ const VI: ScStrings = {
   productOutOfStock: '{name} đã hết hàng. Gọi nhân viên.',
   productInsufficientStock: '{name} chỉ còn {stock}. Đổi số lượng hoặc gọi nhân viên.',
   productNoPrice: '{name} chưa có giá. Gọi nhân viên.',
+  productWeighted: '{name} là hàng cân. Vui lòng nhờ nhân viên cân tại quầy.',
+  weighedAtCounter: 'Hàng cân',
   soldOut: 'Hết hàng',
+  oversoldStock: 'Tồn: {stock}',
   noPrice: 'Chưa có giá',
   scanFailed: 'Quét không thành công. Thử lại hoặc gọi nhân viên.',
   emptyCart: 'Giỏ hàng trống - hãy quét sản phẩm',
@@ -501,6 +530,11 @@ const VI: ScStrings = {
   scanAgain: 'Tiếp tục quét',
   thankYouTitle: 'Cảm ơn quý khách!',
   thankYouSub: 'Vui lòng nhận hóa đơn từ máy in',
+  staffExitTitle: 'Đóng quầy tự thanh toán?',
+  staffExitBody: 'Chức năng dành cho nhân viên. Giữ nút 3 giây để đóng quầy.',
+  staffExitHold: 'Giữ để đóng',
+  pickupNumberLabel: 'SỐ NHẬN ĐỒ CỦA BẠN',
+  pickupNumberHint: 'Đưa số này cho bếp để nhận đồ ăn',
 };
 
 const TABLE: Record<ScLanguage, ScStrings> = { pl: PL, en: EN, vi: VI };

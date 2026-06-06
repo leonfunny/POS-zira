@@ -7,6 +7,12 @@ import { listSerialPorts, sanitizePortName } from '../port-utils';
 import { POSNET_PRODUCT_IDS } from './probe-profiles';
 import { withPortLock } from './port-mutex';
 import { buildFindPosnetVidPortsScript, parsePosnetVidPortOutput } from './pnp-port-parser';
+import { createHash } from 'crypto';
+import {
+  FiscalAttemptJournal,
+  FiscalAttemptRow,
+  fiscalAttemptRepo,
+} from '../../database/repos/fiscal-attempt-repo';
 
 const execFileAsync = promisify(execFile);
 
@@ -105,6 +111,13 @@ type PosnetVerifyResult = {
   detail?: string;
 };
 
+export interface PosnetDriverOptions {
+  /** Called when a fiscal receipt outcome is ambiguous after bytes were sent. */
+  onFiscalUnknown?: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void;
+  /** Injectable for tests; defaults to the shared fiscal_attempts repo. */
+  fiscalJournal?: FiscalAttemptJournal;
+}
+
 export class PosnetDriver {
   private connectionState: PosnetConnectionState = 'disconnected';
   private formatter: ReceiptFormatter;
@@ -113,13 +126,18 @@ export class PosnetDriver {
   private lastDiagnostic?: PosnetDiagnosticCode;
   private detectedPid?: number;
   private lastBaudProbeFailures: string[] = [];
+  private fiscalJournal: FiscalAttemptJournal;
+  private onFiscalUnknown?: PosnetDriverOptions['onFiscalUnknown'];
 
   constructor(
     private portName: string = 'COM3',
     private baudRate: number = 9600,
-    private protocol: 'THERMAL' | 'POSNET' = 'POSNET'
+    private protocol: 'THERMAL' | 'POSNET' = 'POSNET',
+    options: PosnetDriverOptions = {},
   ) {
     this.formatter = new ReceiptFormatter();
+    this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
+    this.onFiscalUnknown = options.onFiscalUnknown;
     logger.info(`[PosnetDriver] Driver initialized for ${portName} @ ${baudRate}`);
   }
 
@@ -426,16 +444,25 @@ export class PosnetDriver {
   }
 
   /**
-   * Print a receipt via non-fiscal transaction.
+   * Print a receipt. In POSNET protocol mode the trinit/trline/trpayment/
+   * trend sequence opens a REAL fiscal transaction on the device, so every
+   * attempt is journaled in fiscal_attempts exactly like the ELZAB path:
+   * a confirmed/unknown prior attempt for the same order BLOCKS automatic
+   * retries (no duplicate paragons), ambiguous outcomes after bytes were
+   * sent are marked UNKNOWN for the Order History reconciliation flow.
    */
   async printReceipt(data: ReceiptData): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
     logger.info('[PosnetDriver] Printing receipt...');
 
+    // THERMAL protocol mode drives plain ESC/POS-style printing — no fiscal
+    // transaction, no journal.
+    const isFiscalProtocol = this.protocol === 'POSNET';
+    const attempt = isFiscalProtocol ? this.createReceiptAttempt(data) : null;
+
     const formattedData = this.formatter.formatOrder(data);
 
     const frames: string[][] = [];
-    // Start non-fiscal
     frames.push(['trinit', 'bm0']);
 
     let total = 0;
@@ -449,15 +476,81 @@ export class PosnetDriver {
       total += lineTotal;
     }
 
-    // Payment (optional for non-fiscal but good practice)
     const paymentType = formattedData.payment?.type === 2 ? 2 : 0; // 0=cash, 2=card
     frames.push(['trpayment', `ty${paymentType}`, `wa${total}`]);
-
-    // End + print
     frames.push(['trend', `to${total}`]);
 
-    await this.sendPosnetSequence(frames);
+    if (attempt) this.fiscalJournal.markSent(attempt.id);
+
+    try {
+      await this.sendPosnetSequence(frames);
+    } catch (error: any) {
+      const detail = error?.message || String(error);
+      if (attempt) {
+        if (this.failedBeforeAnyByteSent()) {
+          // Port lock / invalid port — nothing reached the printer, a clean
+          // retry is safe.
+          this.fiscalJournal.markFailed(attempt.id, this.lastDiagnostic?.code || 'POSNET_SEND_FAILED', { detail });
+          throw error;
+        }
+        // Bytes may have reached the device: the paragon could have printed
+        // even though we lost the confirmation. Block silent retries and
+        // route staff to the reconciliation flow.
+        this.fiscalJournal.markUnknown(attempt.id, 'POSNET_THROWN_AFTER_SENT', { detail });
+        this.notifyUnknownSafe(data, 'POSNET_THROWN_AFTER_SENT', detail);
+        throw new Error(`FISCAL_RESULT_UNKNOWN: POSNET receipt result is unknown after send error: ${detail}`);
+      }
+      throw error;
+    }
+
+    if (attempt) this.fiscalJournal.markSuccess(attempt.id, { responses: 'ok' });
     logger.info('[PosnetDriver] Receipt printed');
+  }
+
+  /** Port-lock and invalid-port failures happen before any byte is written. */
+  private failedBeforeAnyByteSent(): boolean {
+    const code = this.lastDiagnostic?.code;
+    return code === 'PORT_BUSY' || code === 'PORT_NOT_FOUND';
+  }
+
+  private notifyUnknownSafe(data: ReceiptData, code: string, detail?: string): void {
+    try {
+      this.onFiscalUnknown?.({ orderId: data.orderId, orderNumber: data.orderNumber, code, detail });
+    } catch (e: any) {
+      logger.warn(`[PosnetDriver] onFiscalUnknown handler threw (ignored): ${e?.message ?? e}`);
+    }
+  }
+
+  private createReceiptAttempt(data: ReceiptData): FiscalAttemptRow {
+    const orderId = (data.orderId || data.orderNumber || '').trim();
+    const paymentId = data.paymentId?.trim() || null;
+    if (!orderId) {
+      const detail = 'POSNET fiscal receipt requires ReceiptData.orderId or orderNumber for idempotency.';
+      this.lastDiagnostic = { code: 'FISCAL_IDEMPOTENCY_KEY_MISSING', detail } as any;
+      throw new Error(`FISCAL_IDEMPOTENCY_KEY_MISSING: ${detail}`);
+    }
+
+    const blocking = this.fiscalJournal.findBlockingAttempt(orderId, paymentId);
+    if (blocking) {
+      const detail = `Existing fiscal attempt ${blocking.id} for order ${orderId} is ${blocking.status}; automatic retry is blocked.`;
+      this.lastDiagnostic = { code: 'FISCAL_ATTEMPT_RETRY_BLOCKED', detail } as any;
+      throw new Error(`FISCAL_ATTEMPT_RETRY_BLOCKED: ${detail}`);
+    }
+
+    const payloadJson = posnetStableStringify(data);
+    const payloadHash = createHash('sha256').update(payloadJson).digest('hex');
+    const attemptNo = this.fiscalJournal.getNextAttemptNo(orderId, paymentId);
+    const idempotencyKey = `${orderId}:${paymentId || 'default'}:${attemptNo}`;
+
+    return this.fiscalJournal.createPending({
+      orderId,
+      paymentId,
+      attemptNo,
+      idempotencyKey,
+      printerType: 'FISCAL',
+      payloadJson,
+      payloadHash,
+    });
   }
 
   async printZReport(data: DailyReportData): Promise<void> {
@@ -1000,4 +1093,20 @@ export class PosnetDriver {
     }
     return result;
   }
+}
+
+
+/** Deterministic JSON for fiscal payload hashing (key-sorted, like ELZAB). */
+function posnetStableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      return Object.keys(val)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = (val as Record<string, unknown>)[k];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
 }

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { applyFiscalVisibility } from './order-fiscal-visibility';
 import { translations } from '../../i18n/translations';
+import { useConfig } from '../../hooks/useConfig';
 import { describeFiscalError } from '../../lib/fiscal-error-text';
 import { buildRefundRequest } from './refund-request';
 import {
@@ -43,6 +45,7 @@ interface OrderRow {
   payment_tenders?: string | null;
   sync_error?: string | null;
   sync_attempts?: number;
+  has_fiscal?: number;
   _origin?: 'server';
 }
 
@@ -100,6 +103,60 @@ const REFUND_REASONS = [
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
+}
+
+// ── Per-document print badges ─────────────────────────────────────────────
+type PrintBadgeView = { tone: 'ok' | 'warn' | 'err' | 'idle'; text: string };
+type Tr = (key: string, fallback: string) => string;
+
+function orderPrintBadgeView(
+  p: { name: string | null; target: string | null; status: string; route: string | null } | null,
+  tr: Tr,
+): PrintBadgeView {
+  if (!p) return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') };
+  const printer = [p.name, p.target].filter(Boolean).join(' · ') || tr('pos.history.printerGeneric', 'printer');
+  if (p.status === 'PRINTED') return { tone: 'ok', text: printer };
+  if (p.status === 'FAILED') return { tone: 'err', text: `${printer} — ${tr('pos.history.printFailed', 'failed')}` };
+  return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') }; // NO_PRINTER
+}
+
+function fiscalPrintBadgeView(
+  p: { status: string; name: string | null; target: string | null } | null,
+  tr: Tr,
+): PrintBadgeView {
+  if (!p) return { tone: 'idle', text: tr('pos.history.notPrinted', 'Not printed') };
+  const printer = [p.name, p.target].filter(Boolean).join(' · ') || 'Fiscal';
+  switch (p.status) {
+    case 'SUCCESS_CONFIRMED':
+      return { tone: 'ok', text: printer };
+    case 'FAILED_CONFIRMED':
+      return { tone: 'err', text: `${printer} — ${tr('pos.history.printFailed', 'failed')}` };
+    case 'UNKNOWN_NEEDS_RECONCILIATION':
+    case 'SENT':
+    case 'PENDING':
+      return { tone: 'warn', text: `${printer} — ${tr('pos.history.needsCheck', 'needs check')}` };
+    case 'BLOCKED_BY_SAFETY_GATE':
+      return { tone: 'warn', text: `${printer} — ${tr('pos.history.blocked', 'blocked')}` };
+    default:
+      return { tone: 'idle', text: printer };
+  }
+}
+
+function PrintBadge({ label, view }: { label: string; view: PrintBadgeView }) {
+  const tone =
+    view.tone === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : view.tone === 'err' ? 'border-rose-200 bg-rose-50 text-rose-800'
+    : view.tone === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-800'
+    : 'border-slate-200 bg-slate-50 text-slate-500';
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-12 shrink-0 font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className={`inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 font-medium ${tone}`}>
+        {view.tone === 'ok' && <span aria-hidden="true">✓</span>}
+        <span className="truncate">{view.text}</span>
+      </span>
+    </div>
+  );
 }
 
 function todayISO(): string {
@@ -241,6 +298,18 @@ function isSplit(order: OrderRow): boolean {
   } catch {
     return false;
   }
+}
+
+function normalizePaymentMethod(method: string | null | undefined): string | null {
+  if (!method) return null;
+  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
+}
+
+function orderMatchesPaymentFilter(order: OrderRow, paymentMethod: string): boolean {
+  const split = isSplit(order);
+  if (paymentMethod === 'SPLIT') return split;
+  if (paymentMethod === 'INVOICE') return Boolean(order.customer_nip);
+  return !split && normalizePaymentMethod(order.payment_method) === normalizePaymentMethod(paymentMethod);
 }
 
 function StatusBadge({ order, t }: { order: OrderRow; t: (key: string) => string }) {
@@ -1169,6 +1238,7 @@ function OrderMutationPanel({
 }
 
 export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps) {
+  const { config } = useConfig();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
   const [page, setPage] = useState(1);
@@ -1180,6 +1250,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [detail, setDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [reprintStatus, setReprintStatus] = useState<ReprintStatus>(null);
+  const [printingKitchen, setPrintingKitchen] = useState(false);
   const [reprinting, setReprinting] = useState(false);
   const [printingFiscal, setPrintingFiscal] = useState(false);
   // A prior fiscal attempt left in UNKNOWN_NEEDS_RECONCILIATION (e.g. the ELZAB
@@ -1187,6 +1258,12 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   // operator confirms — on the physical printer — whether it actually printed.
   const [reconcilable, setReconcilable] = useState<{ id: string; status: string } | null>(null);
   const [reconciling, setReconciling] = useState(false);
+  // Per-document print badges: which printer printed the order copy + the
+  // fiscal receipt, and whether each succeeded. `printBadgeNonce` is bumped
+  // after any print action so the badges refresh without reopening the order.
+  const [orderPrint, setOrderPrint] = useState<{ name: string | null; target: string | null; status: string; route: string | null } | null>(null);
+  const [fiscalPrint, setFiscalPrint] = useState<{ status: string; name: string | null; target: string | null } | null>(null);
+  const [printBadgeNonce, setPrintBadgeNonce] = useState(0);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1197,8 +1274,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [mirrorError, setMirrorError] = useState<string | null>(null);
   const [mirrorSplit, setMirrorSplit] = useState(false);
   const detailIdRef = useRef<string | undefined>(undefined);
+  const loadSeqRef = useRef(0);
 
   const currency = tOr(t, 'pos.currency', 'zl');
+  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
   const hasActiveFilters = selectedPeriod !== 'today' || filterMethod !== '' || filterStaff !== '';
 
@@ -1209,16 +1288,26 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const pageTotal = useMemo(() => orders.reduce((sum, o) => sum + o.total, 0), [orders]);
 
   const loadOrders = useCallback(async () => {
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
     setLoading(true);
     setLoadError(null);
 
     const { from, to } = periodToDateRange(selectedPeriod);
+    const serverFilters: { paymentMethod?: string; staffName?: string; requiresInvoice?: boolean } = {};
+    if (filterMethod === 'INVOICE') {
+      serverFilters.requiresInvoice = true;
+    } else if (filterMethod) {
+      serverFilters.paymentMethod = filterMethod;
+    }
+    if (filterStaff) serverFilters.staffName = filterStaff;
 
     const [localResult, serverResult] = await Promise.allSettled([
       window.electronAPI.pos.orders.getHistory({ from, to, page, limit: PAGE_SIZE,
         paymentMethod: filterMethod || undefined, staffName: filterStaff || undefined }),
-      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE }),
+      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE, ...serverFilters }),
     ]);
+    if (loadSeq !== loadSeqRef.current) return;
 
     let merged: OrderRow[] = [];
     let total = 0;
@@ -1257,11 +1346,22 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
-    if (filterMethod === 'SPLIT') {
-      merged = merged.filter(isSplit);
-    } else if (filterMethod) {
-      merged = merged.filter((o) => o.payment_method === filterMethod && !isSplit(o));
+    if (hideNonFiscalOrders) {
+      // Server-sourced rows have no has_fiscal — look them up in the local
+      // fiscal journal before filtering so they can't leak through.
+      let confirmedFiscalIds = new Set<string>();
+      const unknownIds = merged
+        .filter((o) => typeof o.has_fiscal !== 'number')
+        .map((o) => o.id);
+      if (unknownIds.length > 0) {
+        const confirmed = await window.electronAPI.pos.orders
+          .getConfirmedFiscalIds?.(unknownIds)
+          .catch(() => [] as string[]);
+        confirmedFiscalIds = new Set(confirmed || []);
+      }
+      merged = applyFiscalVisibility(merged, true, confirmedFiscalIds);
     }
+    if (filterMethod) merged = merged.filter((o) => orderMatchesPaymentFilter(o, filterMethod));
     if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
     merged.sort(compareOrdersByDisplayTimeDesc);
 
@@ -1270,10 +1370,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setServerItemsMap(newItemsMap);
     setDataSource(source);
     setLoading(false);
-  }, [selectedPeriod, filterMethod, filterStaff, page]);
+  }, [selectedPeriod, filterMethod, filterStaff, page, hideNonFiscalOrders]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
-  useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff]);
+  useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff, hideNonFiscalOrders]);
   useEffect(() => {
     detailIdRef.current = detail?.order.id;
     setMirrorError(null);
@@ -1360,6 +1460,33 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setReprinting(false);
+      setPrintBadgeNonce((n) => n + 1);
+    }
+  };
+
+  const handlePrintKitchenTicket = async (orderId: string) => {
+    if (printingKitchen) return;
+    setPrintingKitchen(true);
+    setReprintStatus(null);
+    try {
+      const result = await window.electronAPI.pos.orders.printKitchenTicket(orderId);
+      if (result?.printed) {
+        setReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.kitchenTicketPrinted', 'Kitchen ticket sent to printer') });
+      } else if (result?.error === 'no_kitchen_items') {
+        setReprintStatus({ type: 'error', message: tOr(t, 'pos.history.kitchenTicketNoItems', 'No kitchen items in this order') });
+      } else {
+        setReprintStatus({
+          type: 'error',
+          message: result?.error || tOr(t, 'pos.history.kitchenTicketFailed', 'Kitchen printer not reachable'),
+        });
+      }
+    } catch (e: any) {
+      setReprintStatus({
+        type: 'error',
+        message: e?.message || tOr(t, 'pos.history.kitchenTicketFailed', 'Kitchen printer not reachable'),
+      });
+    } finally {
+      setPrintingKitchen(false);
     }
   };
 
@@ -1384,6 +1511,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       });
     } finally {
       setPrintingFiscal(false);
+      setPrintBadgeNonce((n) => n + 1);
     }
   };
 
@@ -1404,6 +1532,29 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       .catch(() => { if (!cancelled) setReconcilable(null); });
     return () => { cancelled = true; };
   }, [detail?.order.id]);
+
+  // Per-document print badges (which printer printed the order copy + fiscal).
+  // Refetched on order change and after any print action (printBadgeNonce).
+  useEffect(() => {
+    const orderId = detail?.order.id;
+    if (!orderId) { setOrderPrint(null); setFiscalPrint(null); return; }
+    let cancelled = false;
+    Promise.all([
+      window.electronAPI.pos.payment.getPrintAttempts(orderId),
+      window.electronAPI.pos.payment.getLatestFiscalAttempt(orderId),
+    ]).then(([pa, fa]) => {
+      if (cancelled) return;
+      const attempts = (pa?.attempts || []) as Array<{ document_type: string; printer_name: string | null; printer_target: string | null; status: string; route: string | null }>;
+      const orderAttempt = attempts.find((a) => a.document_type === 'ORDER' || a.document_type === 'REPRINT') || null;
+      setOrderPrint(orderAttempt
+        ? { name: orderAttempt.printer_name, target: orderAttempt.printer_target, status: orderAttempt.status, route: orderAttempt.route }
+        : null);
+      setFiscalPrint(fa?.attempt
+        ? { status: fa.attempt.status, name: fa.printer?.name ?? null, target: fa.printer?.target ?? null }
+        : null);
+    }).catch(() => { if (!cancelled) { setOrderPrint(null); setFiscalPrint(null); } });
+    return () => { cancelled = true; };
+  }, [detail?.order.id, printBadgeNonce]);
 
   const handleReconcileFiscal = async (orderId: string, didPrint: boolean) => {
     if (reconciling) return;
@@ -1472,6 +1623,21 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setFilterMethod('');
     setFilterStaff('');
     setPage(1);
+  };
+
+  const changePeriod = (nextPeriod: 'today' | 'week' | 'month' | 'all') => {
+    setPage(1);
+    setSelectedPeriod(nextPeriod);
+  };
+
+  const changePaymentFilter = (nextMethod: string) => {
+    setPage(1);
+    setFilterMethod(nextMethod);
+  };
+
+  const changeStaffFilter = (nextStaff: string) => {
+    setPage(1);
+    setFilterStaff(nextStaff);
   };
 
   const ensureMirrored = async (order: OrderRow): Promise<boolean> => {
@@ -1789,6 +1955,19 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-extrabold text-slate-900">Printing</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">Print the fiscal receipt and the order copy separately.</p>
+
+                {/* Which printer printed each document, and whether it succeeded. */}
+                <div className="mt-3 space-y-1.5">
+                  <PrintBadge
+                    label={tOr(t, 'pos.history.docOrder', 'Order')}
+                    view={orderPrintBadgeView(orderPrint, (k, f) => tOr(t, k, f))}
+                  />
+                  <PrintBadge
+                    label={tOr(t, 'pos.history.docFiscal', 'Fiscal')}
+                    view={fiscalPrintBadgeView(fiscalPrint, (k, f) => tOr(t, k, f))}
+                  />
+                </div>
+
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
                   disabled={reprinting || printingFiscal || isMirroring}
@@ -1836,6 +2015,17 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-800" aria-hidden="true" />
                   )}
                   {printingFiscal ? 'Sending...' : 'Print fiscal receipt'}
+                </button>
+
+                <button
+                  onClick={() => handlePrintKitchenTicket(order.id)}
+                  disabled={printingKitchen || reprinting || printingFiscal}
+                  className="mt-2 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-4 text-sm font-extrabold text-orange-800 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                >
+                  {printingKitchen && (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-orange-300 border-t-orange-800" aria-hidden="true" />
+                  )}
+                  {tOr(t, 'pos.history.printKitchenTicket', 'Print kitchen ticket')}
                 </button>
                 {refundStatus !== 'none' && (
                   <div className="mt-2 text-xs font-bold text-slate-500">
@@ -2002,7 +2192,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Period
             <select
               value={selectedPeriod}
-              onChange={(e) => setSelectedPeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
+              onChange={(e) => changePeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >
               <option value="today">Today</option>
@@ -2016,7 +2206,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Payment
             <select
               value={filterMethod}
-              onChange={(e) => setFilterMethod(e.target.value)}
+              onChange={(e) => changePaymentFilter(e.target.value)}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >
               <option value="">{tOr(t, 'pos.history.allMethods', 'All Methods')}</option>
@@ -2030,7 +2220,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Staff
             <select
               value={filterStaff}
-              onChange={(e) => setFilterStaff(e.target.value)}
+              onChange={(e) => changeStaffFilter(e.target.value)}
               disabled={staffNames.length === 0}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >

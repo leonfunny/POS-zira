@@ -54,6 +54,7 @@ export enum PrintJobType {
   DAILY_REPORT = 'DAILY_REPORT',  // Raport dobowy
   X_REPORT = 'X_REPORT',          // Raport X (niefiskalny)
   Z_REPORT = 'Z_REPORT',          // Raport Z (fiskalny)
+  KITCHEN_TICKET = 'KITCHEN_TICKET', // Phieu bep — items only, no prices
 }
 
 // Printer status returned by driver.getStatus()
@@ -493,11 +494,15 @@ export interface AgentConfig {
   // POS settings
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
+  allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
+  labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
+  labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
   // Receipt seller info (Polish paragon compliance)
   receiptSellerName?: string;    // Legal entity name (e.g., "P.T.H. BAKS Sławomir Chądzyński")
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
+  showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default true.
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
@@ -568,11 +573,27 @@ export interface AgentConfig {
   backupRestoreLastAppliedAt?: string;
 
   // User-hidden tabs (locally controlled, independent of entitlements)
+  // @deprecated superseded by moduleOverrides; kept for backward-compat + migration
   hiddenTabs?: Tab[];
+
+  // Per-module visibility overrides (locally controlled, this device only).
+  // Key present => explicit user choice wins over entitlements (can force-show
+  // a module the plan does not entitle, or hide an entitled one).
+  // Key absent => fall back to entitlement default. `settings` is always shown.
+  moduleOverrides?: Partial<Record<Tab, boolean>>;
 
   // Check-in tab display toggles
   checkinShowStatsBar?: boolean;  // Show total/waiting/in-service/completed bar (default: true)
   checkinShowQueue?: boolean;     // Show active queue panel on the right (default: true)
+
+  // TV Ads (signage) — điều khiển màn hình quảng cáo Google TV qua LAN
+  tvAdEnabled?: boolean;
+  tvAdPort?: number;
+  tvAdPlaybackMode?: 'sequential' | 'repeat-one';
+  tvAdRepeatVideoId?: string | null;
+  tvAdMuted?: boolean;
+  tvAdVolume?: number;
+  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean }>;
 }
 
 // Agent credentials (stored securely)
@@ -635,12 +656,38 @@ export interface DocumentData {
 }
 
 // Print job from server
+export interface KitchenTicketItem {
+  name: string;
+  quantity: number;
+  /** kg for weighted items; null/'szt' renders as a plain count. */
+  unit?: string | null;
+  notes?: string | null;
+}
+
+/** Kitchen ticket payload — what the cooks see. Deliberately NO prices. */
+export interface KitchenTicketData {
+  orderId: string;
+  orderNumber: string;
+  /** ISO timestamp of the sale. */
+  createdAt: string;
+  /** Order source: POS | SELF_CHECKOUT | SERVER | ... */
+  source: string;
+  isReprint?: boolean;
+  /** Daily pickup number ('0001'...) shared between the kitchen ticket and
+   *  the customer pickup slip — the kitchen matches them at hand-over. */
+  pickupNumber?: string | null;
+  /** TICKET (default) = kitchen ticket; PICKUP_SLIP = the small customer
+   *  slip with the big pickup number, printed next to the paragon. */
+  kind?: 'TICKET' | 'PICKUP_SLIP';
+  items: KitchenTicketItem[];
+}
+
 export interface PrintJobEvent {
   jobId: string;
   jobType: PrintJobType;
   printerType?: PrinterType;  // NEW: Explicit printer routing from server
   printerId?: string | null;  // Server printer mapping id
-  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData;
+  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData | KitchenTicketData;
   referenceType: string | null;
   referenceId: string | null;
   openDrawer?: boolean;
@@ -1104,6 +1151,10 @@ export const IPC_CHANNELS = {
 
   // POS - Staff
   POS_STAFF_GET_ALL: 'pos:staff:getAll',
+  POS_STAFF_GET_ALL_FOR_SETTINGS: 'pos:staff:getAllForSettings',
+  POS_STAFF_CREATE: 'pos:staff:create',
+  POS_STAFF_UPDATE: 'pos:staff:update',
+  POS_STAFF_SET_ACTIVE: 'pos:staff:setActive',
 
   // POS - Hold Orders
   POS_HOLD_CREATE: 'pos:hold:create',
@@ -1322,7 +1373,24 @@ export const IPC_CHANNELS = {
 
   // Generic API proxy
   API_CALL: 'api:call',
+
+  // TV Ad Display (signage)
+  TV_AD_GET_STATUS: 'tvAd:getStatus',
+  TV_AD_PICK_VIDEO: 'tvAd:pickVideo',
+  TV_AD_SAVE: 'tvAd:save',
 } as const;
+
+// Shared status shape for the TV Ad Display module.
+// Mirrors AdDisplayStatus from src/main/ad-display/ but lives in shared
+// so the renderer can consume it without importing from src/main.
+export interface AdDisplayStatusLike {
+  running: boolean;
+  port: number | null;
+  ips: string[];
+  primaryIp?: string;
+  connectedClients: number;
+  error?: string;
+}
 
 // ==========================================
 // Telegram Types (Moltbot-style)
@@ -2757,6 +2825,8 @@ export interface ProductAdminCategoryMutationInput {
   color?: string | null;
   icon?: string | null;
   sortOrder?: number | null;
+  /** Items in this category print a kitchen ticket when sold. */
+  kitchenPrint?: boolean | null;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
   idempotencyKey?: string;
@@ -2933,6 +3003,7 @@ export type FeatureKey =
   | 'warehouse'   // Warehouse documents / Magazyn tab
   | 'forecast'    // Sales forecast and daily replenishment tab
   | 'pos'         // POS window
+  | 'label'       // Quick product label printing
   | 'remote'      // Remote control
   | 'telegram'    // Telegram bot
   | 'security'    // Security camera AI
@@ -2942,7 +3013,7 @@ export type FeatureKey =
   | 'selfCheckout'; // Self-checkout kiosk window
 
 /** Tabs available in the main window sidebar */
-export type Tab = 'pos' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'products' | 'warehouse' | 'forecast' | 'security' | 'settings' | 'debug';
+export type Tab = 'pos' | 'label' | 'selfCheckout' | 'billiard' | 'chat' | 'status' | 'booksy' | 'checkin' | 'bookings' | 'invoicing' | 'orders' | 'products' | 'warehouse' | 'forecast' | 'security' | 'settings' | 'debug';
 
 /** Sidebar width constants (px) */
 export const SIDEBAR_WIDTH = { expanded: 180, collapsed: 48 } as const;
@@ -2960,29 +3031,46 @@ export interface SalonEntitlements {
   salonId: string;
   salonCode: string;
   salonName: string;
-  plan: 'free' | 'basic' | 'pro' | 'enterprise';
+  plan: 'free' | 'basic' | 'pro' | 'business' | 'enterprise';
+  /**
+   * Server-suggested POS template derived from salon.niche (nail → salon,
+   * grocery → retail, ...). Applied on salon SWITCH only; null = no opinion.
+   */
+  suggestedPosMode?: 'retail' | 'salon' | 'b2b' | 'restaurant' | null;
   features: Record<FeatureKey, FeatureEntitlement>;
   fetchedAt: string;  // ISO date
   validUntil: string; // ISO date, cache validity
 }
 
-// Default entitlements for when offline or not fetched yet
+// Default entitlements for when offline or not fetched yet.
+//
+// SINGLE SOURCE OF TRUTH — used by BOTH the main process
+// (entitlements-controller createDefaultEntitlements/normalize fallbacks)
+// and the renderer (App.tsx isFeatureEnabled fallback). They used to be two
+// diverging copies: main said pos:false while the renderer said pos:true,
+// so JWT-logged-in machines (fetch 404 → main defaults) hid the POS tab
+// while apiKey machines (fetch null → renderer defaults) showed it.
+//
+// Defaults are deliberately PERMISSIVE (visible unless clearly remote-only):
+// real plan enforcement is the backend entitlements endpoint's job, and the
+// per-device Module Manager (config.moduleOverrides) can hide anything.
 export const DEFAULT_ENTITLEMENTS: Record<FeatureKey, boolean> = {
-  chat: false,
+  chat: true,
   status: true,      // Always enabled
-  booksy: false,
+  booksy: true,
   invoicing: true,   // Free feature
   settings: true,    // Always enabled
-  debug: false,
+  debug: true,
   orders: true,      // Order history — free, tied to POS sales
   products: true,    // Product/catalog management — free, tied to POS catalog
   warehouse: true,   // Warehouse documents — UI shell until backend posting exists
   forecast: true,    // Local sales forecast and daily ordering assistance
-  pos: false,
-  selfCheckout: false,
+  pos: true,         // The till itself — never hide by default
+  label: true,
+  selfCheckout: true,
   remote: false,
   telegram: false,
-  security: false,
+  security: true,
   checkin: true,
   bookings: true,    // Dashboard-synced appointments — free
   billiard: true,

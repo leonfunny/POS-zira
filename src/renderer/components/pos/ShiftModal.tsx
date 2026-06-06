@@ -1,18 +1,57 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+
+interface ShiftStaffOption {
+  id: string;
+  name: string;
+  role?: string | null;
+  commission_rate?: number;
+  is_active?: number;
+}
 
 interface ShiftModalProps {
   mode: 'open' | 'close';
   shiftId?: string | null;
-  onSubmit: (data: { staffName?: string; openingCash?: number; closingCash?: number }) => Promise<void>;
+  onSubmit: (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => Promise<void>;
   onClose: () => void;
   t: (key: string) => string;
 }
 
 export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalProps) {
-  const [staffName, setStaffName] = useState('');
+  const [staffList, setStaffList] = useState<ShiftStaffOption[]>([]);
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const [loadingStaff, setLoadingStaff] = useState(false);
   const [cashAmount, setCashAmount] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const label = (key: string, fallback: string) => {
+    const translated = t(key);
+    return translated && translated !== key ? translated : fallback;
+  };
+
+  useEffect(() => {
+    if (mode !== 'open') return;
+    let cancelled = false;
+    setLoadingStaff(true);
+    window.electronAPI.pos.staff.getAll()
+      .then((rows: ShiftStaffOption[]) => {
+        if (cancelled) return;
+        const activeRows = (rows || []).filter((row) => row.is_active !== 0 && row.name?.trim());
+        setStaffList(activeRows);
+      })
+      .catch((err: any) => {
+        if (!cancelled) setError(err?.message || label('pos.shift.staffLoadFailed', 'Could not load staff list'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingStaff(false);
+      });
+    return () => { cancelled = true; };
+  }, [mode]);
+
+  const selectedStaff = useMemo(
+    () => staffList.find((staff) => staff.id === selectedStaffId) || null,
+    [staffList, selectedStaffId],
+  );
 
   const handleSubmit = async () => {
     if (saving) return;
@@ -21,7 +60,8 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
     try {
       const amount = Math.round(parseFloat(cashAmount || '0') * 100);
       if (mode === 'open') {
-        await onSubmit({ staffName: staffName || t('pos.cashier'), openingCash: amount });
+        if (!selectedStaff) throw new Error(label('pos.shift.selectStaffRequired', 'Select a staff member'));
+        await onSubmit({ staffId: selectedStaff.id, staffName: selectedStaff.name, openingCash: amount });
       } else {
         await onSubmit({ closingCash: amount });
       }
@@ -32,7 +72,7 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
     }
   };
 
-  const canSubmit = !saving && (mode === 'close' || staffName.trim().length > 0);
+  const canSubmit = !saving && (mode === 'close' || !!selectedStaff);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/50" onClick={onClose}>
@@ -72,17 +112,38 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
           {mode === 'open' && (
             <div>
               <label className="text-xs text-gray-500 font-medium block mb-1.5">
-                {t('pos.shift.staffName')}
+                {label('pos.shift.selectStaff', 'Select staff')}
               </label>
-              <input
-                type="text"
-                value={staffName}
-                onChange={(e) => setStaffName(e.target.value)}
-                placeholder={t('pos.namePlaceholder')}
-                autoFocus
-                className="w-full px-3 py-2.5 bg-slate-50 border border-gray-200 rounded-xl text-gray-900 text-sm focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 placeholder-gray-400"
-                onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleSubmit()}
-              />
+              {loadingStaff ? (
+                <div className="w-full px-3 py-3 bg-slate-50 border border-gray-200 rounded-xl text-gray-500 text-sm">
+                  {label('pos.loading', 'Loading...')}
+                </div>
+              ) : staffList.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-0.5">
+                  {staffList.map((staff) => {
+                    const active = staff.id === selectedStaffId;
+                    return (
+                      <button
+                        key={staff.id}
+                        type="button"
+                        onClick={() => setSelectedStaffId(staff.id)}
+                        className={`min-h-14 rounded-xl border px-3 py-2 text-left transition-colors ${
+                          active
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-100'
+                            : 'border-gray-200 bg-slate-50 text-gray-800 hover:border-brand-300 hover:bg-white'
+                        }`}
+                      >
+                        <span className="block text-sm font-bold truncate">{staff.name}</span>
+                        {staff.role && <span className="block mt-0.5 text-xs opacity-70 truncate">{staff.role}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                  {label('pos.shift.noStaff', 'No active staff. Add employees in Settings before opening a shift.')}
+                </div>
+              )}
             </div>
           )}
 

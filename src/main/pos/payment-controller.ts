@@ -1,5 +1,6 @@
 import { ReceiptData, PrinterType } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
+import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { productRepo } from '../database/repos/product-repo';
 import { resolveName } from '../../shared/catalog-names';
 import logger from '../logger';
@@ -45,6 +46,21 @@ type PrintReceiptOptions = {
   throwOnFailure?: boolean;
 };
 
+/**
+ * Raw outcome of a non-fiscal receipt print, reported to the host so it can
+ * resolve the configured printer name/target and persist a `print_attempts`
+ * row. The controller stays config-decoupled; the host owns persistence.
+ */
+export interface ReceiptPrintJournalInput {
+  orderId: string;
+  documentType: 'ORDER' | 'REPRINT' | 'REFUND';
+  printerType: PrinterType;
+  route: 'LOCAL' | 'SHARED_NETWORK' | null;
+  status: 'PRINTED' | 'FAILED' | 'NO_PRINTER';
+  printerId?: string | null;   // shared printerId when route = SHARED_NETWORK
+  error?: string | null;
+}
+
 export class PaymentController {
   constructor(
     private getPrinter: GetPrinter,
@@ -56,7 +72,25 @@ export class PaymentController {
     private sharedReceiptPrinter?: SharedReceiptPrinter,
     private sharedFiscalPrinter?: SharedFiscalPrinter,
     private sharedFiscalStatus?: SharedFiscalStatusProvider,
+    private recordPrintAttempt?: (input: ReceiptPrintJournalInput) => void,
   ) {}
+
+  /** Map the receipt meta.referenceType to a print_attempts document_type. */
+  private docTypeFromMeta(referenceType?: string): 'ORDER' | 'REPRINT' | 'REFUND' {
+    if (referenceType === 'POS_RECEIPT_REPRINT') return 'REPRINT';
+    if (referenceType === 'POS_REFUND_RECEIPT') return 'REFUND';
+    return 'ORDER';
+  }
+
+  /** Best-effort journal write — never let a logging failure break printing. */
+  private journalReceiptPrint(input: ReceiptPrintJournalInput): void {
+    if (!input.orderId) return;
+    try {
+      this.recordPrintAttempt?.(input);
+    } catch (err) {
+      logger.warn(`[Payment] print_attempts journal failed: ${err}`);
+    }
+  }
 
   /**
    * Parse tenders JSON from order row (if split payment).
@@ -131,15 +165,19 @@ export class PaymentController {
     // Shared (network) printer route is only valid for the RECEIPT/order copy.
     // FISCAL printing must always be local — fiscal idempotency, legal liability
     // and the elzabdr/POSNET drivers live on the POS that owns the device.
+    const orderId = meta.referenceId || '';
+    const documentType = this.docTypeFromMeta(meta.referenceType);
     const printer = this.getPrinter(printerType);
 
     if (printer && printer.isConnected()) {
       try {
         await printer.printReceipt(receiptData);
         logger.info(successMessage);
+        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'LOCAL', status: 'PRINTED' });
         return true;
       } catch (err) {
         logger.error(`${failureMessage}: ${err}`);
+        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'LOCAL', status: 'FAILED', error: this.describePrintFailure(err, failureMessage) });
         if (options.throwOnFailure) throw new Error(this.describePrintFailure(err, failureMessage));
         return false;
       }
@@ -147,18 +185,23 @@ export class PaymentController {
 
     if (printerType === PrinterType.RECEIPT) {
       const shared = await this.routeSharedReceipt(receiptData, meta, successMessage, failureMessage);
-      if (shared?.printed) return true;
+      if (shared?.printed) {
+        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'SHARED_NETWORK', status: 'PRINTED', printerId: shared.printerId });
+        return true;
+      }
       if (shared) {
         logger.warn(
           `[Payment] Shared receipt route did not print and no local receipt printer is ready: ` +
           `${shared.error || 'shared printer did not accept the job'}`,
         );
+        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'SHARED_NETWORK', status: 'FAILED', printerId: shared.printerId, error: shared.error || failureMessage });
         if (options.throwOnFailure) throw new Error(shared.error || failureMessage);
         return false;
       }
     }
 
     logger.warn(missingPrinterMessage);
+    this.journalReceiptPrint({ orderId, documentType, printerType, route: null, status: 'NO_PRINTER' });
     if (options.throwOnFailure) throw new Error(missingPrinterMessage);
     return false;
   }
@@ -284,9 +327,11 @@ export class PaymentController {
         try {
           await printer.printReceiptWithDrawer(receiptData);
           logger.info(`${successMessage}; cash drawer pulse sent`);
+          this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'LOCAL', status: 'PRINTED' });
           return { receiptPrinted: true, drawerOpened: true };
         } catch (err) {
           logger.error(`${failureMessage}: ${err}`);
+          this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'LOCAL', status: 'FAILED', error: this.describePrintFailure(err, failureMessage) });
           const drawerOpened = await this.openCashDrawer();
           return {
             receiptPrinted: false,
@@ -317,6 +362,7 @@ export class PaymentController {
           }),
       ]);
 
+      this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'LOCAL', status: receiptPrinted ? 'PRINTED' : 'FAILED' });
       return { receiptPrinted, drawerOpened };
     }
 
@@ -329,17 +375,20 @@ export class PaymentController {
     if (shared) {
       if (shared.printed) {
         const drawerOpened = shared.drawerOpenRequested ? true : await this.openCashDrawer();
+        this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'SHARED_NETWORK', status: 'PRINTED', printerId: shared.printerId });
         return { receiptPrinted: true, drawerOpened, error: undefined };
       }
       logger.warn(
         `[Payment] Shared receipt route did not print and no local receipt printer is ready: ` +
         `${shared.error || 'shared printer did not accept the job'}`,
       );
+      this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'SHARED_NETWORK', status: 'FAILED', printerId: shared.printerId, error: shared.error });
       return { receiptPrinted: false, drawerOpened: false, error: shared.error };
     }
 
     const error = '[Payment] No receipt printer connected, skipping print and drawer';
     logger.warn(error);
+    this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: null, status: 'NO_PRINTER' });
     return { receiptPrinted: false, drawerOpened: false, error };
   }
 
@@ -383,6 +432,15 @@ export class PaymentController {
       if (shared.handled) {
         if (shared.printed) {
           logger.info(`${successMessage} via shared fiscal printer${shared.printerId ? ` ${shared.printerId}` : ''}`);
+          // Mirror the confirmation into the LOCAL fiscal journal: the
+          // paragon physically printed on another POS, but history and the
+          // fiscal-visibility filter on THIS terminal read local
+          // fiscal_attempts. Best-effort — never fail a confirmed print.
+          try {
+            fiscalAttemptRepo.recordRemoteFiscalSuccess(orderId, shared.jobId, shared.printerId);
+          } catch (journalErr) {
+            logger.warn(`[Payment] Remote fiscal journal mirror failed for ${orderId}: ${journalErr}`);
+          }
           return true;
         }
         const error = shared.error || 'Remote fiscal printer did not confirm final print completion';

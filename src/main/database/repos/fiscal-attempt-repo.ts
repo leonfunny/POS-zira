@@ -80,7 +80,70 @@ function markResolved(id: string, status: FiscalAttemptStatus, errorCode?: strin
 
 export const fiscalAttemptRepo: FiscalAttemptJournal & {
   markOpenSentAsUnknownOnStartup(): number;
+  findLatestByOrder(orderId: string): FiscalAttemptRow | null;
+  getConfirmedOrderIds(orderIds: string[]): string[];
+  recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void;
 } = {
+  /**
+   * Which of these orders have a confirmed fiscal paragon in the local
+   * journal. Used by Order History to apply the fiscal-visibility filter to
+   * server-sourced rows (which don't carry the SQL-computed has_fiscal).
+   */
+  getConfirmedOrderIds(orderIds: string[]): string[] {
+    if (orderIds.length === 0) return [];
+    const placeholders = orderIds.map(() => '?').join(', ');
+    return database
+      .all<{ order_id: string }>(
+        `SELECT DISTINCT order_id FROM fiscal_attempts
+         WHERE status = 'SUCCESS_CONFIRMED' AND order_id IN (${placeholders})`,
+        orderIds,
+      )
+      .map((r) => r.order_id);
+  },
+
+  /**
+   * Record a paragon printed REMOTELY (shared FISCAL_RECEIPT job on another
+   * POS's fiscal printer) so THIS terminal's history and fiscal-visibility
+   * filter see the order as fiscalized. Without this, a kiosk/POS that
+   * routes fiscal printing to another machine has has_fiscal=0 for every
+   * order it sells. Idempotent: one confirmed row per order is enough.
+   */
+  recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void {
+    if (!orderId) return;
+    const existing = database.get<{ id: string }>(
+      `SELECT id FROM fiscal_attempts WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED' LIMIT 1`,
+      [orderId],
+    );
+    if (existing) return;
+    const id = randomUUID();
+    database.run(
+      `INSERT INTO fiscal_attempts (
+        id, order_id, payment_id, attempt_no, idempotency_key, printer_type,
+        payload_json, payload_hash, status, sent_at, resolved_at, result_json
+      ) VALUES (?, ?, NULL, ?, ?, 'REMOTE', '{}', '', 'SUCCESS_CONFIRMED', datetime('now'), datetime('now'), ?)`,
+      [
+        id,
+        orderId,
+        fiscalAttemptRepo.getNextAttemptNo(orderId, null),
+        `remote-${jobId || orderId}`,
+        serialize({ remote: true, jobId: jobId ?? null, printerId: printerId ?? null }),
+      ],
+    );
+    database.markDirty();
+  },
+
+  // Latest fiscal attempt for an order, any status — used by Order History to
+  // render the fiscal print badge (printed / failed / needs-reconcile).
+  findLatestByOrder(orderId: string): FiscalAttemptRow | null {
+    return database.get<FiscalAttemptRow>(
+      `SELECT * FROM fiscal_attempts
+       WHERE order_id = ?
+       ORDER BY attempt_no DESC
+       LIMIT 1`,
+      [orderId],
+    );
+  },
+
   findBlockingAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null {
     const payment = paymentPredicate(paymentId);
     const placeholders = BLOCKING_STATUSES.map(() => '?').join(', ');

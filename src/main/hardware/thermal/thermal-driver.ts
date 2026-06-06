@@ -601,6 +601,27 @@ export class ThermalDriver {
   }
 
   /**
+   * Print arbitrary plain lines (kitchen tickets, etc.) with the same
+   * Unicode safety as receipts: any non-ASCII content (Vietnamese dish
+   * names, Polish diacritics) renders the whole block as raster instead of
+   * emitting mangled code-page text. Short documents — full raster is fine.
+   */
+  async printPlainLines(lines: EscPosPlainLine[]): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    const hasUnicode = lines.some((line) => this.plainLineHasNonAsciiText(line));
+    const data = hasUnicode
+      ? await this.renderTextToRaster(lines)
+      : Buffer.concat([
+          this.formatter.formatPlainLinesAsText(lines, { includeInit: true }),
+          this.formatter.getReceiptTrailer(),
+        ]);
+    await this.printRaw(data);
+  }
+
+  /**
    * Print receipt
    */
   async printReceipt(data: ReceiptData): Promise<void> {

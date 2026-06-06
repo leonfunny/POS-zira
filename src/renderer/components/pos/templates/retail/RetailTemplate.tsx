@@ -1,16 +1,18 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Loader2, ScanSearch } from 'lucide-react';
+import { Loader2, Mic, ScanSearch } from 'lucide-react';
 import type { Product, Category } from '../../../../hooks/usePosDb';
 import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStore';
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
+import { formatProductLabelPriceText } from '../../../../utils/product-label';
 import { resolveName } from '../../../../../shared/catalog-names';
-import { classifyProductSale } from '../../../../../shared/product-sale-classifier';
+import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
+import { usePosVoiceSearch, type PosVoiceStatus } from '../../usePosVoiceSearch';
 import AutoCameraSearch, {
   type AutoCameraCapturedImage,
   type AutoCameraSearchStatus,
@@ -67,10 +69,12 @@ const AUTO_CAMERA_SCALE_TIMEOUT_MS = 1500;
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
 const PAY_CARD_SCAN_COMMAND = '11111111';
 const PAY_CASH_SCAN_COMMAND = '22222222';
+const VOICE_SEARCH_SCAN_COMMAND = '55555555';
 const RETAIL_SCAN_COMMANDS = [
   PRINT_LAST_CART_LABEL_COMMAND,
   PAY_CARD_SCAN_COMMAND,
   PAY_CASH_SCAN_COMMAND,
+  VOICE_SEARCH_SCAN_COMMAND,
 ];
 
 type AddProductSource = 'manual' | 'auto';
@@ -139,6 +143,25 @@ function autoCameraStatusText(
   }
 }
 
+function voiceStatusText(
+  status: PosVoiceStatus,
+  tOr: (key: string, fallback: string) => string,
+): string {
+  switch (status) {
+    case 'listening':
+      return tOr('pos.voice.listening', 'Listening');
+    case 'transcribing':
+      return tOr('pos.voice.transcribing', 'Voice search');
+    case 'error':
+      return tOr('pos.voice.error', 'Mic error');
+    case 'ready':
+      return tOr('pos.voice.ready', 'Mic ready');
+    case 'idle':
+    default:
+      return tOr('pos.voice.idle', 'Mic');
+  }
+}
+
 function labelCopiesForCartItem(item: CartItem): number {
   if (normalizeSellBy(item.sellBy) === 'WEIGHT') return 1;
   return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
@@ -163,23 +186,37 @@ async function matchAutoCameraImage(image: AutoCameraCapturedImage, language: st
   });
 }
 
+function getVisibleSearchProducts(searchResults: Product[]): Product[] {
+  const variants = searchResults.filter((product) => !product._isDraft);
+  const variantBarcodes = new Set(
+    variants.map((product) => product.barcode).filter((barcode): barcode is string => !!barcode),
+  );
+  const drafts = searchResults.filter(
+    (product) => product._isDraft && (!product.barcode || !variantBarcodes.has(product.barcode)),
+  );
+  return [...variants, ...drafts];
+}
+
 interface RetailTemplateProps {
   state: PosState;
   dispatch: (action: PosAction) => void;
   t: (key: string) => string;
+  language?: string;
   session: PosState['session'];
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
   onCreateProduct?: () => void;
   onLastLabelVariantChange?: (variantId: string) => void;
   onPrintLastCartLabelCommand?: () => void | Promise<void>;
+  onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
-  const lang = (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
+  const allowOversell = config?.allowOversell === true;
+  const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -315,28 +352,29 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
   }, [allProducts, activeCategoryId, activeUnitFilter]);
 
   const visibleSearchProducts = useMemo(() => {
-    const variants = searchResults.filter((product) => !product._isDraft);
-    const variantBarcodes = new Set(
-      variants.map((product) => product.barcode).filter((barcode): barcode is string => !!barcode),
-    );
-    const drafts = searchResults.filter(
-      (product) => product._isDraft && (!product.barcode || !variantBarcodes.has(product.barcode)),
-    );
-    return [...variants, ...drafts];
+    return getVisibleSearchProducts(searchResults);
   }, [searchResults]);
 
   const visibleProducts = searchQuery ? visibleSearchProducts : visibleCategoryProducts;
+  const visibleSearchProductsRef = useRef<Product[]>(visibleSearchProducts);
+  const voiceChoicePendingRef = useRef(false);
+
+  useEffect(() => {
+    visibleSearchProductsRef.current = visibleSearchProducts;
+  }, [visibleSearchProducts]);
 
   useEffect(() => {
     if (searchQuery && activeCategoryId !== null) setActiveCategoryId(null);
   }, [searchQuery, activeCategoryId]);
 
-  const loadSearchResults = useCallback(async (): Promise<Product[]> => {
+  const loadSearchResults = useCallback(async (query = searchQuery): Promise<Product[]> => {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return [];
     // Retail till searches by name, SKU, and barcode — cashier may either
     // scan/key a code or type a partial product name (grocery items where
     // EAN is missing). Backed by productRepo.search() which normalises
     // Polish + Vietnamese diacritics.
-    const variants: Product[] = await window.electronAPI.pos.products.search(searchQuery);
+    const variants: Product[] = await window.electronAPI.pos.products.search(trimmedQuery);
 
     // Also surface master-catalog drafts that match the same code so an
     // unimported item can be added to the cart in one tap. Clicking a
@@ -344,7 +382,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     // the server, then adds to cart). Drafts are appended after real
     // variants so the cashier sees stocked items first.
     const drafts: any[] = await window.electronAPI.pos.draftProducts
-      .searchByCode(searchQuery)
+      .searchByCode(trimmedQuery)
       .catch(() => []);
     const draftItems: Product[] = drafts
       .map((d) => ({
@@ -513,7 +551,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
       return;
     }
     if ((Number(product.retail_price) || 0) <= 0) return;
-    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+    if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
     const saleClass = classifyProductSale(product);
     if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
     const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
@@ -540,7 +578,12 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
         readWeight: effectiveReadWeight,
       });
       if (!result.ok) {
-        showToolbarError(formatRetailSaleError(result.error, tOr));
+        const message = formatRetailSaleError(result.error, tOr);
+        if (result.saleClass.requiresScale && onManualWeightRequired) {
+          onManualWeightRequired(product, result.saleClass, message);
+        } else {
+          showToolbarError(message);
+        }
         return;
       }
       dispatch({ type: 'cart/addItem', payload: result.item });
@@ -551,7 +594,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
@@ -561,10 +604,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
 
     try {
       const displayName = resolveName(product, lang) || product.name;
-      const priceGrosze = Number(product.retail_price) || 0;
-      const priceText = priceGrosze > 0
-        ? `${(priceGrosze / 100).toFixed(2)} ${tOr('pos.currency', 'zl')}`
-        : undefined;
+      const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
       const result = await window.electronAPI.printLabel(barcode, displayName, {
         priceText,
         sku: product.sku?.trim() || undefined,
@@ -629,9 +669,74 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     setShowPayment(true);
   }, [cart.items.length, cart.total, interruptAutoCamera, shiftBlockedMessage, shiftPaymentOpen, showToolbarError, tOr]);
 
+  const canRunVoiceCommand = useCallback(() => {
+    if (showPayment || showHistory) return false;
+    if (document.body.dataset.posAddProductOpen === 'true') return false;
+    if (document.body.dataset.posPaymentOpen === 'true') return false;
+    return true;
+  }, [showHistory, showPayment]);
+
+  const handleVoiceSearchText = useCallback(async (rawText: string) => {
+    const text = rawText.trim();
+    if (!text) {
+      showToolbarError(tOr('pos.voice.noSpeech', 'No voice detected'));
+      return;
+    }
+
+    interruptAutoCamera();
+    voiceChoicePendingRef.current = false;
+    setSearchQuery(text);
+    setActiveCategoryId(null);
+    const results = await loadSearchResults(text);
+    setSearchResults(results);
+    const visibleMatches = getVisibleSearchProducts(results);
+
+    if (visibleMatches.length === 1) {
+      await handleAddProduct(visibleMatches[0]);
+      return;
+    }
+
+    if (visibleMatches.length > 1) {
+      voiceChoicePendingRef.current = true;
+      showToolbarError(tOr('pos.voice.chooseFirst', 'Scan 55555555 or press Down to add first match'));
+      return;
+    }
+
+    showToolbarError(tOr('pos.voice.noMatch', 'No matching product'));
+  }, [handleAddProduct, interruptAutoCamera, loadSearchResults, showToolbarError, tOr]);
+
+  const {
+    status: voiceStatus,
+    startCommandCapture: startVoiceCommandCapture,
+  } = usePosVoiceSearch({
+    enabled: !showPayment && !showHistory,
+    canListen: canRunVoiceCommand,
+    onCommandText: handleVoiceSearchText,
+    onError: showToolbarError,
+  });
+
+  const handleVoiceSearchCommand = useCallback(async () => {
+    interruptAutoCamera();
+    if (!canRunVoiceCommand()) return;
+    if (voiceChoicePendingRef.current) {
+      const product = visibleSearchProductsRef.current[0];
+      if (product) {
+        voiceChoicePendingRef.current = false;
+        await handleAddProduct(product);
+        return;
+      }
+      voiceChoicePendingRef.current = false;
+    }
+    await startVoiceCommandCapture();
+  }, [canRunVoiceCommand, handleAddProduct, interruptAutoCamera, startVoiceCommandCapture]);
+
   const handleBarcodeScanned = useCallback(async (barcode: string) => {
     interruptAutoCamera();
     const code = barcode.trim();
+    if (code === VOICE_SEARCH_SCAN_COMMAND) {
+      await handleVoiceSearchCommand();
+      return;
+    }
     if (code === PRINT_LAST_CART_LABEL_COMMAND) {
       if (onPrintLastCartLabelCommand) {
         await onPrintLastCartLabelCommand();
@@ -657,7 +762,24 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     if (onUnknownBarcodeScanned) {
       await onUnknownBarcodeScanned(code);
     }
-  }, [handleAddProduct, handleOpenPaymentScanCommand, handlePrintLastScannedCartItemCode, interruptAutoCamera, onPrintLastCartLabelCommand, onUnknownBarcodeScanned]);
+  }, [handleAddProduct, handleOpenPaymentScanCommand, handlePrintLastScannedCartItemCode, handleVoiceSearchCommand, interruptAutoCamera, onPrintLastCartLabelCommand, onUnknownBarcodeScanned]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowDown') return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      if (target instanceof HTMLInputElement && target.id !== 'pos-product-search') return;
+      if (!canRunVoiceCommand()) return;
+
+      event.preventDefault();
+      void handleVoiceSearchCommand();
+    };
+
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [canRunVoiceCommand, handleVoiceSearchCommand]);
 
   const handleAutoCameraCapture = useCallback(async (image: AutoCameraCapturedImage) => {
     const runId = autoCameraRunIdRef.current;
@@ -894,6 +1016,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
     setAutoCameraEnabled(false);
     setAutoCameraStatus('off');
     setAutoCameraResult(null);
+    voiceChoicePendingRef.current = false;
   }, [homeResetKey]);
 
   return (
@@ -918,6 +1041,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                 value={searchQuery}
                 onChange={(value) => {
                   interruptAutoCamera();
+                  voiceChoicePendingRef.current = false;
                   setSearchQuery(value);
                 }}
                 onBarcodeScanned={handleBarcodeScanned}
@@ -958,6 +1082,25 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
                   title={autoCameraResult || autoCameraStatusText(autoCameraStatus, tOr)}
                 >
                   {autoCameraResult || autoCameraStatusText(autoCameraStatus, tOr)}
+                </span>
+              )}
+
+              {voiceStatus !== 'idle' && (
+                <span
+                  role="status"
+                  className={`shrink-0 max-w-32 inline-flex items-center gap-1 truncate rounded-md border px-2 py-1 text-[11px] font-bold ${
+                    voiceStatus === 'error'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-sky-200 bg-sky-50 text-sky-700'
+                  }`}
+                  title={voiceStatusText(voiceStatus, tOr)}
+                >
+                  {voiceStatus === 'transcribing' ? (
+                    <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Mic size={12} aria-hidden="true" />
+                  )}
+                  <span className="truncate">{voiceStatusText(voiceStatus, tOr)}</span>
                 </span>
               )}
 
@@ -1185,6 +1328,7 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
               onAddProduct={handleAddProduct}
               onLongPressProduct={handlePrintProductCode}
               t={t}
+              allowOversell={allowOversell}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
             />
@@ -1232,8 +1376,8 @@ export default function RetailTemplate({ state, dispatch, t, session, onUnknownB
             shiftBlockReason={shiftBlockedMessage}
             lang={lang}
             heldCartsCount={heldCarts.length}
-            onHold={cart.items.length > 0 ? handleHoldCart : undefined}
             onPrintItemLabel={handlePrintCartItemCode}
+            showOrderActionChips
           />
         </div>
       </div>

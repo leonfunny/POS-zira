@@ -1480,6 +1480,10 @@ export class ApiClient {
           sort_order: cat.displayOrder ?? 0,
           updated_at: cat.updatedAt ?? null,
           name_translations: encodeTranslations(cat.nameTranslations ?? cat.name_translations),
+          // null (not 0) when absent so the local upsert preserves the known flag.
+          kitchen_print: cat.kitchenPrint === undefined && cat.kitchen_print === undefined
+            ? null
+            : ((cat.kitchenPrint ?? cat.kitchen_print) ? 1 : 0),
         });
       }
     }
@@ -1805,7 +1809,6 @@ export class ApiClient {
   ): Promise<PosScheduleDayResponse | null> {
     return this.posScheduleRequest<PosScheduleDayResponse>(token, 'GET', '/today', {
       date,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1815,7 +1818,6 @@ export class ApiClient {
   ): Promise<PosScheduleDayResponse | null> {
     return this.posScheduleAgentRequest<PosScheduleDayResponse>(apiKey, '/today', {
       date,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1827,7 +1829,6 @@ export class ApiClient {
     return this.posScheduleRequest<PosScheduleWeekResponse>(token, 'GET', '/week', {
       from,
       days,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1839,7 +1840,6 @@ export class ApiClient {
     return this.posScheduleAgentRequest<PosScheduleWeekResponse>(apiKey, '/week', {
       from,
       days,
-      timezone: 'Europe/Prague',
     });
   }
 
@@ -1853,7 +1853,7 @@ export class ApiClient {
       token,
       'PATCH',
       `/staff/${encodeURIComponent(staffProfileId)}/status`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       { status, idempotency_key: idempotencyKey },
     );
   }
@@ -1873,7 +1873,7 @@ export class ApiClient {
       token,
       'POST',
       `/checkins/${encodeURIComponent(checkinLogId)}/assign-next`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       {
         booking_id: payload.bookingId || undefined,
         customer_name: payload.customerName || undefined,
@@ -1900,7 +1900,7 @@ export class ApiClient {
       token,
       'POST',
       `/checkins/${encodeURIComponent(checkinLogId)}/request-staff`,
-      { timezone: 'Europe/Prague' },
+      undefined,
       {
         staff_profile_id: payload.staffProfileId,
         booking_id: payload.bookingId || undefined,
