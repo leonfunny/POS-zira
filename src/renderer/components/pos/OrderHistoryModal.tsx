@@ -300,6 +300,18 @@ function isSplit(order: OrderRow): boolean {
   }
 }
 
+function normalizePaymentMethod(method: string | null | undefined): string | null {
+  if (!method) return null;
+  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
+}
+
+function orderMatchesPaymentFilter(order: OrderRow, paymentMethod: string): boolean {
+  const split = isSplit(order);
+  if (paymentMethod === 'SPLIT') return split;
+  if (paymentMethod === 'INVOICE') return Boolean(order.customer_nip);
+  return !split && normalizePaymentMethod(order.payment_method) === normalizePaymentMethod(paymentMethod);
+}
+
 function StatusBadge({ order, t }: { order: OrderRow; t: (key: string) => string }) {
   const refundStatus = getRefundStatus(order);
 
@@ -1262,6 +1274,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [mirrorError, setMirrorError] = useState<string | null>(null);
   const [mirrorSplit, setMirrorSplit] = useState(false);
   const detailIdRef = useRef<string | undefined>(undefined);
+  const loadSeqRef = useRef(0);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
@@ -1275,16 +1288,26 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const pageTotal = useMemo(() => orders.reduce((sum, o) => sum + o.total, 0), [orders]);
 
   const loadOrders = useCallback(async () => {
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
     setLoading(true);
     setLoadError(null);
 
     const { from, to } = periodToDateRange(selectedPeriod);
+    const serverFilters: { paymentMethod?: string; staffName?: string; requiresInvoice?: boolean } = {};
+    if (filterMethod === 'INVOICE') {
+      serverFilters.requiresInvoice = true;
+    } else if (filterMethod) {
+      serverFilters.paymentMethod = filterMethod;
+    }
+    if (filterStaff) serverFilters.staffName = filterStaff;
 
     const [localResult, serverResult] = await Promise.allSettled([
       window.electronAPI.pos.orders.getHistory({ from, to, page, limit: PAGE_SIZE,
         paymentMethod: filterMethod || undefined, staffName: filterStaff || undefined }),
-      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE }),
+      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE, ...serverFilters }),
     ]);
+    if (loadSeq !== loadSeqRef.current) return;
 
     let merged: OrderRow[] = [];
     let total = 0;
@@ -1338,11 +1361,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       }
       merged = applyFiscalVisibility(merged, true, confirmedFiscalIds);
     }
-    if (filterMethod === 'SPLIT') {
-      merged = merged.filter(isSplit);
-    } else if (filterMethod) {
-      merged = merged.filter((o) => o.payment_method === filterMethod && !isSplit(o));
-    }
+    if (filterMethod) merged = merged.filter((o) => orderMatchesPaymentFilter(o, filterMethod));
     if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
     merged.sort(compareOrdersByDisplayTimeDesc);
 
@@ -1604,6 +1623,21 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setFilterMethod('');
     setFilterStaff('');
     setPage(1);
+  };
+
+  const changePeriod = (nextPeriod: 'today' | 'week' | 'month' | 'all') => {
+    setPage(1);
+    setSelectedPeriod(nextPeriod);
+  };
+
+  const changePaymentFilter = (nextMethod: string) => {
+    setPage(1);
+    setFilterMethod(nextMethod);
+  };
+
+  const changeStaffFilter = (nextStaff: string) => {
+    setPage(1);
+    setFilterStaff(nextStaff);
   };
 
   const ensureMirrored = async (order: OrderRow): Promise<boolean> => {
@@ -2158,7 +2192,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Period
             <select
               value={selectedPeriod}
-              onChange={(e) => setSelectedPeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
+              onChange={(e) => changePeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >
               <option value="today">Today</option>
@@ -2172,7 +2206,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Payment
             <select
               value={filterMethod}
-              onChange={(e) => setFilterMethod(e.target.value)}
+              onChange={(e) => changePaymentFilter(e.target.value)}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >
               <option value="">{tOr(t, 'pos.history.allMethods', 'All Methods')}</option>
@@ -2186,7 +2220,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             Staff
             <select
               value={filterStaff}
-              onChange={(e) => setFilterStaff(e.target.value)}
+              onChange={(e) => changeStaffFilter(e.target.value)}
               disabled={staffNames.length === 0}
               className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             >

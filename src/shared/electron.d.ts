@@ -818,6 +818,7 @@ interface ElectronAPI {
     };
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
+      lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
@@ -839,6 +840,15 @@ interface ElectronAPI {
         ok: boolean;
         outcome?: string;
         variant?: any;
+        syncPending?: boolean;
+        error?: string;
+      }>;
+      importExternal: (payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) => Promise<{
+        ok: boolean;
+        outcome?: string;
+        product?: any;
+        variant?: any;
+        source?: string;
         syncPending?: boolean;
         error?: string;
       }>;

@@ -64,6 +64,7 @@ function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
     vat_rate: Number(draft.vat_rate) || 23,
     image_url: draft.image_url,
     status: draft.status,
+    source: 'draft',
   };
 }
 
@@ -73,16 +74,18 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
   const source = draft ?? existing;
   if (!source) return null;
   const image = Array.isArray(source.images) ? source.images[0] : source.imageUrl ?? source.image_url;
+  const previewSource = response?.source ?? source.source;
   return {
     id: source.draftId ?? source.draft_id ?? source.id ?? source.variantId ?? source.variant_id,
     name: source.namePreferred ?? source.name ?? source.productName ?? source.product_name ?? source.title ?? fallbackEan,
     barcode: source.ean ?? source.barcode ?? fallbackEan,
-    retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price),
+    retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price ?? source.retailPriceGrosze),
     purchase_price: moneyToGrosze(source.suggestedPurchasePrice ?? source.purchasePrice ?? source.purchase_price),
     stock_qty: Number(source.stockQty ?? source.stock_qty ?? source.currentStock ?? 0) || 0,
     vat_rate: Number(source.taxRate ?? source.vat_rate ?? source.vatRate ?? 23) || 23,
     image_url: image ?? null,
     status: response?.mode ?? source.status,
+    source: previewSource,
   };
 }
 
@@ -431,6 +434,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       }
 
       if (!preview) {
+        const external = await window.electronAPI.pos.masterCatalog.lookupExternalByEan(code);
+        if (external?.ok) preview = draftPreviewFromLookup(external, code);
+      }
+
+      if (!preview) {
         setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
         showScanToast(`Barcode not found: ${code}`, 'err');
         return;
@@ -531,11 +539,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
-      // Local-first import: copy the draft into product_variants right here
-      // so the cashier can ring it up without waiting on the master-catalog
-      // server. A background worker (and any natural delta sync that brings
-      // the same product down later) reconciles the row with the server.
-      const result = await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
+      const isExternal = scanImport.preview?.source === 'open_food_facts';
+      // Drafts keep their existing local-first path. External EAN hits go
+      // through backend quick-add so the new product exists online too.
+      const result = isExternal
+        ? await window.electronAPI.pos.masterCatalog.importExternal({ ean, retailPriceGrosze, quantity: 1 })
+        : await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
@@ -576,7 +585,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [allowOversell, scanImport.ean, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
+  }, [allowOversell, scanImport.ean, scanImport.preview?.source, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
 
   const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
     const code = ean.trim();

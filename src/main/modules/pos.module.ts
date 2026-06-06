@@ -32,6 +32,7 @@ import {
 } from '../pos/refund-backend-payload';
 import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
+import { lookupOpenFoodFactsProduct, normalizeEan } from '../pos/external-product-lookup';
 import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
@@ -1196,6 +1197,128 @@ export class PosModule extends BaseModule {
         return { ok: false, error: err?.message ?? 'lookup-failed', draft: null };
       }
     });
+
+    ipcMain.handle('pos:master-catalog:lookup-external-by-ean', async (_e, ean: string) => {
+      try {
+        const product = await lookupOpenFoodFactsProduct(ean);
+        return { ok: true, product };
+      } catch (err: any) {
+        logger.warn(`[PosModule] external EAN lookup failed ean=${ean}: ${err?.message ?? err}`);
+        return { ok: false, error: err?.message ?? 'external-lookup-failed', product: null };
+      }
+    });
+
+    ipcMain.handle(
+      'pos:master-catalog:import-external',
+      async (_e, payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) => {
+        const ean = normalizeEan(payload?.ean);
+        if (!ean) return { ok: false, error: 'invalid-ean' };
+
+        const requestedRetailPrice = Number(payload?.retailPriceGrosze);
+        const retailPriceGrosze = Number.isFinite(requestedRetailPrice)
+          ? Math.round(requestedRetailPrice)
+          : 0;
+        if (!(retailPriceGrosze >= 1)) {
+          return { ok: false, error: 'missing-price' };
+        }
+
+        const requestedQuantity = Number(payload?.quantity);
+        const quantity = Number.isFinite(requestedQuantity) && requestedQuantity > 0
+          ? requestedQuantity
+          : 1;
+
+        const existing = productRepo.getByBarcode(ean);
+        if (existing) {
+          return { ok: true, outcome: 'EXISTING_VARIANT', variant: existing };
+        }
+
+        const token = getSecureAuthToken();
+        if (!token) return { ok: false, error: 'no-auth' };
+
+        try {
+          const externalProduct = await lookupOpenFoodFactsProduct(ean);
+          if (!externalProduct) return { ok: false, error: 'external-product-not-found' };
+
+          const createPayload: Record<string, unknown> = {
+            name: externalProduct.name,
+            ean: externalProduct.ean,
+          };
+          if (externalProduct.imageUrl) createPayload.imageUrl = externalProduct.imageUrl;
+
+          const prepared = await apiClient.quickAddCreate(token, createPayload, `external-ean-prepare-${externalProduct.ean}`);
+
+          const productId = prepared.product?.id ?? prepared.productId ?? prepared.product_id;
+          const variantId =
+            prepared.variant?.id
+            ?? prepared.variantId
+            ?? prepared.variant_id
+            ?? prepared.product?.variant?.id;
+          if (!productId || !variantId) {
+            return { ok: false, error: 'quick-add-create-returned-no-product-ids' };
+          }
+
+          const finalized = await apiClient.quickAddCreate(token, {
+            productId,
+            variantId,
+            name: externalProduct.name,
+            retailPrice: retailPriceGrosze / 100,
+            quantity,
+          }, `external-ean-finalize-${externalProduct.ean}-${retailPriceGrosze}`);
+
+          const productForLocal = {
+            ...(prepared.product ?? {}),
+            ...(finalized.product ?? {}),
+            id: finalized.product?.id ?? prepared.product?.id ?? productId,
+            name: externalProduct.name,
+            ean: externalProduct.ean,
+            barcode: externalProduct.ean,
+            imageUrl: finalized.product?.imageUrl ?? prepared.product?.imageUrl ?? externalProduct.imageUrl,
+            image_url: finalized.product?.image_url ?? prepared.product?.image_url ?? externalProduct.imageUrl,
+          };
+          const variantForLocal = {
+            ...(prepared.variant ?? {}),
+            ...(finalized.variant ?? {}),
+            id: finalized.variant?.id ?? prepared.variant?.id ?? variantId,
+            name: externalProduct.name,
+            barcode: finalized.variant?.barcode ?? prepared.variant?.barcode ?? externalProduct.ean,
+            imageUrl: finalized.variant?.imageUrl ?? prepared.variant?.imageUrl ?? externalProduct.imageUrl,
+            image_url: finalized.variant?.image_url ?? prepared.variant?.image_url ?? externalProduct.imageUrl,
+          };
+          const localVariant = toQuickAddVariantRow(productForLocal, variantForLocal, {
+            retailPriceGrosze,
+            quantity,
+          });
+
+          if (localVariant) {
+            productRepo.upsertMany([localVariant]);
+            database.markDirty();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+
+          let syncPending = false;
+          try {
+            const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+            await syncMod?.deltaSync?.();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          } catch (syncErr: any) {
+            syncPending = true;
+            logger.debug(`[PosModule] post-external-import product sync skipped: ${syncErr?.message ?? syncErr}`);
+          }
+
+          return {
+            ok: true,
+            outcome: 'EXTERNAL_IMPORT',
+            product: finalized.product ?? prepared.product ?? null,
+            variant: localVariant ?? finalized.variant ?? prepared.variant ?? null,
+            source: externalProduct.source,
+            syncPending,
+          };
+        } catch (err: any) {
+          logger.error(`[PosModule] external EAN import failed ean=${ean}: ${err?.message ?? err}`);
+          return { ok: false, error: err?.message ?? 'external-import-failed' };
+        }
+      },
+    );
     ipcMain.handle(
       'pos:master-catalog:scan-create',
       async (_e, payload: {

@@ -751,10 +751,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
+      lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),
       scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
         importDraft: (payload: { ean: string; retailPriceGrosze?: number }) =>
           ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
+        importExternal: (payload: { ean: string; retailPriceGrosze?: number; quantity?: number }) =>
+          ipcRenderer.invoke('pos:master-catalog:import-external', payload),
     },
     quickAdd: {
       prepare: (payload: { images: Array<{ dataUrl: string; mimeType?: string }>; language?: string; idempotencyKey?: string }) =>
