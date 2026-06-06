@@ -43,26 +43,91 @@ jobs:
       - name: Upload to R2
         if: startsWith(github.ref, 'refs/tags/')
         env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
           pip install boto3
-          python -c "
+          @'
           import boto3
-          import os
           import glob
+          import os
+          import pathlib
+          import re
+          import sys
 
-          s3 = boto3.client('s3',
-            endpoint_url=os.environ['R2_ENDPOINT'],
-            aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],
-            aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY']
+          version = os.environ.get('GITHUB_REF_NAME', '').lstrip('v') or 'unknown'
+          account_id = os.environ.get('R2_ACCOUNT_ID', '').strip()
+          endpoint = os.environ.get('R2_ENDPOINT', '').strip()
+          if not endpoint and account_id:
+              endpoint = f'https://{account_id}.r2.cloudflarestorage.com'
+
+          access_key = os.environ.get('R2_ACCESS_KEY_ID', '').strip()
+          secret_key = os.environ.get('R2_SECRET_ACCESS_KEY', '').strip()
+          bucket = os.environ.get('R2_BUCKET_NAME', '').strip() or 'zira'
+          public_url = (os.environ.get('R2_PUBLIC_URL', '').strip() or 'https://img.zira.pl').rstrip('/')
+
+          missing = []
+          if not endpoint:
+              missing.append('R2_ENDPOINT or R2_ACCOUNT_ID')
+          if not access_key:
+              missing.append('R2_ACCESS_KEY_ID')
+          if not secret_key:
+              missing.append('R2_SECRET_ACCESS_KEY')
+          if missing:
+              raise SystemExit('Missing R2 secrets: ' + ', '.join(missing))
+
+          installers = [
+              pathlib.Path(path)
+              for path in glob.glob('release/*.exe')
+              if 'setup' in pathlib.Path(path).name.lower()
+          ] or [pathlib.Path(path) for path in glob.glob('release/*.exe')]
+          if not installers:
+              raise SystemExit('No installer .exe found in release/')
+
+          installers.sort(
+              key=lambda path: (
+                  version in path.name,
+                  path.stat().st_mtime,
+              ),
+              reverse=True,
+          )
+          installer = installers[0]
+          latest_filename = 'Zira_AI_Setup.exe'
+          versioned_filename = f'Zira_AI_Setup_{version}.exe'
+
+          s3 = boto3.client(
+              's3',
+              endpoint_url=endpoint,
+              aws_access_key_id=access_key,
+              aws_secret_access_key=secret_key,
           )
 
-          for exe in glob.glob('release/*.exe'):
-            filename = os.path.basename(exe)
-            print(f'Uploading {filename}...')
-            s3.upload_file(exe, 'zira', f'downloads/{filename}',
-              ExtraArgs={'ContentType': 'application/octet-stream'})
-            print(f'Done: https://img.zira.pl/downloads/{filename}')
-          "
+          def upload_file(local_path, key, content_type, cache_control, filename=None):
+              extra = {
+                  'ContentType': content_type,
+                  'CacheControl': cache_control,
+              }
+              if filename:
+                  extra['ContentDisposition'] = f'attachment; filename=\"{filename}\"'
+              print(f'Uploading {local_path} -> s3://{bucket}/{key}')
+              s3.upload_file(str(local_path), bucket, key, ExtraArgs=extra)
+              print(f'Done: {public_url}/{key}')
+
+          upload_file(installer, f'downloads/{latest_filename}', 'application/octet-stream', 'public, max-age=3600', latest_filename)
+          upload_file(installer, f'downloads/{versioned_filename}', 'application/octet-stream', 'public, max-age=31536000', versioned_filename)
+
+          latest_yml = pathlib.Path('release/latest.yml')
+          if latest_yml.exists():
+              content = latest_yml.read_text(encoding='utf-8')
+              content = re.sub(r'url: .+\.exe', f'url: {versioned_filename}', content)
+              content = re.sub(r'path: .+\.exe', f'path: {versioned_filename}', content)
+              tmp = pathlib.Path('release/latest-r2.yml')
+              tmp.write_text(content, encoding='utf-8')
+              upload_file(tmp, 'downloads/latest.yml', 'text/yaml', 'public, max-age=300')
+          else:
+              print('WARNING: release/latest.yml not found; auto-update manifest was not uploaded', file=sys.stderr)
+          '@ | python -
