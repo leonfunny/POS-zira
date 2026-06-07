@@ -203,11 +203,27 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
   });
   const vatRate = toVatRate(item.taxRate, 23);
   const netPricedServerOrder = serverOrderLooksNetPriced(serverOrder);
-  const rawUnitPrice = toGrosze(item.unitPrice);
-  const rawTotal = item.totalPrice == null
-    ? calculateLineTotalGrosze(rawUnitPrice, quantity, sellBy)
-    : toGrosze(item.totalPrice);
-  const price = netPricedServerOrder ? grossFromNet(rawUnitPrice, vatRate) : rawUnitPrice;
+  const explicitGrossUnitPrice = toOptionalGrosze(item.grossUnitPrice);
+  const explicitGrossTotal = toOptionalGrosze(item.grossTotalPrice);
+  let rawUnitPrice: number | null = null;
+  let price: number;
+  if (explicitGrossUnitPrice !== null) {
+    price = explicitGrossUnitPrice;
+  } else {
+    rawUnitPrice = toGrosze(item.unitPrice);
+    price = netPricedServerOrder ? grossFromNet(rawUnitPrice, vatRate) : rawUnitPrice;
+  }
+
+  let total: number;
+  if (explicitGrossTotal !== null) {
+    total = explicitGrossTotal;
+  } else {
+    if (rawUnitPrice === null) rawUnitPrice = toGrosze(item.unitPrice);
+    const rawTotal = item.totalPrice == null
+      ? calculateLineTotalGrosze(rawUnitPrice, quantity, sellBy)
+      : toGrosze(item.totalPrice);
+    total = netPricedServerOrder ? grossFromNet(rawTotal, vatRate) : rawTotal;
+  }
   return {
     id: item.id ?? `${orderId}-${item.variantId ?? String(Math.random()).slice(2, 10)}`,
     order_id: orderId,
@@ -219,9 +235,7 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
     sale_quantity: quantity,
     sale_unit: saleUnit,
     sell_by: sellBy,
-    total: netPricedServerOrder
-      ? grossFromNet(rawTotal, vatRate)
-      : rawTotal,
+    total,
     vat_rate: vatRate,
   };
 }
