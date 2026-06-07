@@ -2521,7 +2521,7 @@ export class PosModule extends BaseModule {
         const orders = data.orders.map((s: any) => {
           const adapted = adaptServerOrder(s);
           if (Array.isArray(s.items)) {
-            itemsMap[adapted.id] = s.items.map((item: any) => adaptServerOrderItem(item, adapted.id));
+            itemsMap[adapted.id] = s.items.map((item: any) => adaptServerOrderItem(item, adapted.id, s));
           }
           return adapted;
         });
@@ -2561,7 +2561,7 @@ export class PosModule extends BaseModule {
         }
 
         const adapted = adaptServerOrder(detail);
-        const items = adaptedItems.map((i: any) => adaptServerOrderItem(i, adapted.id));
+        const items = adaptedItems.map((i: any) => adaptServerOrderItem(i, adapted.id, detail));
 
         const result = orderRepo.upsertFromServer(adapted, items);
         const wasSplit = detail.paymentMethod === 'SPLIT';

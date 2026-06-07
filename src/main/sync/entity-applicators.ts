@@ -193,7 +193,7 @@ function applyOrder(entry: SyncLogEntry): boolean {
     try {
       const adapted = adaptServerOrder(p);
       const adaptedItems = items.map((it: any) =>
-        adaptServerOrderItem(it, adapted.id),
+        adaptServerOrderItem(it, adapted.id, p),
       );
       orderRepo.upsertFromServer(adapted, adaptedItems);
       logger.info(

@@ -37,6 +37,20 @@ function toOptionalGrosze(value: unknown): number | null {
   return Math.round(n * 100);
 }
 
+function grossFromNet(netGrosze: number, vatRate: number): number {
+  if (netGrosze <= 0 || vatRate <= 0) return netGrosze;
+  return Math.round(netGrosze * (100 + vatRate) / 100);
+}
+
+function serverOrderLooksNetPriced(s: any): boolean {
+  const subtotal = toGrosze(s?.subtotal);
+  const tax = toGrosze(s?.taxAmount);
+  const discount = toGrosze(s?.discountAmount);
+  const total = toGrosze(s?.total);
+  if (subtotal <= 0 || tax <= 0 || total <= 0) return false;
+  return Math.abs((subtotal + tax - discount) - total) <= 1;
+}
+
 function resolveServerPaymentAmount(args: {
   paymentMethod: string | null;
   total: number;
@@ -115,10 +129,12 @@ export function adaptServerOrder(s: any): any {
   }
 
   const total = toGrosze(s.total);
+  const discount = toGrosze(s.discountAmount);
   const paidAmount = toGrosze(s.paidAmount);
   const changeAmount = toGrosze(s.changeAmount);
   const paymentMethod = s.paymentMethod ?? null;
   const cashReceived = toOptionalGrosze(s.cashReceived ?? s.cash_received);
+  const subtotal = serverOrderLooksNetPriced(s) ? total + discount : toGrosze(s.subtotal);
   const paymentAmount = resolveServerPaymentAmount({
     paymentMethod,
     total,
@@ -142,8 +158,8 @@ export function adaptServerOrder(s: any): any {
       }
       return s.status === 'DELIVERED' ? 'COMPLETED' : (s.status ?? 'COMPLETED');
     })(),
-    subtotal: toGrosze(s.subtotal),
-    discount: toGrosze(s.discountAmount),
+    subtotal,
+    discount,
     tax: toGrosze(s.taxAmount),
     total,
     payment_method: paymentMethod,
@@ -172,7 +188,7 @@ export function adaptServerOrder(s: any): any {
   };
 }
 
-export function adaptServerOrderItem(item: any, orderId: string): any {
+export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: any): any {
   const sellBy = normalizeSellBy(item.sellBy ?? item.sell_by);
   const rawQuantity = sellBy === 'WEIGHT'
     ? item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1
@@ -185,7 +201,13 @@ export function adaptServerOrderItem(item: any, orderId: string): any {
     saleUnit: item.saleUnit ?? item.sale_unit ?? item.unit,
     sellBy,
   });
-  const price = toGrosze(item.unitPrice);
+  const vatRate = toVatRate(item.taxRate, 23);
+  const netPricedServerOrder = serverOrderLooksNetPriced(serverOrder);
+  const rawUnitPrice = toGrosze(item.unitPrice);
+  const rawTotal = item.totalPrice == null
+    ? calculateLineTotalGrosze(rawUnitPrice, quantity, sellBy)
+    : toGrosze(item.totalPrice);
+  const price = netPricedServerOrder ? grossFromNet(rawUnitPrice, vatRate) : rawUnitPrice;
   return {
     id: item.id ?? `${orderId}-${item.variantId ?? String(Math.random()).slice(2, 10)}`,
     order_id: orderId,
@@ -197,7 +219,9 @@ export function adaptServerOrderItem(item: any, orderId: string): any {
     sale_quantity: quantity,
     sale_unit: saleUnit,
     sell_by: sellBy,
-    total: item.totalPrice == null ? calculateLineTotalGrosze(price, quantity, sellBy) : toGrosze(item.totalPrice),
-    vat_rate: toVatRate(item.taxRate, 23),
+    total: netPricedServerOrder
+      ? grossFromNet(rawTotal, vatRate)
+      : rawTotal,
+    vat_rate: vatRate,
   };
 }

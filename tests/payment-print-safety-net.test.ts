@@ -267,6 +267,43 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     );
   });
 
+  it('grosses legacy mirrored net-priced order rows before fiscal printing', async () => {
+    const fiscalPrinter = makeFakePrinter({});
+    const ctl = buildController(fiscalPrinter);
+    orderRepoGetById.mockReturnValue({
+      ...sampleOrder,
+      subtotal: 571,
+      tax: 29,
+      discount: 0,
+      total: 600,
+      payment_amount: 600,
+    });
+    orderRepoGetItemsByOrderId.mockReturnValue([
+      {
+        name: 'Sữa đậu nành bán theo cốc',
+        quantity: 1,
+        price: 571,
+        total: 571,
+        vat_rate: 5,
+        sku: 'MOON-260601-NE6',
+        variant_id: null,
+      },
+    ]);
+
+    await expect(ctl.printFiscalReceipt('order-1')).resolves.toBe(true);
+
+    const data = (fiscalPrinter.printReceipt.mock.calls[0] as any[])[0];
+    expect(data.subtotal).toBe(600);
+    expect(data.total).toBe(600);
+    expect(data.payment.amount).toBe(600);
+    expect(data.items[0]).toMatchObject({
+      unitPrice: 600,
+      totalPrice: 600,
+      vatRate: 5,
+      sku: 'MOON-260601-NE6',
+    });
+  });
+
   it('surfaces remote fiscal failure instead of treating job delivery as printed', async () => {
     const sharedFiscalPrinter = vi.fn(async () => ({
       handled: true,

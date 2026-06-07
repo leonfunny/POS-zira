@@ -8,6 +8,7 @@ vi.mock('../src/main/logger', () => ({
 
 import {
   adaptServerOrder,
+  adaptServerOrderItem,
   normalizePaymentTendersJson,
 } from '../src/main/sync/pos-order-adapter';
 
@@ -105,5 +106,73 @@ describe('pos order adapter', () => {
 
     expect(adapted.payment_amount).toBe(1400);
     expect(adapted.change_amount).toBe(3600);
+  });
+
+  it('stores mirrored net-priced server rows as local gross prices for receipts', () => {
+    const serverOrder = {
+      id: 'server-pos-1',
+      status: 'PENDING_STOCK',
+      subtotal: '5.71',
+      discountAmount: '0.00',
+      taxAmount: '0.29',
+      total: '6.00',
+      paidAmount: '6.00',
+      paymentMethod: 'CASH',
+      priceType: 'brutto',
+      taxIncluded: false,
+      posMode: 'retail',
+      createdAt: '2026-06-07T10:21:10.675Z',
+    };
+
+    const adapted = adaptServerOrder(serverOrder);
+    const item = adaptServerOrderItem({
+      id: 'line-1',
+      variantId: 'variant-soy-milk',
+      productName: 'Sữa đậu nành bán theo cốc',
+      productSku: 'MOON-260601-NE6',
+      variantSku: 'MOON-260601-NE6',
+      unitPrice: '5.7143',
+      totalPrice: '5.71',
+      taxRate: '5.00',
+      totalUnits: 1,
+      packQuantity: 1,
+    }, adapted.id, serverOrder);
+
+    expect(adapted.subtotal).toBe(600);
+    expect(adapted.tax).toBe(29);
+    expect(adapted.total).toBe(600);
+    expect(item.price).toBe(600);
+    expect(item.total).toBe(600);
+    expect(item.vat_rate).toBe(5);
+  });
+
+  it('keeps already gross-priced server rows unchanged', () => {
+    const serverOrder = {
+      id: 'server-pos-gross',
+      status: 'PAID',
+      subtotal: '6.00',
+      discountAmount: '0.00',
+      taxAmount: '0.29',
+      total: '6.00',
+      paidAmount: '6.00',
+      paymentMethod: 'CASH',
+      posMode: 'retail',
+      createdAt: '2026-06-07T10:21:10.675Z',
+    };
+
+    const adapted = adaptServerOrder(serverOrder);
+    const item = adaptServerOrderItem({
+      id: 'line-1',
+      variantId: 'variant-soy-milk',
+      productName: 'Sữa đậu nành bán theo cốc',
+      unitPrice: '6.00',
+      totalPrice: '6.00',
+      taxRate: '5.00',
+      totalUnits: 1,
+    }, adapted.id, serverOrder);
+
+    expect(adapted.subtotal).toBe(600);
+    expect(item.price).toBe(600);
+    expect(item.total).toBe(600);
   });
 });

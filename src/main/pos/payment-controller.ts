@@ -130,6 +130,23 @@ export class PaymentController {
     return raw ? `${fallback}: ${raw}` : fallback;
   }
 
+  private grossFromNet(netGrosze: number, vatRate: number): number {
+    if (netGrosze <= 0 || vatRate <= 0) return netGrosze;
+    return Math.round(netGrosze * (100 + vatRate) / 100);
+  }
+
+  private orderItemsLookNetPriced(
+    order: { subtotal: number; tax: number; total: number; discount: number },
+    items: Array<{ total: number }>,
+  ): boolean {
+    const itemTotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+    const grossSubtotal = (Number(order.total) || 0) + (Number(order.discount) || 0);
+    return itemTotal > 0
+      && (Number(order.tax) || 0) > 0
+      && grossSubtotal > 0
+      && Math.abs(itemTotal + (Number(order.tax) || 0) - grossSubtotal) <= 1;
+  }
+
   private async routeSharedReceipt(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
@@ -229,6 +246,10 @@ export class PaymentController {
     const order = orderRepo.getById(orderId);
     if (!order) return null;
     const items = orderRepo.getItemsByOrderId(orderId);
+    const itemsLookNetPriced = this.orderItemsLookNetPriced(order, items);
+    const subtotal = itemsLookNetPriced
+      ? order.total + (order.discount ?? 0)
+      : order.subtotal;
     return {
       orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
@@ -238,11 +259,13 @@ export class PaymentController {
       sellerNip: this.getSellerNip?.(),
       items: items.map((i) => {
         const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
+        const unitPrice = itemsLookNetPriced ? this.grossFromNet(i.price, i.vat_rate) : i.price;
+        const totalPrice = itemsLookNetPriced ? this.grossFromNet(i.total, i.vat_rate) : i.total;
         return {
           name: this.getReceiptItemName(i),
           quantity: i.quantity,
-          unitPrice: i.price,
-          totalPrice: i.total,
+          unitPrice,
+          totalPrice,
           vatRate: i.vat_rate,
           sku: i.sku || undefined,
           unit: i.sale_unit || product?.sale_unit || undefined,
@@ -252,7 +275,7 @@ export class PaymentController {
         method: order.payment_method || 'CASH',
         amount: order.payment_amount,
       },
-      subtotal: order.subtotal,
+      subtotal,
       discount: order.discount > 0 ? order.discount : undefined,
       total: order.total,
       cashierName: order.staff_name || undefined,
