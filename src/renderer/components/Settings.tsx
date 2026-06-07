@@ -8,7 +8,7 @@ import KitchenPrintSettings from './pos/KitchenPrintSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
-import { ShoppingCart, ScanBarcode, LayoutDashboard, FileText, CalendarDays, UserCheck, Bot, Activity, Shield, Bug, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, ClipboardList, Package, Warehouse, TrendingUp, Scale, LayoutGrid } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
@@ -439,25 +439,6 @@ function getWindowsPrinterOptionsForSelect(
   );
 }
 
-const TAB_VISIBILITY_CONFIG: { tab: Tab; label: string; icon: React.ReactNode; color: string }[] = [
-  { tab: 'pos',          label: 'Point of Sale',   icon: <ShoppingCart size={15} />,   color: 'text-blue-600 bg-blue-50' },
-  { tab: 'label',        label: 'Label',           icon: <Tag size={15} />,            color: 'text-emerald-700 bg-emerald-50' },
-  { tab: 'selfCheckout', label: 'Self-Checkout',   icon: <ScanBarcode size={15} />,    color: 'text-emerald-600 bg-emerald-50' },
-  { tab: 'billiard',     label: 'Billiard',         icon: <LayoutDashboard size={15} />, color: 'text-teal-600 bg-teal-50' },
-  { tab: 'orders',     label: 'Orders',           icon: <ClipboardList size={15} />,   color: 'text-slate-600 bg-slate-100' },
-  { tab: 'products',   label: 'Products',         icon: <Package size={15} />,         color: 'text-cyan-600 bg-cyan-50' },
-  { tab: 'warehouse',  label: 'Warehouse',        icon: <Warehouse size={15} />,       color: 'text-stone-600 bg-stone-100' },
-  { tab: 'forecast',   label: 'Forecast',         icon: <TrendingUp size={15} />,      color: 'text-lime-700 bg-lime-50' },
-  { tab: 'invoicing', label: 'Invoicing',        icon: <FileText size={15} />,        color: 'text-purple-600 bg-purple-50' },
-  { tab: 'booksy',    label: 'Booksy Sync',      icon: <CalendarDays size={15} />,    color: 'text-orange-600 bg-orange-50' },
-  { tab: 'bookings',  label: 'Bookings',         icon: <CalendarDays size={15} />,    color: 'text-indigo-600 bg-indigo-50' },
-  { tab: 'checkin',   label: 'Check-in Kiosk',   icon: <UserCheck size={15} />,       color: 'text-green-600 bg-green-50' },
-  { tab: 'chat',      label: 'Zira AI Chat',     icon: <Bot size={15} />,             color: 'text-brand-600 bg-brand-50' },
-  { tab: 'status',    label: 'Status',           icon: <Activity size={15} />,        color: 'text-slate-600 bg-slate-100' },
-  { tab: 'security',  label: 'Security',         icon: <Shield size={15} />,          color: 'text-red-600 bg-red-50' },
-  { tab: 'debug',     label: 'Debug',            icon: <Bug size={15} />,             color: 'text-yellow-600 bg-yellow-50' },
-];
-
 export default function Settings({ config, onConfigChange, isModuleEntitled }: SettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
   const [windowsPrinters, setWindowsPrinters] = useState<WindowsPrinterOption[]>(
@@ -484,8 +465,6 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   // Language
   const [language, setLanguage] = useState<Language>(config?.language || 'en');
 
-  // Tab visibility
-  const [hiddenTabs, setHiddenTabs] = useState<Tab[]>((config?.hiddenTabs as Tab[]) ?? []);
   const t = getTranslation(language);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
 
@@ -5151,47 +5130,6 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           )}
         </div>
       )}
-
-      {/* Tab Visibility */}
-      <div className="panel p-4">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="text-sm font-semibold text-slate-700">{t('settings.navigationTabs')}</h2>
-          <span className="text-xs text-slate-400">
-            {TAB_VISIBILITY_CONFIG.length - hiddenTabs.filter(t => TAB_VISIBILITY_CONFIG.some(c => c.tab === t)).length} / {TAB_VISIBILITY_CONFIG.length} visible
-          </span>
-        </div>
-        <p className="text-xs text-slate-400 mb-4">{t('settings.navigationTabsDesc')}</p>
-        <div className="space-y-1">
-          {TAB_VISIBILITY_CONFIG.map(({ tab, label, icon, color }) => {
-            const isVisible = !hiddenTabs.includes(tab);
-            return (
-              <label key={tab} className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                <div className="flex items-center gap-3">
-                  <span className={`flex items-center justify-center w-7 h-7 rounded-lg ${color}`}>
-                    {icon}
-                  </span>
-                  <span className="text-sm text-slate-700">{label}</span>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={isVisible}
-                  onClick={() => {
-                    const newHidden = isVisible
-                      ? [...hiddenTabs, tab]
-                      : hiddenTabs.filter(t => t !== tab);
-                    setHiddenTabs(newHidden);
-                    onConfigChange({ hiddenTabs: newHidden });
-                  }}
-                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${isVisible ? 'bg-brand-600' : 'bg-slate-200'}`}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${isVisible ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-              </label>
-            );
-          })}
-        </div>
-      </div>
 
       {/* POS Fiscal Visibility */}
       <div className="panel p-4">
