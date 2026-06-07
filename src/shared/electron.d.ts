@@ -715,7 +715,7 @@ interface ElectronAPI {
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => Promise<PosDailyStats>;
-      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
+      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       deleteLocal: (orderId: string) => Promise<{ success: boolean; restocked?: number; error?: string }>;
       mutate: (orderId: string, data: any) => Promise<{ success: boolean; localOnly?: boolean; order?: any; mutation?: any; restocked?: number; error?: string }>;

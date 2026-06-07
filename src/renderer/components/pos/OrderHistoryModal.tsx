@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { applyFiscalVisibility } from './order-fiscal-visibility';
+import { getHistoryDisplayNumber, getRealHistoryOrderNumber } from './order-fiscal-visibility';
 import { translations } from '../../i18n/translations';
 import { useConfig } from '../../hooks/useConfig';
 import { describeFiscalError } from '../../lib/fiscal-error-text';
@@ -1302,10 +1302,21 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
     if (filterStaff) serverFilters.staffName = filterStaff;
 
+    const localHistoryFilters = {
+      from,
+      to,
+      page,
+      limit: PAGE_SIZE,
+      fiscalOnly: hideNonFiscalOrders,
+      paymentMethod: filterMethod || undefined,
+      staffName: filterStaff || undefined,
+    };
+    const serverHistoryPromise = hideNonFiscalOrders
+      ? Promise.resolve({ orders: [], total: 0, page, limit: PAGE_SIZE, source: 'unconfigured' as const, items: {} })
+      : window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE, ...serverFilters });
     const [localResult, serverResult] = await Promise.allSettled([
-      window.electronAPI.pos.orders.getHistory({ from, to, page, limit: PAGE_SIZE,
-        paymentMethod: filterMethod || undefined, staffName: filterStaff || undefined }),
-      window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE, ...serverFilters }),
+      window.electronAPI.pos.orders.getHistory(localHistoryFilters),
+      serverHistoryPromise,
     ]);
     if (loadSeq !== loadSeqRef.current) return;
 
@@ -1346,23 +1357,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
-    if (hideNonFiscalOrders) {
-      // Server-sourced rows have no has_fiscal — look them up in the local
-      // fiscal journal before filtering so they can't leak through.
-      let confirmedFiscalIds = new Set<string>();
-      const unknownIds = merged
-        .filter((o) => typeof o.has_fiscal !== 'number')
-        .map((o) => o.id);
-      if (unknownIds.length > 0) {
-        const confirmed = await window.electronAPI.pos.orders
-          .getConfirmedFiscalIds?.(unknownIds)
-          .catch(() => [] as string[]);
-        confirmedFiscalIds = new Set(confirmed || []);
-      }
-      merged = applyFiscalVisibility(merged, true, confirmedFiscalIds);
-    }
     if (filterMethod) merged = merged.filter((o) => orderMatchesPaymentFilter(o, filterMethod));
-    if (filterStaff) merged = merged.filter((o) => o.staff_name === filterStaff);
+    if (filterStaff) {
+      const staffNeedle = filterStaff.trim().toLowerCase();
+      merged = merged.filter((o) => (o.staff_name || '').toLowerCase().includes(staffNeedle));
+    }
     merged.sort(compareOrdersByDisplayTimeDesc);
 
     setOrders(merged);
@@ -2271,8 +2270,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {orders.map((order) => {
+              {orders.map((order, index) => {
                 const refundStatus = getRefundStatus(order);
+                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders);
+                const realOrderNumber = getRealHistoryOrderNumber(order);
                 return (
                   <button
                     key={order.id}
@@ -2280,8 +2281,12 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                     className="grid min-h-[64px] w-full grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-extrabold text-slate-950">{getOrderLabel(order)}</span>
-                      <span className="mt-0.5 block truncate text-xs font-medium text-slate-500">{formatDate(order.created_at)}</span>
+                      <span className="block truncate text-sm font-extrabold text-slate-950" title={hideNonFiscalOrders ? `Real order number: ${realOrderNumber}` : undefined}>
+                        {displayNumber}
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs font-medium text-slate-500">
+                        {hideNonFiscalOrders ? `${realOrderNumber} - ${formatDate(order.created_at)}` : formatDate(order.created_at)}
+                      </span>
                     </span>
                     <span className="text-sm font-bold tabular-nums text-slate-700">{formatTime(order.created_at)}</span>
                     <span className={`text-right text-base font-extrabold tabular-nums ${refundStatus === 'none' ? 'text-slate-950' : 'text-slate-500 line-through'}`}>

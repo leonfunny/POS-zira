@@ -11,6 +11,11 @@ export interface FiscalVisibilityOrder {
   has_fiscal?: number;
 }
 
+export interface HistoryDisplayOrder {
+  id: string;
+  order_number: string | null;
+}
+
 export function applyFiscalVisibility<T extends FiscalVisibilityOrder>(
   orders: T[],
   hideNonFiscal: boolean,
@@ -21,4 +26,18 @@ export function applyFiscalVisibility<T extends FiscalVisibilityOrder>(
     if (typeof order.has_fiscal === 'number') return order.has_fiscal !== 0;
     return confirmedFiscalIds.has(order.id);
   });
+}
+
+export function getRealHistoryOrderNumber(order: HistoryDisplayOrder): string {
+  return order.order_number || order.id.substring(0, 8);
+}
+
+export function getHistoryDisplayNumber(
+  order: HistoryDisplayOrder,
+  sortedIndex: number,
+  fiscalOnly: boolean,
+): string {
+  if (!fiscalOnly) return getRealHistoryOrderNumber(order);
+  const sequence = String(Math.max(0, sortedIndex) + 1).padStart(3, '0');
+  return `FISCAL #${sequence}`;
 }

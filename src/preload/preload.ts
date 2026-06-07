@@ -641,7 +641,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_GET_DAILY_STATS, date, options),
-      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
+      getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:orders:getHistory', filters),
       getDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getDetail', orderId),
       deleteLocal: (orderId: string) => ipcRenderer.invoke('pos:orders:deleteLocal', orderId),
       mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),

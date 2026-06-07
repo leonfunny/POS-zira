@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { applyFiscalVisibility } from '../src/renderer/components/pos/order-fiscal-visibility';
+import {
+  applyFiscalVisibility,
+  getHistoryDisplayNumber,
+  getRealHistoryOrderNumber,
+} from '../src/renderer/components/pos/order-fiscal-visibility';
 
 function readSource(relativePath: string): string {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -32,15 +36,32 @@ describe('order history fiscal visibility', () => {
     expect(applyFiscalVisibility(orders, true, new Set(['kiosk-2']))).toEqual([server('kiosk-2')]);
   });
 
-  it('wires the modal to look up unknown rows in the local fiscal journal', () => {
+  it('uses display-only contiguous fiscal numbers without mutating real order numbers', () => {
+    const order = { id: 'local-order-id', order_number: 'POS260607-0042' };
+
+    expect(getHistoryDisplayNumber(order, 0, false)).toBe('POS260607-0042');
+    expect(getHistoryDisplayNumber(order, 0, true)).toBe('FISCAL #001');
+    expect(getHistoryDisplayNumber(order, 19, true)).toBe('FISCAL #020');
+    expect(getRealHistoryOrderNumber(order)).toBe('POS260607-0042');
+    expect(order.order_number).toBe('POS260607-0042');
+  });
+
+  it('wires the modal to request fiscal-filtered local history before pagination', () => {
     const modalSource = readSource('src/renderer/components/pos/OrderHistoryModal.tsx');
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/fiscal-attempt-repo.ts');
 
-    expect(modalSource).toContain('applyFiscalVisibility(merged, true, confirmedFiscalIds)');
-    expect(modalSource).toContain('getConfirmedFiscalIds?.(unknownIds)');
+    expect(modalSource).toContain('fiscalOnly: hideNonFiscalOrders');
+    expect(modalSource).toContain('window.electronAPI.pos.orders.getHistory(localHistoryFilters)');
+    expect(modalSource).toContain("source: 'unconfigured' as const");
+    expect(modalSource).toContain('hideNonFiscalOrders ? `${realOrderNumber} - ${formatDate(order.created_at)}` : formatDate(order.created_at)');
+    expect(modalSource).not.toContain('applyFiscalVisibility(merged, true');
+    expect(modalSource).not.toContain('getConfirmedFiscalIds?.(unknownIds)');
     expect(modalSource).not.toContain('merged.filter((o) => o.has_fiscal !== 0)');
     expect(posModuleSource).toContain("ipcMain.handle('pos:orders:getConfirmedFiscalIds'");
+    expect(posModuleSource).toContain('fiscalOnly?: boolean');
+    expect(posModuleSource).toContain('paymentMethod: filters.paymentMethod');
+    expect(posModuleSource).toContain('staffName: filters.staffName');
     expect(repoSource).toContain('getConfirmedOrderIds(orderIds: string[])');
   });
 });

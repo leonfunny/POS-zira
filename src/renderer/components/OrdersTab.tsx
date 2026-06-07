@@ -4,6 +4,7 @@ import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
 import { useConfig } from '../hooks/useConfig';
 import { compareOrdersByDisplayTimeDesc, parseOrderTimestampMs } from './pos/order-history-time';
+import { getHistoryDisplayNumber, getRealHistoryOrderNumber } from './pos/order-fiscal-visibility';
 import rlog from '../utils/logger';
 
 interface OrdersTabProps {
@@ -253,14 +254,20 @@ export default function OrdersTab({ language }: OrdersTabProps) {
         page: 1,
         limit: SERVER_ORDER_FETCH_LIMIT,
       };
+      const serverListPromise = hideNonFiscalOrders
+        ? Promise.resolve({ orders: [], items: {}, total: 0, page: 1, limit: SERVER_ORDER_FETCH_LIMIT, source: 'unconfigured' as const })
+        : window.electronAPI.pos.orders.getServerList(serverFilters as any);
       const [localResult, serverResult] = await Promise.allSettled([
         window.electronAPI.pos.orders.getHistory({
           from: range.from,
           to: range.to,
           page: 1,
           limit: LOCAL_ORDER_FETCH_LIMIT,
+          fiscalOnly: hideNonFiscalOrders,
+          paymentMethod: paymentMethod || undefined,
+          staffName: trimmedStaffName || undefined,
         } as any),
-        window.electronAPI.pos.orders.getServerList(serverFilters as any),
+        serverListPromise,
       ]);
 
       const localRows = localResult.status === 'fulfilled'
@@ -285,7 +292,6 @@ export default function OrdersTab({ language }: OrdersTabProps) {
 
       const merged = mergeOrders(localRows, serverRows)
         .filter((order) => order.status !== 'DRAFT' && order.status !== 'POS-DRA')
-        .filter((order) => !hideNonFiscalOrders || order.has_fiscal !== 0)
         .filter((order) => orderWithinRange(order, range.from, range.to))
         .filter((order) => orderMatchesPayment(order, paymentMethod))
         .filter((order) => orderMatchesStaff(order, staffName));
@@ -520,10 +526,12 @@ export default function OrdersTab({ language }: OrdersTabProps) {
             </div>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {displayedOrders.map((order) => {
+              {displayedOrders.map((order, index) => {
                 const isExpanded = expandedId === order.id;
                 const isReprintBusy = reprintBusyId === order.id;
                 const feedback = reprintFeedback?.orderId === order.id ? reprintFeedback : null;
+                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders);
+                const realOrderNumber = getRealHistoryOrderNumber(order);
                 return (
                   <li key={order.id} className="bg-white">
                     <button
@@ -534,7 +542,16 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                       <span className="flex h-6 w-6 items-center justify-center text-slate-400">
                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </span>
-                      <span className="font-semibold tabular-nums text-slate-950">{order.order_number || order.id.slice(0, 8)}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold tabular-nums text-slate-950" title={hideNonFiscalOrders ? `Real order number: ${realOrderNumber}` : undefined}>
+                          {displayNumber}
+                        </span>
+                        {hideNonFiscalOrders && (
+                          <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">
+                            {realOrderNumber}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-slate-700">{formatDateTime(order.created_at)}</span>
                       <span className="truncate text-slate-700">
                         {order.customer_name || (order.customer_nip ? `NIP: ${order.customer_nip}` : '-')}

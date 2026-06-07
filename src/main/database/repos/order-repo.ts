@@ -98,6 +98,12 @@ export interface DailyStats {
   card_total: number;
 }
 
+export interface OrderHistoryOptions {
+  fiscalOnly?: boolean;
+  paymentMethod?: string;
+  staffName?: string;
+}
+
 const HAS_FISCAL_EXPR = `
   EXISTS (
     SELECT 1
@@ -106,6 +112,50 @@ const HAS_FISCAL_EXPR = `
       AND fa.status = 'SUCCESS_CONFIRMED'
   )
 `;
+
+const HISTORY_SPLIT_PAYMENT_EXPR = `(
+  orders.payment_method = 'SPLIT'
+  OR COALESCE(orders.payment_tenders, '') LIKE '%},{%'
+  OR COALESCE(orders.payment_tenders, '') LIKE '%}, {%'
+)`;
+
+function normalizeHistoryPaymentMethod(method: string | null | undefined): string | null {
+  if (!method) return null;
+  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
+}
+
+function buildHistoryWhere(from: string, to: string, options: OrderHistoryOptions): { sql: string; params: any[] } {
+  const parts = [
+    'date(orders.created_at) >= date(?)',
+    'date(orders.created_at) <= date(?)',
+  ];
+  const params: any[] = [from, to];
+
+  if (options.fiscalOnly) {
+    parts.push(HAS_FISCAL_EXPR);
+  }
+
+  const paymentMethod = normalizeHistoryPaymentMethod(options.paymentMethod);
+  if (paymentMethod === 'SPLIT') {
+    parts.push(HISTORY_SPLIT_PAYMENT_EXPR);
+  } else if (paymentMethod === 'INVOICE') {
+    parts.push("(orders.customer_nip IS NOT NULL AND TRIM(orders.customer_nip) <> '')");
+  } else if (paymentMethod === 'BANK_TRANSFER') {
+    parts.push(`orders.payment_method IN (?, ?) AND NOT ${HISTORY_SPLIT_PAYMENT_EXPR}`);
+    params.push('BANK_TRANSFER', 'TRANSFER');
+  } else if (paymentMethod) {
+    parts.push(`orders.payment_method = ? AND NOT ${HISTORY_SPLIT_PAYMENT_EXPR}`);
+    params.push(paymentMethod);
+  }
+
+  const staffName = options.staffName?.trim().toLowerCase();
+  if (staffName) {
+    parts.push("LOWER(COALESCE(orders.staff_name, '')) LIKE ?");
+    params.push(`%${staffName}%`);
+  }
+
+  return { sql: parts.map((part) => `(${part})`).join(' AND '), params };
+}
 
 export const orderRepo = {
   create(order: OrderRow, items: OrderItemRow[]): string {
@@ -450,18 +500,21 @@ export const orderRepo = {
     return result ?? { order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 };
   },
 
-  getByDateRange(from: string, to: string, limit = 20, offset = 0): { orders: OrderRow[]; total: number } {
+  getByDateRange(from: string, to: string, limit = 20, offset = 0, options: OrderHistoryOptions = {}): { orders: OrderRow[]; total: number } {
     // Use date() to normalize format differences (datetime('now') uses space, ISO uses T)
+    const where = buildHistoryWhere(from, to, options);
     const total = database.get<{ cnt: number }>(
-      'SELECT COUNT(*) as cnt FROM orders WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)',
-      [from, to],
+      `SELECT COUNT(*) as cnt
+       FROM orders
+       WHERE ${where.sql}`,
+      where.params,
     )?.cnt ?? 0;
     const orders = database.all<OrderRow>(
       `SELECT orders.*, CAST(${HAS_FISCAL_EXPR} AS INTEGER) as has_fiscal
        FROM orders
-       WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)
-       ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [from, to, limit, offset],
+       WHERE ${where.sql}
+       ORDER BY julianday(orders.created_at) DESC, orders.created_at DESC LIMIT ? OFFSET ?`,
+      [...where.params, limit, offset],
     );
     return { orders, total };
   },

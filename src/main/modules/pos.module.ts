@@ -116,34 +116,6 @@ function getExternalProductLookupOptions(): ExternalProductLookupOptions {
   };
 }
 
-function parseOrderPaymentTenders(order: any): Array<{ method: string; amount: number }> {
-  if (!order?.payment_tenders) return [];
-  try {
-    const tenders = JSON.parse(order.payment_tenders);
-    if (!Array.isArray(tenders)) return [];
-    return tenders.filter((t: any) => typeof t?.method === 'string' && typeof t?.amount === 'number');
-  } catch {
-    return [];
-  }
-}
-
-function isSplitPaymentOrder(order: any): boolean {
-  return order?.payment_method === 'SPLIT' || parseOrderPaymentTenders(order).length > 1;
-}
-
-function normalizeOrderPaymentMethod(method: string | null | undefined): string | null {
-  if (!method) return null;
-  return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;
-}
-
-function orderMatchesPaymentFilter(order: any, paymentMethod?: string): boolean {
-  if (!paymentMethod) return true;
-  const isSplit = isSplitPaymentOrder(order);
-  if (paymentMethod === 'SPLIT') return isSplit;
-  if (paymentMethod === 'INVOICE') return Boolean(order?.requires_invoice || order?.customer_nip);
-  return !isSplit && normalizeOrderPaymentMethod(order?.payment_method) === normalizeOrderPaymentMethod(paymentMethod);
-}
-
 type NailTurnCheckoutGroup = {
   staffId: string;
   staffName: string | null;
@@ -1716,29 +1688,18 @@ export class PosModule extends BaseModule {
       return orderRepo.getDailyStats(date, Boolean(options?.fiscalOnly));
     });
 
-    ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number }) => {
+    ipcMain.handle('pos:orders:getHistory', (_e, filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => {
       const limit = filters.limit || 20;
       const page = filters.page || 1;
-      const hasFilter = Boolean(filters.paymentMethod || filters.staffName);
+      const fiscalOnly = Boolean(filters.fiscalOnly);
 
-      if (!hasFilter) {
-        const offset = (page - 1) * limit;
-        const result = orderRepo.getByDateRange(filters.from, filters.to, limit, offset);
-        return { orders: result.orders, total: result.total, page, limit };
-      }
-
-      // Filter path: fetch wider window, filter in JS, then paginate.
-      // 1000 cap — single-day POS rarely exceeds 500 orders.
-      const wide = orderRepo.getByDateRange(filters.from, filters.to, 1000, 0);
-      let orders = wide.orders;
-      if (filters.paymentMethod) orders = orders.filter(o => orderMatchesPaymentFilter(o, filters.paymentMethod));
-      if (filters.staffName) {
-        const staffNeedle = filters.staffName.trim().toLowerCase();
-        orders = orders.filter(o => (o.staff_name || '').toLowerCase().includes(staffNeedle));
-      }
-      const total = orders.length;
       const offset = (page - 1) * limit;
-      return { orders: orders.slice(offset, offset + limit), total, page, limit };
+      const result = orderRepo.getByDateRange(filters.from, filters.to, limit, offset, {
+        fiscalOnly,
+        paymentMethod: filters.paymentMethod,
+        staffName: filters.staffName,
+      });
+      return { orders: result.orders, total: result.total, page, limit };
     });
 
     // Order History fiscal-visibility: which of these order ids have a

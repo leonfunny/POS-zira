@@ -16,6 +16,15 @@ describe('OrderHistoryModal filters', () => {
     expect(source).toContain('window.electronAPI.pos.orders.getServerList({ period: selectedPeriod, page, limit: PAGE_SIZE, ...serverFilters })');
   });
 
+  it('passes fiscalOnly to local history and does not fiscal-filter local rows after pagination', () => {
+    expect(source).toContain('const localHistoryFilters = {');
+    expect(source).toContain('fiscalOnly: hideNonFiscalOrders');
+    expect(source).toContain('window.electronAPI.pos.orders.getHistory(localHistoryFilters)');
+    expect(source).toContain("source: 'unconfigured' as const");
+    expect(source).not.toContain('applyFiscalVisibility(merged, true');
+    expect(source).not.toContain('getConfirmedFiscalIds?.(unknownIds)');
+  });
+
   it('uses one payment matcher for the renderer-side safety filter', () => {
     expect(source).toContain('function normalizePaymentMethod(method: string | null | undefined): string | null');
     expect(source).toContain("return method === 'TRANSFER' ? 'BANK_TRANSFER' : method;");
