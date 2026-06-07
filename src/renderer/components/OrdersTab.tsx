@@ -530,7 +530,7 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                 const isExpanded = expandedId === order.id;
                 const isReprintBusy = reprintBusyId === order.id;
                 const feedback = reprintFeedback?.orderId === order.id ? reprintFeedback : null;
-                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders);
+                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders, searchedOrders.length);
                 const realOrderNumber = getRealHistoryOrderNumber(order);
                 return (
                   <li key={order.id} className="bg-white">

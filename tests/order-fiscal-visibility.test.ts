@@ -40,10 +40,18 @@ describe('order history fiscal visibility', () => {
     const order = { id: 'local-order-id', order_number: 'POS260607-0042' };
 
     expect(getHistoryDisplayNumber(order, 0, false)).toBe('POS260607-0042');
-    expect(getHistoryDisplayNumber(order, 0, true)).toBe('FISCAL #001');
-    expect(getHistoryDisplayNumber(order, 19, true)).toBe('FISCAL #020');
+    expect(getHistoryDisplayNumber(order, 0, true, 20)).toBe('FISCAL #020');
+    expect(getHistoryDisplayNumber(order, 19, true, 20)).toBe('FISCAL #001');
     expect(getRealHistoryOrderNumber(order)).toBe('POS260607-0042');
     expect(order.order_number).toBe('POS260607-0042');
+  });
+
+  it('keeps fiscal display numbers stable across descending paged history', () => {
+    const order = { id: 'local-order-id', order_number: 'POS260607-0146' };
+
+    expect(getHistoryDisplayNumber(order, 0, true, 47)).toBe('FISCAL #047');
+    expect(getHistoryDisplayNumber(order, 8, true, 47)).toBe('FISCAL #039');
+    expect(getHistoryDisplayNumber(order, 46, true, 47)).toBe('FISCAL #001');
   });
 
   it('wires the modal to request fiscal-filtered local history before pagination', () => {

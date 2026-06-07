@@ -36,8 +36,16 @@ export function getHistoryDisplayNumber(
   order: HistoryDisplayOrder,
   sortedIndex: number,
   fiscalOnly: boolean,
+  totalVisibleOrders?: number,
 ): string {
   if (!fiscalOnly) return getRealHistoryOrderNumber(order);
-  const sequence = String(Math.max(0, sortedIndex) + 1).padStart(3, '0');
+  const safeIndex = Math.max(0, Math.floor(sortedIndex));
+  const safeTotal = typeof totalVisibleOrders === 'number' && isFinite(totalVisibleOrders)
+    ? Math.max(0, Math.floor(totalVisibleOrders))
+    : 0;
+  const ordinal = safeTotal > 0
+    ? Math.max(1, safeTotal - safeIndex)
+    : safeIndex + 1;
+  const sequence = String(ordinal).padStart(3, '0');
   return `FISCAL #${sequence}`;
 }

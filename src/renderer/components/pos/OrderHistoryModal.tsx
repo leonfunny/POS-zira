@@ -2272,7 +2272,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             <div className="divide-y divide-slate-100">
               {orders.map((order, index) => {
                 const refundStatus = getRefundStatus(order);
-                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders);
+                const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders, totalOrders);
                 const realOrderNumber = getRealHistoryOrderNumber(order);
                 return (
                   <button
