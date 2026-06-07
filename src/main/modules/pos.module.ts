@@ -245,6 +245,18 @@ export class PosModule extends BaseModule {
       database.markDirty();
       logger.warn(`[PosModule] Reset ${corruptedCount} orders with missing backend_id for re-sync`);
     }
+    try {
+      const grossRepair = orderRepo.repairServerMirroredGrossItemPrices();
+      if (grossRepair.repaired > 0) {
+        logger.warn(
+          `[PosModule] Server-mirrored gross item price repair: ` +
+          `scanned=${grossRepair.scanned} repaired=${grossRepair.repaired} ` +
+          `skipped=${grossRepair.skipped} reasons=${JSON.stringify(grossRepair.skipped_reasons)}`,
+        );
+      }
+    } catch (err: any) {
+      logger.error(`[PosModule] Server-mirrored gross item price repair failed: ${err?.message ?? err}`);
+    }
     // NOTE: shelved orders (synced = -1) are NOT auto-reset. They require an explicit
     // retry via `pos:orders:retrySync` or one-time repair via `pos:orders:repairStockFailures`.
 

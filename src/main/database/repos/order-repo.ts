@@ -1,6 +1,7 @@
 import { database } from '../database';
 import logger from '../../logger';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../../pos/order-line-contract';
+import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
 
 export interface OrderRow {
   id: string;
@@ -104,6 +105,29 @@ export interface OrderHistoryOptions {
   staffName?: string;
 }
 
+export interface ServerMirroredGrossItemRepairResult {
+  scanned: number;
+  repaired: number;
+  skipped: number;
+  skipped_reasons: Record<string, number>;
+}
+
+type ServerMirroredGrossRepairCandidate = {
+  id: string;
+  order_number: string | null;
+  backend_id: string | null;
+  source: string | null;
+  total: number;
+  discount: number | null;
+  local_sum: number | null;
+  payload: string | null;
+};
+
+type LocalItemRepairRow = {
+  id: string;
+  total: number;
+};
+
 const HAS_FISCAL_EXPR = `
   EXISTS (
     SELECT 1
@@ -155,6 +179,27 @@ function buildHistoryWhere(from: string, to: string, options: OrderHistoryOption
   }
 
   return { sql: parts.map((part) => `(${part})`).join(' AND '), params };
+}
+
+function parseRepairPayload(payload: unknown): any | null {
+  if (!payload) return null;
+  if (typeof payload !== 'string') return payload;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+function hasExplicitMoney(value: unknown): boolean {
+  if (value == null || value === '') return false;
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  return isFinite(n);
+}
+
+function incrementReason(result: ServerMirroredGrossItemRepairResult, reason: string): void {
+  result.skipped++;
+  result.skipped_reasons[reason] = (result.skipped_reasons[reason] ?? 0) + 1;
 }
 
 export const orderRepo = {
@@ -517,6 +562,123 @@ export const orderRepo = {
       [...where.params, limit, offset],
     );
     return { orders, total };
+  },
+
+  repairServerMirroredGrossItemPrices(): ServerMirroredGrossItemRepairResult {
+    const result: ServerMirroredGrossItemRepairResult = {
+      scanned: 0,
+      repaired: 0,
+      skipped: 0,
+      skipped_reasons: {},
+    };
+
+    const candidates = database.all<ServerMirroredGrossRepairCandidate>(
+      `SELECT
+         o.id,
+         o.order_number,
+         o.backend_id,
+         o.source,
+         o.total,
+         COALESCE(o.discount, 0) AS discount,
+         COALESCE(SUM(oi.total), 0) AS local_sum,
+         (
+           SELECT l.payload
+           FROM local_sync_log l
+           WHERE l.entity_type = 'order'
+             AND l.source = 'server'
+             AND (l.entity_id = o.id OR (o.backend_id IS NOT NULL AND l.entity_id = o.backend_id))
+           ORDER BY COALESCE(l.server_seq, l.id) DESC, l.id DESC
+           LIMIT 1
+         ) AS payload
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.source = 'SERVER'
+       GROUP BY o.id, o.order_number, o.backend_id, o.source, o.total, o.discount
+       HAVING ABS((o.total + COALESCE(o.discount, 0)) - COALESCE(SUM(oi.total), 0)) > 1`,
+    );
+
+    result.scanned = candidates.length;
+
+    for (const candidate of candidates) {
+      if (candidate.source !== 'SERVER') {
+        incrementReason(result, 'source_not_server');
+        continue;
+      }
+
+      const expectedGross = Math.round(Number(candidate.total) || 0) + Math.round(Number(candidate.discount) || 0);
+      const beforeSum = Math.round(Number(candidate.local_sum) || 0);
+      if (Math.abs(expectedGross - beforeSum) <= 1) {
+        incrementReason(result, 'already_matches_order_gross');
+        continue;
+      }
+
+      const payload = parseRepairPayload(candidate.payload);
+      const payloadItems = Array.isArray(payload?.items) ? payload.items : null;
+      if (!payloadItems || payloadItems.length === 0) {
+        incrementReason(result, 'missing_payload_items');
+        continue;
+      }
+
+      if (!payloadItems.every((item: any) => item?.id != null && String(item.id).trim().length > 0)) {
+        incrementReason(result, 'missing_item_id');
+        continue;
+      }
+
+      if (!payloadItems.every((item: any) => hasExplicitMoney(item.grossUnitPrice) && hasExplicitMoney(item.grossTotalPrice))) {
+        incrementReason(result, 'missing_gross_fields');
+        continue;
+      }
+
+      const adaptedItems = payloadItems.map((item: any) =>
+        adaptServerOrderItem(item, candidate.id, payload),
+      );
+      const adaptedSum = adaptedItems.reduce((sum: number, item: OrderItemRow) => sum + Math.round(Number(item.total) || 0), 0);
+      if (Math.abs(adaptedSum - expectedGross) > 1) {
+        incrementReason(result, 'adapted_sum_mismatch');
+        continue;
+      }
+
+      const localItems = database.all<LocalItemRepairRow>(
+        'SELECT id, total FROM order_items WHERE order_id = ?',
+        [candidate.id],
+      );
+      if (localItems.length !== adaptedItems.length) {
+        incrementReason(result, 'local_item_count_mismatch');
+        continue;
+      }
+
+      const localById = new Map(localItems.map((item) => [item.id, item]));
+      if (!adaptedItems.every((item: OrderItemRow) => localById.has(item.id))) {
+        incrementReason(result, 'local_item_id_mismatch');
+        continue;
+      }
+
+      const hasChanges = adaptedItems.some((item: OrderItemRow) => {
+        const local = localById.get(item.id);
+        return !local || local.total !== item.total;
+      });
+      if (!hasChanges) {
+        incrementReason(result, 'already_repaired');
+        continue;
+      }
+
+      database.transaction(() => {
+        for (const item of adaptedItems) {
+          database.run(
+            'UPDATE order_items SET price = ?, total = ? WHERE order_id = ? AND id = ?',
+            [item.price, item.total, candidate.id, item.id],
+          );
+        }
+      });
+      database.markDirty();
+      result.repaired++;
+      logger.warn(
+        `[OrderRepo] Repaired server-mirrored gross item prices for ${candidate.order_number || candidate.id} (${candidate.id}): ` +
+        `items_sum ${beforeSum} -> ${adaptedSum}, expected=${expectedGross}`,
+      );
+    }
+
+    return result;
   },
 
   upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
