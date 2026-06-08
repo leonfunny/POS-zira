@@ -374,6 +374,7 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
   const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
   const [optimisticProductIds, setOptimisticProductIds] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const pinSearchSectionRef = useRef<HTMLElement | null>(null);
   const statusResetTimeoutRef = useRef<number | null>(null);
   const printSequenceRef = useRef(0);
   const configSaveChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -530,6 +531,12 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
     return nextSave;
   }, [clearStatusResetTimeout, saveConfig]);
 
+  const scrollPinSearchIntoView = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      pinSearchSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }, []);
+
   const toggleCategory = (categoryId: string) => {
     setOptimisticCategoryIds((current) => {
       const next = current.includes(categoryId)
@@ -653,15 +660,17 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
       const tagName = target?.tagName;
       const isTyping = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
 
-      if (event.key === '/' || (event.ctrlKey && event.key.toLowerCase() === 'f')) {
-        event.preventDefault();
-        searchInputRef.current?.focus();
+      if (settingsOpen) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setSettingsOpen(false);
+        }
         return;
       }
 
-      if (event.key === 'Escape' && settingsOpen) {
+      if (event.key === '/' || (event.ctrlKey && event.key.toLowerCase() === 'f')) {
         event.preventDefault();
-        setSettingsOpen(false);
+        searchInputRef.current?.focus();
         return;
       }
 
@@ -1079,6 +1088,7 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
             {settingsOpen && (
               <div
                 className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 p-3"
+                style={{ paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 0.75rem)' }}
                 onClick={() => setSettingsOpen(false)}
               >
                 <aside
@@ -1155,7 +1165,7 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
                     )}
                   </section>
 
-                  <section className="space-y-2">
+                  <section ref={pinSearchSectionRef} className="space-y-2">
                     <div>
                       <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.pinnedProducts}</div>
                       <div className="text-[11px] font-bold text-slate-500">{pinnedProducts.length} {copy.selected}</div>
@@ -1165,6 +1175,8 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
                       <input
                         value={settingsQuery}
                         onChange={(event) => setSettingsQuery(event.target.value)}
+                        onFocus={scrollPinSearchIntoView}
+                        onPointerDown={scrollPinSearchIntoView}
                         placeholder={copy.pinSearch}
                         className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-200"
                       />

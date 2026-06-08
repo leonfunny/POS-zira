@@ -96,4 +96,25 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('if (printSequenceRef.current === printToken) {');
     expect(LABEL_MODULE).toContain('statusResetTimeoutRef.current = null;');
   });
+
+  it('keeps the pinned-product settings search above the shared touch keyboard', () => {
+    expect(LABEL_MODULE).toContain('const pinSearchSectionRef = useRef<HTMLElement | null>(null);');
+    expect(LABEL_MODULE).toContain("paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 0.75rem)'");
+    expect(LABEL_MODULE).toContain("pinSearchSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });");
+    expect(LABEL_MODULE).toContain('ref={pinSearchSectionRef}');
+    expect(LABEL_MODULE).toContain('onFocus={scrollPinSearchIntoView}');
+    expect(LABEL_MODULE).toContain('onPointerDown={scrollPinSearchIntoView}');
+  });
+
+  it('blocks background label shortcuts while settings is open', () => {
+    const shortcutHandler = LABEL_MODULE.slice(
+      LABEL_MODULE.indexOf('const onKeyDown = (event: KeyboardEvent) => {'),
+      LABEL_MODULE.indexOf("if (event.key === '/' ||", LABEL_MODULE.indexOf('const onKeyDown = (event: KeyboardEvent) => {')),
+    );
+
+    expect(shortcutHandler).toContain('if (settingsOpen) {');
+    expect(shortcutHandler).toContain("if (event.key === 'Escape') {");
+    expect(shortcutHandler).toContain('setSettingsOpen(false);');
+    expect(shortcutHandler).toContain('return;');
+  });
 });
