@@ -41,6 +41,7 @@ import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { StaffSync } from '../sync/staff-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
@@ -1884,23 +1885,32 @@ export class PosModule extends BaseModule {
     // Staff
     ipcMain.handle('pos:staff:getAll', () => staffRepo.getAll());
     ipcMain.handle('pos:staff:getAllForSettings', () => staffRepo.getAllForSettings());
-    ipcMain.handle('pos:staff:create', (_e, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+    ipcMain.handle('pos:staff:create', async (_e, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
       try {
-        return { success: true, staff: staffRepo.createLocal(input) };
+        const sync = this.container.getOptional<StaffSync>(SERVICE_TOKENS.STAFF_SYNC);
+        if (!sync) throw new Error('Staff sync is not initialized');
+        const staff = await sync.createStaff(input);
+        return { success: true, staff };
       } catch (e: any) {
         return { success: false, error: e?.message ?? 'Failed to create staff' };
       }
     });
-    ipcMain.handle('pos:staff:update', (_e, id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
+    ipcMain.handle('pos:staff:update', async (_e, id: string, input: { name: string; commissionRate?: number; role?: string | null; isActive?: boolean }) => {
       try {
-        return { success: true, staff: staffRepo.updateLocal(id, input) };
+        const sync = this.container.getOptional<StaffSync>(SERVICE_TOKENS.STAFF_SYNC);
+        if (!sync) throw new Error('Staff sync is not initialized');
+        const staff = await sync.updateStaff(id, input);
+        return { success: true, staff };
       } catch (e: any) {
         return { success: false, error: e?.message ?? 'Failed to update staff' };
       }
     });
-    ipcMain.handle('pos:staff:setActive', (_e, id: string, active: boolean) => {
+    ipcMain.handle('pos:staff:setActive', async (_e, id: string, active: boolean) => {
       try {
-        return { success: true, staff: staffRepo.setActive(id, active) };
+        const sync = this.container.getOptional<StaffSync>(SERVICE_TOKENS.STAFF_SYNC);
+        if (!sync) throw new Error('Staff sync is not initialized');
+        const staff = await sync.setStaffActive(id, active);
+        return { success: true, staff };
       } catch (e: any) {
         return { success: false, error: e?.message ?? 'Failed to update staff status' };
       }

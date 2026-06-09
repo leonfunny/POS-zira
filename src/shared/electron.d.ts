@@ -235,7 +235,7 @@ interface PosStaffWriteInput {
 
 interface PosStaffWriteResult {
   success: boolean;
-  staff?: PosStaff;
+  staff?: PosStaff | null;
   error?: string;
 }
 
@@ -797,7 +797,9 @@ interface ElectronAPI {
     sync: {
       products: () => Promise<{ success: boolean; productsCount?: number; error?: string }>;
       orders: () => Promise<void>;
+      staff: () => Promise<{ success: boolean; count?: number; error?: string }>;
       onProductsSynced: (callback: () => void) => () => void;
+      onStaffUpdated: (callback: (data?: any) => void) => () => void;
       onCatalogUpdated: (callback: (data: any) => void) => () => void;
       onStockUpdated: (callback: (data: any) => void) => () => void;
       onOrderSynced: (callback: (data: { orderId: string; backendId: string }) => void) => () => void;

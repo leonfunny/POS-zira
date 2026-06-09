@@ -2597,6 +2597,36 @@ export class ApiClient {
     return Array.isArray(data) ? data : data.data ?? data.staff ?? data.items ?? [];
   }
 
+  async getStaffProfiles(token: string): Promise<any[] | null> {
+    const response = await this.request('GET', '/staff', token);
+    const rows = Array.isArray(response) ? response : response?.items ?? response?.data ?? response?.staff ?? [];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async createStaffUser(
+    token: string,
+    data: { full_name: string; role?: string; phone?: string; email?: string; password?: string },
+  ): Promise<any> {
+    return this.request('POST', '/users', token, data);
+  }
+
+  async updateStaffUser(
+    token: string,
+    userId: string,
+    data: { full_name?: string; role?: string; phone?: string; email?: string },
+  ): Promise<any> {
+    return this.request('PATCH', `/users/${encodeURIComponent(userId)}`, token, data);
+  }
+
+  async setStaffUserActive(token: string, userId: string, isActive: boolean): Promise<any> {
+    return this.request('PATCH', `/users/${encodeURIComponent(userId)}/status`, token, { is_active: isActive });
+  }
+
+  async updateStaffCommission(token: string, userId: string, commissionRateBasisPoints: number): Promise<any> {
+    const commissionRate = Math.max(0, Number(commissionRateBasisPoints || 0)) / 10000;
+    return this.request('PATCH', `/staff/${encodeURIComponent(userId)}/commission`, token, { commission_rate: commissionRate });
+  }
+
   // ==========================================
   // Sync — Path B: Log-based bidirectional sync
   // ==========================================

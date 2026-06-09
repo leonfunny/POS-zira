@@ -45,7 +45,7 @@ export default function StaffManagementSettings() {
 
   const activeCount = useMemo(() => rows.filter((row) => row.is_active !== 0).length, [rows]);
 
-  const load = useCallback(async () => {
+  const readLocal = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -59,9 +59,27 @@ export default function StaffManagementSettings() {
     }
   }, []);
 
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const syncStaff = window.electronAPI.pos.sync.staff;
+      if (syncStaff) await syncStaff().catch(() => null);
+    } finally {
+      setLoading(false);
+    }
+    await readLocal();
+  }, [readLocal]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    return window.electronAPI.pos.sync.onStaffUpdated?.(() => {
+      readLocal();
+    });
+  }, [readLocal]);
 
   const saveNew = async () => {
     if (!form.name.trim() || saving) return;

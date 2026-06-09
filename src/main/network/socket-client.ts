@@ -465,6 +465,11 @@ export default class SocketClient extends EventEmitter {
       this.emit('stock:updated', data);
     });
 
+    this.socket.on('staff:updated', (data) => {
+      logger.debug('Staff updated');
+      this.emit('staff:updated', data);
+    });
+
     // Master Catalog — draft products realtime mirror
     this.socket.on('draft-products:updated', (data: { draft: any }) => {
       logger.debug(`Draft product updated: ${data?.draft?.id ?? 'unknown'}`);

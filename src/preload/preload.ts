@@ -706,10 +706,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sync: {
       products: () => ipcRenderer.invoke(IPC_CHANNELS.POS_SYNC_PRODUCTS),
       orders: () => ipcRenderer.invoke(IPC_CHANNELS.POS_SYNC_ORDERS),
+      staff: () => ipcRenderer.invoke(IPC_CHANNELS.POS_SYNC_STAFF),
       onProductsSynced: (callback: () => void) => {
         const listener = () => callback();
         ipcRenderer.on(IPC_CHANNELS.POS_PRODUCTS_SYNCED, listener);
         return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_PRODUCTS_SYNCED, listener);
+      },
+      onStaffUpdated: (callback: (data?: any) => void) => {
+        const listener = (_e: any, data: any) => callback(data);
+        ipcRenderer.on(IPC_CHANNELS.POS_STAFF_UPDATED, listener);
+        return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STAFF_UPDATED, listener);
       },
       onCatalogUpdated: (callback: (data: any) => void) => {
         const listener = (_e: any, data: any) => callback(data);

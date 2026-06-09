@@ -274,10 +274,20 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
     }));
   }, [requestStaffByCheckin, runScheduleAction]);
 
-  // Load staff and categories once
-  useEffect(() => {
+  const loadStaff = useCallback(() => {
     window.electronAPI.pos.staff.getAll().then(setStaffList);
   }, []);
+
+  // Load staff and categories once
+  useEffect(() => {
+    loadStaff();
+    const syncStaff = window.electronAPI.pos.sync.staff;
+    if (syncStaff) syncStaff().then(loadStaff).catch(() => {});
+  }, [loadStaff]);
+
+  useEffect(() => {
+    return window.electronAPI.pos.sync.onStaffUpdated?.(() => loadStaff());
+  }, [loadStaff]);
 
   useEffect(() => {
     window.electronAPI.pos.categories.getAll().then(setCategories);

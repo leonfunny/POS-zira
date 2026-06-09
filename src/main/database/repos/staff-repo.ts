@@ -49,6 +49,10 @@ export const staffRepo = {
     return database.get<StaffRow>('SELECT * FROM pos_staff WHERE id = ?', [id]);
   },
 
+  getByUserId(userId: string): StaffRow | null {
+    return database.get<StaffRow>('SELECT * FROM pos_staff WHERE user_id = ?', [userId]);
+  },
+
   /**
    * Lookup by either staff_profiles.id OR users.id. The booking pipeline
    * stores users.id (canonical) but POS dropdown may bind to either,
@@ -133,5 +137,50 @@ export const staffRepo = {
         );
       }
     });
+  },
+
+  reconcileFromBackend(staff: StaffRow[]): void {
+    if (staff.length === 0) return;
+
+    const now = new Date().toISOString();
+    const syncedIds = staff.map((s) => s.id);
+    const placeholders = syncedIds.map(() => '?').join(',');
+
+    database.transaction(() => {
+      for (const s of staff) {
+        database.run(
+          `INSERT INTO pos_staff (id, user_id, name, commission_rate, is_active, updated_at, role, backend_synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             user_id = COALESCE(excluded.user_id, pos_staff.user_id),
+             name = excluded.name,
+             commission_rate = excluded.commission_rate,
+             is_active = excluded.is_active,
+             updated_at = excluded.updated_at,
+             role = excluded.role,
+             backend_synced_at = excluded.backend_synced_at`,
+          [
+            s.id,
+            s.user_id ?? null,
+            s.name,
+            s.commission_rate,
+            s.is_active,
+            s.updated_at ?? now,
+            s.role ?? null,
+            s.backend_synced_at ?? now,
+          ],
+        );
+      }
+
+      database.run(
+        `UPDATE pos_staff
+         SET is_active = 0,
+             updated_at = ?,
+             backend_synced_at = ?
+         WHERE id NOT IN (${placeholders})`,
+        [now, now, ...syncedIds],
+      );
+    });
+    database.markDirty();
   },
 };

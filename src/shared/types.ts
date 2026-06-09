@@ -1105,7 +1105,9 @@ export const IPC_CHANNELS = {
   // POS - Sync
   POS_SYNC_PRODUCTS: 'pos:sync:products',
   POS_SYNC_ORDERS: 'pos:sync:orders',
+  POS_SYNC_STAFF: 'pos:sync:staff',
   POS_PRODUCTS_SYNCED: 'pos:products-synced',
+  POS_STAFF_UPDATED: 'pos:staff-updated',
   POS_CATALOG_UPDATED: 'pos:catalog-updated',
   POS_STOCK_UPDATED: 'pos:stock-updated',
   POS_ORDER_SYNCED: 'pos:order-synced',

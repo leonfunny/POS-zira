@@ -122,9 +122,12 @@ export function seedIfEmpty(): void {
   }
 
   const staffCount = database.get<{ cnt: number }>('SELECT COUNT(*) as cnt FROM pos_staff');
-  if (!staffCount || staffCount.cnt === 0) {
+  const seedDemoStaff = process.env.ZIRA_SEED_DEMO_STAFF === '1';
+  if (seedDemoStaff && (!staffCount || staffCount.cnt === 0)) {
     staffRepo.upsertMany(SEED_STAFF);
     logger.info(`[Seed] Seeded ${SEED_STAFF.length} salon staff`);
+  } else if (!seedDemoStaff && (!staffCount || staffCount.cnt === 0)) {
+    logger.info('[Seed] Skipping demo salon staff seed; staff must come from backend or manual setup');
   }
 
   // 5s auto-save loop persists the seeded rows. Awaiting save() here would

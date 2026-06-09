@@ -130,6 +130,14 @@ export class SyncModule extends BaseModule {
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
+    ipcMain.handle('pos:sync:staff', async () => {
+      try {
+        const count = await this.staffSync?.pullStaff();
+        notifyPosRenderers(this.container, 'pos:staff-updated', { count: count ?? 0 });
+        return { success: true, count: count ?? 0 };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
+
     // ── Billiard IPC handlers ─────────────────────────
     ipcMain.handle('billiard:get:overview', async () => {
       try {
@@ -524,6 +532,15 @@ export class SyncModule extends BaseModule {
 
     socket.on('billiard:resource-updated', () => {
       this.billiardSync?.fullSync().catch((e: any) => { logger.debug('[SyncModule] billiard full sync failed:', e?.message); });
+    });
+
+    socket.on('staff:updated', async () => {
+      try {
+        await this.staffSync?.pullStaff();
+        notifyPosRenderers(this.container, 'pos:staff-updated');
+      } catch (e: any) {
+        logger.debug('[SyncModule] staff:updated pull failed:', e?.message);
+      }
     });
 
     // ── Path B: Real-time sync log entries ──────────────────
