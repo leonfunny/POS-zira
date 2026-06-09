@@ -2622,6 +2622,10 @@ export class ApiClient {
     return this.request('PATCH', `/users/${encodeURIComponent(userId)}/status`, token, { is_active: isActive });
   }
 
+  async setStaffProfileStatus(token: string, userId: string, status: 'ACTIVE' | 'OFF' | 'ON_LEAVE'): Promise<any> {
+    return this.request('PATCH', `/staff/${encodeURIComponent(userId)}/status`, token, { status });
+  }
+
   async updateStaffCommission(token: string, userId: string, commissionRateBasisPoints: number): Promise<any> {
     const commissionRate = Math.max(0, Number(commissionRateBasisPoints || 0)) / 10000;
     return this.request('PATCH', `/staff/${encodeURIComponent(userId)}/commission`, token, { commission_rate: commissionRate });

@@ -16,9 +16,18 @@ interface StaffFormState {
   commissionPercent: string;
 }
 
+const STAFF_ROLE_OPTIONS = [
+  { value: 'STAFF', label: 'Staff' },
+  { value: 'MANAGER', label: 'Manager' },
+  { value: 'OWNER', label: 'Owner' },
+];
+
+const ADD_STAFF_ROLE_OPTIONS = STAFF_ROLE_OPTIONS.filter((option) => option.value !== 'OWNER');
+const STAFF_ROLE_VALUES = new Set(STAFF_ROLE_OPTIONS.map((option) => option.value));
+
 const emptyForm: StaffFormState = {
   name: '',
-  role: '',
+  role: 'STAFF',
   commissionPercent: '',
 };
 
@@ -33,6 +42,15 @@ function toBasisPoints(value: string): number {
   return Math.round(parsed * 100);
 }
 
+function normalizeRole(role: string | null | undefined): string {
+  const value = String(role || '').trim().toUpperCase();
+  return STAFF_ROLE_VALUES.has(value) ? value : 'STAFF';
+}
+
+function roleLabel(role: string | null | undefined): string {
+  return STAFF_ROLE_OPTIONS.find((option) => option.value === normalizeRole(role))?.label || 'Staff';
+}
+
 export default function StaffManagementSettings() {
   const [rows, setRows] = useState<StaffRow[]>([]);
   const [form, setForm] = useState<StaffFormState>(emptyForm);
@@ -40,10 +58,15 @@ export default function StaffManagementSettings() {
   const [editingForm, setEditingForm] = useState<StaffFormState>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeCount = useMemo(() => rows.filter((row) => row.is_active !== 0).length, [rows]);
+  const visibleRows = useMemo(
+    () => (showInactive ? rows : rows.filter((row) => row.is_active !== 0)),
+    [rows, showInactive],
+  );
 
   const readLocal = useCallback(async () => {
     setLoading(true);
@@ -89,7 +112,7 @@ export default function StaffManagementSettings() {
     try {
       const result = await window.electronAPI.pos.staff.create({
         name: form.name.trim(),
-        role: form.role.trim() || null,
+        role: normalizeRole(form.role),
         commissionRate: toBasisPoints(form.commissionPercent),
         isActive: true,
       });
@@ -108,7 +131,7 @@ export default function StaffManagementSettings() {
     setEditingId(row.id);
     setEditingForm({
       name: row.name,
-      role: row.role || '',
+      role: normalizeRole(row.role),
       commissionPercent: toPercent(row.commission_rate || 0),
     });
     setMessage(null);
@@ -123,7 +146,7 @@ export default function StaffManagementSettings() {
     try {
       const result = await window.electronAPI.pos.staff.update(row.id, {
         name: editingForm.name.trim(),
-        role: editingForm.role.trim() || null,
+        role: normalizeRole(editingForm.role),
         commissionRate: toBasisPoints(editingForm.commissionPercent),
         isActive: row.is_active !== 0,
       });
@@ -185,12 +208,17 @@ export default function StaffManagementSettings() {
           placeholder="Employee name"
           className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
         />
-        <input
+        <select
           value={form.role}
           onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
-          placeholder="Role"
           className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
-        />
+        >
+          {ADD_STAFF_ROLE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <input
           value={form.commissionPercent}
           onChange={(event) => {
@@ -222,12 +250,12 @@ export default function StaffManagementSettings() {
           <span className="text-right">Actions</span>
         </div>
         <div className="divide-y divide-slate-100 bg-white">
-          {rows.length === 0 && (
+          {visibleRows.length === 0 && (
             <div className="px-3 py-4 text-sm text-slate-500">
               {loading ? 'Loading staff...' : 'No staff yet.'}
             </div>
           )}
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const editing = editingId === row.id;
             return (
               <div
@@ -243,11 +271,17 @@ export default function StaffManagementSettings() {
                       onChange={(event) => setEditingForm((prev) => ({ ...prev, name: event.target.value }))}
                       className="px-2 py-1.5 border border-slate-300 rounded-md text-sm"
                     />
-                    <input
+                    <select
                       value={editingForm.role}
                       onChange={(event) => setEditingForm((prev) => ({ ...prev, role: event.target.value }))}
                       className="px-2 py-1.5 border border-slate-300 rounded-md text-sm"
-                    />
+                    >
+                      {STAFF_ROLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       value={editingForm.commissionPercent}
                       onChange={(event) => {
@@ -262,7 +296,7 @@ export default function StaffManagementSettings() {
                 ) : (
                   <>
                     <span className="font-semibold truncate">{row.name}</span>
-                    <span className="truncate">{row.role || '-'}</span>
+                    <span className="truncate">{roleLabel(row.role)}</span>
                     <span>{toPercent(row.commission_rate || 0)}%</span>
                   </>
                 )}
@@ -322,6 +356,15 @@ export default function StaffManagementSettings() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
+        <label className="inline-flex items-center gap-1.5 text-slate-600">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(event) => setShowInactive(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-300"
+          />
+          Show inactive
+        </label>
         <span className="text-slate-500">{activeCount} active / {rows.length} total</span>
         {message && <span className="text-emerald-700">{message}</span>}
         {error && <span className="text-red-600">{error}</span>}

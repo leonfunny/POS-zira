@@ -99,7 +99,7 @@ export class StaffSync {
     }
 
     if (input.isActive !== undefined && input.isActive !== (staff.is_active !== 0)) {
-      await apiClient.setStaffUserActive(token, staff.user_id, input.isActive);
+      await apiClient.setStaffProfileStatus(token, staff.user_id, input.isActive ? 'ACTIVE' : 'OFF');
     }
 
     await this.pullStaffAfterMutation();
@@ -117,7 +117,7 @@ export class StaffSync {
     }
     if (!staff?.user_id) throw new Error('Staff is not linked to a backend user yet. Refresh staff and try again.');
 
-    await apiClient.setStaffUserActive(token, staff.user_id, active);
+    await apiClient.setStaffProfileStatus(token, staff.user_id, active ? 'ACTIVE' : 'OFF');
     await this.pullStaffAfterMutation();
     return staffRepo.getById(id);
   }
