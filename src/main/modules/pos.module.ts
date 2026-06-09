@@ -2703,10 +2703,26 @@ export class PosModule extends BaseModule {
           return { success: true, report: null };
         }
 
-        // Attempt to sync pending orders before closing shift
+        // Attempt to sync pending orders before closing shift, but never let
+        // a backend outage block the local close/Z-report flow.
         const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
         if (orderSync) {
-          try { await orderSync.syncPendingOrders(); } catch { /* best-effort */ }
+          let syncFinished = false;
+          const syncTimeoutMs = 2000;
+          const syncPromise = orderSync.syncPendingOrders()
+            .catch((err: any) => {
+              logger.debug(`[PosModule] pre-close order sync failed: ${err?.message ?? err}`);
+            })
+            .finally(() => {
+              syncFinished = true;
+            });
+          await Promise.race([
+            syncPromise,
+            new Promise((resolve) => setTimeout(resolve, syncTimeoutMs)),
+          ]);
+          if (!syncFinished) {
+            logger.warn(`[PosModule] pre-close order sync still running after ${syncTimeoutMs}ms; closing shift locally`);
+          }
         }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         this.posStore?.dispatch({ type: 'session/close' });
