@@ -16,6 +16,7 @@ class Database {
   private dbPath: string = '';
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private dirty = false;
+  private dirtyVersion = 0;
 
   /**
    * Cheap header sanity check before handing a buffer to sql.js. sql.js
@@ -182,6 +183,7 @@ class Database {
    */
   markDirty(): void {
     this.dirty = true;
+    this.dirtyVersion++;
   }
 
   async save(): Promise<BackupFlushResult> {
@@ -192,11 +194,16 @@ class Database {
       return { success: false, dbPath: this.dbPath || undefined, error: 'Database save already in progress' };
     }
     this.saving = true;
+    const saveVersion = this.dirtyVersion;
 
     try {
       const data = this.db.export();
       await atomicWriteFile(this.dbPath, Buffer.from(data));
-      this.dirty = false;
+      if (this.dirtyVersion === saveVersion) {
+        this.dirty = false;
+      } else {
+        logger.debug('[DB] Save completed with newer changes still dirty; scheduling another flush');
+      }
       if (this.consecutiveFailures > 0) {
         logger.info(`[DB] Save recovered after ${this.consecutiveFailures} failures`);
         this.consecutiveFailures = 0;
@@ -239,9 +246,12 @@ class Database {
       return { success: false, dbPath: this.dbPath || undefined, error: 'Database not initialized' };
     }
     try {
+      const saveVersion = this.dirtyVersion;
       const data = this.db.export();
       atomicWriteFileSync(this.dbPath, Buffer.from(data));
-      this.dirty = false;
+      if (this.dirtyVersion === saveVersion) {
+        this.dirty = false;
+      }
       return { success: true, dbPath: this.dbPath };
     } catch (error) {
       logger.error('[DB] saveSync failed:', error);
