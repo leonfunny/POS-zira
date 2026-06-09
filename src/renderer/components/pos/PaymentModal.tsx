@@ -612,11 +612,6 @@ export default function PaymentModal({
     setReceiptRecovery(null);
 
     try {
-      if (!shiftId || !staffId || !staffName?.trim()) {
-        setError(tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.'));
-        setSaving(false);
-        return;
-      }
       if (!customerNipValid) {
         setError(tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.'));
         setSaving(false);
@@ -634,7 +629,15 @@ export default function PaymentModal({
       }
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
-      setError(t('pos.payment.error'));
+      const rawMessage = err instanceof Error
+        ? err.message
+        : (typeof err === 'string' ? err : '');
+      const message = rawMessage.trim();
+      if (/active shift staff|local active shift/i.test(message)) {
+        setError(tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.'));
+      } else {
+        setError(message || t('pos.payment.error'));
+      }
     } finally {
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
@@ -645,7 +648,7 @@ export default function PaymentModal({
     void completePayment();
   }, [completePayment]);
 
-  const canComplete = !receiptRecovery && !saving && !!shiftId && !!staffId && !!staffName?.trim() && customerNipValid && (
+  const canComplete = !receiptRecovery && !saving && customerNipValid && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );

@@ -99,17 +99,18 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain("window.electronAPI.pos.payment.printReceipt(orderId)");
   });
 
-  it('blocks payments when a restored shift has no staff name', () => {
-    expect(RETAIL_TEMPLATE).toContain('missingShiftStaff');
+  it('lets the main process repair stale renderer staff state from the local active shift', () => {
+    expect(RETAIL_TEMPLATE).toContain('const shiftPaymentOpen = session.isOpen');
     expect(RETAIL_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
     expect(CART).toContain('shiftBlockReason');
-    expect(PAYMENT_MODAL).toContain('if (!shiftId || !staffId || !staffName?.trim())');
+    expect(PAYMENT_MODAL).not.toContain('if (!shiftId || !staffId || !staffName?.trim())');
+    expect(POS_MODULE).toContain('const activeShift = database.get');
     expect(POS_MODULE).toContain('Cannot create POS order without an active shift staff');
   });
 
-  it('keeps non-retail payment surfaces behind the same shift staff gate', () => {
+  it('keeps non-retail payment surfaces behind the same local shift gate', () => {
     expect(SALON_TEMPLATE).toContain('shiftPaymentOpen');
-    expect(SALON_TEMPLATE).toContain('!session.staffId || !session.staffName?.trim()');
+    expect(SALON_TEMPLATE).toContain('const shiftPaymentOpen = session.isOpen');
     expect(B2B_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
     expect(RESTAURANT_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
   });

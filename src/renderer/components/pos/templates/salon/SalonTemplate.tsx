@@ -150,11 +150,10 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
     const value = t(key);
     return value !== key ? value : fallback;
   }, [t]);
-  const missingShiftStaff = session.isOpen && (!session.staffId || !session.staffName?.trim());
-  const shiftPaymentOpen = session.isOpen && !missingShiftStaff;
-  const shiftBlockedMessage = missingShiftStaff
-    ? tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.')
-    : t('pos.shift.openRequired') || 'Open a shift to accept payments';
+  const shiftPaymentOpen = session.isOpen;
+  const shiftBlockedMessage = !session.isOpen
+    ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
+    : undefined;
 
   const loadNailTurnBoard = useCallback(async () => {
     try {
