@@ -34,6 +34,7 @@ vi.mock('../src/main/database/repos/local-variant-imports-repo', () => ({
 
 vi.mock('../src/main/database/database', () => ({
   database: {
+    get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
     markDirty: vi.fn(),
@@ -98,9 +99,33 @@ function makeOrder(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function mockNoStrandedSyncingOrders() {
+  vi.mocked(database.get).mockReturnValue({ cnt: 0 } as any);
+}
+
+function makeItem(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'item-1',
+    order_id: 'order-1',
+    variant_id: 'variant-1',
+    name: 'Banh Trang Re 200g',
+    sku: 'CHE-BANHTRANG-13',
+    price: 1100,
+    quantity: 1,
+    total: 1100,
+    vat_rate: 8,
+    staff_id: null,
+    staff_name: null,
+    notes: null,
+    course: null,
+    ...overrides,
+  };
+}
+
 describe('OrderSync DTO mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNoStrandedSyncingOrders();
     vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
     vi.mocked(apiClient.createPosOrder).mockResolvedValue({ id: 'backend-order-1' });
     vi.mocked(apiClient.finishOrder).mockResolvedValue({});
@@ -217,6 +242,7 @@ describe('OrderSync DTO mapping', () => {
 describe('OrderSync.resetForRetry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNoStrandedSyncingOrders();
   });
 
   it('resets a shelved order for manual retry', () => {
@@ -240,5 +266,55 @@ describe('OrderSync.resetForRetry', () => {
     expect(result).toBe(false);
     expect(database.run).not.toHaveBeenCalled();
     expect(database.markDirty).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrderSync concurrency and recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNoStrandedSyncingOrders();
+    vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
+    vi.mocked(apiClient.finishOrder).mockResolvedValue({});
+  });
+
+  it('reuses an in-flight sync so concurrent triggers do not create duplicate backend orders', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([makeItem() as any]);
+
+    let resolveCreate: (value: any) => void = () => {};
+    vi.mocked(apiClient.createPosOrder).mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; }) as any,
+    );
+
+    const sync = new OrderSync();
+    const first = sync.syncPendingOrders();
+    const second = sync.syncPendingOrders();
+
+    expect(orderRepo.getUnsynced).toHaveBeenCalledTimes(1);
+    expect(orderRepo.markSyncing).toHaveBeenCalledTimes(1);
+    expect(apiClient.createPosOrder).toHaveBeenCalledTimes(1);
+
+    resolveCreate({ id: 'backend-order-1', orderNumber: 'POS260609-0013' });
+    const [firstSummary, secondSummary] = await Promise.all([first, second]);
+
+    expect(firstSummary).toBe(secondSummary);
+    expect(apiClient.createPosOrder).toHaveBeenCalledTimes(1);
+    expect(orderRepo.markSynced).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers stranded syncing orders only when the sync service starts', async () => {
+    vi.mocked(database.get).mockReturnValue({ cnt: 2 } as any);
+
+    const sync = new OrderSync();
+
+    expect(database.run).toHaveBeenCalledWith('UPDATE orders SET synced = 0 WHERE synced = 2');
+    expect(database.markDirty).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    vi.mocked(getSecureAuthToken).mockReturnValue(null as any);
+
+    await sync.syncPendingOrders();
+
+    expect(database.run).not.toHaveBeenCalledWith('UPDATE orders SET synced = 0 WHERE synced = 2');
   });
 });

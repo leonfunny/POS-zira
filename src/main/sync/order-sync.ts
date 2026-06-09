@@ -54,6 +54,22 @@ export interface OrderSyncSummary {
 export class OrderSync {
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private retryJitterTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncInFlight: Promise<OrderSyncSummary> | null = null;
+
+  constructor() {
+    this.recoverStrandedSyncingOrders();
+  }
+
+  private recoverStrandedSyncingOrders(): void {
+    const stranded = database.get<{ cnt: number }>(
+      'SELECT COUNT(*) AS cnt FROM orders WHERE synced = 2',
+    )?.cnt ?? 0;
+    if (stranded === 0) return;
+
+    database.run('UPDATE orders SET synced = 0 WHERE synced = 2');
+    database.markDirty();
+    logger.warn(`[OrderSync] Recovered ${stranded} stranded in-flight order(s) from previous session`);
+  }
 
   /**
    * Upload all unsynced orders to backend.
@@ -61,12 +77,19 @@ export class OrderSync {
    * Transient errors retry up to MAX_SYNC_ATTEMPTS; business errors shelve immediately.
    */
   async syncPendingOrders(): Promise<OrderSyncSummary> {
+    if (this.syncInFlight) return this.syncInFlight;
+
+    this.syncInFlight = this.runSyncPendingOrders()
+      .finally(() => {
+        this.syncInFlight = null;
+      });
+    return this.syncInFlight;
+  }
+
+  private async runSyncPendingOrders(): Promise<OrderSyncSummary> {
     const summary: OrderSyncSummary = { attempted: 0, synced: 0, failed: 0, results: [] };
     const token = getSecureAuthToken();
     if (!token) return summary;
-
-    // Recover stranded in-flight orders (synced=2 from a previous crash)
-    database.run('UPDATE orders SET synced = 0 WHERE synced = 2');
 
     const pending = orderRepo.getUnsynced();
     if (pending.length === 0) return summary;
