@@ -1,6 +1,8 @@
 import { database } from '../database';
 import { randomUUID } from 'crypto';
 
+const DEMO_STAFF_IDS = ['staff-1', 'staff-2', 'staff-3', 'staff-4'] as const;
+
 export interface StaffRow {
   id: string;                      // staff_profiles.id (server)
   user_id?: string | null;         // users.id — canonical bookings.staff_user_id FK target
@@ -171,6 +173,13 @@ export const staffRepo = {
           ],
         );
       }
+
+      database.run(
+        `DELETE FROM pos_staff
+         WHERE user_id IS NULL
+           AND id IN (${DEMO_STAFF_IDS.map(() => '?').join(',')})`,
+        [...DEMO_STAFF_IDS],
+      );
 
       database.run(
         `UPDATE pos_staff

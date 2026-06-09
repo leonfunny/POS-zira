@@ -55,4 +55,25 @@ describe('staffRepo', () => {
     expect(staleUpdate?.[0]).toContain('SET is_active = 0');
     expect(staleUpdate?.[1]).toEqual([expect.any(String), expect.any(String), 'profile-1']);
   });
+
+  it('purges built-in demo staff rows after successful backend reconciliation', () => {
+    staffRepo.reconcileFromBackend([
+      {
+        id: 'profile-1',
+        user_id: 'user-1',
+        name: 'Alice',
+        commission_rate: 4000,
+        is_active: 1,
+        updated_at: '2026-06-09T12:00:00.000Z',
+      },
+    ]);
+
+    const demoCleanup = vi.mocked(database.run).mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM pos_staff'),
+    );
+
+    expect(demoCleanup?.[0]).toContain('user_id IS NULL');
+    expect(demoCleanup?.[0]).toContain('id IN (?,?,?,?)');
+    expect(demoCleanup?.[1]).toEqual(['staff-1', 'staff-2', 'staff-3', 'staff-4']);
+  });
 });
