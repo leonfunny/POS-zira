@@ -89,6 +89,16 @@ const WINDOW_CONFIGS: Record<string, WindowConfig> = {
     alwaysOnTop: true,
     targetDisplay: 'primary',
   },
+  kitchenSelfOrder: {
+    id: 'kitchenSelfOrder',
+    htmlFile: 'windows/kitchen-self-order/index.html',
+    preload: 'preload-kitchen-self-order.js',
+    width: 1280,
+    height: 800,
+    fullscreen: true,
+    alwaysOnTop: true,
+    targetDisplay: 'primary',
+  },
 };
 
 export class WindowManager {
@@ -244,6 +254,10 @@ export class WindowManager {
       logger.warn('[WindowManager] Self-checkout disabled in settings');
       return null;
     }
+    if (id === 'kitchenSelfOrder' && !getConfigValue('kitchenSelfOrderEnabled')) {
+      logger.warn('[WindowManager] Kitchen self-order disabled in settings');
+      return null;
+    }
 
     const existing = this.getWindow(id);
     if (existing) {
@@ -266,6 +280,8 @@ export class WindowManager {
     const primaryDisplay = screen.getPrimaryDisplay();
     const isCustomer = id === 'customer';
     const isSelfCheckout = id === 'selfCheckout';
+    const isKitchenSelfOrder = id === 'kitchenSelfOrder';
+    const isCustomerKiosk = isSelfCheckout || isKitchenSelfOrder;
     const customerBehavior = isCustomer
       ? this.resolveCustomerDisplayBehavior(displays, primaryDisplay, true)
       : null;
@@ -274,14 +290,14 @@ export class WindowManager {
     let targetDisplay = primaryDisplay;
     if (customerBehavior) {
       targetDisplay = customerBehavior.targetDisplay;
-    } else if (isSelfCheckout) {
-      const requestedDisplay = Number(getConfigValue('selfCheckoutMonitor') ?? 0);
+    } else if (isCustomerKiosk) {
+      const requestedDisplay = Number(getConfigValue(isKitchenSelfOrder ? 'kitchenSelfOrderMonitor' : 'selfCheckoutMonitor') ?? 0);
       targetDisplay = displays[requestedDisplay] || primaryDisplay;
     } else if (config.targetDisplay === 'secondary' && displays.length > 1) {
       targetDisplay = displays.find((d) => d.id !== primaryDisplay.id) || primaryDisplay;
     }
 
-    const selfCheckoutBounds: Rectangle | null = isSelfCheckout
+    const selfCheckoutBounds: Rectangle | null = isCustomerKiosk
       ? {
         x: targetDisplay.bounds.x,
         y: targetDisplay.bounds.y,
@@ -295,9 +311,9 @@ export class WindowManager {
     // even on single-monitor machines. Toggle it off in Settings on dev machines that need
     // the old windowed fallback. Esc and 3-finger swipe-down (CustomerApp.tsx) still exit.
     const forceKiosk = customerBehavior?.forceKiosk ?? false;
-    const useKiosk = customerBehavior?.useKiosk ?? isSelfCheckout;
+    const useKiosk = customerBehavior?.useKiosk ?? isCustomerKiosk;
     const useAlwaysOnTop = useKiosk || !!config.alwaysOnTop;
-    const isLockedKioskSurface = (isCustomer || isSelfCheckout) && useKiosk;
+    const isLockedKioskSurface = (isCustomer || isCustomerKiosk) && useKiosk;
 
     if (isCustomer && !hasMultipleDisplays) {
       if (forceKiosk) {
@@ -351,12 +367,14 @@ export class WindowManager {
           ? 'Zira AI POS'
           : id === 'selfCheckout'
             ? 'Self Checkout'
-            : 'Customer Display',
+            : id === 'kitchenSelfOrder'
+              ? 'Kitchen Self-Order'
+              : 'Customer Display',
     });
 
     if (customerBehavior) {
       this.applyCustomerDisplayPresentation(win, customerBehavior);
-    } else if (isSelfCheckout && selfCheckoutBounds) {
+    } else if (isCustomerKiosk && selfCheckoutBounds) {
       this.applyKioskPresentation(win, selfCheckoutBounds);
     }
 
@@ -367,6 +385,7 @@ export class WindowManager {
         pos: 'http://localhost:3100/windows/pos/',
         customer: 'http://localhost:3100/windows/customer/',
         selfCheckout: 'http://localhost:3100/windows/self-checkout/',
+        kitchenSelfOrder: 'http://localhost:3100/windows/kitchen-self-order/',
       };
       win.loadURL(devUrls[id] || `http://localhost:3100/windows/${id}/`);
     } else {
@@ -417,9 +436,9 @@ export class WindowManager {
         return;
       }
 
-      if (isSelfCheckout && isLockedKioskSurface) {
+      if (isCustomerKiosk && isLockedKioskSurface) {
         if (isSelfCheckoutStaffExit(input)) {
-          logger.info('[WindowManager] Ctrl+Shift+Q on self-checkout - closing');
+          logger.info(`[WindowManager] Ctrl+Shift+Q on ${id} - closing`);
           event.preventDefault();
           win.destroy();
           return;
@@ -480,7 +499,7 @@ export class WindowManager {
         win.once('closed', () => clearTimeout(restoreTimer));
       });
 
-      if (isSelfCheckout) {
+      if (isCustomerKiosk) {
         // Prevent OS from stealing focus via swipe gestures - immediately reclaim
         win.on('blur', () => {
           if (win.isDestroyed()) return;
@@ -492,7 +511,7 @@ export class WindowManager {
         });
       }
 
-      logger.info(`[WindowManager] ${id} kiosk=true, frameless=true, blur-refocus=${isSelfCheckout ? 'on' : 'off'}`);
+      logger.info(`[WindowManager] ${id} kiosk=true, frameless=true, blur-refocus=${isCustomerKiosk ? 'on' : 'off'}`);
     } else if (isCustomer) {
       logger.info(`[WindowManager] Customer display kiosk=false, frameless=true, windowed mode`);
     }
@@ -544,6 +563,16 @@ export class WindowManager {
         return { success: true };
       }
       return { success: false, error: 'not_self_checkout_window' };
+    });
+
+    ipcMain.handle('kitchen-self-order:close', (event) => {
+      const senderWin = BrowserWindow.fromWebContents(event.sender);
+      const kitchenSelfOrderWin = this.getWindow('kitchenSelfOrder');
+      if (senderWin && kitchenSelfOrderWin && senderWin === kitchenSelfOrderWin && !senderWin.isDestroyed()) {
+        senderWin.destroy();
+        return { success: true };
+      }
+      return { success: false, error: 'not_kitchen_self_order_window' };
     });
 
     ipcMain.handle('window:setFullScreen', (event, value: boolean) => {
@@ -701,6 +730,7 @@ export class WindowManager {
     try { ipcMain.removeHandler('display:list'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:list failed:', err?.message); }
     try { ipcMain.removeHandler('display:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler display:close failed:', err?.message); }
     try { ipcMain.removeHandler('self-checkout:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler self-checkout:close failed:', err?.message); }
+    try { ipcMain.removeHandler('kitchen-self-order:close'); } catch (err: any) { logger.debug('[WindowManager] removeHandler kitchen-self-order:close failed:', err?.message); }
     // Destroy windows
     for (const [_id, win] of this.windows) {
       if (!win.isDestroyed()) win.destroy();

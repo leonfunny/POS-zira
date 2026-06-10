@@ -353,6 +353,8 @@ class Database {
     logger.info('[DB] Clearing salon-specific data for tenant isolation...');
 
     const tablesToClear = [
+      'kitchen_self_order_items',
+      'kitchen_self_orders',
       'order_items',      // Must be first (FK to orders)
       'orders',
       'forecast_order_draft_lines',

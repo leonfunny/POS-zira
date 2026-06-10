@@ -56,6 +56,26 @@ describe('kitchen ticket builder', () => {
     const lines = buildKitchenTicketLines({ ...baseTicket, source: 'POS' });
     expect(lines.map((l) => l.text).join('\n')).toContain('KASA');
   });
+
+  it('renders kitchen self-order tickets in Vietnamese with fulfillment and K-number', () => {
+    const lines = buildKitchenTicketLines({
+      ...baseTicket,
+      orderNumber: 'K-042',
+      pickupNumber: 'K-042',
+      source: 'KIOSK PC-YURI',
+      fulfillmentType: 'TAKEAWAY',
+      kitchenLanguage: 'vi',
+      items: [{ name: 'Pho bo', quantity: 2, notes: 'it cay' }],
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('*** BEP ***');
+    expect(text).toContain('K-042');
+    expect(text).toContain('MANG DI');
+    expect(text).toContain('KIOSK PC-YURI');
+    expect(text).toContain('Ghi chu: it cay');
+    expect(text).not.toContain('#K-042');
+  });
 });
 
 describe('pickup number (so nhan do)', () => {

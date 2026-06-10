@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ChefHat,
   CheckCircle2,
   Clock,
   Languages,
   Maximize,
   Monitor,
   Power,
+  Printer,
   ScanBarcode,
   Settings,
   ShieldAlert,
+  Utensils,
   XCircle,
 } from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
@@ -24,6 +27,8 @@ import {
 import rlog from '../utils/logger';
 
 type ScLang = 'pl' | 'en' | 'vi';
+type KitchenFulfillment = 'DINE_IN' | 'TAKEAWAY';
+type KitchenSlipPrinterType = 'RECEIPT' | 'LABEL';
 
 interface DisplayInfo {
   index: number;
@@ -43,17 +48,81 @@ interface SelfCheckoutTabProps {
   language: Language;
 }
 
+function getKitchenSelfOrderCopy(language: Language) {
+  if (language === 'vi') {
+    return {
+      badge: 'Kiosk đơn bếp',
+      title: 'Kitchen Self-Order',
+      desc: 'Flow riêng cho PC-YURI: khách chọn món, POS1 in phiếu bếp, PC-YURI hiện số đơn.',
+      launch: 'Mở kiosk đặt món',
+      opening: 'Đang mở...',
+      settings: 'Cài đặt kitchen kiosk',
+      defaultLanguage: 'Ngôn ngữ mặc định',
+      monitor: 'Màn hình',
+      fulfillment: 'Mặc định ăn tại quán/mang đi',
+      dineIn: 'Na miejscu',
+      takeaway: 'Na wynos',
+      slipPrinter: 'Máy in slip PC-YURI',
+      receipt: 'Receipt',
+      label: 'Label',
+      isolated: 'Tách khỏi self-checkout store',
+    };
+  }
+  if (language === 'pl') {
+    return {
+      badge: 'Kiosk kuchenny',
+      title: 'Kitchen Self-Order',
+      desc: 'Oddzielny flow dla PC-YURI: klient wybiera dania, POS1 drukuje bon kuchenny, PC-YURI pokazuje numer.',
+      launch: 'Otworz kiosk zamowien',
+      opening: 'Otwieranie...',
+      settings: 'Ustawienia kiosku kuchni',
+      defaultLanguage: 'Domyslny jezyk',
+      monitor: 'Monitor',
+      fulfillment: 'Domyslnie na miejscu/na wynos',
+      dineIn: 'Na miejscu',
+      takeaway: 'Na wynos',
+      slipPrinter: 'Drukarka slip PC-YURI',
+      receipt: 'Receipt',
+      label: 'Label',
+      isolated: 'Oddzielone od self-checkout sklepu',
+    };
+  }
+  return {
+    badge: 'Kitchen kiosk',
+    title: 'Kitchen Self-Order',
+    desc: 'Separate PC-YURI flow: customer picks food, POS1 prints the kitchen ticket, PC-YURI shows the order number.',
+    launch: 'Open food-order kiosk',
+    opening: 'Opening...',
+    settings: 'Kitchen kiosk settings',
+    defaultLanguage: 'Food kiosk language',
+    monitor: 'Customer-facing screen',
+    fulfillment: 'Default dine-in/takeaway',
+    dineIn: 'Dine in',
+    takeaway: 'Takeaway',
+    slipPrinter: 'PC-YURI slip printer',
+    receipt: 'Receipt',
+    label: 'Label',
+    isolated: 'Separate from store self-checkout',
+  };
+}
+
 export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTabProps) {
   const { config, saveConfig } = useConfig();
   const { t } = useTranslation(uiLanguage);
+  const kitchenCopy = getKitchenSelfOrderCopy(uiLanguage);
 
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
+  const [kitchenLanguage, setKitchenLanguage] = useState<ScLang>('pl');
+  const [kitchenMonitor, setKitchenMonitor] = useState<number>(0);
+  const [kitchenFulfillment, setKitchenFulfillment] = useState<KitchenFulfillment>('DINE_IN');
+  const [kitchenSlipPrinterType, setKitchenSlipPrinterType] = useState<KitchenSlipPrinterType>('RECEIPT');
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [opening, setOpening] = useState(false);
+  const [kitchenOpening, setKitchenOpening] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
@@ -64,6 +133,10 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     setProfile(resolveSelfCheckoutProfile(c.selfCheckoutProfile));
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
+    setKitchenLanguage((c.kitchenSelfOrderLanguage as ScLang) ?? 'pl');
+    setKitchenMonitor(typeof c.kitchenSelfOrderMonitor === 'number' ? c.kitchenSelfOrderMonitor : 0);
+    setKitchenFulfillment(c.kitchenSelfOrderDefaultFulfillment === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE_IN');
+    setKitchenSlipPrinterType(c.kitchenSelfOrderSlipPrinterType === 'LABEL' ? 'LABEL' : 'RECEIPT');
   }, [config]);
 
   useEffect(() => {
@@ -129,6 +202,30 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
       alert(`${t('selfCheckout.openError')}: ${err?.message || err}`);
     } finally {
       setOpening(false);
+    }
+  };
+
+  const openKitchenSelfOrder = async () => {
+    setKitchenOpening(true);
+    try {
+      await persist({
+        kitchenSelfOrderEnabled: true,
+        kitchenSelfOrderLanguage: kitchenLanguage,
+        kitchenSelfOrderMonitor: kitchenMonitor,
+        kitchenSelfOrderDefaultFulfillment: kitchenFulfillment,
+        kitchenSelfOrderSlipPrinterType: kitchenSlipPrinterType,
+        kitchenSelfOrderSourceLabel: 'PC-YURI',
+      });
+      const result = await window.electronAPI.window.open('kitchenSelfOrder');
+      if (!result?.success) {
+        rlog.error('[SelfCheckoutTab] Failed to open kitchen self-order:', result?.error);
+        alert(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
+      }
+    } catch (err: any) {
+      rlog.error('[SelfCheckoutTab] openKitchenSelfOrder failed:', err);
+      alert(`${t('selfCheckout.openError')}: ${err?.message || err}`);
+    } finally {
+      setKitchenOpening(false);
     }
   };
 
@@ -274,6 +371,129 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
           </div>
         </section>
       </div>
+
+      <section className="panel p-5">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-emerald-700">
+              <ChefHat size={14} />
+              {kitchenCopy.badge}
+            </div>
+            <h2 className="flex items-center gap-2 text-xl font-black text-[var(--ink)]">
+              <Utensils size={22} className="text-[var(--primary-deep)]" />
+              {kitchenCopy.title}
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--ink-muted)]">
+              {kitchenCopy.desc}
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.1em] text-slate-700">
+            {kitchenCopy.isolated}
+          </span>
+        </div>
+
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SettingField
+              icon={<Languages size={17} />}
+              label={kitchenCopy.defaultLanguage}
+              help={t('selfCheckout.defaultLanguageHelp')}
+            >
+              <select
+                value={kitchenLanguage}
+                onChange={(e) => {
+                  const v = e.target.value as ScLang;
+                  setKitchenLanguage(v);
+                  persist({ kitchenSelfOrderLanguage: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                <option value="pl">Polski (PL)</option>
+                <option value="en">English (EN)</option>
+                <option value="vi">Tiếng Việt (VI)</option>
+              </select>
+            </SettingField>
+
+            <SettingField
+              icon={<Monitor size={17} />}
+              label={kitchenCopy.monitor}
+              help={t('selfCheckout.displayMonitorHelp')}
+            >
+              <select
+                value={kitchenMonitor}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  setKitchenMonitor(v);
+                  persist({ kitchenSelfOrderMonitor: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                {displays.length > 0 ? (
+                  displays.map((d) => (
+                    <option key={d.index} value={d.index}>
+                      {d.isPrimary ? t('selfCheckout.monitor.primary') : `${t('selfCheckout.monitor.secondary')} ${d.index}`}
+                      {' - '}{d.width}x{d.height}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value={0}>{t('selfCheckout.monitor.primary')}</option>
+                    <option value={1}>{t('selfCheckout.monitor.secondary')} (1)</option>
+                  </>
+                )}
+              </select>
+            </SettingField>
+
+            <SettingField
+              icon={<Utensils size={17} />}
+              label={kitchenCopy.fulfillment}
+              help="Customer can still change before submit."
+            >
+              <select
+                value={kitchenFulfillment}
+                onChange={(e) => {
+                  const v = e.target.value === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE_IN';
+                  setKitchenFulfillment(v);
+                  persist({ kitchenSelfOrderDefaultFulfillment: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                <option value="DINE_IN">{kitchenCopy.dineIn}</option>
+                <option value="TAKEAWAY">{kitchenCopy.takeaway}</option>
+              </select>
+            </SettingField>
+
+            <SettingField
+              icon={<Printer size={17} />}
+              label={kitchenCopy.slipPrinter}
+              help="Best-effort local print on PC-YURI."
+            >
+              <select
+                value={kitchenSlipPrinterType}
+                onChange={(e) => {
+                  const v = e.target.value === 'LABEL' ? 'LABEL' : 'RECEIPT';
+                  setKitchenSlipPrinterType(v);
+                  persist({ kitchenSelfOrderSlipPrinterType: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                <option value="RECEIPT">{kitchenCopy.receipt}</option>
+                <option value="LABEL">{kitchenCopy.label}</option>
+              </select>
+            </SettingField>
+          </div>
+
+          <button
+            type="button"
+            onClick={openKitchenSelfOrder}
+            disabled={kitchenOpening}
+            className="flex min-h-[148px] w-full items-center justify-center gap-3 rounded-2xl bg-emerald-700 px-6 text-xl font-black text-white shadow-[0_16px_38px_rgba(21,128,61,0.20)] transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Maximize size={24} />
+            {kitchenOpening ? kitchenCopy.opening : kitchenCopy.launch}
+          </button>
+        </div>
+      </section>
 
       <section className="panel p-5">
         <div className="mb-5 flex items-center gap-2">

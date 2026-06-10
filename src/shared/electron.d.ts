@@ -141,6 +141,7 @@ interface PosCategory {
   color: string | null;
   sort_order: number;
   updated_at: string | null;
+  kitchen_print?: number | null;
 }
 
 interface PosDailyStats {
@@ -447,6 +448,29 @@ interface ElectronAPI {
     list: () => Promise<string[]>;
     setFullScreen: (value: boolean) => Promise<{ success: boolean }>;
     setKiosk: (value: boolean) => Promise<{ success: boolean }>;
+  };
+
+  kitchenSelfOrder?: {
+    submit: (payload: {
+      customerLanguage: 'pl' | 'vi' | 'en';
+      fulfillmentType: 'DINE_IN' | 'TAKEAWAY';
+      sourceLabel?: string | null;
+      items: Array<{
+        variantId?: string | null;
+        productId?: string | null;
+        name: string;
+        quantity: number;
+        note?: string | null;
+        options?: string[] | null;
+      }>;
+    }) => Promise<{
+      success: boolean;
+      orderNumber?: string;
+      kitchenPrinted?: boolean;
+      customerSlipPrinted?: boolean;
+      error?: string | null;
+    }>;
+    close: () => Promise<{ success: boolean; error?: string }>;
   };
 
   // Display info (list from main preload, touch from customer-display preload)

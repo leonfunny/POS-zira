@@ -1320,4 +1320,47 @@ export const migrations: Migration[] = [
       ALTER TABLE orders ADD COLUMN kitchen_number TEXT;
     `,
   },
+  {
+    version: 41,
+    name: 'kitchen_self_orders',
+    up: `
+      CREATE TABLE IF NOT EXISTS kitchen_self_orders (
+        id TEXT PRIMARY KEY,
+        order_number TEXT NOT NULL,
+        sequence_number INTEGER NOT NULL,
+        business_date TEXT NOT NULL,
+        fulfillment_type TEXT NOT NULL,
+        customer_language TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source_machine_id TEXT,
+        source_label TEXT,
+        created_at TEXT NOT NULL,
+        printed_at TEXT,
+        kitchen_printed INTEGER NOT NULL DEFAULT 0,
+        customer_slip_printed INTEGER NOT NULL DEFAULT 0,
+        error TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_kso_business_sequence
+        ON kitchen_self_orders(business_date, sequence_number);
+      CREATE INDEX IF NOT EXISTS idx_kso_created_at
+        ON kitchen_self_orders(created_at);
+      CREATE INDEX IF NOT EXISTS idx_kso_status
+        ON kitchen_self_orders(status);
+
+      CREATE TABLE IF NOT EXISTS kitchen_self_order_items (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        variant_id TEXT,
+        product_id TEXT,
+        name_snapshot TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        options_json TEXT,
+        note TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(order_id) REFERENCES kitchen_self_orders(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_kso_items_order
+        ON kitchen_self_order_items(order_id, sort_order);
+    `,
+  },
 ];

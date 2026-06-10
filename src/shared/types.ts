@@ -529,6 +529,13 @@ export interface AgentConfig {
   selfCheckoutFakePaymentEnabled?: boolean; // Reserved legacy flag; production checkout ignores it until readiness gates are implemented.
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
+  kitchenSelfOrderEnabled?: boolean;      // Separate customer-facing food-order kiosk.
+  kitchenSelfOrderMonitor?: number;
+  kitchenSelfOrderLanguage?: 'pl' | 'en' | 'vi';
+  kitchenSelfOrderDefaultFulfillment?: 'DINE_IN' | 'TAKEAWAY';
+  kitchenSelfOrderSlipPrinterType?: 'RECEIPT' | 'LABEL';
+  kitchenSelfOrderSlipPrinterId?: string;
+  kitchenSelfOrderSourceLabel?: string;
 
   // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
@@ -674,6 +681,12 @@ export interface KitchenTicketData {
   createdAt: string;
   /** Order source: POS | SELF_CHECKOUT | SERVER | ... */
   source: string;
+  /** Optional first-class kitchen/self-order fulfillment choice. */
+  fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
+  /** Kitchen ticket language. Existing POS kitchen tickets default to PL. */
+  kitchenLanguage?: 'pl' | 'vi' | 'en' | string | null;
+  /** Customer slip language. Existing pickup slips default to PL. */
+  customerLanguage?: 'pl' | 'vi' | 'en' | string | null;
   isReprint?: boolean;
   /** Daily pickup number ('0001'...) shared between the kitchen ticket and
    *  the customer pickup slip — the kitchen matches them at hand-over. */

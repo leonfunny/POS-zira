@@ -289,6 +289,13 @@ const store = new Store<AgentConfig>({
     selfCheckoutFakePaymentEnabled: { type: 'boolean', default: false },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },
+    kitchenSelfOrderEnabled: { type: 'boolean', default: false },
+    kitchenSelfOrderMonitor: { type: 'number', default: 0 },
+    kitchenSelfOrderLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
+    kitchenSelfOrderDefaultFulfillment: { type: 'string', enum: ['DINE_IN', 'TAKEAWAY'], default: 'DINE_IN' },
+    kitchenSelfOrderSlipPrinterType: { type: 'string', enum: ['RECEIPT', 'LABEL'], default: 'RECEIPT' },
+    kitchenSelfOrderSlipPrinterId: { type: 'string', default: '' },
+    kitchenSelfOrderSourceLabel: { type: 'string', default: 'PC-YURI' },
     // Booksy Sync settings
     booksy: {
       type: 'object',

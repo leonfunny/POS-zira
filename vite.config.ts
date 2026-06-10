@@ -33,6 +33,10 @@ export default defineConfig({
           __dirname,
           'src/renderer/windows/self-checkout/index.html',
         ),
+        kitchenSelfOrder: resolve(
+          __dirname,
+          'src/renderer/windows/kitchen-self-order/index.html',
+        ),
       },
       output: {
         format: 'es',

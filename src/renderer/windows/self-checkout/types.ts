@@ -27,6 +27,7 @@ export interface CatalogCategory {
   color?: string | null;
   sort_order?: number;
   name_translations?: string | null;
+  kitchen_print?: number | null;
 }
 
 export type CatalogDepartment = 'grocery' | 'kitchen';

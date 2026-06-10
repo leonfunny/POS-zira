@@ -16,6 +16,30 @@ function sourceLabel(source: string): string {
   return normalized || 'KASA';
 }
 
+function ticketLanguage(data: KitchenTicketData): 'pl' | 'vi' | 'en' {
+  const lang = String(data.kitchenLanguage || '').toLowerCase();
+  return lang === 'vi' || lang === 'en' ? lang : 'pl';
+}
+
+function customerSlipLanguage(data: KitchenTicketData): 'pl' | 'vi' | 'en' {
+  const lang = String(data.customerLanguage || '').toLowerCase();
+  return lang === 'vi' || lang === 'en' ? lang : 'pl';
+}
+
+function fulfillmentLabel(value: KitchenTicketData['fulfillmentType'], lang: 'pl' | 'vi' | 'en'): string | null {
+  const normalized = String(value || '').toUpperCase();
+  if (normalized !== 'DINE_IN' && normalized !== 'TAKEAWAY') return null;
+  if (lang === 'vi') return normalized === 'TAKEAWAY' ? 'MANG DI' : 'AN TAI QUAN';
+  if (lang === 'en') return normalized === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE IN';
+  return normalized === 'TAKEAWAY' ? 'NA WYNOS' : 'NA MIEJSCU';
+}
+
+function orderNumberLabel(orderNumber: string): string {
+  const normalized = String(orderNumber || '').trim();
+  if (!normalized) return '#--------';
+  return normalized.toUpperCase().startsWith('K-') ? normalized : `#${normalized}`;
+}
+
 function formatTimeHHMM(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -38,12 +62,17 @@ function formatQuantity(item: KitchenTicketItem): string {
 
 export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLine[] {
   const lines: EscPosPlainLine[] = [];
+  const lang = ticketLanguage(data);
+  const fulfillment = fulfillmentLabel(data.fulfillmentType, lang);
 
-  lines.push({ text: '*** KUCHNIA ***', bold: true, center: true, textSize: 'double-size' });
+  lines.push({ text: lang === 'vi' ? '*** BEP ***' : '*** KUCHNIA ***', bold: true, center: true, textSize: 'double-size' });
   if (data.isReprint) {
     lines.push({ text: '(KOPIA / IN LAI)', bold: true, center: true });
   }
-  lines.push({ text: `#${data.orderNumber}`, bold: true, center: true, textSize: 'double-size' });
+  lines.push({ text: orderNumberLabel(data.orderNumber), bold: true, center: true, textSize: 'double-size' });
+  if (fulfillment) {
+    lines.push({ text: fulfillment, bold: true, center: true, textSize: 'double-height' });
+  }
   lines.push({
     text: `${formatTimeHHMM(data.createdAt)}  ·  ${sourceLabel(data.source)}`,
     center: true,
@@ -58,7 +87,7 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
     });
     const notes = (item.notes || '').trim();
     if (notes) {
-      lines.push({ text: `   >> ${notes}` });
+      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
     }
   }
 
@@ -79,11 +108,32 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
  * printer has. The customer shows it to the kitchen to collect the food.
  */
 export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[] {
+  const lang = customerSlipLanguage(data);
+  const fulfillment = fulfillmentLabel(data.fulfillmentType, lang);
+  const number = data.pickupNumber || data.orderNumber || '----';
+  const copy = {
+    pl: {
+      title: 'NUMER ZAMOWIENIA',
+      keep: 'Zachowaj ten numer.',
+    },
+    vi: {
+      title: 'SO DON',
+      keep: 'Giu so nay de nhan mon.',
+    },
+    en: {
+      title: 'ORDER NUMBER',
+      keep: 'Keep this number for pickup.',
+    },
+  }[lang];
   const lines: EscPosPlainLine[] = [];
-  lines.push({ text: 'NR ODBIORU / SO NHAN DO', bold: true, center: true });
-  lines.push({ text: data.pickupNumber || '----', bold: true, center: true, textSize: 'double-size' });
-  lines.push({ text: `#${data.orderNumber}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
-  lines.push({ text: 'Pokaz ten numer w kuchni', center: true });
+  lines.push({ text: 'SAIGON MARKET', bold: true, center: true });
+  lines.push({ text: `${copy.title} / NR ODBIORU`, bold: true, center: true });
+  lines.push({ text: number, bold: true, center: true, textSize: 'double-size' });
+  if (fulfillment) {
+    lines.push({ text: fulfillment, bold: true, center: true });
+  }
+  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  lines.push({ text: copy.keep, center: true });
   lines.push({ text: '', separator: true });
   return lines;
 }
