@@ -11,6 +11,7 @@ import type {
 } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { calculateLineTotalGrosze, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
+import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../shared/pos-price-guard';
 
 // === State interfaces ===
 
@@ -309,6 +310,17 @@ function normalizedCartItem(item: CartItem): CartItem {
   };
 }
 
+function validateCartItemCatalogPrice(item: CartItem): boolean {
+  const variant = productRepo.getById(item.variantId);
+  if (!variant) return true;
+  const catalogPrice = Number(variant.retail_price) || Number(variant.price_gross) || 0;
+  const anomaly = findLinePriceAnomaly(item.price, catalogPrice);
+  if (!anomaly) return true;
+
+  logger.warn(`[PosStore] Blocked cart item with abnormal price: ${formatPriceAnomalyMessage(variant.name || item.name || item.variantId, anomaly)}`);
+  return false;
+}
+
 interface PosReducerOptions {
   customerDisplayProfile?: LiveCustomerDisplayProfile;
 }
@@ -323,6 +335,7 @@ function posReducer(
       // Merge only if same variant AND same staff AND same course
       // (salon mode: different staff = separate entry; restaurant: different course = separate entry)
       const p = normalizedCartItem(action.payload);
+      if (!validateCartItemCatalogPrice(p)) return state;
       const existing = state.cart.items.find(
         (i) => i.variantId === p.variantId
           && (i.staffId ?? null) === (p.staffId ?? null)
@@ -405,6 +418,8 @@ function posReducer(
 
     case 'cart/setItemPrice': {
       const newPrice = Math.max(0, action.payload.price);
+      const existingItem = state.cart.items.find((i) => i.id === action.payload.id);
+      if (existingItem && !validateCartItemCatalogPrice({ ...existingItem, price: newPrice })) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
           ? normalizedCartItem({ ...i, price: newPrice })

@@ -5,9 +5,10 @@
 // Payment is currently an assisted profile: the kiosk speaks a Polish
 // announcement so staff knows the amount + method, staff collects payment
 // physically, then taps "Money received" to save the order, sync, and print.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScLanguage, getScStrings } from './i18n';
 import { resolveName } from '../../../shared/catalog-names';
+import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../shared/pos-price-guard';
 import {
   SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
@@ -113,6 +114,13 @@ export default function SelfCheckoutApp() {
 
   const cart = useScCart();
   const t = getScStrings(lang);
+  const catalogProductById = useMemo(() => {
+    const map = new Map<string, ProductLookupResult>();
+    catalogProducts.forEach((product) => {
+      map.set(product.id, product);
+    });
+    return map;
+  }, [catalogProducts]);
 
   const handleLangChange = useCallback((next: ScLanguage) => {
     // Session-only. A customer changing language must not rewrite the
@@ -563,6 +571,16 @@ export default function SelfCheckoutApp() {
         fail(t.emptyCart);
       }
 
+      for (const item of cart.cart.items) {
+        const product = catalogProductById.get(item.variantId)
+          ?? await window.electronAPI?.pos?.products?.getById?.(item.variantId).catch(() => null);
+        const expectedPrice = product ? getProductPriceGrosze(product as ProductLookupResult) : 0;
+        const anomaly = findLinePriceAnomaly(item.price, expectedPrice);
+        if (anomaly) {
+          fail(formatPriceAnomalyMessage(resolveName(product as ProductLookupResult, lang) || item.name, anomaly));
+        }
+      }
+
       const orderId = pendingOrderIdRef.current ?? crypto.randomUUID();
       pendingOrderIdRef.current = orderId;
       const saleTotalGrosze = cart.cart.totalGrosze;
@@ -617,7 +635,7 @@ export default function SelfCheckoutApp() {
       setLastReceiptPrinted(receiptPrinted);
       setReceiptPrinting(false);
     },
-    [cart, goTo, kioskUserId, mode, showToast, t],
+    [cart, catalogProductById, goTo, kioskUserId, lang, mode, showToast, t],
   );
 
   const callStaffOther = useCallback(() => callStaff('OTHER'), [callStaff]);

@@ -9,6 +9,7 @@ import { getTranslation, Language, languageNames } from '../../i18n/translations
 import { resolveName } from '../../../shared/catalog-names';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 import type { ProductSaleClassification } from '../../../shared/product-sale-classifier';
+import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../shared/pos-price-guard';
 import rlog from '../../utils/logger';
 import { formatProductLabelPriceText } from '../../utils/product-label';
 import ShiftModal from './ShiftModal';
@@ -346,6 +347,13 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (variantId) lastLabelVariantIdRef.current = variantId;
   }, []);
 
+  const validateCartLinePrice = useCallback((product: Product, item: CartItem): boolean => {
+    const anomaly = findLinePriceAnomaly(item.price, product.retail_price);
+    if (!anomaly) return true;
+    showScanToast(formatPriceAnomalyMessage(resolveName(product, language) || product.name, anomaly), 'err');
+    return false;
+  }, [language, showScanToast]);
+
   const openManualWeightPrompt = useCallback((product: Product, saleClass: ProductSaleClassification, error?: string) => {
     setManualWeightPrompt({
       product,
@@ -364,13 +372,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const prompt = manualWeightPrompt;
     if (!prompt || !dispatch) return;
     const item = buildRetailCartItem(prompt.product, prompt.saleClass, weightKg, crypto.randomUUID());
+    if (!validateCartLinePrice(prompt.product, item)) return;
     dispatch({ type: 'cart/addItem', payload: item });
     rememberLastLabelVariant(item.variantId);
     setShowAddProduct(false);
     setManualWeightPrompt(null);
     showScanToast(`+ ${prompt.displayName} (${formatManualWeight(weightKg, prompt.saleClass.saleUnit || 'kg')})`, 'ok');
     document.dispatchEvent(new CustomEvent('pos:focus-search'));
-  }, [dispatch, manualWeightPrompt, rememberLastLabelVariant, showScanToast]);
+  }, [dispatch, manualWeightPrompt, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
   const printCartItemLabel = useCallback(async (item: CartItem) => {
     try {
@@ -516,27 +525,29 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     }
 
     const displayName = resolveName(variant, language);
+    const item = {
+      id: crypto.randomUUID(),
+      variantId: variant.id,
+      name: variant.name,
+      sku: variant.sku || '',
+      price: variant.retail_price,
+      quantity: 1,
+      total: variant.retail_price,
+      saleUnit: variant.sale_unit ?? null,
+      sellBy: variant.sell_by ?? 'PIECE',
+      imageUrl: variant.image_url || undefined,
+      vatRate: variant.vat_rate,
+      name_translations: variant.name_translations ?? null,
+    };
+    if (!validateCartLinePrice(variant, item)) return;
     dispatch({
       type: 'cart/addItem',
-      payload: {
-        id: crypto.randomUUID(),
-        variantId: variant.id,
-        name: variant.name,
-        sku: variant.sku || '',
-        price: variant.retail_price,
-        quantity: 1,
-        total: variant.retail_price,
-        saleUnit: variant.sale_unit ?? null,
-        sellBy: variant.sell_by ?? 'PIECE',
-        imageUrl: variant.image_url || undefined,
-        vatRate: variant.vat_rate,
-        name_translations: variant.name_translations ?? null,
-      },
+      payload: item,
     });
     rememberLastLabelVariant(variant.id);
     showScanToast(`+ ${displayName}`, 'ok');
     setShowQuickAddCamera(false);
-  }, [dispatch, language, rememberLastLabelVariant, showScanToast]);
+  }, [dispatch, language, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
   const confirmScanImport = useCallback(async (retailPriceGrosze: number) => {
     const ean = scanImport.ean;
@@ -562,22 +573,27 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           return;
         }
         const displayName = resolveName(variant, language);
+        const item = {
+          id: crypto.randomUUID(),
+          variantId: variant.id,
+          name: variant.name,
+          sku: variant.sku || '',
+          price: variant.retail_price,
+          quantity: 1,
+          total: variant.retail_price,
+          saleUnit: variant.sale_unit ?? null,
+          sellBy: variant.sell_by ?? 'PIECE',
+          imageUrl: variant.image_url || undefined,
+          vatRate: variant.vat_rate,
+          name_translations: variant.name_translations ?? null,
+        };
+        if (!validateCartLinePrice(variant, item)) {
+          setScanImport((s) => ({ ...s, loading: false }));
+          return;
+        }
         dispatch({
           type: 'cart/addItem',
-          payload: {
-            id: crypto.randomUUID(),
-            variantId: variant.id,
-            name: variant.name,
-            sku: variant.sku || '',
-            price: variant.retail_price,
-            quantity: 1,
-            total: variant.retail_price,
-            saleUnit: variant.sale_unit ?? null,
-            sellBy: variant.sell_by ?? 'PIECE',
-            imageUrl: variant.image_url || undefined,
-            vatRate: variant.vat_rate,
-            name_translations: variant.name_translations ?? null,
-          },
+          payload: item,
         });
         rememberLastLabelVariant(variant.id);
         showScanToast(`+ ${displayName}`, 'ok');
@@ -589,7 +605,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [allowOversell, scanImport.ean, scanImport.preview?.source, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport]);
+  }, [allowOversell, scanImport.ean, scanImport.preview?.source, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport, validateCartLinePrice]);
 
   const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
     const code = ean.trim();
@@ -621,6 +637,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         return true;
       }
 
+      if (!validateCartLinePrice(product, result.item)) return true;
       dispatch({ type: 'cart/addItem', payload: result.item });
       rememberLastLabelVariant(result.item.variantId);
       showScanToast(`+ ${displayName}`, 'ok');
@@ -631,7 +648,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       showScanToast('Scan failed', 'err');
       return true;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr, validateCartLinePrice]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -674,6 +691,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 }
                 return;
               }
+              if (!validateCartLinePrice(product, result.item)) return;
               dispatch({ type: 'cart/addItem', payload: result.item });
               rememberLastLabelVariant(result.item.variantId);
               showScanToast(`+ ${displayName}`, 'ok');
@@ -690,7 +708,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
 
   // Sync language/mode from config
   useEffect(() => {

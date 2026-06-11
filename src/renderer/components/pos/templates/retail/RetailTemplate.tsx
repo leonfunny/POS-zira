@@ -8,6 +8,7 @@ import { formatProductLabelPriceText } from '../../../../utils/product-label';
 import { resolveName } from '../../../../../shared/catalog-names';
 import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
+import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../../../shared/pos-price-guard';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
@@ -585,6 +586,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         }
         return;
       }
+      const anomaly = findLinePriceAnomaly(result.item.price, product.retail_price);
+      if (anomaly) {
+        showToolbarError(formatPriceAnomalyMessage(resolveName(product, lang) || product.name, anomaly));
+        return;
+      }
       dispatch({ type: 'cart/addItem', payload: result.item });
       lastLabelVariantIdRef.current = product.id;
       onLastLabelVariantChange?.(product.id);
@@ -593,7 +599,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
