@@ -282,6 +282,17 @@ export class PosModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.PAYMENT_CONTROLLER, this.paymentController);
     this.container.set(SERVICE_TOKENS.SHIFT_CONTROLLER, this.shiftController);
 
+    // If a second-instance/focus event created the main window before POS init,
+    // the orchestrator could not register it with PosStore yet. Register any
+    // existing windows here so cart state broadcasts still reach the renderer.
+    const existingWindows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
+    for (const win of existingWindows) {
+      this.posStore.registerWindow(win);
+    }
+    if (existingWindows.length > 0) {
+      logger.info(`[PosModule] Registered ${existingWindows.length} existing window(s) with PosStore`);
+    }
+
     // Crash recovery: orders marked synced=2 (in-flight) when the app crashed → reset to 0
     database.run('UPDATE orders SET synced = 0 WHERE synced = 2');
     // Repair corrupted state: synced=1 but no backend_id (response-shape bug fix side-effect)
