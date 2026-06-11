@@ -80,9 +80,11 @@ export class ShiftController {
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
-    // Aggregate by payment method, accounting for split tenders
+    // Aggregate by payment method for the same order set shown in the report,
+    // accounting for split tenders.
+    const paymentOrders = salesOrders;
     let cashTotal = 0, cardTotal = 0, blikTotal = 0, transferTotal = 0;
-    for (const o of orders) {
+    for (const o of paymentOrders) {
       const tendersJson = o.payment_tenders;
       if (tendersJson) {
         try {
@@ -109,7 +111,7 @@ export class ShiftController {
       0,
     );
 
-    for (const o of orders) {
+    for (const o of paymentOrders) {
       if (o.refund_amount && o.refund_amount > 0) {
         const tendersJson = o.payment_tenders;
         if (tendersJson) {

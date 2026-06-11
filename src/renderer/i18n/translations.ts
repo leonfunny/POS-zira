@@ -36,7 +36,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.history.kitchenTicketNoItems': 'No kitchen items in this order',
     'pos.history.kitchenTicketFailed': 'Kitchen printer not reachable',
     'settings.showNonFiscalOrders': 'Show orders without fiscal receipt',
-    'settings.showNonFiscalOrdersDesc': 'When off, history and sales totals only include orders with successful fiscal print. Cash drawer reconciliation still counts all cash.',
+    'settings.showNonFiscalOrdersDesc': 'When off, history, sales totals, and payment breakdown only include orders with successful fiscal print.',
 
     // Printers
     'settings.printers': 'Printers',
@@ -365,7 +365,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.closingCash': 'Closing Cash',
     'pos.shift.report': 'Shift Report',
     'pos.shift.totalSales': 'Total Sales',
-    'pos.shift.fiscalOnlySales': 'Sales and order count include only orders with successful fiscal print. Cash reconciliation below still includes all cash received.',
+    'pos.shift.fiscalOnlySales': 'Sales, order count, and payment breakdown include only orders with successful fiscal print.',
     'pos.shift.totalOrders': 'Total Orders',
     'pos.shift.cashSales': 'Cash Sales',
     'pos.shift.cardSales': 'Card Sales',
@@ -1511,7 +1511,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.history.kitchenTicketNoItems': 'Đơn này không có món bếp',
     'pos.history.kitchenTicketFailed': 'Không kết nối được máy in bếp',
     'settings.showNonFiscalOrders': 'Hiện order chưa có fiscal',
-    'settings.showNonFiscalOrdersDesc': 'Khi tắt, lịch sử và doanh thu chỉ tính order đã in fiscal thành công. Đối soát tiền mặt vẫn tính toàn bộ tiền đã nhận.',
+    'settings.showNonFiscalOrdersDesc': 'Khi tắt, lịch sử, doanh thu và phân tách thanh toán chỉ tính order đã in fiscal thành công.',
 
     // Printers
     'settings.printers': 'Máy in',
@@ -1835,7 +1835,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.shift.closingCash': 'Tiền cuối ca',
     'pos.shift.report': 'Báo cáo ca',
     'pos.shift.totalSales': 'Tổng doanh thu',
-    'pos.shift.fiscalOnlySales': 'Doanh thu và số đơn chỉ tính order đã in fiscal thành công. Phần đối soát tiền bên dưới vẫn tính toàn bộ tiền đã nhận.',
+    'pos.shift.fiscalOnlySales': 'Doanh thu, số đơn và phân tách thanh toán chỉ tính order đã in fiscal thành công.',
     'pos.shift.totalOrders': 'Tổng đơn hàng',
     'pos.shift.cashSales': 'Tiền mặt',
     'pos.shift.cardSales': 'Thẻ',
