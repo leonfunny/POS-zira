@@ -121,6 +121,8 @@ export default function PaymentModal({
   const scannerBufferRef = useRef('');
   const scannerLastKeyRef = useRef(0);
   const paymentCompleteInFlightRef = useRef(false);
+  const orderAttemptIdRef = useRef(crypto.randomUUID());
+  const completedOrderIdRef = useRef<string | null>(null);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
@@ -408,6 +410,7 @@ export default function PaymentModal({
 
     const result = await window.electronAPI.pos.orders.create(order, items);
     if (result && !result.success) throw new Error(result.error || 'Failed to save order');
+    completedOrderIdRef.current = orderId;
 
     // Trigger immediate backend sync — don't wait 30s. Runs in parallel with print.
     // Result surfaces via pos:order-synced / pos:order-sync-failed events → Order History banner.
@@ -604,7 +607,14 @@ export default function PaymentModal({
   };
 
   const completePayment = useCallback(async (paymentAmountOverride?: number) => {
-    if (saving || paymentCompleteInFlightRef.current) return;
+    if (
+      saving ||
+      paymentCompleteInFlightRef.current ||
+      completedOrderIdRef.current ||
+      receiptRecovery ||
+      fiscalPrompt ||
+      receiptRetrying
+    ) return;
     paymentCompleteInFlightRef.current = true;
     setSaving(true);
     setError(null);
@@ -618,7 +628,7 @@ export default function PaymentModal({
         return;
       }
 
-      const orderId = crypto.randomUUID();
+      const orderId = orderAttemptIdRef.current;
 
       if (splitMode) {
         if (!splitComplete) { setError(t('pos.split.incomplete') || 'Split payment incomplete'); setSaving(false); return; }
@@ -642,13 +652,13 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, customerNipValid, grandTotal, method, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
+  }, [cashAmountGrosze, customerNipValid, fiscalPrompt, grandTotal, method, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
   }, [completePayment]);
 
-  const canComplete = !receiptRecovery && !saving && customerNipValid && (
+  const canComplete = !receiptRecovery && !fiscalPrompt && !completedOrderIdRef.current && !saving && customerNipValid && (
     splitMode ? splitComplete
     : method !== 'CASH' || cashAmountGrosze >= grandTotal
   );
@@ -713,8 +723,16 @@ export default function PaymentModal({
     const code = rawCode.trim();
     const cardCommand = scanCommands?.card?.trim();
     const cashCommand = scanCommands?.cash?.trim();
+    const submitBlocked =
+      saving ||
+      paymentCompleteInFlightRef.current ||
+      !!completedOrderIdRef.current ||
+      !!receiptRecovery ||
+      receiptRetrying ||
+      !!fiscalPrompt;
 
     if (cardCommand && code === cardCommand) {
+      if (submitBlocked) return true;
       setSplitMode(false);
       setTenders([]);
       setSplitAmount('');
@@ -732,6 +750,7 @@ export default function PaymentModal({
     }
 
     if (cashCommand && code === cashCommand) {
+      if (submitBlocked) return true;
       const shouldCompleteCash = method === 'CASH';
       setSplitMode(false);
       setTenders([]);
@@ -746,7 +765,7 @@ export default function PaymentModal({
     }
 
     return false;
-  }, [canComplete, completePayment, grandTotal, handleComplete, method, scanCommands?.card, scanCommands?.cash, totalZl]);
+  }, [canComplete, completePayment, fiscalPrompt, grandTotal, handleComplete, method, receiptRecovery, receiptRetrying, saving, scanCommands?.card, scanCommands?.cash, totalZl]);
 
   useEffect(() => {
     const commandCodes = [scanCommands?.card, scanCommands?.cash]
