@@ -35,6 +35,14 @@ function getBackendOrderNumber(response: any): string | undefined {
   return typeof nested === 'string' && nested.trim() ? nested : undefined;
 }
 
+function normalizePosLocalCreatedAt(value: string | null | undefined): string | undefined {
+  const raw = String(value || '').trim();
+  if (!raw) return undefined;
+  const normalized = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
+  const date = new Date(normalized);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 export interface OrderSyncResult {
   orderId: string;
   orderNumber: string | null;
@@ -157,6 +165,7 @@ export class OrderSync {
           id: order.id, // idempotency key
           priceType: 'brutto',
           requiresInvoice: !!order.customer_nip,
+          posLocalCreatedAt: normalizePosLocalCreatedAt(order.created_at),
           items: items
             .filter((item) => item.variant_id || item.id) // skip items with no product ID
             .map((item) => {
