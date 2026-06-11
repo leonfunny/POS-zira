@@ -94,6 +94,21 @@ function getRendererConfig(): AgentConfig {
   return sanitized;
 }
 
+function resolveAuthSalonId(payload: any): string {
+  const user = payload?.user ?? payload ?? {};
+  return user.salonId || user.salon_id || user.salon?.id || payload?.salon?.id || '';
+}
+
+function resolveAuthSalonName(payload: any): string {
+  const user = payload?.user ?? payload ?? {};
+  return payload?.salon?.name || user.salon?.name || user.salonName || '';
+}
+
+function resolveAuthSalonSlug(payload: any): string {
+  const user = payload?.user ?? payload ?? {};
+  return payload?.salon?.slug || user.salon?.slug || user.salonSlug || '';
+}
+
 export class AuthModule extends BaseModule {
   readonly name = 'auth';
 
@@ -339,7 +354,7 @@ export class AuthModule extends BaseModule {
 
         if (result?.access_token && result.status === 'VERIFIED') {
           const user: any = result.user || {};
-          const newSalonId = user.salonId || '';
+          const newSalonId = resolveAuthSalonId(result);
           const currentSalonId = config.salonId || '';
           if (!newSalonId) {
             return { success: false, error: 'Login response missing salon id' };
@@ -372,8 +387,8 @@ export class AuthModule extends BaseModule {
           setConfig({
             authUser: { id: user.id || '', email: user.email || '', firstName: user.firstName || '', lastName: user.lastName || '', role: user.role || '', salonId: newSalonId },
             salonId: newSalonId,
-            salonName: result.salon?.name || user.salon?.name || '',
-            salonSlug: result.salon?.slug || user.salon?.slug || '',
+            salonName: resolveAuthSalonName(result),
+            salonSlug: resolveAuthSalonSlug(result),
             posEnabled: true,
             customerDisplayEnabled: true,
           });
@@ -384,7 +399,7 @@ export class AuthModule extends BaseModule {
           }
 
           if (willRestartForSalonTg) {
-            this.eventBus?.emit('salon:switching', { salonName: result.salon?.name || user.salon?.name || '' });
+            this.eventBus?.emit('salon:switching', { salonName: resolveAuthSalonName(result) });
             this.scheduleSalonRestartRestore();
             return { success: true, data: { status: 'VERIFIED', restarting: true } };
           }
@@ -396,12 +411,12 @@ export class AuthModule extends BaseModule {
               result.access_token,
               'telegram login',
               newSalonId,
-              result.salon?.name || user.salon?.name || '',
+              resolveAuthSalonName(result),
             );
           } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
-          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: result.salon?.name });
+          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: resolveAuthSalonName(result) });
 
           return { success: true, data: { status: 'VERIFIED', user: result.user, salon: result.salon } };
         }
@@ -441,7 +456,7 @@ export class AuthModule extends BaseModule {
       });
 
       const resolvedUser = result.data?.isAuthenticated ? result.data.user : undefined;
-      const newSalonId = resolvedUser?.salonId || '';
+      const newSalonId = resolveAuthSalonId(resolvedUser);
       const currentSalonId = config.salonId || '';
       if (currentSalonId && newSalonId && currentSalonId !== newSalonId) {
         // At startup we can't relaunch-restore (would loop), so archive + clear
@@ -488,7 +503,7 @@ export class AuthModule extends BaseModule {
 
         if (result.access_token) {
           const user = result.user;
-          const newSalonId = user.salonId || '';
+          const newSalonId = resolveAuthSalonId(result);
           const currentSalonId = config.salonId || '';
           if (!newSalonId) {
             return { success: false, error: 'Login response missing salon id' };
@@ -510,7 +525,7 @@ export class AuthModule extends BaseModule {
           const authUser: AuthUser = {
             id: user.id || user.sub, email: user.email, firstName: user.firstName || '',
             lastName: user.lastName || '', role: user.role, salonId: newSalonId,
-            salonName: user.salon?.name || '',
+            salonName: resolveAuthSalonName(result),
           };
 
           if (!setSecureAuthToken(result.access_token)) {
@@ -525,7 +540,7 @@ export class AuthModule extends BaseModule {
             return { success: false, error: 'Failed to store refresh token securely' };
           }
 
-          setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: user.salon?.slug || '', posEnabled: true, customerDisplayEnabled: true });
+          setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: resolveAuthSalonSlug(result), posEnabled: true, customerDisplayEnabled: true });
 
           // New tenant ⇒ new POS template (must persist before any relaunch)
           if (isSalonSwitch) {

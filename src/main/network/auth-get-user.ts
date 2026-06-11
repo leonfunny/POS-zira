@@ -46,6 +46,20 @@ export interface ResolveUserDeps {
   onUserResolved: (authUser: AuthUser) => void;
 }
 
+function resolveAuthUser(raw: any, defaultSalonName?: string): AuthUser {
+  const user = raw?.user ?? raw ?? {};
+  const fullName = user.fullName || user.full_name || '';
+  return {
+    id: user.id || user.sub || '',
+    email: user.email || '',
+    firstName: user.firstName || user.first_name || fullName.split(/\s+/)[0] || '',
+    lastName: user.lastName || user.last_name || '',
+    role: user.role || '',
+    salonId: user.salonId || user.salon_id || user.salon?.id || raw?.salon?.id || '',
+    salonName: raw?.salon?.name || user.salon?.name || user.salonName || defaultSalonName || '',
+  };
+}
+
 export async function resolveCurrentUser(deps: ResolveUserDeps): Promise<GetUserResult> {
   const token = deps.getAuthToken();
   if (!token) {
@@ -54,15 +68,7 @@ export async function resolveCurrentUser(deps: ResolveUserDeps): Promise<GetUser
 
   try {
     const raw = await deps.getMe(token);
-    const authUser: AuthUser = {
-      id: raw?.id || raw?.sub || '',
-      email: raw?.email || '',
-      firstName: raw?.firstName || '',
-      lastName: raw?.lastName || '',
-      role: raw?.role || '',
-      salonId: raw?.salonId || '',
-      salonName: raw?.salon?.name || deps.defaultSalonName || '',
-    };
+    const authUser = resolveAuthUser(raw, deps.defaultSalonName);
     deps.onUserResolved(authUser);
     return { success: true, data: { isAuthenticated: true, user: authUser } };
   } catch (e: any) {
