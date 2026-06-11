@@ -16,7 +16,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
-import { PaymentController, ReceiptPrintJournalInput } from '../pos/payment-controller';
+import { PaymentController, FiscalReceiptJournalInput, ReceiptPrintJournalInput } from '../pos/payment-controller';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../pos/order-line-contract';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
@@ -218,6 +218,46 @@ export class PosModule extends BaseModule {
         error: input.error,
       });
     };
+    const recordFiscalReceipt = (input: FiscalReceiptJournalInput) => {
+      void (async () => {
+        const token = getSecureAuthToken();
+        if (!token) return;
+
+        const order = orderRepo.getById(input.orderId);
+        const backendOrderId = order?.backend_id || input.orderId;
+        const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidLike.test(backendOrderId)) {
+          logger.warn(`[PosModule] Cannot record fiscal event for ${input.orderId}: missing backend UUID`);
+          return;
+        }
+
+        try {
+          await apiClient.recordFiscalReceiptEvent(token, {
+            b2bOrderId: backendOrderId,
+            printJobId: input.printJobId && uuidLike.test(input.printJobId) ? input.printJobId : undefined,
+            status: input.status,
+            source: 'POS_SYNC',
+            paymentMethod: input.paymentMethod ? input.paymentMethod.toUpperCase() : order?.payment_method || undefined,
+            grossTotal: input.grossTotal ?? (order ? order.total / 100 : undefined),
+            currency: 'PLN',
+            printerType: 'FISCAL',
+            printerDisplayName: input.printerId || undefined,
+            errorMessage: input.error || undefined,
+            printedAt: input.status === 'PRINTED' ? new Date().toISOString() : undefined,
+            failedAt: input.status === 'FAILED' ? new Date().toISOString() : undefined,
+            metadata: {
+              localOrderId: input.orderId,
+              localOrderNumber: order?.order_number || null,
+              route: input.route,
+              printerId: input.printerId || null,
+              printJobId: input.printJobId || null,
+            },
+          });
+        } catch (err: any) {
+          logger.warn(`[PosModule] Failed to record fiscal receipt event for ${input.orderId}: ${err?.message || err}`);
+        }
+      })();
+    };
 
     this.paymentController = new PaymentController(
       getPrinterForType,
@@ -230,6 +270,7 @@ export class PosModule extends BaseModule {
       submitSharedFiscalPrint,
       getSharedFiscalPrinterStatus,
       recordPrintAttempt,
+      recordFiscalReceipt,
     );
     this.shiftController = new ShiftController(
       getPrinterForType,

@@ -61,6 +61,17 @@ export interface ReceiptPrintJournalInput {
   error?: string | null;
 }
 
+export interface FiscalReceiptJournalInput {
+  orderId: string;
+  status: 'PRINTED' | 'FAILED';
+  route: 'LOCAL' | 'SHARED_NETWORK';
+  paymentMethod?: string | null;
+  grossTotal?: number | null;
+  printerId?: string | null;
+  printJobId?: string | null;
+  error?: string | null;
+}
+
 export class PaymentController {
   constructor(
     private getPrinter: GetPrinter,
@@ -73,6 +84,7 @@ export class PaymentController {
     private sharedFiscalPrinter?: SharedFiscalPrinter,
     private sharedFiscalStatus?: SharedFiscalStatusProvider,
     private recordPrintAttempt?: (input: ReceiptPrintJournalInput) => void,
+    private recordFiscalReceipt?: (input: FiscalReceiptJournalInput) => void,
   ) {}
 
   /** Map the receipt meta.referenceType to a print_attempts document_type. */
@@ -89,6 +101,16 @@ export class PaymentController {
       this.recordPrintAttempt?.(input);
     } catch (err) {
       logger.warn(`[Payment] print_attempts journal failed: ${err}`);
+    }
+  }
+
+  /** Best-effort backend fiscal journal write; never let reporting telemetry break printing. */
+  private journalFiscalReceipt(input: FiscalReceiptJournalInput): void {
+    if (!input.orderId) return;
+    try {
+      this.recordFiscalReceipt?.(input);
+    } catch (err) {
+      logger.warn(`[Payment] fiscal receipt journal failed: ${err}`);
     }
   }
 
@@ -443,10 +465,26 @@ export class PaymentController {
       try {
         await printer.printReceipt(receiptData);
         logger.info(successMessage);
+        this.journalFiscalReceipt({
+          orderId,
+          status: 'PRINTED',
+          route: 'LOCAL',
+          paymentMethod: receiptData.payment.method,
+          grossTotal: receiptData.total / 100,
+        });
         return true;
       } catch (err) {
+        const error = this.describePrintFailure(err, failureMessage);
         logger.error(`${failureMessage}: ${err}`);
-        throw new Error(this.describePrintFailure(err, failureMessage));
+        this.journalFiscalReceipt({
+          orderId,
+          status: 'FAILED',
+          route: 'LOCAL',
+          paymentMethod: receiptData.payment.method,
+          grossTotal: receiptData.total / 100,
+          error,
+        });
+        throw new Error(error);
       }
     }
 
@@ -464,10 +502,29 @@ export class PaymentController {
           } catch (journalErr) {
             logger.warn(`[Payment] Remote fiscal journal mirror failed for ${orderId}: ${journalErr}`);
           }
+          this.journalFiscalReceipt({
+            orderId,
+            status: 'PRINTED',
+            route: 'SHARED_NETWORK',
+            paymentMethod: receiptData.payment.method,
+            grossTotal: receiptData.total / 100,
+            printerId: shared.printerId,
+            printJobId: shared.jobId,
+          });
           return true;
         }
         const error = shared.error || 'Remote fiscal printer did not confirm final print completion';
         logger.error(`${failureMessage}: ${error}`);
+        this.journalFiscalReceipt({
+          orderId,
+          status: 'FAILED',
+          route: 'SHARED_NETWORK',
+          paymentMethod: receiptData.payment.method,
+          grossTotal: receiptData.total / 100,
+          printerId: shared.printerId,
+          printJobId: shared.jobId,
+          error,
+        });
         throw new Error(error);
       }
     }
