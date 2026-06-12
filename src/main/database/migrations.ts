@@ -1363,4 +1363,30 @@ export const migrations: Migration[] = [
         ON kitchen_self_order_items(order_id, sort_order);
     `,
   },
+  {
+    version: 42,
+    name: 'fiscal_receipt_sync_queue',
+    // Durable outbox for backend fiscal receipt telemetry. Fiscal printing is
+    // already guarded by fiscal_attempts; this queue only makes backend report
+    // sync survive missing auth, network drops, and app restarts.
+    up: `
+      CREATE TABLE IF NOT EXISTS fiscal_receipt_sync_queue (
+        id TEXT PRIMARY KEY,
+        local_order_id TEXT NOT NULL,
+        backend_order_id TEXT NOT NULL,
+        event_status TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        event_body_json TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        synced_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_fiscal_receipt_sync_backend_status
+        ON fiscal_receipt_sync_queue(backend_order_id, event_status);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_receipt_sync_status
+        ON fiscal_receipt_sync_queue(status, created_at);
+    `,
+  },
 ];

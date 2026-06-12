@@ -46,6 +46,7 @@ import { localVariantImportsRepo } from '../database/repos/local-variant-imports
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo } from '../database/repos/kitchen-self-order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
 import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
@@ -169,6 +170,8 @@ export class PosModule extends BaseModule {
   private windowManager: WindowManager | null = null;
   private paymentController: PaymentController | null = null;
   private shiftController: ShiftController | null = null;
+  private fiscalReceiptSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private fiscalReceiptSyncInFlight = false;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -229,6 +232,7 @@ export class PosModule extends BaseModule {
         }
 
         try {
+          const eventAt = new Date().toISOString();
           const body = {
             b2bOrderId: backendOrderId,
             printJobId: input.printJobId && uuidLike.test(input.printJobId) ? input.printJobId : undefined,
@@ -240,8 +244,8 @@ export class PosModule extends BaseModule {
             printerType: 'FISCAL',
             printerDisplayName: input.printerId || undefined,
             errorMessage: input.error || undefined,
-            printedAt: input.status === 'PRINTED' ? new Date().toISOString() : undefined,
-            failedAt: input.status === 'FAILED' ? new Date().toISOString() : undefined,
+            printedAt: input.status === 'PRINTED' ? eventAt : undefined,
+            failedAt: input.status === 'FAILED' ? eventAt : undefined,
             metadata: {
               localOrderId: input.orderId,
               localOrderNumber: order?.order_number || null,
@@ -250,20 +254,20 @@ export class PosModule extends BaseModule {
               printJobId: input.printJobId || null,
             },
           };
-          const apiKey = getSecureApiKey();
-          const machineId = getConfigValue('machineId') as string | undefined;
-          if (apiKey) {
-            await apiClient.recordFiscalReceiptEventWithApiKey(apiKey, body, machineId);
-            return;
+
+          fiscalReceiptSyncRepo.enqueue({
+            localOrderId: input.orderId,
+            backendOrderId,
+            status: input.status,
+            body,
+          });
+          const flush = await database.save();
+          if (!flush.success) {
+            logger.warn(`[PosModule] Fiscal receipt event queued for ${input.orderId} but disk flush failed: ${flush.error || 'unknown error'}`);
           }
-          const token = getSecureAuthToken();
-          if (!token) {
-            logger.warn(`[PosModule] Cannot record fiscal event for ${input.orderId}: missing auth token and print-agent API key`);
-            return;
-          }
-          await apiClient.recordFiscalReceiptEvent(token, body);
+          void this.flushFiscalReceiptSyncQueue('record');
         } catch (err: any) {
-          logger.warn(`[PosModule] Failed to record fiscal receipt event for ${input.orderId}: ${err?.message || err}`);
+          logger.warn(`[PosModule] Failed to queue fiscal receipt event for ${input.orderId}: ${err?.message || err}`);
         }
       })();
     };
@@ -3219,8 +3223,63 @@ export class PosModule extends BaseModule {
     ];
   }
 
+  private async sendFiscalReceiptSyncRow(row: FiscalReceiptSyncRow): Promise<void> {
+    const body = JSON.parse(row.event_body_json) as Parameters<typeof apiClient.recordFiscalReceiptEvent>[1];
+    const apiKey = getSecureApiKey();
+    const machineId = getConfigValue('machineId') as string | undefined;
+    if (apiKey) {
+      await apiClient.recordFiscalReceiptEventWithApiKey(apiKey, body, machineId);
+      return;
+    }
+
+    const token = getSecureAuthToken();
+    if (!token) {
+      throw new Error('missing auth token and print-agent API key');
+    }
+    await apiClient.recordFiscalReceiptEvent(token, body);
+  }
+
+  private async flushFiscalReceiptSyncQueue(reason: string): Promise<void> {
+    if (this.fiscalReceiptSyncInFlight) return;
+    this.fiscalReceiptSyncInFlight = true;
+    try {
+      const rows = fiscalReceiptSyncRepo.listPending(25);
+      if (rows.length === 0) return;
+
+      for (const row of rows) {
+        try {
+          await this.sendFiscalReceiptSyncRow(row);
+          fiscalReceiptSyncRepo.markSynced(row.id);
+          logger.info(`[PosModule] Synced fiscal receipt event ${row.id} for ${row.local_order_id} (${reason})`);
+        } catch (err: any) {
+          const message = err?.message || String(err);
+          fiscalReceiptSyncRepo.markFailed(row.id, message);
+          logger.warn(`[PosModule] Fiscal receipt event ${row.id} pending sync for ${row.local_order_id}: ${message}`);
+        }
+      }
+    } finally {
+      this.fiscalReceiptSyncInFlight = false;
+    }
+  }
+
+  private startFiscalReceiptSyncTimer(): void {
+    if (this.fiscalReceiptSyncTimer) return;
+    void this.flushFiscalReceiptSyncQueue('startup');
+    this.fiscalReceiptSyncTimer = setInterval(() => {
+      void this.flushFiscalReceiptSyncQueue('timer');
+    }, 60_000);
+    this.fiscalReceiptSyncTimer.unref?.();
+  }
+
+  private stopFiscalReceiptSyncTimer(): void {
+    if (!this.fiscalReceiptSyncTimer) return;
+    clearInterval(this.fiscalReceiptSyncTimer);
+    this.fiscalReceiptSyncTimer = null;
+  }
+
   async start(): Promise<void> {
     this.setState(ModuleState.RUNNING);
+    this.startFiscalReceiptSyncTimer();
     // Set salon display info from config
     const config = getConfig();
     const salonSlug = config.salonSlug as string | undefined;
@@ -3231,6 +3290,7 @@ export class PosModule extends BaseModule {
   }
 
   async stop(): Promise<void> {
+    this.stopFiscalReceiptSyncTimer();
     this.windowManager?.destroy();
     if (this.posStore && typeof this.posStore.destroy === 'function') {
       this.posStore.destroy();
@@ -3238,7 +3298,10 @@ export class PosModule extends BaseModule {
     this.setState(ModuleState.STOPPED);
   }
 
-  async destroy(): Promise<void> { this.setState(ModuleState.STOPPED); }
+  async destroy(): Promise<void> {
+    this.stopFiscalReceiptSyncTimer();
+    this.setState(ModuleState.STOPPED);
+  }
 }
 
 function normalizeSelectedServices(services?: SelectedService[]): SelectedService[] | undefined {

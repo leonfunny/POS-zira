@@ -419,6 +419,8 @@ class Database {
       'local_printers',
       // Local fiscal journal (contains order payloads and tax-device safety state)
       'fiscal_attempts',
+      // Durable backend sync queue for fiscal receipt telemetry
+      'fiscal_receipt_sync_queue',
       // Local print journal (which printer printed each order receipt copy)
       'print_attempts',
     ];
