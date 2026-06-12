@@ -3,6 +3,7 @@ import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { productRepo } from '../database/repos/product-repo';
 import { resolveName } from '../../shared/catalog-names';
+import { calculateLineTotalGrosze, normalizeSellBy } from '../../shared/pos-sale';
 import logger from '../logger';
 
 export interface PaymentResult {
@@ -169,6 +170,83 @@ export class PaymentController {
       && Math.abs(itemTotal + (Number(order.tax) || 0) - grossSubtotal) <= 1;
   }
 
+  private receiptTotalsMatch(left: number, right: number): boolean {
+    return Math.abs(Math.round(left) - Math.round(right)) <= 1;
+  }
+
+  private sumReceiptItems(items: ReceiptData['items']): number {
+    return items.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
+  }
+
+  private buildReceiptItems(
+    order: { id?: string; order_number?: string | null; total: number; discount: number },
+    orderItems: Array<any>,
+    itemsLookNetPriced: boolean,
+  ): ReceiptData['items'] {
+    const expectedLineTotal = (Number(order.total) || 0) + (Number(order.discount) || 0);
+    const buildFromOrderItems = (): ReceiptData['items'] => orderItems.map((i) => {
+      const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
+      const unitPrice = itemsLookNetPriced ? this.grossFromNet(i.price, i.vat_rate) : i.price;
+      const totalPrice = itemsLookNetPriced ? this.grossFromNet(i.total, i.vat_rate) : i.total;
+      return {
+        name: this.getReceiptItemName(i),
+        quantity: i.quantity,
+        unitPrice,
+        totalPrice,
+        vatRate: i.vat_rate,
+        sku: i.sku || undefined,
+        unit: i.sale_unit || product?.sale_unit || undefined,
+      };
+    });
+
+    const receiptItems = buildFromOrderItems();
+    const lineSum = this.sumReceiptItems(receiptItems);
+    if (expectedLineTotal <= 0 || this.receiptTotalsMatch(lineSum, expectedLineTotal)) {
+      return receiptItems;
+    }
+
+    const catalogItems: ReceiptData['items'] = [];
+    for (const i of orderItems) {
+      const product = i.variant_id
+        ? productRepo.getById(i.variant_id)
+        : i.sku
+          ? productRepo.getBySku(i.sku)
+          : null;
+      const catalogPrice = Number(product?.retail_price);
+      if (!product || !Number.isFinite(catalogPrice) || catalogPrice < 0) {
+        break;
+      }
+      const sellBy = normalizeSellBy(i.sell_by ?? product.sell_by);
+      const quantity = Number(i.sale_quantity ?? i.quantity) || 1;
+      const totalPrice = calculateLineTotalGrosze(catalogPrice, quantity, sellBy);
+      catalogItems.push({
+        name: this.getReceiptItemName(i),
+        quantity,
+        unitPrice: catalogPrice,
+        totalPrice,
+        vatRate: Number(i.vat_rate ?? product.vat_rate) || 23,
+        sku: i.sku || product.sku || undefined,
+        unit: i.sale_unit || product.sale_unit || undefined,
+      });
+    }
+
+    if (catalogItems.length === orderItems.length) {
+      const catalogSum = this.sumReceiptItems(catalogItems);
+      if (this.receiptTotalsMatch(catalogSum, expectedLineTotal)) {
+        logger.warn(
+          `[Payment] Corrected receipt item prices from catalog for order ${order.order_number || order.id || 'unknown'}: ` +
+          `local line sum=${lineSum}, expected=${expectedLineTotal}`,
+        );
+        return catalogItems;
+      }
+    }
+
+    throw new Error(
+      `FISCAL_LINE_TOTAL_MISMATCH order=${order.order_number || order.id || 'unknown'} ` +
+      `lineSum=${lineSum} expected=${expectedLineTotal}. Refusing to print receipt with inconsistent local item prices.`,
+    );
+  }
+
   private async routeSharedReceipt(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
@@ -272,6 +350,7 @@ export class PaymentController {
     const subtotal = itemsLookNetPriced
       ? order.total + (order.discount ?? 0)
       : order.subtotal;
+    const receiptItems = this.buildReceiptItems(order, items, itemsLookNetPriced);
     return {
       orderId,
       orderNumber: order.order_number || orderId.substring(0, 8),
@@ -279,20 +358,7 @@ export class PaymentController {
       sellerName: this.getSellerName?.(),
       sellerAddress: this.getSellerAddress?.(),
       sellerNip: this.getSellerNip?.(),
-      items: items.map((i) => {
-        const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
-        const unitPrice = itemsLookNetPriced ? this.grossFromNet(i.price, i.vat_rate) : i.price;
-        const totalPrice = itemsLookNetPriced ? this.grossFromNet(i.total, i.vat_rate) : i.total;
-        return {
-          name: this.getReceiptItemName(i),
-          quantity: i.quantity,
-          unitPrice,
-          totalPrice,
-          vatRate: i.vat_rate,
-          sku: i.sku || undefined,
-          unit: i.sale_unit || product?.sale_unit || undefined,
-        };
-      }),
+      items: receiptItems,
       payment: {
         method: order.payment_method || 'CASH',
         amount: order.payment_amount,
@@ -537,51 +603,19 @@ export class PaymentController {
    * Reprint receipt for an existing order — marks as KOPIA/REPRINT
    */
   async reprintReceipt(orderId: string): Promise<boolean> {
-    const order = orderRepo.getById(orderId);
-    if (!order) {
+    const receiptData = this.buildSaleReceiptData(orderId);
+    if (!receiptData) {
       logger.warn(`[Payment] Cannot reprint: order ${orderId} not found`);
       return false;
     }
-
-    const items = orderRepo.getItemsByOrderId(orderId);
-    const receiptData: ReceiptData = {
-      orderId,
-      orderNumber: order.order_number || orderId.substring(0, 8),
-      salonName: this.getSalonName?.(),
-      sellerName: this.getSellerName?.(),
-      sellerAddress: this.getSellerAddress?.(),
-      sellerNip: this.getSellerNip?.(),
-      items: items.map((i) => {
-        const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
-        return {
-          name: this.getReceiptItemName(i),
-          quantity: i.quantity,
-          unitPrice: i.price,
-          totalPrice: i.total,
-          vatRate: i.vat_rate,
-          sku: i.sku || undefined,
-          unit: i.sale_unit || product?.sale_unit || undefined,
-        };
-      }),
-      payment: {
-        method: order.payment_method || 'CASH',
-        amount: order.payment_amount,
-      },
-      subtotal: order.subtotal,
-      discount: order.discount > 0 ? order.discount : undefined,
-      total: order.total,
-      cashierName: order.staff_name || undefined,
-      customerName: order.customer_name || undefined,
-      customerNip: order.customer_nip || undefined,
-      tenders: this.parseTenders(order),
-      isReprint: true,
-      originalDate: order.created_at,
-    };
+    const order = orderRepo.getById(orderId);
+    receiptData.isReprint = true;
+    receiptData.originalDate = order?.created_at;
 
     return this.printReceiptData(
       receiptData,
       { referenceType: 'POS_RECEIPT_REPRINT', referenceId: orderId, source: 'pos-reprint' },
-      `[Payment] Receipt REPRINTED for order ${order.order_number}`,
+      `[Payment] Receipt REPRINTED for order ${receiptData.orderNumber}`,
       '[Payment] Receipt reprint failed',
       '[Payment] No receipt printer connected, cannot reprint',
     );
