@@ -675,6 +675,44 @@ export class HardwareModule extends BaseModule {
     return this.printerDriver;
   }
 
+  async printFiscalDailyReport(data: Partial<DailyReportData> = {}): Promise<void> {
+    const targetPrinter = this.getPrinterForType(PrinterType.FISCAL);
+    if (!targetPrinter) {
+      throw new Error('No fiscal printer configured for automatic daily report');
+    }
+
+    if (!targetPrinter.isConnected()) {
+      logger.warn('[HardwareModule] Fiscal printer not connected before automatic daily report; running health check...');
+      await this.runHealthCheck();
+    }
+
+    const refreshedPrinter = this.getPrinterForType(PrinterType.FISCAL);
+    if (!refreshedPrinter?.isConnected()) {
+      throw new Error('Fiscal printer is not connected for automatic daily report');
+    }
+
+    const reportData: DailyReportData = {
+      date: data.date || new Date().toISOString().slice(0, 10),
+      reportNumber: data.reportNumber,
+      transactionCount: data.transactionCount ?? 0,
+      grossSales: data.grossSales ?? 0,
+      discounts: data.discounts ?? 0,
+      refunds: data.refunds ?? 0,
+      netSales: data.netSales ?? 0,
+      vatSummary: data.vatSummary,
+      paymentSummary: data.paymentSummary,
+      cashierName: data.cashierName,
+      ...(data as Record<string, unknown>),
+    };
+
+    if (isElzabDriver(refreshedPrinter)) {
+      await refreshedPrinter.printDailyReport(reportData);
+      return;
+    }
+
+    throw new Error('Automatic fiscal daily report requires an ELZAB_STX fiscal driver');
+  }
+
   private getPrinterConfigForJob(job: any): { printerType: PrinterType; config?: PrinterConfig } {
     const config = getConfig();
     const printers = config.printers || {};

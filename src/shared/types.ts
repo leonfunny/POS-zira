@@ -111,6 +111,7 @@ export interface DailyReportData {
     amount: number;        // In grosze/cents
   }>;
   cashierName?: string;
+  unconditionally?: 0 | 1;  // ELZAB daily report flag: print even without sales.
 }
 
 // Barcode types for label printing
@@ -504,6 +505,16 @@ export interface AgentConfig {
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
+  fiscalDailyReport?: {
+    enabled?: boolean;            // Enable automatic fiscal daily report on this device.
+    master?: boolean;             // Must be true on exactly one POS: the fiscal-printer master.
+    hour?: number;                // Warsaw local hour, default 23.
+    minute?: number;              // Warsaw local minute, default 58.
+    timezone?: string;            // IANA timezone, default Europe/Warsaw.
+    retryMinutes?: number;        // Retry interval after a failed attempt, default 5.
+    maxAttempts?: number;         // Attempts per report_date, default 3.
+    unconditionally?: boolean;    // Pass ELZAB "print even without sale" flag. Default false.
+  };
   showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default true.
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)

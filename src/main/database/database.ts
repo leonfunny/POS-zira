@@ -421,6 +421,8 @@ class Database {
       'fiscal_attempts',
       // Durable backend sync queue for fiscal receipt telemetry
       'fiscal_receipt_sync_queue',
+      // Local automatic fiscal daily report guard/outbox
+      'fiscal_daily_report_runs',
       // Local print journal (which printer printed each order receipt copy)
       'print_attempts',
     ];

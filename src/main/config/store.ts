@@ -125,6 +125,21 @@ const scaleConfigSchema = {
   default: {},
 };
 
+const fiscalDailyReportConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    master: { type: 'boolean', default: false },
+    hour: { type: 'number', default: 23, minimum: 0, maximum: 23 },
+    minute: { type: 'number', default: 58, minimum: 0, maximum: 59 },
+    timezone: { type: 'string', default: 'Europe/Warsaw' },
+    retryMinutes: { type: 'number', default: 5, minimum: 1, maximum: 60 },
+    maxAttempts: { type: 'number', default: 3, minimum: 1, maximum: 20 },
+    unconditionally: { type: 'boolean', default: false },
+  },
+  default: {},
+};
+
 // Telegram group config schema
 const telegramGroupConfigSchema = {
   type: 'object',
@@ -185,9 +200,14 @@ const telegramConfigSchema = {
 };
 
 // Configuration store
+function parseConfigJson(value: string): AgentConfig {
+  return JSON.parse(value.replace(/^\uFEFF/, '').replace(/^\u00EF\u00BB\u00BF/, ''));
+}
+
 const store = new Store<AgentConfig>({
   name: 'config',
   defaults: defaultConfig,
+  deserialize: parseConfigJson,
   schema: {
     agentId: { type: 'string' },
     salonId: { type: 'string' },
@@ -250,6 +270,7 @@ const store = new Store<AgentConfig>({
     receiptSellerAddress: { type: 'string' },
     receiptSellerNip: { type: 'string' },
     allowRealFiscalPrint: { type: 'boolean', default: false },
+    fiscalDailyReport: fiscalDailyReportConfigSchema,
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },

@@ -1389,4 +1389,28 @@ export const migrations: Migration[] = [
         ON fiscal_receipt_sync_queue(status, created_at);
     `,
   },
+  {
+    version: 43,
+    name: 'fiscal_daily_report_runs',
+    // Local guard/outbox for automatic ELZAB fiscal daily reports. This is
+    // intentionally local to the POS master device so POS2 cannot duplicate the
+    // fiscal zeroing report after pulling the same source code.
+    up: `
+      CREATE TABLE IF NOT EXISTS fiscal_daily_report_runs (
+        id TEXT PRIMARY KEY,
+        report_date TEXT NOT NULL,
+        scheduled_for TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        printed_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_fiscal_daily_report_date
+        ON fiscal_daily_report_runs(report_date);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_daily_report_status
+        ON fiscal_daily_report_runs(status, report_date);
+    `,
+  },
 ];

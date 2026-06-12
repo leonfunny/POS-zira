@@ -372,6 +372,57 @@ function Invoke-Receipt {
   }
 }
 
+function Invoke-Report {
+  param($Config, $Kind, $Data)
+
+  if ($env:ALLOW_REAL_FISCAL_PRINT -ne 'true') {
+    Write-Result $false 'REAL_FISCAL_PRINT_DISABLED' 'Real ELZAB fiscal report is disabled. Set ALLOW_REAL_FISCAL_PRINT=true only during controlled production go-live.' $null
+    return
+  }
+
+  $reportKind = ([string]$Kind).ToUpperInvariant()
+  if ($reportKind -ne 'DAILY' -and $reportKind -ne 'Z') {
+    Write-Result $false 'ELZAB_UNSUPPORTED_OPERATION' "ELZAB sidecar only supports fiscal daily/Z report; '$reportKind' is not supported." $null
+    return
+  }
+
+  $open = Open-Elzab $Config
+  if (!$open.ok) {
+    Write-Result $false $open.code $open.detail $open.data
+    return
+  }
+
+  try {
+    $unconditionally = [int](Get-Property $Data 'unconditionally' 0)
+    if ($unconditionally -ne 0) { $unconditionally = 1 }
+
+    $beforeNo = 0
+    try { [void][ElzabNative]::DailyReportNumber([ref]$beforeNo) } catch {}
+
+    $r = [ElzabNative]::DailyReportPaperPrint($unconditionally)
+    if ($r -ne 0) {
+      $message = Native-Error $r
+      $code = if (Is-LocalMenuError $message) { 'ELZAB_LOCAL_MENU_MODE' } else { 'ELZAB_COMMAND_FAILED' }
+      Write-Result $false $code "DailyReportPaperPrint failed: $message" @{ errorNumber = $r; reportKind = $reportKind; beforeReportNumber = $beforeNo }
+      return
+    }
+
+    $afterNo = 0
+    try { [void][ElzabNative]::DailyReportNumber([ref]$afterNo) } catch {}
+    Write-Result $true $null 'ELZAB fiscal daily report printed.' @{
+      target = $open.target
+      reportKind = $reportKind
+      beforeReportNumber = $beforeNo
+      afterReportNumber = $afterNo
+      unconditionally = $unconditionally
+    }
+  } catch {
+    Write-Result $false 'ELZAB_COMMAND_FAILED' $_.Exception.Message $null
+  } finally {
+    Close-Elzab
+  }
+}
+
 try {
   if (!$Command) {
     Write-Result $false 'ELZAB_BRIDGE_BAD_RESPONSE' 'Missing sidecar command.' $null
@@ -416,6 +467,11 @@ public static class ElzabNative {
   [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int NonFiscalPrintoutBegin(int Number);
   [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int addNonFiscalPrintoutLineSTX(string text, string addText, int textAlignment, int generatorType, int textStyle, int addTextStyle);
   [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int NonFiscalPrintoutEnd();
+  [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int DailyReport(int Unconditionally);
+  [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int DailyReportViaDeviceSettingsPrint(int Unconditionally);
+  [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int DailyReportPaperPrint(int Unconditionally);
+  [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int DailyReportInternalPrint(int Unconditionally);
+  [DllImport("ElzabDR.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)] public static extern int DailyReportNumber(ref int Number);
 }
 "@
   Add-Type -TypeDefinition $nativeCode
@@ -431,9 +487,7 @@ public static class ElzabNative {
     'status' { Invoke-ConnectLike $config $true }
     'test' { Invoke-TestPrint $config }
     'receipt' { Invoke-Receipt $config (Get-Property $payload 'data' $null) }
-    'report' {
-      Write-Result $false 'ELZAB_UNSUPPORTED_OPERATION' 'ELZAB report printing is not enabled in this sidecar until service verifies the required report mode.' $null
-    }
+    'report' { Invoke-Report $config (Get-Property $payload 'kind' '') (Get-Property $payload 'data' $null) }
     default {
       Write-Result $false 'ELZAB_UNSUPPORTED_OPERATION' "Unsupported ELZAB sidecar command '$Command'." $null
     }

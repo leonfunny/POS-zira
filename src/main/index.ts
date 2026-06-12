@@ -25,6 +25,7 @@ import {
 
 // Module imports
 import { HardwareModule } from './modules/hardware.module';
+import { FiscalDailyReportModule } from './modules/fiscal-daily-report.module';
 import { SyncModule } from './modules/sync.module';
 import { PosModule } from './modules/pos.module';
 import { WarehouseModule } from './modules/warehouse.module';
@@ -290,6 +291,7 @@ async function startApp() {
 
     orchestrator
       .use(new HardwareModule(container))
+      .use(new FiscalDailyReportModule(container))
       .use(new SyncModule(container))
       .use(new PosModule(container))
       .use(new WarehouseModule(container))
