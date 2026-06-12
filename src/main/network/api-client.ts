@@ -921,6 +921,31 @@ export class ApiClient {
     return this.request('POST', '/print-agent/fiscal-receipts/events', token, body);
   }
 
+  async recordFiscalReceiptEventWithApiKey(apiKey: string, body: {
+    orderId?: string;
+    b2bOrderId?: string;
+    printJobId?: string;
+    status: 'PRINTED' | 'FAILED' | 'NOT_PRINTED' | 'SKIPPED' | 'UNKNOWN' | 'REQUESTED';
+    source?: 'PRINT_JOB' | 'PRINT_AGENT_EVENT' | 'POS_SYNC' | 'MANUAL';
+    paymentMethod?: string;
+    grossTotal?: number;
+    currency?: string;
+    printerType?: string;
+    printerDisplayName?: string;
+    errorMessage?: string;
+    printedAt?: string;
+    failedAt?: string;
+    metadata?: Record<string, unknown>;
+  }, machineId?: string): Promise<{ fiscalReceiptId?: string; status?: string }> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      '/print-agent/agent/fiscal-receipts/events',
+      apiKey,
+      body,
+      machineId,
+    );
+  }
+
   async createPrintJobWithApiKey(
     apiKey: string,
     body: CreatePrintJobRequest,

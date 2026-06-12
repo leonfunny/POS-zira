@@ -220,9 +220,6 @@ export class PosModule extends BaseModule {
     };
     const recordFiscalReceipt = (input: FiscalReceiptJournalInput) => {
       void (async () => {
-        const token = getSecureAuthToken();
-        if (!token) return;
-
         const order = orderRepo.getById(input.orderId);
         const backendOrderId = order?.backend_id || input.orderId;
         const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -232,11 +229,11 @@ export class PosModule extends BaseModule {
         }
 
         try {
-          await apiClient.recordFiscalReceiptEvent(token, {
+          const body = {
             b2bOrderId: backendOrderId,
             printJobId: input.printJobId && uuidLike.test(input.printJobId) ? input.printJobId : undefined,
             status: input.status,
-            source: 'POS_SYNC',
+            source: 'POS_SYNC' as const,
             paymentMethod: input.paymentMethod ? input.paymentMethod.toUpperCase() : order?.payment_method || undefined,
             grossTotal: input.grossTotal ?? (order ? order.total / 100 : undefined),
             currency: 'PLN',
@@ -252,7 +249,19 @@ export class PosModule extends BaseModule {
               printerId: input.printerId || null,
               printJobId: input.printJobId || null,
             },
-          });
+          };
+          const apiKey = getSecureApiKey();
+          const machineId = getConfigValue('machineId') as string | undefined;
+          if (apiKey) {
+            await apiClient.recordFiscalReceiptEventWithApiKey(apiKey, body, machineId);
+            return;
+          }
+          const token = getSecureAuthToken();
+          if (!token) {
+            logger.warn(`[PosModule] Cannot record fiscal event for ${input.orderId}: missing auth token and print-agent API key`);
+            return;
+          }
+          await apiClient.recordFiscalReceiptEvent(token, body);
         } catch (err: any) {
           logger.warn(`[PosModule] Failed to record fiscal receipt event for ${input.orderId}: ${err?.message || err}`);
         }
