@@ -15,6 +15,7 @@ const DEFAULT_HOUR = 23;
 const DEFAULT_MINUTE = 58;
 const DEFAULT_RETRY_MINUTES = 5;
 const DEFAULT_MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 6;
 const TICK_MS = 30_000;
 
 interface FiscalDailyReportConfig {
@@ -231,9 +232,9 @@ function normalizeConfig(input?: FiscalDailyReportConfig): Required<FiscalDailyR
     master: !!input?.master,
     hour: clampInt(input?.hour, DEFAULT_HOUR, 0, 23),
     minute: clampInt(input?.minute, DEFAULT_MINUTE, 0, 59),
-    timezone: input?.timezone || DEFAULT_TZ,
+    timezone: input?.timezone === DEFAULT_TZ ? input.timezone : DEFAULT_TZ,
     retryMinutes: clampInt(input?.retryMinutes, DEFAULT_RETRY_MINUTES, 1, 60),
-    maxAttempts: clampInt(input?.maxAttempts, DEFAULT_MAX_ATTEMPTS, 1, 20),
+    maxAttempts: clampInt(input?.maxAttempts, DEFAULT_MAX_ATTEMPTS, 1, MAX_ATTEMPTS),
     unconditionally: !!input?.unconditionally,
   };
 }

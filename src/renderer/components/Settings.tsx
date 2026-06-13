@@ -104,6 +104,12 @@ const DEFAULT_FISCAL_DAILY_REPORT_SETTINGS: NormalizedFiscalDailyReportSettings 
   maxAttempts: 3,
   unconditionally: false,
 };
+const FISCAL_DAILY_REPORT_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const FISCAL_DAILY_REPORT_MINUTES = Array.from({ length: 60 }, (_, minute) => minute);
+const FISCAL_DAILY_REPORT_RETRY_OPTIONS = [0, 1, 2, 3, 4, 5];
+const FISCAL_DAILY_REPORT_RETRY_MINUTE_OPTIONS = [1, 2, 3, 5, 10, 15, 30, 60];
+const FISCAL_DAILY_REPORT_MAX_ATTEMPTS = Math.max(...FISCAL_DAILY_REPORT_RETRY_OPTIONS) + 1;
+const FISCAL_DAILY_REPORT_TIMEZONE = 'Europe/Warsaw';
 
 function deriveScaleConnection(scale?: AgentConfig['scale'] | null): ScaleConnectionMode {
   if (!scale?.enabled) return 'none';
@@ -136,9 +142,11 @@ function normalizeFiscalDailyReportSettings(
     master: !!input?.master,
     hour: clampInt(input?.hour, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.hour, 0, 23),
     minute: clampInt(input?.minute, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.minute, 0, 59),
-    timezone: input?.timezone || DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.timezone,
+    timezone: input?.timezone === FISCAL_DAILY_REPORT_TIMEZONE
+      ? input.timezone
+      : DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.timezone,
     retryMinutes: clampInt(input?.retryMinutes, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.retryMinutes, 1, 60),
-    maxAttempts: clampInt(input?.maxAttempts, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.maxAttempts, 1, 20),
+    maxAttempts: clampInt(input?.maxAttempts, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.maxAttempts, 1, FISCAL_DAILY_REPORT_MAX_ATTEMPTS),
     unconditionally: !!input?.unconditionally,
   };
 }
@@ -640,6 +648,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [fiscalDailyReport, setFiscalDailyReport] = useState<NormalizedFiscalDailyReportSettings>(
     () => normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
   );
+  const [showFiscalDailyReportAdvanced, setShowFiscalDailyReportAdvanced] = useState(false);
   const [serverPrinters, setServerPrinters] = useState<ServerPrinterMapping[]>([]);
   const [serverPrintersLoading, setServerPrintersLoading] = useState(false);
   const [serverPrintersError, setServerPrintersError] = useState<string | null>(null);
@@ -2078,6 +2087,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const selectedSharedPrinterId = sharedReceiptAssignment?.printerId || '';
   const sharedReceiptPrinters = salonPrinters.filter((printer) => isSharedReceiptRouteCandidate(printer, selectedSharedPrinterId));
   const salonInventoryPrinters = salonPrinterInventory.length > 0 ? salonPrinterInventory : salonPrinters;
+  const fiscalDailyReportRetries = Math.min(5, Math.max(0, fiscalDailyReport.maxAttempts - 1));
+  const fiscalDailyReportRetryMinuteOptions = Array.from(
+    new Set([...FISCAL_DAILY_REPORT_RETRY_MINUTE_OPTIONS, fiscalDailyReport.retryMinutes]),
+  ).sort((a, b) => a - b);
   const salonConfiguredPrinters = salonInventoryPrinters.filter(hasServerPrinterTarget);
   const salonReadyPrinters = salonConfiguredPrinters.filter(isSalonPrinterRouteReady);
   const enabledSalonRoutes = SALON_PRINTER_ROUTES.filter((route) => route.enabled);
@@ -3025,52 +3038,76 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                               <div className="mt-3 grid grid-cols-2 gap-3">
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Time</span>
-                                  <input
-                                    type="time"
-                                    step={60}
-                                    value={fiscalDailyReportTimeValue(fiscalDailyReport)}
-                                    onChange={(e) => {
-                                      const [hour, minute] = e.target.value.split(':').map(Number);
-                                      updateFiscalDailyReport({ hour, minute });
-                                    }}
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Hour (24h)</span>
+                                  <select
+                                    value={fiscalDailyReport.hour}
+                                    onChange={(e) => updateFiscalDailyReport({ hour: Number(e.target.value) })}
                                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
-                                  />
+                                  >
+                                    {FISCAL_DAILY_REPORT_HOURS.map((hour) => (
+                                      <option key={hour} value={hour}>
+                                        {String(hour).padStart(2, '0')}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Timezone</span>
-                                  <input
-                                    type="text"
-                                    value={fiscalDailyReport.timezone}
-                                    onChange={(e) => updateFiscalDailyReport({ timezone: e.target.value.trim() || 'Europe/Warsaw' })}
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Minute</span>
+                                  <select
+                                    value={fiscalDailyReport.minute}
+                                    onChange={(e) => updateFiscalDailyReport({ minute: Number(e.target.value) })}
                                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
-                                  />
+                                  >
+                                    {FISCAL_DAILY_REPORT_MINUTES.map((minute) => (
+                                      <option key={minute} value={minute}>
+                                        {String(minute).padStart(2, '0')}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retry minutes</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={60}
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retries</span>
+                                  <select
+                                    value={fiscalDailyReportRetries}
+                                    onChange={(e) => updateFiscalDailyReport({ maxAttempts: Number(e.target.value) + 1 })}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                                  >
+                                    {FISCAL_DAILY_REPORT_RETRY_OPTIONS.map((retries) => (
+                                      <option key={retries} value={retries}>
+                                        {retries}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retry every</span>
+                                  <select
+                                    disabled={fiscalDailyReportRetries === 0}
                                     value={fiscalDailyReport.retryMinutes}
                                     onChange={(e) => updateFiscalDailyReport({ retryMinutes: Number(e.target.value) })}
-                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
-                                  />
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300 disabled:bg-slate-100 disabled:text-slate-400"
+                                  >
+                                    {fiscalDailyReportRetryMinuteOptions.map((minutes) => (
+                                      <option key={minutes} value={minutes}>
+                                        {minutes} min
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
-                                <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Max attempts</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={20}
-                                    value={fiscalDailyReport.maxAttempts}
-                                    onChange={(e) => updateFiscalDailyReport({ maxAttempts: Number(e.target.value) })}
-                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
-                                  />
+                                <label className="col-span-2 block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Timezone</span>
+                                  <select
+                                    disabled
+                                    value={FISCAL_DAILY_REPORT_TIMEZONE}
+                                    onChange={() => updateFiscalDailyReport({ timezone: FISCAL_DAILY_REPORT_TIMEZONE })}
+                                    className="w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-600 outline-none"
+                                  >
+                                    <option value={FISCAL_DAILY_REPORT_TIMEZONE}>{FISCAL_DAILY_REPORT_TIMEZONE}</option>
+                                  </select>
                                 </label>
                               </div>
 
-                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
                                 <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                                   <span className="text-xs font-medium text-slate-700">This POS is master</span>
                                   <input
@@ -3080,16 +3117,28 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     className="h-4 w-4 accent-brand-600"
                                   />
                                 </label>
-                                <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                  <span className="text-xs font-medium text-slate-700">ELZAB force flag</span>
-                                  <input
-                                    type="checkbox"
-                                    checked={fiscalDailyReport.unconditionally}
-                                    onChange={(e) => updateFiscalDailyReport({ unconditionally: e.target.checked })}
-                                    className="h-4 w-4 accent-brand-600"
-                                  />
-                                </label>
+                                <button
+                                  type="button"
+                                  aria-expanded={showFiscalDailyReportAdvanced}
+                                  onClick={() => setShowFiscalDailyReportAdvanced((open) => !open)}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                >
+                                  Advanced
+                                </button>
                               </div>
+                              {showFiscalDailyReportAdvanced && (
+                                <div className="mt-2">
+                                  <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                    <span className="text-xs font-medium text-slate-700">Force auto report</span>
+                                    <input
+                                      type="checkbox"
+                                      checked={fiscalDailyReport.unconditionally}
+                                      onChange={(e) => updateFiscalDailyReport({ unconditionally: e.target.checked })}
+                                      className="h-4 w-4 accent-brand-600"
+                                    />
+                                  </label>
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-start gap-2">
                               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />

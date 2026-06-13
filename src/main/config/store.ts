@@ -134,7 +134,7 @@ const fiscalDailyReportConfigSchema = {
     minute: { type: 'number', default: 58, minimum: 0, maximum: 59 },
     timezone: { type: 'string', default: 'Europe/Warsaw' },
     retryMinutes: { type: 'number', default: 5, minimum: 1, maximum: 60 },
-    maxAttempts: { type: 'number', default: 3, minimum: 1, maximum: 20 },
+    maxAttempts: { type: 'number', default: 3, minimum: 1, maximum: 6 },
     unconditionally: { type: 'boolean', default: false },
   },
   default: {},
