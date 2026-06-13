@@ -47,6 +47,25 @@ describe('database migrations', () => {
     expect(statements[2]).toBe('CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_status ON fiscal_attempts(status)');
   });
 
+  it('changes fiscal daily report runs from one-per-date guard to run history', () => {
+    const migration = migrations.find((m) => m.name === 'fiscal_daily_report_run_history');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(44);
+    const statements = migration!.up
+      .split(';')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    expect(statements).toContain('DROP INDEX IF EXISTS idx_fiscal_daily_report_date');
+    expect(statements).toContain("ALTER TABLE fiscal_daily_report_runs ADD COLUMN trigger TEXT NOT NULL DEFAULT 'auto'");
+    expect(statements).toContain('ALTER TABLE fiscal_daily_report_runs ADD COLUMN report_no_before INTEGER');
+    expect(statements).toContain('ALTER TABLE fiscal_daily_report_runs ADD COLUMN report_no_after INTEGER');
+    expect(statements).toContain('ALTER TABLE fiscal_daily_report_runs ADD COLUMN confirmation_unknown INTEGER NOT NULL DEFAULT 0');
+    expect(statements).toContain('CREATE INDEX IF NOT EXISTS idx_fiscal_daily_report_date\n        ON fiscal_daily_report_runs(report_date, created_at)');
+    expect(statements).not.toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_fiscal_daily_report_date\n        ON fiscal_daily_report_runs(report_date)');
+  });
+
   it('repairs only mirrored server cash payment amounts that stored applied paidAmount', () => {
     const migration = migrations.find((m) => m.name === 'repair_server_cash_received_amount');
 

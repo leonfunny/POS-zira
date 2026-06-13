@@ -1413,4 +1413,24 @@ export const migrations: Migration[] = [
         ON fiscal_daily_report_runs(status, report_date);
     `,
   },
+  {
+    version: 44,
+    name: 'fiscal_daily_report_run_history',
+    // Allow several ELZAB fiscal daily reports in one business day. The
+    // scheduler now guards on fiscal receipts printed after the latest
+    // successful report instead of a unique report_date row.
+    up: `
+      DROP INDEX IF EXISTS idx_fiscal_daily_report_date;
+      ALTER TABLE fiscal_daily_report_runs ADD COLUMN trigger TEXT NOT NULL DEFAULT 'auto';
+      ALTER TABLE fiscal_daily_report_runs ADD COLUMN report_no_before INTEGER;
+      ALTER TABLE fiscal_daily_report_runs ADD COLUMN report_no_after INTEGER;
+      ALTER TABLE fiscal_daily_report_runs ADD COLUMN confirmation_unknown INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_fiscal_daily_report_date
+        ON fiscal_daily_report_runs(report_date, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_daily_report_schedule
+        ON fiscal_daily_report_runs(scheduled_for, trigger, created_at);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_daily_report_success
+        ON fiscal_daily_report_runs(status, printed_at);
+    `,
+  },
 ];

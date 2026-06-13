@@ -3,7 +3,10 @@ import type { ServiceContainer } from '../core/container';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { getConfig } from '../config/store';
 import { database } from '../database/database';
-import { fiscalDailyReportRunRepo } from '../database/repos/fiscal-daily-report-run-repo';
+import {
+  fiscalDailyReportRunRepo,
+  type FiscalDailyReportRunRow,
+} from '../database/repos/fiscal-daily-report-run-repo';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
 
@@ -30,6 +33,27 @@ interface ZonedNow {
   hour: number;
   minute: number;
   second: number;
+}
+
+export type FiscalDailyReportDecisionReason =
+  | 'ready'
+  | 'no_receipts_after_last_success'
+  | 'schedule_already_success'
+  | 'retry_not_due'
+  | 'max_attempts_reached';
+
+export interface FiscalDailyReportDecisionInput {
+  latestSuccess: Pick<FiscalDailyReportRunRow, 'printed_at'> | null;
+  hasReceiptAfterLatestSuccess: boolean;
+  scheduledRun: Pick<FiscalDailyReportRunRow, 'status' | 'attempts' | 'updated_at'> | null;
+  retryMinutes: number;
+  maxAttempts: number;
+  nowMs?: number;
+}
+
+export interface FiscalDailyReportDecision {
+  shouldRun: boolean;
+  reason: FiscalDailyReportDecisionReason;
 }
 
 export class FiscalDailyReportModule extends BaseModule {
@@ -86,15 +110,36 @@ export class FiscalDailyReportModule extends BaseModule {
     const currentMinute = now.hour * 60 + now.minute;
     if (currentMinute < scheduledMinute) return;
 
-    const existing = fiscalDailyReportRunRepo.get(now.date);
-    if (existing?.status === 'SUCCESS') return;
-    if (existing?.status === 'RUNNING' && existing.updated_at && !isRetryDue(existing.updated_at, config.retryMinutes)) return;
-    if (existing && existing.attempts >= config.maxAttempts) return;
-    if (existing?.updated_at && !isRetryDue(existing.updated_at, config.retryMinutes)) return;
+    const scheduledFor = `${now.date}T${pad2(config.hour)}:${pad2(config.minute)}:00[${config.timezone}]`;
+    const latestSuccess = fiscalDailyReportRunRepo.getLatestSuccess();
+    const hasReceiptAfterLatestSuccess = latestSuccess?.printed_at
+      ? fiscalDailyReportRunRepo.hasSuccessfulFiscalReceiptAfter(latestSuccess.printed_at)
+      : true;
+    const scheduledRun = fiscalDailyReportRunRepo.getLatestForSchedule(scheduledFor, 'auto');
+    const decision = shouldAttemptFiscalDailyReport({
+      latestSuccess,
+      hasReceiptAfterLatestSuccess,
+      scheduledRun,
+      retryMinutes: config.retryMinutes,
+      maxAttempts: config.maxAttempts,
+    });
+
+    if (!decision.shouldRun) {
+      if (decision.reason === 'no_receipts_after_last_success') {
+        logger.info(
+          `[FiscalDailyReport] Skipping automatic fiscal daily report for ${now.date}: ` +
+          'no confirmed fiscal receipts after the latest successful daily report',
+        );
+      }
+      return;
+    }
 
     this.inFlight = true;
-    const scheduledFor = `${now.date}T${pad2(config.hour)}:${pad2(config.minute)}:00[${config.timezone}]`;
-    const row = fiscalDailyReportRunRepo.begin(now.date, scheduledFor);
+    const row = fiscalDailyReportRunRepo.begin({
+      reportDate: now.date,
+      scheduledFor,
+      trigger: 'auto',
+    });
     await this.flushRunState('begin', now.date);
 
     try {
@@ -119,7 +164,7 @@ export class FiscalDailyReportModule extends BaseModule {
           `(${result.beforeReportNumber ?? '?'} -> ${result.afterReportNumber ?? '?'}); marking success to prevent duplicate report retry`,
         );
       }
-      fiscalDailyReportRunRepo.markSuccess(row.id);
+      fiscalDailyReportRunRepo.markSuccess(row.id, result);
       await this.flushRunState('success', now.date);
       logger.info(
         `[FiscalDailyReport] Automatic fiscal daily report printed for ${now.date} ` +
@@ -164,6 +209,22 @@ function isConfirmationUnknownAfterCommand(err: any): boolean {
     result?.data?.commandSent === true;
 }
 
+export function shouldAttemptFiscalDailyReport(input: FiscalDailyReportDecisionInput): FiscalDailyReportDecision {
+  if (input.latestSuccess?.printed_at && !input.hasReceiptAfterLatestSuccess) {
+    return { shouldRun: false, reason: 'no_receipts_after_last_success' };
+  }
+  if (input.scheduledRun?.status === 'SUCCESS') {
+    return { shouldRun: false, reason: 'schedule_already_success' };
+  }
+  if (input.scheduledRun && input.scheduledRun.attempts >= input.maxAttempts) {
+    return { shouldRun: false, reason: 'max_attempts_reached' };
+  }
+  if (input.scheduledRun?.updated_at && !isRetryDue(input.scheduledRun.updated_at, input.retryMinutes, input.nowMs)) {
+    return { shouldRun: false, reason: 'retry_not_due' };
+  }
+  return { shouldRun: true, reason: 'ready' };
+}
+
 function normalizeConfig(input?: FiscalDailyReportConfig): Required<FiscalDailyReportConfig> {
   return {
     enabled: !!input?.enabled,
@@ -203,10 +264,10 @@ function getZonedNow(date: Date, timezone: string): ZonedNow {
   };
 }
 
-function isRetryDue(updatedAt: string, retryMinutes: number): boolean {
+function isRetryDue(updatedAt: string, retryMinutes: number, nowMs = Date.now()): boolean {
   const updated = Date.parse(`${updatedAt.replace(' ', 'T')}Z`);
   if (!Number.isFinite(updated)) return true;
-  return Date.now() - updated >= retryMinutes * 60_000;
+  return nowMs - updated >= retryMinutes * 60_000;
 }
 
 function pad2(value: number): string {

@@ -49,6 +49,8 @@ import {
   TestPrintResult,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
+import { database } from '../database/database';
+import { fiscalDailyReportRunRepo } from '../database/repos/fiscal-daily-report-run-repo';
 import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
@@ -329,6 +331,8 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.PRINT_FISCAL_DAILY_REPORT_NOW, async (): Promise<FiscalDailyReportPrintResponse> => {
+      const reportDate = getFiscalDailyReportDate(new Date());
+      let manualRunId: string | null = null;
       try {
         const dailyReportConfig = getConfig().fiscalDailyReport;
         if (!dailyReportConfig?.master) {
@@ -340,21 +344,36 @@ export class HardwareModule extends BaseModule {
           };
         }
         logger.info('[HardwareModule] Manual fiscal daily report requested');
+        const scheduledFor = new Date().toISOString();
+        const run = fiscalDailyReportRunRepo.begin({
+          reportDate,
+          scheduledFor,
+          trigger: 'manual',
+        });
+        manualRunId = run.id;
+        await this.flushFiscalDailyReportRunState('manual-begin', reportDate);
         const result = await this.printFiscalDailyReport({
-          date: new Date().toISOString().slice(0, 10),
+          date: reportDate,
           transactionCount: 0,
           grossSales: 0,
           discounts: 0,
           netSales: 0,
           unconditionally: 1,
         });
+        fiscalDailyReportRunRepo.markSuccess(run.id, result);
+        await this.flushFiscalDailyReportRunState('manual-success', reportDate);
         logger.info(
           `[HardwareModule] Manual fiscal daily report printed ` +
-          `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'})`,
+          `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'}` +
+          `${result.confirmationUnknown ? ', confirmation=paper-required' : ''})`,
         );
         return { success: true, data: result };
       } catch (err: any) {
         const bridgeResult = err?.result;
+        if (manualRunId) {
+          fiscalDailyReportRunRepo.markFailed(manualRunId, err?.message || String(err));
+          await this.flushFiscalDailyReportRunState('manual-failure', reportDate);
+        }
         logger.error(
           `[HardwareModule] Manual fiscal daily report failed: ${err?.message || String(err)}`,
         );
@@ -768,6 +787,23 @@ export class HardwareModule extends BaseModule {
     }
 
     throw new Error('Automatic fiscal daily report requires an ELZAB_STX fiscal driver');
+  }
+
+  private async flushFiscalDailyReportRunState(stage: string, reportDate: string): Promise<void> {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const flush = await database.save();
+      if (flush.success) return;
+
+      const error = flush.error || 'unknown error';
+      if (!/already in progress/i.test(error) || attempt === 3) {
+        logger.warn(
+          `[HardwareModule] Fiscal daily report ${stage} state for ${reportDate} is not durable yet: ${error}`,
+        );
+        return;
+      }
+
+      await delay(250);
+    }
   }
 
   private getPrinterConfigForJob(job: any): { printerType: PrinterType; config?: PrinterConfig } {
@@ -2517,4 +2553,19 @@ function numberOrUndefined(value: unknown): number | undefined {
   if (typeof value === 'string' && value.trim().length === 0) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function getFiscalDailyReportDate(date: Date): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Warsaw',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

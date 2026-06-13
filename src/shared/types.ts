@@ -535,7 +535,7 @@ export interface AgentConfig {
     minute?: number;              // Warsaw local minute, default 58.
     timezone?: string;            // IANA timezone, default Europe/Warsaw.
     retryMinutes?: number;        // Retry interval after a failed attempt, default 5.
-    maxAttempts?: number;         // Attempts per report_date, default 3.
+    maxAttempts?: number;         // Attempts per scheduled run, default 3.
     unconditionally?: boolean;    // Pass ELZAB "print even without sale" flag. Default false.
   };
   showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default true.

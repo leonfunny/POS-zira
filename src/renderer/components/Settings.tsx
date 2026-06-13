@@ -8,7 +8,7 @@ import KitchenPrintSettings from './pos/KitchenPrintSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
-import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
@@ -92,6 +92,18 @@ const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 const DEFAULT_SCALE_SHARE_PORT = 17891;
 const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
+type FiscalDailyReportSettings = NonNullable<AgentConfig['fiscalDailyReport']>;
+type NormalizedFiscalDailyReportSettings = Required<FiscalDailyReportSettings>;
+const DEFAULT_FISCAL_DAILY_REPORT_SETTINGS: NormalizedFiscalDailyReportSettings = {
+  enabled: false,
+  master: false,
+  hour: 23,
+  minute: 58,
+  timezone: 'Europe/Warsaw',
+  retryMinutes: 5,
+  maxAttempts: 3,
+  unconditionally: false,
+};
 
 function deriveScaleConnection(scale?: AgentConfig['scale'] | null): ScaleConnectionMode {
   if (!scale?.enabled) return 'none';
@@ -108,6 +120,31 @@ function parseScalePortNumber(value: string | number | undefined, fallback: numb
   const parsed = Number(value);
   if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) return parsed;
   return fallback;
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+}
+
+function normalizeFiscalDailyReportSettings(
+  input?: FiscalDailyReportSettings | null,
+): NormalizedFiscalDailyReportSettings {
+  return {
+    enabled: !!input?.enabled,
+    master: !!input?.master,
+    hour: clampInt(input?.hour, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.hour, 0, 23),
+    minute: clampInt(input?.minute, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.minute, 0, 59),
+    timezone: input?.timezone || DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.timezone,
+    retryMinutes: clampInt(input?.retryMinutes, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.retryMinutes, 1, 60),
+    maxAttempts: clampInt(input?.maxAttempts, DEFAULT_FISCAL_DAILY_REPORT_SETTINGS.maxAttempts, 1, 20),
+    unconditionally: !!input?.unconditionally,
+  };
+}
+
+function fiscalDailyReportTimeValue(settings: NormalizedFiscalDailyReportSettings): string {
+  return `${String(settings.hour).padStart(2, '0')}:${String(settings.minute).padStart(2, '0')}`;
 }
 
 type SalonPrinterRouteDefinition = {
@@ -351,6 +388,7 @@ function buildPrinterPayloadFromConfig(config: AgentConfig | null | undefined): 
       printers: config?.printers || {},
       receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
       labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
+      fiscalDailyReport: normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
     };
   }
 
@@ -365,6 +403,7 @@ function buildPrinterPayloadFromConfig(config: AgentConfig | null | undefined): 
     printers: {},
     receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
     labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
+    fiscalDailyReport: normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
   };
 }
 
@@ -598,6 +637,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [printers, setPrinters] = useState<PrintersConfig>(
     config?.printers || {}
   );
+  const [fiscalDailyReport, setFiscalDailyReport] = useState<NormalizedFiscalDailyReportSettings>(
+    () => normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
+  );
   const [serverPrinters, setServerPrinters] = useState<ServerPrinterMapping[]>([]);
   const [serverPrintersLoading, setServerPrintersLoading] = useState(false);
   const [serverPrintersError, setServerPrintersError] = useState<string | null>(null);
@@ -732,6 +774,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         printers,
         receiptPrinter: { ...defaultPrinterConfig, enabled: false },
         labelPrinter: { ...defaultPrinterConfig, enabled: false },
+        fiscalDailyReport,
       };
     }
 
@@ -746,9 +789,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       printers: {},
       receiptPrinter: { ...defaultPrinterConfig, enabled: false },
       labelPrinter: { ...defaultPrinterConfig, enabled: false },
+      fiscalDailyReport,
     };
   }, [
-    multiPrinterMode, printers,
+    multiPrinterMode, printers, fiscalDailyReport,
     selectedPort, protocol, baudRate, zebraPrinter, labelWidth, labelHeight,
   ]);
 
@@ -1033,6 +1077,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         setLabelHeight(config.labelHeight || 30);
         setMultiPrinterMode(deriveMultiPrinterMode(config));
         setPrinters(config.printers || {});
+        setFiscalDailyReport(normalizeFiscalDailyReportSettings(config.fiscalDailyReport));
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
       setWindowsPrinters(prev => mergeWindowsPrinterOptions(prev, getConfiguredWindowsPrinterOptions(config)));
@@ -1154,6 +1199,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         ...(prev[printerType as keyof typeof prev] || defaultPrinterConfig),
         ...updates,
       },
+    }));
+  };
+
+  const updateFiscalDailyReport = (updates: Partial<FiscalDailyReportSettings>) => {
+    setFiscalDailyReport(prev => normalizeFiscalDailyReportSettings({
+      ...prev,
+      ...updates,
     }));
   };
 
@@ -1578,6 +1630,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     setZebraPrinter(updatedConfig?.zebraPrinter || '');
     setLabelWidth(updatedConfig?.labelWidth || 50);
     setLabelHeight(updatedConfig?.labelHeight || 30);
+    setFiscalDailyReport(normalizeFiscalDailyReportSettings(updatedConfig?.fiscalDailyReport));
     syncedPrinterSignatureRef.current = incomingPrinterSignature;
     await loadLocalPrinterRows();
   };
@@ -1803,6 +1856,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         setZebraPrinter(updatedConfig?.zebraPrinter || '');
         setLabelWidth(updatedConfig?.labelWidth || 50);
         setLabelHeight(updatedConfig?.labelHeight || 30);
+        setFiscalDailyReport(normalizeFiscalDailyReportSettings(updatedConfig?.fiscalDailyReport));
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
         await loadLocalPrinterRows();
       }
@@ -1950,6 +2004,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         setZebraPrinter(updatedConfig?.zebraPrinter || '');
         setLabelWidth(updatedConfig?.labelWidth || 50);
         setLabelHeight(updatedConfig?.labelHeight || 30);
+        setFiscalDailyReport(normalizeFiscalDailyReportSettings(updatedConfig?.fiscalDailyReport));
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
         await loadLocalPrinterRows();
       }
@@ -2523,9 +2578,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             {PRINTER_TYPES.map((printerType) => {
               const printerConfig = getPrinterConfig(printerType);
               const isLabel = printerType === 'LABEL';
-              const isFiscalElzabMaster = printerType === 'FISCAL' &&
-                printerConfig.protocol === 'ELZAB_STX' &&
-                config?.fiscalDailyReport?.master === true;
+              const isFiscalElzab = printerType === 'FISCAL' &&
+                printerConfig.protocol === 'ELZAB_STX';
 
               return (
                 <div key={printerType} className="border border-slate-200 rounded-lg p-4">
@@ -2937,13 +2991,111 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           </div>
                         )}
 
-                        {isFiscalElzabMaster && (
+                        {isFiscalElzab && (
                           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                            <div className="mb-3 rounded-lg border border-white/70 bg-white/70 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <Clock className="h-4 w-4 shrink-0 text-slate-600" />
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                      Fiscal daily report timer
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {fiscalDailyReport.enabled
+                                        ? `${fiscalDailyReportTimeValue(fiscalDailyReport)} ${fiscalDailyReport.timezone}`
+                                        : 'Disabled'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => updateFiscalDailyReport({ enabled: !fiscalDailyReport.enabled })}
+                                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                                    fiscalDailyReport.enabled ? 'bg-brand-600' : 'bg-slate-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                      fiscalDailyReport.enabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+
+                              <div className="mt-3 grid grid-cols-2 gap-3">
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Time</span>
+                                  <input
+                                    type="time"
+                                    step={60}
+                                    value={fiscalDailyReportTimeValue(fiscalDailyReport)}
+                                    onChange={(e) => {
+                                      const [hour, minute] = e.target.value.split(':').map(Number);
+                                      updateFiscalDailyReport({ hour, minute });
+                                    }}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Timezone</span>
+                                  <input
+                                    type="text"
+                                    value={fiscalDailyReport.timezone}
+                                    onChange={(e) => updateFiscalDailyReport({ timezone: e.target.value.trim() || 'Europe/Warsaw' })}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retry minutes</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={60}
+                                    value={fiscalDailyReport.retryMinutes}
+                                    onChange={(e) => updateFiscalDailyReport({ retryMinutes: Number(e.target.value) })}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">Max attempts</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={20}
+                                    value={fiscalDailyReport.maxAttempts}
+                                    onChange={(e) => updateFiscalDailyReport({ maxAttempts: Number(e.target.value) })}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                                  />
+                                </label>
+                              </div>
+
+                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                  <span className="text-xs font-medium text-slate-700">This POS is master</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={fiscalDailyReport.master}
+                                    onChange={(e) => updateFiscalDailyReport({ master: e.target.checked })}
+                                    className="h-4 w-4 accent-brand-600"
+                                  />
+                                </label>
+                                <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                  <span className="text-xs font-medium text-slate-700">ELZAB force flag</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={fiscalDailyReport.unconditionally}
+                                    onChange={(e) => updateFiscalDailyReport({ unconditionally: e.target.checked })}
+                                    className="h-4 w-4 accent-brand-600"
+                                  />
+                                </label>
+                              </div>
+                            </div>
                             <div className="flex items-start gap-2">
                               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-                                  Fiscal daily report test
+                                  Fiscal daily report
                                 </div>
                                 <p className="mt-1 text-xs leading-5 text-amber-800">
                                   This closes the current ELZAB fiscal period. Use only while standing beside POS1 and the fiscal printer.
@@ -2953,9 +3105,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                             <button
                               type="button"
                               onClick={handlePrintFiscalDailyReportNow}
-                              disabled={printingFiscalDailyReport || testingPrinter !== null}
+                              disabled={!fiscalDailyReport.master || printingFiscalDailyReport || testingPrinter !== null}
                               className={`mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-                                printingFiscalDailyReport || testingPrinter !== null
+                                !fiscalDailyReport.master || printingFiscalDailyReport || testingPrinter !== null
                                   ? 'cursor-not-allowed bg-slate-100 text-slate-400'
                                   : 'bg-amber-600 text-white hover:bg-amber-700 active:bg-amber-800'
                               }`}
@@ -2975,6 +3127,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 </>
                               )}
                             </button>
+                            {!fiscalDailyReport.master && (
+                              <div className="mt-2 text-xs text-amber-800">
+                                Enable master on this POS to allow fiscal daily report printing.
+                              </div>
+                            )}
                             {fiscalDailyReportResult && (
                               <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
                                 fiscalDailyReportResult.success && fiscalDailyReportResult.data?.confirmationUnknown
@@ -2986,7 +3143,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 <div className="font-semibold">
                                   {fiscalDailyReportResult.success
                                     ? fiscalDailyReportResult.data?.confirmationUnknown
-                                      ? 'Daily report accepted — confirm paper report'
+                                      ? 'Daily report accepted - confirm paper report'
                                       : 'Daily report created'
                                     : `Daily report failed: ${fiscalDailyReportResult.error || fiscalDailyReportResult.detail || 'Unknown error'}`}
                                 </div>
