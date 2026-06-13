@@ -94,6 +94,19 @@ function plnToGrosze(value: unknown): number | null {
   return Math.round(n * 100);
 }
 
+function getRefundedLinesAmountGrosze(result: RefundBackendResult): number | null {
+  if (!Array.isArray(result.refundedLines) || result.refundedLines.length === 0) return null;
+  let total = 0;
+  let hasAmount = false;
+  for (const line of result.refundedLines) {
+    const amount = plnToGrosze((line as any)?.refundAmount);
+    if (amount == null || amount <= 0) continue;
+    total += amount;
+    hasAmount = true;
+  }
+  return hasAmount ? total : null;
+}
+
 export function getRefundedAmountGrosze(result: RefundBackendResult): number | null {
   return plnToGrosze(result.totalRefundedAmount);
 }
@@ -142,6 +155,7 @@ export function validateRefundBackendResponse(
   const summary = getRefundBackendResponseSummary(result);
   const refundAmountGrosze = plnToGrosze(result.refundAmount);
   const refundedAmountGrosze = getRefundedAmountGrosze(result);
+  const refundedLinesAmountGrosze = getRefundedLinesAmountGrosze(result);
   const mutationDetected = (
     result.status === 'REFUNDED' ||
     result.status === 'PARTIAL_REFUND' ||
@@ -156,8 +170,9 @@ export function validateRefundBackendResponse(
   const expectedDeltaGrosze = Math.round(opts.requestedAmountGrosze * factor);
   const expectedDeltaCandidates = Array.from(new Set([
     expectedDeltaGrosze,
+    refundedLinesAmountGrosze,
     ...(opts.expectedDeltaGroszeCandidates ?? []),
-  ].filter((n) => Number.isFinite(n) && n > 0)));
+  ].filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0)));
   // Allow a 1-grosz rounding tolerance plus an extra 1-grosz per percent
   // of gross-up to absorb compounding rounding errors when the server
   // grosses up each line individually before summing.

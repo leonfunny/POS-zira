@@ -25,6 +25,10 @@ import {
 } from '../src/main/pos/refund-backend-payload';
 import { buildRefundRequest } from '../src/renderer/components/pos/refund-request';
 import {
+  calculateRefundLineAmount,
+  getRefundLineUnitPrice,
+} from '../src/renderer/components/pos/refund-line-amount';
+import {
   getRemainingRefundableItems,
   getSafeRemainingTotal,
   hasRefundOverage,
@@ -496,6 +500,52 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(validation.classification).toBe('confirmedComplete');
     expect(validation.refundAmountGrosze).toBe(700);
     expect(validation.refundedAmountGrosze).toBe(700);
+  });
+
+  it('renderer derives refund amounts from canonical line totals, not rounded unit prices', () => {
+    const driftedServerLine = {
+      price: 3501,
+      quantity: 2,
+      total: 7000,
+      sell_by: 'PIECE',
+    };
+
+    expect(getRefundLineUnitPrice(driftedServerLine)).toBe(3500);
+    expect(calculateRefundLineAmount(driftedServerLine, 1)).toBe(3500);
+    expect(calculateRefundLineAmount(driftedServerLine, 2)).toBe(7000);
+  });
+
+  it('accepts backend canonical refundedLines amount when the client requested amount drifted by rounding', () => {
+    const validation = validateRefundBackendResponse({
+      success: true,
+      status: 'PARTIAL_REFUND',
+      refundAmount: 70,
+      totalRefundedAmount: 70,
+      refundedLines: [
+        {
+          variantId: 'coffee-variant',
+          sku: 'kawa-mielona-trung-nguyen-sang-tao-4-340g',
+          name: 'Ca phe rang xay Trung Nguyen Sang Tao 4, 340g',
+          quantity: 2,
+          unitPrice: 35,
+          refundAmount: 70,
+          taxRate: 23,
+        },
+      ],
+      stockMovementIds: ['stock-move-coffee'],
+    }, {
+      type: 'PARTIAL',
+      requestedAmountGrosze: 7002,
+      orderTotalGrosze: 22150,
+      alreadyRefundedGrosze: 0,
+      requireRefundedLines: true,
+      requireStockMovement: true,
+    });
+
+    expect(validation.ok).toBe(true);
+    expect(validation.classification).toBe('confirmedComplete');
+    expect(validation.refundAmountGrosze).toBe(7000);
+    expect(validation.refundedAmountGrosze).toBe(7000);
   });
 
   it('does not treat refundAmount alone as the cumulative refunded total', () => {

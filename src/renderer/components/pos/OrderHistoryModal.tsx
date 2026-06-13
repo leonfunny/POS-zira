@@ -19,6 +19,10 @@ import {
   getRefundBreakdownLines,
   type RefundBreakdownLine,
 } from './refund-breakdown';
+import {
+  calculateRefundLineAmount,
+  getRefundLineUnitPrice,
+} from './refund-line-amount';
 import { calculateLineTotalGrosze, formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
 
 interface OrderRow {
@@ -221,10 +225,6 @@ function toGrosze(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Math.round(n * 100) : fallback;
 }
 
-function getSelectedRefundLineGrossAmount(line: { refundAmount: number; vatRate?: number }): number {
-  return Math.round(line.refundAmount * (1 + Math.max(0, line.vatRate ?? 0) / 100));
-}
-
 function getRefundSuccessLines(result: any, fallbackLines: Array<{ name?: string; quantity: number; refundAmount: number; vatRate?: number; sku?: string; variantId?: string }>): RefundBreakdownLine[] {
   if (Array.isArray(result?.refundedLines) && result.refundedLines.length > 0) {
     return result.refundedLines
@@ -244,7 +244,7 @@ function getRefundSuccessLines(result: any, fallbackLines: Array<{ name?: string
     sku: line.sku ?? null,
     name: line.name || '',
     quantity: line.quantity,
-    refundAmount: getSelectedRefundLineGrossAmount(line),
+    refundAmount: Math.max(0, Math.round(Number(line.refundAmount) || 0)),
     vatRate: line.vatRate,
   })).filter((line: RefundBreakdownLine) => line.name && line.quantity > 0 && line.refundAmount > 0);
 }
@@ -410,20 +410,36 @@ function RefundPanel({
   const refundableResult = getRemainingRefundableItems(order, items);
   const refundableItems = refundableResult.items;
   const refundBlockedByMissingLines = refundableResult.unsafeMissingRefundLines;
+  const refundBreakdownById = useMemo(
+    () => new Map(getItemRefundBreakdowns(order, items).map((entry) => [entry.item.id, entry])),
+    [order, items],
+  );
+  const getRefundAmountItem = (item: typeof refundableItems[number]) => {
+    const breakdown = refundBreakdownById.get(item.id);
+    return {
+      price: item.price,
+      quantity: item.maxQty,
+      total: breakdown?.remainingAmount ?? item.total,
+      sell_by: item.sell_by,
+    };
+  };
 
   const selectedRefundLines = refundableItems
     .filter(item => (selectedQtys[item.id] ?? 0) > 0)
-    .map(item => ({
-      variantId: item.variant_id ?? undefined,
-      sku: item.sku ?? undefined,
-      name: item.name,
-      quantity: selectedQtys[item.id],
-      unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
-      unitPrice: item.price,
-      refundAmount: calculateLineTotalGrosze(item.price, selectedQtys[item.id], normalizeSellBy(item.sell_by)),
-      restock,
-      vatRate: item.vat_rate,
-    }));
+    .map(item => {
+      const refundAmountItem = getRefundAmountItem(item);
+      return {
+        variantId: item.variant_id ?? undefined,
+        sku: item.sku ?? undefined,
+        name: item.name,
+        quantity: selectedQtys[item.id],
+        unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
+        unitPrice: getRefundLineUnitPrice(refundAmountItem),
+        refundAmount: calculateRefundLineAmount(refundAmountItem, selectedQtys[item.id]),
+        restock,
+        vatRate: item.vat_rate,
+      };
+    });
 
   const computedRefundTotal = refundType === 'FULL'
     ? remainingTotal
@@ -468,17 +484,20 @@ function RefundPanel({
         : translations.pl[`pos.refund.${reason}`] || tOr(t, `pos.refund.${reason}`, reason);
       let refundItems = selectedRefundLines as any[];
       if (refundType === 'FULL') {
-        refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => ({
-          variantId: item.variant_id ?? undefined,
-          sku: item.sku ?? undefined,
-          name: item.name,
-          quantity: item.maxQty,
-          unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
-          unitPrice: item.price,
-          refundAmount: calculateLineTotalGrosze(item.price, item.maxQty, normalizeSellBy(item.sell_by)),
-          restock,
-          vatRate: item.vat_rate,
-        }));
+        refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => {
+          const refundAmountItem = getRefundAmountItem(item);
+          return {
+            variantId: item.variant_id ?? undefined,
+            sku: item.sku ?? undefined,
+            name: item.name,
+            quantity: item.maxQty,
+            unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
+            unitPrice: getRefundLineUnitPrice(refundAmountItem),
+            refundAmount: calculateRefundLineAmount(refundAmountItem, item.maxQty),
+            restock,
+            vatRate: item.vat_rate,
+          };
+        });
       }
       const refundRequestId = refundRequestIdRef.current ?? createRefundRequestId();
       refundRequestIdRef.current = refundRequestId;
@@ -656,12 +675,13 @@ function RefundPanel({
             const qty = selectedQtys[item.id] ?? 0;
             const sellBy = normalizeSellBy(item.sell_by);
             const unit = normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy });
+            const refundAmountItem = getRefundAmountItem(item);
             return (
               <div key={item.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold text-slate-900 truncate">{item.name}</div>
                   <div className="text-xs text-slate-500">
-                    {formatMoney(item.price, currency)} x {formatSaleQuantity(item.maxQty, sellBy)} {unit}
+                    {formatMoney(getRefundLineUnitPrice(refundAmountItem), currency)} x {formatSaleQuantity(item.maxQty, sellBy)} {unit}
                   </div>
                 </div>
                 {sellBy === 'WEIGHT' ? (
@@ -687,7 +707,7 @@ function RefundPanel({
                   </div>
                 )}
                 <div className="text-sm font-bold tabular-nums text-slate-900 w-20 text-right">
-                  {qty > 0 ? formatMoney(calculateLineTotalGrosze(item.price, qty, sellBy), currency) : '-'}
+                  {qty > 0 ? formatMoney(calculateRefundLineAmount(refundAmountItem, qty), currency) : '-'}
                 </div>
               </div>
             );
