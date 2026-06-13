@@ -191,7 +191,7 @@ describe('ElzabDriver fail-closed behavior', () => {
     const printReport = vi.fn(async () => ({
       ok: true,
       data: {
-        commandUsed: 'DailyReportPaperPrint',
+        commandUsed: 'DailyReport',
         beforeReportNumber: 41,
         afterReportNumber: 42,
         reportNumberIncreased: true,
@@ -227,15 +227,49 @@ describe('ElzabDriver fail-closed behavior', () => {
     }
   });
 
+  it('returns accepted daily report diagnostics when number confirmation stays stale', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const reportResult = {
+      ok: true,
+      detail: 'DailyReport returned OK, but DailyReportNumber did not update immediately.',
+      data: {
+        commandUsed: 'DailyReport',
+        beforeReportNumber: 23,
+        afterReportNumber: 23,
+        reportNumberIncreased: false,
+        commandSent: true,
+        confirmationUnknown: true,
+      },
+    };
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt: async () => ({ ok: true }),
+      printReport: async () => reportResult,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: createJournal().journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printDailyReport(dailyReport)).resolves.toMatchObject(reportResult);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
   it('preserves confirmation-unknown report diagnostics on thrown errors', async () => {
     const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
     process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
     const reportResult = {
       ok: false,
       code: 'ELZAB_DAILY_REPORT_CONFIRMATION_UNKNOWN' as const,
-      detail: 'DailyReportPaperPrint returned OK, but the app could not confirm the new daily report number.',
+      detail: 'DailyReport returned OK, but the app could not confirm the new daily report number.',
       data: {
-        commandUsed: 'DailyReportPaperPrint',
+        commandUsed: 'DailyReport',
         beforeReportNumber: 41,
         commandSent: true,
         confirmationUnknown: true,

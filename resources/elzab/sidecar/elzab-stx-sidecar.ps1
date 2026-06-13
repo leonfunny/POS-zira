@@ -451,7 +451,7 @@ function Invoke-Report {
       $resultData.afterReportNumberReadCode = $afterReadCode
       $resultData.confirmationUnknown = $true
       $detail = if ($afterReadError) { $afterReadError } else { "DailyReportNumber after command failed: $(Native-Error $afterReadCode)" }
-      Write-Result $false 'ELZAB_DAILY_REPORT_CONFIRMATION_UNKNOWN' "$commandUsed returned OK, but the app could not confirm the new daily report number. $detail" $resultData
+      Write-Result $true $null "$commandUsed returned OK, but the app could not confirm the new daily report number. Confirm the paper report. $detail" $resultData
       return
     }
 
@@ -459,7 +459,8 @@ function Invoke-Report {
     $resultData.afterReportNumberReadCode = $afterReadCode
     $resultData.reportNumberIncreased = ($afterNo -gt $beforeNo)
     if ($afterNo -le $beforeNo) {
-      Write-Result $false 'ELZAB_NO_DAILY_REPORT_CREATED' "$commandUsed returned OK, but daily report number did not increase ($beforeNo -> $afterNo)." $resultData
+      $resultData.confirmationUnknown = $true
+      Write-Result $true $null "$commandUsed returned OK, but DailyReportNumber did not update immediately ($beforeNo -> $afterNo). Confirm the paper report." $resultData
       return
     }
     Write-Result $true $null 'ELZAB fiscal daily report printed.' $resultData

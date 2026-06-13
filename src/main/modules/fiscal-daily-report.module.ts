@@ -114,16 +114,17 @@ export class FiscalDailyReportModule extends BaseModule {
         unconditionally: config.unconditionally ? 1 : 0,
       });
       if (result.reportNumberIncreased !== true) {
-        throw new Error(
-          `ELZAB_NO_DAILY_REPORT_CREATED: report number did not increase ` +
-          `(${result.beforeReportNumber ?? '?'} -> ${result.afterReportNumber ?? '?'})`,
+        logger.warn(
+          `[FiscalDailyReport] ELZAB daily report accepted but number increase was not confirmed ` +
+          `(${result.beforeReportNumber ?? '?'} -> ${result.afterReportNumber ?? '?'}); marking success to prevent duplicate report retry`,
         );
       }
       fiscalDailyReportRunRepo.markSuccess(row.id);
       await this.flushRunState('success', now.date);
       logger.info(
         `[FiscalDailyReport] Automatic fiscal daily report printed for ${now.date} ` +
-        `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'})`,
+        `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'}` +
+        `${result.confirmationUnknown ? ', confirmation=paper-required' : ''})`,
       );
     } catch (err: any) {
       const message = err?.message || String(err);

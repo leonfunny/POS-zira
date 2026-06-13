@@ -315,6 +315,52 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(driver).toBe(mock.elzabInstances[0]);
   });
 
+  it('treats an accepted ELZAB daily report with stale number confirmation as printed', async () => {
+    const row = {
+      id: 'elzab-1',
+      printer_type: PrinterType.FISCAL,
+      display_name: 'ELZAB Zeta Online',
+      protocol: 'ELZAB_STX',
+      is_enabled: 1,
+    };
+    const config: PrinterConfig = {
+      enabled: true,
+      protocol: 'ELZAB_STX',
+      serverPrinterId: 'elzab-1',
+      port: 'COM8',
+    };
+    mock.currentConfig = { multiPrinterMode: true, printers: {} };
+    mock.getEnabled.mockReturnValue([row]);
+    mock.getById.mockReturnValue(row);
+    mock.rowToPrinterConfig.mockReturnValue(config);
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule({ set: vi.fn(), getOptional: vi.fn() } as any);
+    await module.reinitializePrinter();
+
+    const driver = mock.elzabInstances[0];
+    driver.isConnected.mockReturnValue(true);
+    driver.printDailyReport.mockResolvedValue({
+      ok: true,
+      data: {
+        commandUsed: 'DailyReport',
+        beforeReportNumber: 23,
+        afterReportNumber: 23,
+        reportNumberIncreased: false,
+        commandSent: true,
+        confirmationUnknown: true,
+      },
+    });
+
+    await expect(module.printFiscalDailyReport({ unconditionally: 1 })).resolves.toMatchObject({
+      commandUsed: 'DailyReport',
+      beforeReportNumber: 23,
+      afterReportNumber: 23,
+      reportNumberIncreased: false,
+      confirmationUnknown: true,
+    });
+  });
+
   it('keeps mirrored LABEL row dimensions instead of per-type config fallback', async () => {
     const row = {
       id: 'xprinter-1',

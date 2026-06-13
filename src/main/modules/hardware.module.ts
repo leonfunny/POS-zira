@@ -759,17 +759,10 @@ export class HardwareModule extends BaseModule {
       const result = await refreshedPrinter.printDailyReport(reportData);
       const reportResult = coerceFiscalDailyReportResult(result.data);
       if (reportResult.reportNumberIncreased !== true) {
-        const error = new Error(
-          `ELZAB_NO_DAILY_REPORT_CREATED: report number did not increase ` +
-          `(${reportResult.beforeReportNumber ?? '?'} -> ${reportResult.afterReportNumber ?? '?'})`,
+        logger.warn(
+          `[HardwareModule] ELZAB daily report command returned OK but report number was not confirmed as increased ` +
+          `(${reportResult.beforeReportNumber ?? '?'} -> ${reportResult.afterReportNumber ?? '?'}); treating as printed/no-retry and requiring paper confirmation`,
         );
-        (error as Error & { result?: unknown }).result = {
-          ok: false,
-          code: 'ELZAB_NO_DAILY_REPORT_CREATED',
-          detail: error.message,
-          data: reportResult,
-        };
-        throw error;
       }
       return reportResult;
     }

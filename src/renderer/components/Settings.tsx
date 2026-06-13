@@ -2977,13 +2977,17 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                             </button>
                             {fiscalDailyReportResult && (
                               <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
-                                fiscalDailyReportResult.success
+                                fiscalDailyReportResult.success && fiscalDailyReportResult.data?.confirmationUnknown
+                                  ? 'bg-amber-50 text-amber-700'
+                                  : fiscalDailyReportResult.success
                                   ? 'bg-green-50 text-green-700'
                                   : 'bg-red-50 text-red-700'
                               }`}>
                                 <div className="font-semibold">
                                   {fiscalDailyReportResult.success
-                                    ? 'Daily report created'
+                                    ? fiscalDailyReportResult.data?.confirmationUnknown
+                                      ? 'Daily report accepted — confirm paper report'
+                                      : 'Daily report created'
                                     : `Daily report failed: ${fiscalDailyReportResult.error || fiscalDailyReportResult.detail || 'Unknown error'}`}
                                 </div>
                                 {fiscalDailyReportResult.data && (
