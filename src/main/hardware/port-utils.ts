@@ -46,9 +46,10 @@ export function sanitizePrinterName(name: string): string | null {
  * Returns stdout as a string.
  */
 async function runPowerShell(command: string, timeoutMs = 10000): Promise<string> {
+  const psCommand = `$ProgressPreference = 'SilentlyContinue'; ${command}`;
   const { stdout } = await execFileAsync(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', command],
+    ['-NoProfile', '-NonInteractive', '-Command', psCommand],
     { encoding: 'utf8', timeout: timeoutMs },
   );
   return stdout;
@@ -75,6 +76,7 @@ export async function listSerialPorts(): Promise<string[]> {
     // row. We intersect afterwards in JS so the parser is trivial.
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       "Get-PnpDevice -PresentOnly -Class Ports -Status OK -ErrorAction SilentlyContinue | ForEach-Object {\n" +
       "  if ($_.FriendlyName -match '\\(COM(\\d+)\\)') {\n" +
       "    $svc = $_.Service\n" +
@@ -204,6 +206,7 @@ export async function getVidForPort(port: string): Promise<string | null> {
   try {
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       `$dev = Get-PnpDevice -Class Ports -PresentOnly | Where-Object { $_.FriendlyName -like '*(${portUpper})*' } | Select-Object -First 1\n` +
       'if ($dev) { Write-Output $dev.InstanceId }\n';
     const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
@@ -235,6 +238,7 @@ export async function getPresentPrinterVids(): Promise<Set<string>> {
     const vids = ALL_PRINTER_VIDS;
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       `$vids = @(${vids.map(v => `'${v}'`).join(',')})\n` +
       '$ids = Get-PnpDevice -PresentOnly -Status OK | ForEach-Object { $_.InstanceId }\n' +
       '$text = $ids -join "`n"\n' +
@@ -276,6 +280,7 @@ export async function isWindowsPrinterPresent(printerName: string): Promise<bool
     const safe = printerName.replace(/'/g, "''");
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       `$p = Get-Printer -Name '${safe}' -ErrorAction SilentlyContinue\n` +
       'if (-not $p) { Write-Output "MISSING"; exit }\n' +
       '$workOffline = if ($p.WorkOffline) { "1" } else { "0" }\n' +
@@ -381,6 +386,7 @@ export async function flushStuckPrintJobs(printerName: string): Promise<number> 
   try {
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       `$jobs = Get-PrintJob -PrinterName '${safe.replace(/'/g, "''")}' -ErrorAction SilentlyContinue\n` +
       'if (-not $jobs) { Write-Output "0"; exit }\n' +
       "$stuck = $jobs | Where-Object { $_.JobStatus -match 'Error|Offline|Blocked|PaperOut|Paused|UserIntervention|Restart' }\n" +
@@ -421,6 +427,7 @@ export async function getStuckPrintJobStatus(printerName: string): Promise<strin
   try {
     const psScript =
       "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
       `$jobs = Get-PrintJob -PrinterName '${safe.replace(/'/g, "''")}' -ErrorAction SilentlyContinue\n` +
       'if (-not $jobs) { Write-Output "OK"; exit }\n' +
       "$stuck = $jobs | Where-Object { $_.JobStatus -match 'Error|Offline|Blocked|PaperOut|Paused|UserIntervention' }\n" +

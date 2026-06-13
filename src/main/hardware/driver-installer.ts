@@ -79,6 +79,8 @@ export interface DriverInstallResult {
   rebootRequired?: boolean;
 }
 
+let inFlightDriverStatusScan: Promise<HardwareStatus> | null = null;
+
 /** Path to bundled posnetCDC15v.inf — works dev and packaged */
 export function getPosnetInfPath(): string {
   const rel = path.join('drivers', 'posnet', 'posnetCDC15v.inf');
@@ -96,6 +98,18 @@ export function getPosnetInfPath(): string {
  *    (includes COM port lookup for serial devices)
  */
 export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
+  if (inFlightDriverStatusScan) {
+    logger.info('[DriverInstaller] getPosnetDriverStatus() joining in-flight scan');
+    return inFlightDriverStatusScan;
+  }
+
+  inFlightDriverStatusScan = detectPosnetDriverStatus().finally(() => {
+    inFlightDriverStatusScan = null;
+  });
+  return inFlightDriverStatusScan;
+}
+
+async function detectPosnetDriverStatus(): Promise<HardwareStatus> {
   const devices: DetectedDevice[] = [];
   const seenPrinterNames = new Set<string>();
   let serialPorts: string[] = [];
@@ -135,6 +149,7 @@ export async function getPosnetDriverStatus(): Promise<HardwareStatus> {
     const vids = ALL_PRINTER_VIDS;
     const batchScript = `
 $ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
 
 # Pre-query: hashset of every PnP InstanceId currently physically present
 $presentIds = @{}

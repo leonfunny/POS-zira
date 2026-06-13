@@ -334,4 +334,27 @@ describe('HardwareModule print job runtime guards', () => {
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-fiscal', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('fiscal-printer-1');
   });
+
+  it('keeps the current printer driver when a backend refresh emits unchanged config', async () => {
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { EventBus } = await import('../src/main/core/event-bus');
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    const firstDriver = mock.thermalInstances[0];
+    expect(mock.thermalInstances).toHaveLength(1);
+
+    const bus = new EventBus();
+    module.registerEventHandlers(bus);
+    bus.emit('config:changed', { changedKeys: ['printers', 'multiPrinterMode'] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(mock.thermalInstances).toHaveLength(1);
+    expect(firstDriver.disconnect).not.toHaveBeenCalled();
+  });
 });

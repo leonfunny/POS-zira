@@ -135,6 +135,9 @@ export class HardwareModule extends BaseModule {
   // without the user physically changing the printer menu.
   private lastDetectionSnapshot: Awaited<ReturnType<typeof getPosnetDriverStatus>> | null = null;
   private lastDetectionPortSignature: string = '';
+  private lastPrinterRuntimeSignature: string = '';
+  private printerReinitializeInFlight: Promise<void> | null = null;
+  private printerReinitializeQueued = false;
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
   private handleAgentConnected = () => {
@@ -329,12 +332,14 @@ export class HardwareModule extends BaseModule {
       try {
         const dailyReportConfig = getConfig().fiscalDailyReport;
         if (!dailyReportConfig?.master) {
+          logger.warn('[HardwareModule] Manual fiscal daily report refused: this POS is not the fiscal daily report master');
           return {
             success: false,
             code: 'FISCAL_DAILY_REPORT_NOT_MASTER',
             error: 'Manual fiscal daily report is only allowed on the configured fiscal daily report master POS.',
           };
         }
+        logger.info('[HardwareModule] Manual fiscal daily report requested');
         const result = await this.printFiscalDailyReport({
           date: new Date().toISOString().slice(0, 10),
           transactionCount: 0,
@@ -343,9 +348,16 @@ export class HardwareModule extends BaseModule {
           netSales: 0,
           unconditionally: 1,
         });
+        logger.info(
+          `[HardwareModule] Manual fiscal daily report printed ` +
+          `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'})`,
+        );
         return { success: true, data: result };
       } catch (err: any) {
         const bridgeResult = err?.result;
+        logger.error(
+          `[HardwareModule] Manual fiscal daily report failed: ${err?.message || String(err)}`,
+        );
         return {
           success: false,
           error: err?.message || String(err),
@@ -572,8 +584,13 @@ export class HardwareModule extends BaseModule {
       try {
         const printerKeys = ['printers', 'multiPrinterMode', 'printerPort', 'printerProtocol', 'printerBaudRate', 'zebraPrinter', 'receiptPrinter', 'labelPrinter'];
         if (payload.changedKeys.some(k => printerKeys.includes(k))) {
-          logger.info('[HardwareModule] Printer config changed, reinitializing...');
-          await this.reinitializePrinter();
+          const nextSignature = this.buildPrinterRuntimeSignature();
+          if (this.lastPrinterRuntimeSignature && nextSignature === this.lastPrinterRuntimeSignature) {
+            logger.debug('[HardwareModule] Printer config event did not change runtime printer targets; keeping existing drivers');
+          } else {
+            logger.info('[HardwareModule] Printer config changed, reinitializing...');
+            await this.reinitializePrinter();
+          }
         }
         if (payload.changedKeys.includes('scale')) {
           await this.scaleNetworkService?.applyConfig();
@@ -1452,6 +1469,68 @@ export class HardwareModule extends BaseModule {
     return [...rows].sort((a, b) => priority(a) - priority(b));
   }
 
+  private normalizePrinterConfigForSignature(config?: PrinterConfig | null): Record<string, unknown> | null {
+    if (!config) return null;
+    return {
+      enabled: !!config.enabled,
+      protocol: config.protocol || null,
+      serverPrinterId: config.serverPrinterId || null,
+      displayName: config.displayName || null,
+      port: config.port || null,
+      baudRate: config.baudRate ?? null,
+      address: config.address || null,
+      windowsPrinter: config.windowsPrinter || null,
+      labelWidth: config.labelWidth ?? null,
+      labelHeight: config.labelHeight ?? null,
+      paperWidth: config.paperWidth ?? null,
+      charsPerLine: config.charsPerLine ?? null,
+      supportsCut: config.supportsCut ?? null,
+      supportsCashDrawer: config.supportsCashDrawer ?? null,
+      charset: config.charset || null,
+      cutMode: config.cutMode || null,
+    };
+  }
+
+  private buildPrinterRuntimeSignature(): string {
+    const config = getConfig();
+    const printers = Object.entries(config.printers || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, printerConfig]) => [type, this.normalizePrinterConfigForSignature(printerConfig)]);
+    const localRows = localPrinterRepo.getAll()
+      .slice()
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map(row => ({
+        id: row.id,
+        agentId: row.agent_id || null,
+        printerType: row.printer_type || null,
+        displayName: row.display_name || null,
+        name: row.name || null,
+        protocol: row.protocol || null,
+        windowsPrinterName: row.windows_printer_name || null,
+        address: row.address || null,
+        port: row.port || null,
+        baudRate: row.baud_rate ?? null,
+        paperWidth: row.paper_width ?? null,
+        paperHeight: row.paper_height ?? null,
+        charsPerLine: row.chars_per_line ?? null,
+        supportsCut: row.supports_cut ?? null,
+        supportsCashDrawer: row.supports_cash_drawer ?? null,
+        isEnabled: row.is_enabled ?? null,
+      }));
+
+    return JSON.stringify({
+      multiPrinterMode: !!config.multiPrinterMode,
+      printerPort: config.printerPort || null,
+      printerProtocol: config.printerProtocol || null,
+      printerBaudRate: config.printerBaudRate ?? null,
+      zebraPrinter: config.zebraPrinter || null,
+      receiptPrinter: this.normalizePrinterConfigForSignature(config.receiptPrinter),
+      labelPrinter: this.normalizePrinterConfigForSignature(config.labelPrinter),
+      printers,
+      localRows,
+    });
+  }
+
   private async connectPrinterWithTimeout(driver: PrinterDriver, label: string): Promise<boolean> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1468,6 +1547,29 @@ export class HardwareModule extends BaseModule {
   }
 
   async reinitializePrinter(): Promise<void> {
+    if (this.printerReinitializeInFlight) {
+      this.printerReinitializeQueued = true;
+      logger.info('[HardwareModule] Printer reinitialize already running; queued latest config');
+      await this.printerReinitializeInFlight;
+      return;
+    }
+
+    this.printerReinitializeInFlight = (async () => {
+      do {
+        this.printerReinitializeQueued = false;
+        await this.reinitializePrinterNow();
+      } while (this.printerReinitializeQueued);
+    })();
+
+    try {
+      await this.printerReinitializeInFlight;
+    } finally {
+      this.printerReinitializeInFlight = null;
+      this.printerReinitializeQueued = false;
+    }
+  }
+
+  private async reinitializePrinterNow(): Promise<void> {
     // One-time migration: split merged RECEIPT config into FISCAL + RECEIPT
     const preConfig = getConfig();
     const receiptCfg = preConfig.printers?.RECEIPT;
@@ -1636,6 +1738,7 @@ export class HardwareModule extends BaseModule {
 
     // Notify status change
     this.notifyStatusChange();
+    this.lastPrinterRuntimeSignature = this.buildPrinterRuntimeSignature();
   }
 
   // ─── Periodic Health Check ──────────────────────────────────────
