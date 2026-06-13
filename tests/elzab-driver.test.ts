@@ -12,7 +12,7 @@ vi.mock('../src/main/hardware/port-utils', async (importOriginal) => ({
 import { ElzabDriver } from '../src/main/hardware/elzab/elzab-driver';
 import { MissingElzabBridge, type ElzabBridge } from '../src/main/hardware/elzab/elzab-bridge';
 import type { FiscalAttemptJournal, FiscalAttemptRow } from '../src/main/database/repos/fiscal-attempt-repo';
-import type { ReceiptData } from '../src/shared/types';
+import type { DailyReportData, ReceiptData } from '../src/shared/types';
 
 const receipt: ReceiptData = {
   orderId: 'order-1',
@@ -21,6 +21,15 @@ const receipt: ReceiptData = {
   payment: { method: 'CASH', amount: 0 },
   subtotal: 0,
   total: 0,
+};
+
+const dailyReport: DailyReportData = {
+  date: '2026-06-13',
+  transactionCount: 0,
+  grossSales: 0,
+  discounts: 0,
+  netSales: 0,
+  unconditionally: 1,
 };
 
 const savedIgnoreConfigAllowReal = process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL;
@@ -170,6 +179,83 @@ describe('ElzabDriver fail-closed behavior', () => {
         discounts: 0,
         netSales: 0,
       })).rejects.toThrow(/not implemented/);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
+  it('returns fiscal daily report diagnostics without creating a receipt journal attempt', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const printReport = vi.fn(async () => ({
+      ok: true,
+      data: {
+        commandUsed: 'DailyReportPaperPrint',
+        beforeReportNumber: 41,
+        afterReportNumber: 42,
+        reportNumberIncreased: true,
+        commandSent: true,
+      },
+    }));
+    const { journal, attempts } = createJournal();
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt: async () => ({ ok: true }),
+      printReport,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printDailyReport(dailyReport)).resolves.toMatchObject({
+        ok: true,
+        data: {
+          beforeReportNumber: 41,
+          afterReportNumber: 42,
+          reportNumberIncreased: true,
+        },
+      });
+      expect(printReport).toHaveBeenCalledWith(expect.objectContaining({ port: 'COM4' }), 'DAILY', dailyReport);
+      expect(attempts).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
+  it('preserves confirmation-unknown report diagnostics on thrown errors', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const reportResult = {
+      ok: false,
+      code: 'ELZAB_DAILY_REPORT_CONFIRMATION_UNKNOWN' as const,
+      detail: 'DailyReportPaperPrint returned OK, but the app could not confirm the new daily report number.',
+      data: {
+        commandUsed: 'DailyReportPaperPrint',
+        beforeReportNumber: 41,
+        commandSent: true,
+        confirmationUnknown: true,
+      },
+    };
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt: async () => ({ ok: true }),
+      printReport: async () => reportResult,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: createJournal().journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printDailyReport(dailyReport)).rejects.toMatchObject({
+        result: reportResult,
+      });
     } finally {
       if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
       else process.env.ALLOW_REAL_FISCAL_PRINT = previous;

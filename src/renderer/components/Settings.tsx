@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
@@ -480,6 +480,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     cutModeUsed?: string;
   } | null>(null);
   const [copiedTestError, setCopiedTestError] = useState(false);
+  const [printingFiscalDailyReport, setPrintingFiscalDailyReport] = useState(false);
+  const [fiscalDailyReportResult, setFiscalDailyReportResult] = useState<FiscalDailyReportPrintResponse | null>(null);
   // Live progress — updated as each step streams back from main process
   const [liveSteps, setLiveSteps] = useState<Array<{ step: string; ok: boolean; detail?: string; error?: string }>>([]);
   // Calibrate state
@@ -1153,6 +1155,28 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         ...updates,
       },
     }));
+  };
+
+  const handlePrintFiscalDailyReportNow = async () => {
+    if (printingFiscalDailyReport || testingPrinter) return;
+    const confirmed = window.confirm(
+      'This will close the current fiscal day on the ELZAB printer now. Continue only if you are physically beside the printer and ready to collect the report.',
+    );
+    if (!confirmed) return;
+
+    setPrintingFiscalDailyReport(true);
+    setFiscalDailyReportResult(null);
+    try {
+      const result = await window.electronAPI.printFiscalDailyReportNow();
+      setFiscalDailyReportResult(result);
+    } catch (error: any) {
+      setFiscalDailyReportResult({
+        success: false,
+        error: error?.message || String(error),
+      });
+    } finally {
+      setPrintingFiscalDailyReport(false);
+    }
   };
 
   // Get printer config for a type (with default)
@@ -2499,6 +2523,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             {PRINTER_TYPES.map((printerType) => {
               const printerConfig = getPrinterConfig(printerType);
               const isLabel = printerType === 'LABEL';
+              const isFiscalElzabMaster = printerType === 'FISCAL' &&
+                printerConfig.protocol === 'ELZAB_STX' &&
+                config?.fiscalDailyReport?.master === true;
 
               return (
                 <div key={printerType} className="border border-slate-200 rounded-lg p-4">
@@ -2905,6 +2932,67 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 >
                                   Open log folder
                                 </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isFiscalElzabMaster && (
+                          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                                  Fiscal daily report test
+                                </div>
+                                <p className="mt-1 text-xs leading-5 text-amber-800">
+                                  This closes the current ELZAB fiscal period. Use only while standing beside POS1 and the fiscal printer.
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handlePrintFiscalDailyReportNow}
+                              disabled={printingFiscalDailyReport || testingPrinter !== null}
+                              className={`mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                                printingFiscalDailyReport || testingPrinter !== null
+                                  ? 'cursor-not-allowed bg-slate-100 text-slate-400'
+                                  : 'bg-amber-600 text-white hover:bg-amber-700 active:bg-amber-800'
+                              }`}
+                            >
+                              {printingFiscalDailyReport ? (
+                                <>
+                                  <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  Printing fiscal daily report...
+                                </>
+                              ) : (
+                                <>
+                                  <Shield className="h-4 w-4" />
+                                  Print fiscal daily report now
+                                </>
+                              )}
+                            </button>
+                            {fiscalDailyReportResult && (
+                              <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
+                                fiscalDailyReportResult.success
+                                  ? 'bg-green-50 text-green-700'
+                                  : 'bg-red-50 text-red-700'
+                              }`}>
+                                <div className="font-semibold">
+                                  {fiscalDailyReportResult.success
+                                    ? 'Daily report created'
+                                    : `Daily report failed: ${fiscalDailyReportResult.error || fiscalDailyReportResult.detail || 'Unknown error'}`}
+                                </div>
+                                {fiscalDailyReportResult.data && (
+                                  <div className="mt-1 space-y-0.5 font-mono text-[11px]">
+                                    <div>command: {fiscalDailyReportResult.data.commandUsed || '-'}</div>
+                                    <div>report no: {fiscalDailyReportResult.data.beforeReportNumber ?? '?'} -&gt; {fiscalDailyReportResult.data.afterReportNumber ?? '?'}</div>
+                                    <div>forced: {fiscalDailyReportResult.data.unconditionally === 1 ? 'yes' : 'no'}</div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

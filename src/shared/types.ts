@@ -114,6 +114,29 @@ export interface DailyReportData {
   unconditionally?: 0 | 1;  // ELZAB daily report flag: print even without sales.
 }
 
+export interface FiscalDailyReportResult {
+  target?: string;
+  reportKind?: 'DAILY' | 'Z' | string;
+  commandUsed?: string;
+  beforeReportNumber?: number;
+  afterReportNumber?: number;
+  reportNumberIncreased?: boolean;
+  unconditionally?: 0 | 1;
+  errorNumber?: number;
+  beforeReportNumberReadCode?: number;
+  afterReportNumberReadCode?: number;
+  commandSent?: boolean;
+  confirmationUnknown?: boolean;
+}
+
+export interface FiscalDailyReportPrintResponse {
+  success: boolean;
+  error?: string;
+  code?: string;
+  detail?: string;
+  data?: FiscalDailyReportResult;
+}
+
 // Barcode types for label printing
 export type BarcodeType = 'CODE128' | 'QR' | 'EAN13' | 'AUTO';
 
@@ -988,6 +1011,7 @@ export const IPC_CHANNELS = {
   PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
+  PRINT_FISCAL_DAILY_REPORT_NOW: 'print-fiscal-daily-report-now',
   TEST_PRINT_PROGRESS: 'test-print-progress',  // Main → Renderer: per-step progress stream
   VALIDATE_PRINTER_PORT: 'validate-printer-port',
   OPEN_LOG_FOLDER: 'open-log-folder',

@@ -283,6 +283,7 @@ interface ElectronAPI {
   ) => Promise<{ success: boolean; error?: string }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
+  printFiscalDailyReportNow: () => Promise<import('./types').FiscalDailyReportPrintResponse>;
   validatePrinterPort: (port: string, protocol: import('./types').PrinterProtocol) => Promise<{
     ok: boolean;
     code: 'OK' | 'PROTOCOL_DEVICE_MISMATCH' | 'UNKNOWN_DEVICE' | 'NO_DEVICE_ON_PORT';

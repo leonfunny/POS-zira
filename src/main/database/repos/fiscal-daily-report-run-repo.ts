@@ -81,4 +81,18 @@ export const fiscalDailyReportRunRepo = {
     );
     database.markDirty();
   },
+
+  markFailedFinal(id: string, error: string, maxAttempts: number): void {
+    const finalAttempts = Math.max(1, Math.floor(Number(maxAttempts) || 1));
+    database.run(
+      `UPDATE fiscal_daily_report_runs
+       SET status = 'FAILED',
+           attempts = CASE WHEN attempts < ? THEN ? ELSE attempts END,
+           last_error = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      [finalAttempts, finalAttempts, error.slice(0, 1000), id],
+    );
+    database.markDirty();
+  },
 };

@@ -240,16 +240,16 @@ export class ElzabDriver {
     await this.requireOk(result, 'ELZAB_STX fiscal receipt failed');
   }
 
-  async printDailyReport(data: DailyReportData): Promise<void> {
-    await this.printReport('DAILY', data);
+  async printDailyReport(data: DailyReportData): Promise<ElzabOperationResult> {
+    return this.printReport('DAILY', data);
   }
 
-  async printXReport(data: DailyReportData): Promise<void> {
-    await this.printReport('X', data);
+  async printXReport(data: DailyReportData): Promise<ElzabOperationResult> {
+    return this.printReport('X', data);
   }
 
-  async printZReport(data: DailyReportData): Promise<void> {
-    await this.printReport('Z', data);
+  async printZReport(data: DailyReportData): Promise<ElzabOperationResult> {
+    return this.printReport('Z', data);
   }
 
   async openDrawer(): Promise<void> {
@@ -268,16 +268,21 @@ export class ElzabDriver {
     };
   }
 
-  private async printReport(kind: 'DAILY' | 'X' | 'Z', data: DailyReportData): Promise<void> {
+  private async printReport(kind: 'DAILY' | 'X' | 'Z', data: DailyReportData): Promise<ElzabOperationResult> {
     this.assertConnected();
     this.assertRealFiscalAllowed(`${kind} report`);
     if (!this.bridge.printReport) {
       throw new Error(`ELZAB_STX ${kind} report is not implemented until the official sidecar supports it.`);
     }
-    await this.requireOk(
-      await this.bridge.printReport(this.connectionConfig(), kind, data),
-      `ELZAB_STX ${kind} report failed`,
+    const result = await this.bridge.printReport(this.connectionConfig(), kind, data);
+    if (result.ok) return result;
+
+    this.setFailure(result);
+    const error = new Error(
+      `ELZAB_STX ${kind} report failed: ${result.code || 'ELZAB_COMMAND_FAILED'}${result.detail ? `: ${result.detail}` : ''}`,
     );
+    (error as Error & { result?: ElzabOperationResult }).result = result;
+    throw error;
   }
 
   private connectionConfig(): ElzabConnectionConfig {

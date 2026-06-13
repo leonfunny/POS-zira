@@ -105,7 +105,7 @@ export class FiscalDailyReportModule extends BaseModule {
         `[FiscalDailyReport] Printing automatic fiscal daily report for ${now.date} ` +
         `(reason=${reason}, attempt=${row.attempts}, scheduled=${scheduledFor})`,
       );
-      await hardware.printFiscalDailyReport({
+      const result = await hardware.printFiscalDailyReport({
         date: now.date,
         transactionCount: 0,
         grossSales: 0,
@@ -113,12 +113,25 @@ export class FiscalDailyReportModule extends BaseModule {
         netSales: 0,
         unconditionally: config.unconditionally ? 1 : 0,
       });
+      if (result.reportNumberIncreased !== true) {
+        throw new Error(
+          `ELZAB_NO_DAILY_REPORT_CREATED: report number did not increase ` +
+          `(${result.beforeReportNumber ?? '?'} -> ${result.afterReportNumber ?? '?'})`,
+        );
+      }
       fiscalDailyReportRunRepo.markSuccess(row.id);
       await this.flushRunState('success', now.date);
-      logger.info(`[FiscalDailyReport] Automatic fiscal daily report printed for ${now.date}`);
+      logger.info(
+        `[FiscalDailyReport] Automatic fiscal daily report printed for ${now.date} ` +
+        `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'})`,
+      );
     } catch (err: any) {
       const message = err?.message || String(err);
-      fiscalDailyReportRunRepo.markFailed(row.id, message);
+      if (isConfirmationUnknownAfterCommand(err)) {
+        fiscalDailyReportRunRepo.markFailedFinal(row.id, message, config.maxAttempts);
+      } else {
+        fiscalDailyReportRunRepo.markFailed(row.id, message);
+      }
       await this.flushRunState('failure', now.date);
       logger.error(`[FiscalDailyReport] Automatic fiscal daily report failed for ${now.date}: ${message}`);
     } finally {
@@ -142,6 +155,12 @@ export class FiscalDailyReportModule extends BaseModule {
       await delay(250);
     }
   }
+}
+
+function isConfirmationUnknownAfterCommand(err: any): boolean {
+  const result = err?.result;
+  return result?.code === 'ELZAB_DAILY_REPORT_CONFIRMATION_UNKNOWN' &&
+    result?.data?.commandSent === true;
 }
 
 function normalizeConfig(input?: FiscalDailyReportConfig): Required<FiscalDailyReportConfig> {

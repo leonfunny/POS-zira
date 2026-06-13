@@ -397,25 +397,72 @@ function Invoke-Report {
     if ($unconditionally -ne 0) { $unconditionally = 1 }
 
     $beforeNo = 0
-    try { [void][ElzabNative]::DailyReportNumber([ref]$beforeNo) } catch {}
+    $beforeReadCode = $null
+    $beforeReadError = $null
+    try {
+      $beforeReadCode = [ElzabNative]::DailyReportNumber([ref]$beforeNo)
+    } catch {
+      $beforeReadError = $_.Exception.Message
+    }
+    if ($beforeReadCode -ne 0) {
+      $detail = if ($beforeReadError) { $beforeReadError } else { "DailyReportNumber before command failed: $(Native-Error $beforeReadCode)" }
+      Write-Result $false 'ELZAB_DAILY_REPORT_NUMBER_UNAVAILABLE' $detail @{
+        reportKind = $reportKind
+        beforeReportNumberReadCode = $beforeReadCode
+        commandSent = $false
+        unconditionally = $unconditionally
+      }
+      return
+    }
 
+    $commandUsed = 'DailyReportPaperPrint'
     $r = [ElzabNative]::DailyReportPaperPrint($unconditionally)
     if ($r -ne 0) {
       $message = Native-Error $r
       $code = if (Is-LocalMenuError $message) { 'ELZAB_LOCAL_MENU_MODE' } else { 'ELZAB_COMMAND_FAILED' }
-      Write-Result $false $code "DailyReportPaperPrint failed: $message" @{ errorNumber = $r; reportKind = $reportKind; beforeReportNumber = $beforeNo }
+      Write-Result $false $code "DailyReportPaperPrint failed: $message" @{
+        errorNumber = $r
+        reportKind = $reportKind
+        commandUsed = $commandUsed
+        beforeReportNumber = $beforeNo
+        unconditionally = $unconditionally
+      }
       return
     }
 
     $afterNo = 0
-    try { [void][ElzabNative]::DailyReportNumber([ref]$afterNo) } catch {}
-    Write-Result $true $null 'ELZAB fiscal daily report printed.' @{
+    $afterReadCode = $null
+    $afterReadError = $null
+    try {
+      $afterReadCode = [ElzabNative]::DailyReportNumber([ref]$afterNo)
+    } catch {
+      $afterReadError = $_.Exception.Message
+    }
+    $resultData = @{
       target = $open.target
       reportKind = $reportKind
+      commandUsed = $commandUsed
       beforeReportNumber = $beforeNo
-      afterReportNumber = $afterNo
+      beforeReportNumberReadCode = $beforeReadCode
+      commandSent = $true
       unconditionally = $unconditionally
     }
+    if ($afterReadCode -ne 0) {
+      $resultData.afterReportNumberReadCode = $afterReadCode
+      $resultData.confirmationUnknown = $true
+      $detail = if ($afterReadError) { $afterReadError } else { "DailyReportNumber after command failed: $(Native-Error $afterReadCode)" }
+      Write-Result $false 'ELZAB_DAILY_REPORT_CONFIRMATION_UNKNOWN' "DailyReportPaperPrint returned OK, but the app could not confirm the new daily report number. $detail" $resultData
+      return
+    }
+
+    $resultData.afterReportNumber = $afterNo
+    $resultData.afterReportNumberReadCode = $afterReadCode
+    $resultData.reportNumberIncreased = ($afterNo -gt $beforeNo)
+    if ($afterNo -le $beforeNo) {
+      Write-Result $false 'ELZAB_NO_DAILY_REPORT_CREATED' "DailyReportPaperPrint returned OK, but daily report number did not increase ($beforeNo -> $afterNo)." $resultData
+      return
+    }
+    Write-Result $true $null 'ELZAB fiscal daily report printed.' $resultData
   } catch {
     Write-Result $false 'ELZAB_COMMAND_FAILED' $_.Exception.Message $null
   } finally {

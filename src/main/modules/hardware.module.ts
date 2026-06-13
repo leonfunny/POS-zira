@@ -38,6 +38,8 @@ import {
   ReceiptData,
   DocumentData,
   DailyReportData,
+  FiscalDailyReportPrintResponse,
+  FiscalDailyReportResult,
   DeviceStatus,
   CheckinConfirmationData,
   InfoLabelData,
@@ -321,6 +323,37 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, async (_, config: PrinterConfig, printerType?: string) => {
       return this.testPrinterByConfig(config, printerType);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_FISCAL_DAILY_REPORT_NOW, async (): Promise<FiscalDailyReportPrintResponse> => {
+      try {
+        const dailyReportConfig = getConfig().fiscalDailyReport;
+        if (!dailyReportConfig?.master) {
+          return {
+            success: false,
+            code: 'FISCAL_DAILY_REPORT_NOT_MASTER',
+            error: 'Manual fiscal daily report is only allowed on the configured fiscal daily report master POS.',
+          };
+        }
+        const result = await this.printFiscalDailyReport({
+          date: new Date().toISOString().slice(0, 10),
+          transactionCount: 0,
+          grossSales: 0,
+          discounts: 0,
+          netSales: 0,
+          unconditionally: 1,
+        });
+        return { success: true, data: result };
+      } catch (err: any) {
+        const bridgeResult = err?.result;
+        return {
+          success: false,
+          error: err?.message || String(err),
+          code: bridgeResult?.code,
+          detail: bridgeResult?.detail,
+          data: coerceFiscalDailyReportResult(bridgeResult?.data),
+        };
+      }
     });
 
     ipcMain.handle(IPC_CHANNELS.VALIDATE_PRINTER_PORT, async (_, port: string, protocol: PrinterProtocol): Promise<PortValidationResult> => {
@@ -675,7 +708,7 @@ export class HardwareModule extends BaseModule {
     return this.printerDriver;
   }
 
-  async printFiscalDailyReport(data: Partial<DailyReportData> = {}): Promise<void> {
+  async printFiscalDailyReport(data: Partial<DailyReportData> = {}): Promise<FiscalDailyReportResult> {
     const targetPrinter = this.getPrinterForType(PrinterType.FISCAL);
     if (!targetPrinter) {
       throw new Error('No fiscal printer configured for automatic daily report');
@@ -706,8 +739,22 @@ export class HardwareModule extends BaseModule {
     };
 
     if (isElzabDriver(refreshedPrinter)) {
-      await refreshedPrinter.printDailyReport(reportData);
-      return;
+      const result = await refreshedPrinter.printDailyReport(reportData);
+      const reportResult = coerceFiscalDailyReportResult(result.data);
+      if (reportResult.reportNumberIncreased !== true) {
+        const error = new Error(
+          `ELZAB_NO_DAILY_REPORT_CREATED: report number did not increase ` +
+          `(${reportResult.beforeReportNumber ?? '?'} -> ${reportResult.afterReportNumber ?? '?'})`,
+        );
+        (error as Error & { result?: unknown }).result = {
+          ok: false,
+          code: 'ELZAB_NO_DAILY_REPORT_CREATED',
+          detail: error.message,
+          data: reportResult,
+        };
+        throw error;
+      }
+      return reportResult;
     }
 
     throw new Error('Automatic fiscal daily report requires an ELZAB_STX fiscal driver');
@@ -2340,4 +2387,38 @@ export class HardwareModule extends BaseModule {
     for (const d of [this.receiptPrinter, this.labelPrinter, this.printerDriver]) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect legacy printer on destroy failed:', err?.message); } }
     this.setState(ModuleState.STOPPED);
   }
+}
+
+function coerceFiscalDailyReportResult(input: unknown): FiscalDailyReportResult {
+  const data = input && typeof input === 'object'
+    ? input as Record<string, unknown>
+    : {};
+
+  return {
+    target: stringOrUndefined(data.target),
+    reportKind: stringOrUndefined(data.reportKind),
+    commandUsed: stringOrUndefined(data.commandUsed),
+    beforeReportNumber: numberOrUndefined(data.beforeReportNumber),
+    afterReportNumber: numberOrUndefined(data.afterReportNumber),
+    reportNumberIncreased: typeof data.reportNumberIncreased === 'boolean'
+      ? data.reportNumberIncreased
+      : undefined,
+    unconditionally: data.unconditionally === 1 || data.unconditionally === '1' ? 1 : data.unconditionally === 0 || data.unconditionally === '0' ? 0 : undefined,
+    errorNumber: numberOrUndefined(data.errorNumber),
+    beforeReportNumberReadCode: numberOrUndefined(data.beforeReportNumberReadCode),
+    afterReportNumberReadCode: numberOrUndefined(data.afterReportNumberReadCode),
+    commandSent: typeof data.commandSent === 'boolean' ? data.commandSent : undefined,
+    confirmationUnknown: typeof data.confirmationUnknown === 'boolean' ? data.confirmationUnknown : undefined,
+  };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string' && value.trim().length === 0) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
