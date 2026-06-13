@@ -44,6 +44,12 @@ interface CartState {
   total: number;
 }
 
+export interface CheckoutDraftState {
+  customerNip?: string;
+  customerName?: string;
+  requiresInvoice?: boolean;
+}
+
 interface PosSessionState {
   shiftId: string | null;
   staffId: string | null;
@@ -87,6 +93,7 @@ interface DisplayState {
 
 export interface PosState {
   cart: CartState;
+  checkoutDraft: CheckoutDraftState;
   session: PosSessionState;
   display: DisplayState;
   activeTable?: string | null;
@@ -105,6 +112,8 @@ type PosAction =
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
   | { type: 'cart/setItemCourse'; payload: { id: string; course: number } }
+  | { type: 'checkoutDraft/update'; payload: Partial<CheckoutDraftState> }
+  | { type: 'checkoutDraft/clear' }
   | { type: 'session/open'; payload: { shiftId: string; staffId: string; staffName: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }

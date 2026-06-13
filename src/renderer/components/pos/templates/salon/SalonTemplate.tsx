@@ -1020,6 +1020,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
           shiftId={session.shiftId}
           staffId={session.staffId}
           staffName={session.staffName}
+          checkoutDraft={state.checkoutDraft}
           extraOrderFields={{ tip, mode: 'salon' }}
         />
       )}

@@ -1408,6 +1408,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
           staffName={session.staffName}
           initialCashAmountGrosze={paymentPrefillCashGrosze}
           initialMethod={paymentInitialMethod}
+          checkoutDraft={state.checkoutDraft}
           scanCommands={{
             card: PAY_CARD_SCAN_COMMAND,
             cash: PAY_CASH_SCAN_COMMAND,

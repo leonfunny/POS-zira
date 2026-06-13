@@ -306,6 +306,7 @@ export default function RestaurantTemplate({ state, dispatch, t, language, sessi
           staffId={session.staffId}
           staffName={session.staffName}
           initialCashAmountGrosze={paymentPrefillCashGrosze}
+          checkoutDraft={state.checkoutDraft}
           extraOrderFields={{
             table_id: activeTableId,
             covers: activeTable?.covers ?? 0,

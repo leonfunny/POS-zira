@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import type { CartState, PosAction } from '../../hooks/usePosStore';
+import type { CartState, CheckoutDraftState, PosAction } from '../../hooks/usePosStore';
 import type { PosLoyaltyLookupResponse } from '../../../shared/types';
 import rlog from '../../utils/logger';
 import {
@@ -19,6 +19,7 @@ interface PaymentModalProps {
   staffName: string | null;
   initialCashAmountGrosze?: number;
   initialMethod?: PaymentMethod;
+  checkoutDraft?: CheckoutDraftState;
   scanCommands?: {
     card?: string;
     cash?: string;
@@ -50,6 +51,18 @@ type ReceiptRecovery = {
 };
 
 type LoyaltyLookupState = 'idle' | 'loading' | 'found' | 'not_found' | 'error';
+
+function normalizeNipInput(value: unknown): string {
+  return String(value ?? '').replace(/\D/g, '').slice(0, 10);
+}
+
+function getInitialCustomerNip(
+  checkoutDraft: CheckoutDraftState | undefined,
+  extraOrderFields: Record<string, any> | undefined,
+): string {
+  const hasDraftNip = !!checkoutDraft && Object.prototype.hasOwnProperty.call(checkoutDraft, 'customerNip');
+  return normalizeNipInput(hasDraftNip ? checkoutDraft?.customerNip : extraOrderFields?.customer_nip);
+}
 
 // Polish cash denominations (grosze) — surface every one so the cashier can
 // compose received cash by tapping each bill they were handed, including
@@ -83,6 +96,7 @@ export default function PaymentModal({
   staffName,
   initialCashAmountGrosze,
   initialMethod,
+  checkoutDraft,
   scanCommands,
   extraOrderFields,
 }: PaymentModalProps) {
@@ -107,9 +121,7 @@ export default function PaymentModal({
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
   const [paymentSnapshot, setPaymentSnapshot] = useState<PaymentSnapshot | null>(null);
-  const [customerNip, setCustomerNip] = useState(() =>
-    String(extraOrderFields?.customer_nip ?? '').replace(/\D/g, '').slice(0, 10),
-  );
+  const [customerNip, setCustomerNip] = useState(() => getInitialCustomerNip(checkoutDraft, extraOrderFields));
   const [loyaltyPhone, setLoyaltyPhone] = useState(() =>
     String(extraOrderFields?.customer_phone ?? '').trim(),
   );
@@ -174,9 +186,17 @@ export default function PaymentModal({
       .filter(Boolean)
       .join('-');
   };
-  const appendNipDigit = (digit: string) =>
-    setCustomerNip((prev) => (prev + digit).replace(/\D/g, '').slice(0, 10));
-  const backspaceNip = () => setCustomerNip((prev) => prev.slice(0, -1));
+  const updateCustomerNip = (value: unknown) => {
+    const next = normalizeNipInput(value);
+    setCustomerNip(next);
+    dispatch({ type: 'checkoutDraft/update', payload: { customerNip: next } });
+  };
+  const appendNipDigit = (digit: string) => updateCustomerNip(customerNip + digit);
+  const backspaceNip = () => updateCustomerNip(customerNip.slice(0, -1));
+
+  useEffect(() => {
+    setCustomerNip(getInitialCustomerNip(checkoutDraft, extraOrderFields));
+  }, [checkoutDraft?.customerNip, extraOrderFields?.customer_nip]);
 
   useEffect(() => {
     let cancelled = false;
@@ -652,7 +672,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, customerNipValid, fiscalPrompt, grandTotal, method, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
+  }, [cashAmountGrosze, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -1207,7 +1227,7 @@ export default function PaymentModal({
                   data-keyboard="false"
                   maxLength={10}
                   value={customerNip}
-                  onChange={(e) => setCustomerNip(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  onChange={(e) => updateCustomerNip(e.target.value)}
                   onFocus={() => setNipPadOpen(true)}
                   onClick={() => setNipPadOpen(true)}
                   placeholder={tOr('pos.payment.customerNipPlaceholder', 'Tap to enter 10 digits')}
@@ -1267,7 +1287,7 @@ export default function PaymentModal({
                     {customerNip.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => setCustomerNip('')}
+                        onClick={() => updateCustomerNip('')}
                         className="mt-1.5 w-full rounded-md py-1 text-xs font-semibold text-slate-500 transition-colors hover:text-red-700"
                       >
                         {tOr('pos.payment.nipClear', 'Clear')}

@@ -263,6 +263,7 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
           staffId={session.staffId}
           staffName={session.staffName}
           initialCashAmountGrosze={paymentPrefillCashGrosze}
+          checkoutDraft={state.checkoutDraft}
           extraOrderFields={{
             customer_id: selectedCustomer?.id,
             customer_name: selectedCustomer?.name,

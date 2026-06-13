@@ -188,6 +188,30 @@ describe('Cart operations', () => {
     store.destroy();
   });
 
+  it('keeps checkout draft with the active cart and clears it with the cart', () => {
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'checkoutDraft/update', payload: { customerNip: '1234567890' } });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ id: 'item-2', variantId: 'var-2' }) });
+
+    expect(store.getState().checkoutDraft.customerNip).toBe('1234567890');
+
+    store.dispatch({ type: 'cart/clear' });
+    expect(store.getState().checkoutDraft).toEqual({});
+    store.destroy();
+  });
+
+  it('clears checkout draft when removing the final cart item', () => {
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'checkoutDraft/update', payload: { customerNip: '1234567890' } });
+    store.dispatch({ type: 'cart/removeItem', payload: { id: 'item-1' } });
+
+    expect(store.getState().cart.items).toHaveLength(0);
+    expect(store.getState().checkoutDraft).toEqual({});
+    store.destroy();
+  });
+
   it('applies discount without exceeding subtotal', () => {
     const store = new PosStore();
     store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
@@ -442,8 +466,13 @@ describe('Table and customer selection', () => {
       payload: { id: 'cust-1', name: 'ACME Corp', nip: '1234567890' },
     });
     expect(store.getState().activeCustomer?.name).toBe('ACME Corp');
+    expect(store.getState().checkoutDraft).toMatchObject({
+      customerName: 'ACME Corp',
+      customerNip: '1234567890',
+    });
     store.dispatch({ type: 'customer/clear' });
     expect(store.getState().activeCustomer).toBeNull();
+    expect(store.getState().checkoutDraft).toEqual({});
     store.destroy();
   });
 });

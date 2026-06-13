@@ -46,6 +46,12 @@ export interface CartState {
   total: number;
 }
 
+export interface CheckoutDraftState {
+  customerNip?: string;
+  customerName?: string;
+  requiresInvoice?: boolean;
+}
+
 export interface PosSessionState {
   shiftId: string | null;
   staffId: string | null;
@@ -112,6 +118,7 @@ export interface DisplayState {
 
 export interface PosState {
   cart: CartState;
+  checkoutDraft: CheckoutDraftState;
   session: PosSessionState;
   display: DisplayState;
   // Mode-specific (no tables array - tables are in SQLite)
@@ -137,6 +144,8 @@ export type PosAction =
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
   | { type: 'cart/setItemCourse'; payload: { id: string; course: number } }
+  | { type: 'checkoutDraft/update'; payload: Partial<CheckoutDraftState> }
+  | { type: 'checkoutDraft/clear' }
   | { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }
@@ -157,6 +166,7 @@ function createInitialState(): PosState {
       tax: 0,
       total: 0,
     },
+    checkoutDraft: {},
     session: {
       shiftId: null,
       staffId: null,
@@ -369,7 +379,8 @@ function posReducer(
     case 'cart/removeItem': {
       const items = state.cart.items.filter((i) => i.id !== action.payload.id);
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
-      return { ...state, cart: recalcCart({ ...state.cart, items }), display };
+      const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
+      return { ...state, cart: recalcCart({ ...state.cart, items }), checkoutDraft, display };
     }
 
     case 'cart/updateQuantity': {
@@ -379,13 +390,20 @@ function posReducer(
           : i,
       ).filter((i) => i.quantity > 0);
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
-      return { ...state, cart: recalcCart({ ...state.cart, items }), display };
+      const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
+      return { ...state, cart: recalcCart({ ...state.cart, items }), checkoutDraft, display };
     }
 
     case 'cart/clear': {
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
-      return { ...state, cart: createInitialState().cart, tip: 0, display };
+      return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
+
+    case 'checkoutDraft/update':
+      return { ...state, checkoutDraft: { ...state.checkoutDraft, ...action.payload } };
+
+    case 'checkoutDraft/clear':
+      return { ...state, checkoutDraft: createInitialState().checkoutDraft };
 
     case 'cart/applyDiscount': {
       const { amount, discountType } = action.payload;
@@ -461,6 +479,7 @@ function posReducer(
         ...state,
         session: createInitialState().session,
         cart: createInitialState().cart,
+        checkoutDraft: createInitialState().checkoutDraft,
         display: { ...state.display, mode: 'idle' },
         activeTable: null,
         activeCustomer: null,
@@ -474,10 +493,18 @@ function posReducer(
       return { ...state, activeTable: action.payload.tableId };
 
     case 'customer/select':
-      return { ...state, activeCustomer: action.payload };
+      return {
+        ...state,
+        activeCustomer: action.payload,
+        checkoutDraft: {
+          ...state.checkoutDraft,
+          customerNip: action.payload.nip ?? '',
+          customerName: action.payload.name,
+        },
+      };
 
     case 'customer/clear':
-      return { ...state, activeCustomer: null };
+      return { ...state, activeCustomer: null, checkoutDraft: createInitialState().checkoutDraft };
 
     case 'tip/set':
       return { ...state, tip: action.payload.amount };

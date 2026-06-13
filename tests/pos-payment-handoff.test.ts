@@ -58,6 +58,16 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain('formatInitialCashAmount(initialCashAmountGrosze)');
   });
 
+  it('keeps buyer NIP in the active checkout draft only', () => {
+    expect(PAYMENT_MODAL).toContain('checkoutDraft?: CheckoutDraftState');
+    expect(PAYMENT_MODAL).toContain('getInitialCustomerNip(checkoutDraft, extraOrderFields)');
+    expect(PAYMENT_MODAL).toContain("dispatch({ type: 'checkoutDraft/update'");
+    expect(RETAIL_TEMPLATE).toContain('checkoutDraft={state.checkoutDraft}');
+    expect(SALON_TEMPLATE).toContain('checkoutDraft={state.checkoutDraft}');
+    expect(B2B_TEMPLATE).toContain('checkoutDraft={state.checkoutDraft}');
+    expect(RESTAURANT_TEMPLATE).toContain('checkoutDraft={state.checkoutDraft}');
+  });
+
   it('snapshots payment totals before clearing the cart for receipt prompts', () => {
     const snapshotIndex = PAYMENT_MODAL.indexOf('setPaymentSnapshot({');
     const clearIndex = PAYMENT_MODAL.indexOf("dispatch({ type: 'cart/clear' })");
