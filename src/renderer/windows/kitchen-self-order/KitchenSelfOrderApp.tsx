@@ -418,6 +418,7 @@ export default function KitchenSelfOrderApp() {
           productId: item.product.templateId,
           name: item.product.name,
           quantity: item.quantity,
+          unitPriceGrosze: item.product.priceGrosze + modifierTotal(item),
           note: sanitizeKitchenSelfOrderNote(item.note),
           modifiers: item.modifiers,
         })),

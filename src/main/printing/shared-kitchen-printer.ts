@@ -91,7 +91,10 @@ async function resolveSharedKitchenPrinter(
     if (!assignments && apiKey) {
       assignments = await client.listPrinterAssignmentsWithApiKey(apiKey, config.machineId);
     }
-    if (!assignments) return { ready: false };
+    if (!assignments) {
+      logger.warn(`[SharedKitchenPrinter] ${role} assignment lookup returned no assignments`);
+      return { ready: false };
+    }
     printerId = assignments.assignments.find((assignment) => assignment.role === role)?.printerId;
   } catch (err: any) {
     if (isBackendContractUnavailable(err)) {
@@ -102,7 +105,10 @@ async function resolveSharedKitchenPrinter(
     return { ready: false, error };
   }
 
-  if (!printerId) return { ready: false };
+  if (!printerId) {
+    logger.warn(`[SharedKitchenPrinter] ${role} assignment is not configured`);
+    return { ready: false, error: `${role} assignment is not configured` };
+  }
 
   try {
     const response = token
@@ -157,13 +163,18 @@ async function submitSharedPlainPrint(
 ): Promise<SharedKitchenPrintResult> {
   const token = getSecureAuthToken();
   const apiKey = getSecureApiKey();
-  if (!token && !apiKey) return { handled: false, printed: false };
+  if (!token && !apiKey) {
+    logger.warn(`[SharedKitchenPrinter] Cannot submit ${role} print: missing auth token/API key`);
+    return { handled: false, printed: false, error: 'missing_print_agent_auth' };
+  }
 
   const route = await resolveSharedKitchenPrinter(token, apiKey, role, printerType);
   if (!route.printerId) {
+    logger.warn(`[SharedKitchenPrinter] Cannot submit ${role} print: ${route.error || 'no assigned printer'}`);
     return { handled: false, printed: false, error: route.error };
   }
   if (!route.ready) {
+    logger.warn(`[SharedKitchenPrinter] Cannot submit ${role} print to ${route.printerId}: ${route.error || 'route is not ready'}`);
     return { handled: true, printed: false, printerId: route.printerId, error: route.error || 'Kitchen printer route is not ready' };
   }
 

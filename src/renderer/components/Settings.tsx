@@ -191,8 +191,8 @@ const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[] = [
     role: 'KITCHEN',
     printerType: 'KITCHEN',
     title: 'Kitchen tickets',
-    description: 'Future route for kitchen printers.',
-    enabled: false,
+    description: 'Kitchen self-order tickets can route to a kitchen printer owned by any online POS.',
+    enabled: true,
   },
   {
     role: 'LABEL',

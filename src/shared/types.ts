@@ -711,6 +711,9 @@ export interface KitchenTicketItem {
   /** kg for weighted items; null/'szt' renders as a plain count. */
   unit?: string | null;
   notes?: string | null;
+  /** Customer payment slip only. Kitchen tickets must not render prices. */
+  unitPriceGrosze?: number | null;
+  lineTotalGrosze?: number | null;
 }
 
 /** Kitchen ticket payload — what the cooks see. Deliberately NO prices. */
@@ -732,14 +735,17 @@ export interface KitchenTicketData {
    *  the customer pickup slip — the kitchen matches them at hand-over. */
   pickupNumber?: string | null;
   /** TICKET (default) = kitchen ticket; PICKUP_SLIP = the small customer
-   *  slip with the big pickup number, printed next to the paragon. */
-  kind?: 'TICKET' | 'PICKUP_SLIP';
+   *  slip with the big pickup number, printed next to the paragon.
+   *  PAYMENT_SLIP = customer takes this unpaid kitchen self-order to cashier. */
+  kind?: 'TICKET' | 'PICKUP_SLIP' | 'PAYMENT_SLIP';
   /** Self-order kitchen tickets can be printed before cashier payment. */
   paymentStatus?: 'UNPAID' | 'PAID' | string | null;
   /** Optional customer-slip QR payload used by cashier POS to recall the cart. */
   qrPayload?: string | null;
   /** Customer-facing brand shown on pickup slips. */
   brandName?: string | null;
+  /** Customer payment slip only. Existing kitchen tickets can omit it. */
+  totalGrosze?: number | null;
   items: KitchenTicketItem[];
 }
 

@@ -65,6 +65,19 @@ function formatQuantity(item: KitchenTicketItem): string {
   return `${Math.max(1, Math.round(Number(item.quantity) || 1))}x`;
 }
 
+function formatMoney(grosze: unknown): string {
+  const amount = Math.max(0, Math.round(Number(grosze) || 0));
+  return `${(amount / 100).toFixed(2).replace('.', ',')} zl`;
+}
+
+function lineTotal(item: KitchenTicketItem): number {
+  const explicit = Math.round(Number(item.lineTotalGrosze) || 0);
+  if (explicit > 0) return explicit;
+  const unit = Math.round(Number(item.unitPriceGrosze) || 0);
+  const quantity = Math.max(1, Math.round(Number(item.quantity) || 1));
+  return unit * quantity;
+}
+
 export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLine[] {
   const lines: EscPosPlainLine[] = [];
   const lang = ticketLanguage(data);
@@ -149,6 +162,77 @@ export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[]
     lines.push({ text: '', qrData: data.qrPayload, qrSize: 5 });
   }
   lines.push({ text: copy.keep, center: true });
+  lines.push({ text: '', separator: true });
+  return lines;
+}
+
+/**
+ * Kitchen self-order payment slip: the customer takes this unpaid order to the
+ * cashier. It keeps the QR recall payload from the pickup slip and adds prices.
+ */
+export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPlainLine[] {
+  const lang = customerSlipLanguage(data);
+  const fulfillment = fulfillmentLabel(data.fulfillmentType, lang);
+  const number = data.pickupNumber || data.orderNumber || '----';
+  const copy = {
+    pl: {
+      title: 'DO ZAPLATY PRZY KASIE',
+      order: 'NUMER ZAMOWIENIA',
+      total: 'RAZEM',
+      pay: 'Pokaz ten slip przy kasie.',
+      scan: 'Zeskanuj przy kasie.',
+    },
+    vi: {
+      title: 'THANH TOAN TAI QUAY',
+      order: 'SO DON',
+      total: 'TONG CONG',
+      pay: 'Dua phieu nay cho thu ngan.',
+      scan: 'Quet tai quay thu ngan.',
+    },
+    en: {
+      title: 'PAY AT COUNTER',
+      order: 'ORDER NUMBER',
+      total: 'TOTAL',
+      pay: 'Show this slip to the cashier.',
+      scan: 'Scan at cashier.',
+    },
+  }[lang];
+  const lines: EscPosPlainLine[] = [];
+  const total = Math.max(
+    0,
+    Math.round(Number(data.totalGrosze) || data.items.reduce((sum, item) => sum + lineTotal(item), 0)),
+  );
+
+  lines.push({ text: pickupSlipBrandName(data), bold: true, center: true });
+  lines.push({ text: copy.title, bold: true, center: true });
+  lines.push({ text: copy.order, bold: true, center: true });
+  lines.push({ text: number, bold: true, center: true, textSize: 'double-size' });
+  if (fulfillment) {
+    lines.push({ text: fulfillment, bold: true, center: true });
+  }
+  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  lines.push({ text: '', separator: true });
+
+  for (const item of data.items) {
+    const quantity = Math.max(1, Math.round(Number(item.quantity) || 1));
+    const unitPrice = Math.max(0, Math.round(Number(item.unitPriceGrosze) || 0));
+    lines.push({ text: `${quantity}x ${item.name}`, rightText: formatMoney(lineTotal(item)), bold: true });
+    if (unitPrice > 0 && quantity > 1) {
+      lines.push({ text: `   ${formatMoney(unitPrice)} / szt` });
+    }
+    const notes = (item.notes || '').trim();
+    if (notes) {
+      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
+    }
+  }
+
+  lines.push({ text: '', separator: true, separatorChar: '=' });
+  lines.push({ text: copy.total, rightText: formatMoney(total), bold: true, textSize: 'double-height' });
+  if (data.qrPayload) {
+    lines.push({ text: copy.scan, bold: true, center: true });
+    lines.push({ text: '', qrData: data.qrPayload, qrSize: 5 });
+  }
+  lines.push({ text: copy.pay, center: true });
   lines.push({ text: '', separator: true });
   return lines;
 }

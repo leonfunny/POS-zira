@@ -4,6 +4,7 @@ import {
   formatKitchenSelfOrderNumber,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
+  normalizeKitchenSelfOrderPriceGrosze,
   normalizeKitchenSelfOrderQuantity,
   sanitizeKitchenSelfOrderNote,
   serializeKitchenSelfOrderOptions,
@@ -28,6 +29,11 @@ export interface KitchenSelfOrderRow {
   printed_at: string | null;
   kitchen_printed: number;
   customer_slip_printed: number;
+  total_grosze: number;
+  kitchen_route: string | null;
+  kitchen_printer_id: string | null;
+  kitchen_job_id: string | null;
+  customer_slip_route: string | null;
   error: string | null;
 }
 
@@ -38,6 +44,8 @@ export interface KitchenSelfOrderItemRow {
   product_id: string | null;
   name_snapshot: string;
   quantity: number;
+  unit_price_grosze: number;
+  line_total_grosze: number;
   options_json: string | null;
   note: string | null;
   sort_order: number;
@@ -92,6 +100,7 @@ export const kitchenSelfOrderRepo = {
         productId: sanitizeKitchenSelfOrderNote(item.productId),
         name: sanitizeKitchenSelfOrderNote(item.name) || 'Pozycja',
         quantity: normalizeKitchenSelfOrderQuantity(item.quantity),
+        unitPriceGrosze: normalizeKitchenSelfOrderPriceGrosze(item.unitPriceGrosze),
         note: sanitizeKitchenSelfOrderNote(item.note),
         optionsJson: serializeKitchenSelfOrderOptions(item.modifiers, item.options),
         sortOrder: index,
@@ -101,6 +110,10 @@ export const kitchenSelfOrderRepo = {
     if (items.length === 0) {
       throw new Error('empty_order');
     }
+    const totalGrosze = items.reduce(
+      (sum, item) => sum + item.unitPriceGrosze * item.quantity,
+      0,
+    );
 
     let createdId = '';
     database.transaction(() => {
@@ -118,8 +131,9 @@ export const kitchenSelfOrderRepo = {
           status,
           source_machine_id,
           source_label,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, ?, ?)`,
+          created_at,
+          total_grosze
+        ) VALUES (?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, ?, ?, ?)`,
         [
           id,
           formatKitchenSelfOrderNumber(sequence),
@@ -130,6 +144,7 @@ export const kitchenSelfOrderRepo = {
           sourceMachineId,
           sourceLabel,
           now,
+          totalGrosze,
         ],
       );
 
@@ -142,10 +157,12 @@ export const kitchenSelfOrderRepo = {
             product_id,
             name_snapshot,
             quantity,
+            unit_price_grosze,
+            line_total_grosze,
             options_json,
             note,
             sort_order
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.id,
             id,
@@ -153,6 +170,8 @@ export const kitchenSelfOrderRepo = {
             item.productId,
             item.name,
             item.quantity,
+            item.unitPriceGrosze,
+            item.unitPriceGrosze * item.quantity,
             item.optionsJson,
             item.note,
             item.sortOrder,
@@ -171,6 +190,10 @@ export const kitchenSelfOrderRepo = {
     result: {
       kitchenPrinted: boolean;
       customerSlipPrinted: boolean;
+      kitchenRoute?: string | null;
+      kitchenPrinterId?: string | null;
+      kitchenJobId?: string | null;
+      customerSlipRoute?: string | null;
       error?: string | null;
     },
   ): KitchenSelfOrderWithItems | null {
@@ -185,6 +208,10 @@ export const kitchenSelfOrderRepo = {
            printed_at = ?,
            kitchen_printed = ?,
            customer_slip_printed = ?,
+           kitchen_route = ?,
+           kitchen_printer_id = ?,
+           kitchen_job_id = ?,
+           customer_slip_route = ?,
            error = ?
        WHERE id = ?`,
       [
@@ -192,6 +219,10 @@ export const kitchenSelfOrderRepo = {
         new Date().toISOString(),
         result.kitchenPrinted ? 1 : 0,
         result.customerSlipPrinted ? 1 : 0,
+        result.kitchenRoute || null,
+        result.kitchenPrinterId || null,
+        result.kitchenJobId || null,
+        result.customerSlipRoute || null,
         result.error || null,
         id,
       ],

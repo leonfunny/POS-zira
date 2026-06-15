@@ -121,9 +121,12 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).toContain("const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT'");
     expect(settingsSource).toContain('const SALON_PRINTER_ROUTES: SalonPrinterRouteDefinition[]');
     expect(settingsSource).toContain("role: 'FISCAL_RECEIPT'");
+    expect(settingsSource).toContain("role: 'KITCHEN'");
+    expect(settingsSource).toContain('Kitchen self-order tickets can route to a kitchen printer owned by any online POS.');
     expect(settingsSource).toContain('route.role === \'FISCAL_RECEIPT\'');
     expect(settingsSource).toContain('handleAssignSharedPrinter(printer.id, route.role)');
     expect(sharedTypesSource).toContain("| 'FISCAL_RECEIPT'");
+    expect(sharedTypesSource).toContain("| 'KITCHEN'");
     expect(sharedTypesSource).toContain("| 'POS_RECEIPT'");
     expect(settingsSource).toContain('window.electronAPI.printAgentPrinters.salonList({');
     expect(settingsSource).toContain('shareableOnly: true');

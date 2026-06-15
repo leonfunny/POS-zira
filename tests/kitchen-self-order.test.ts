@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   formatKitchenSelfOrderNumber,
+  normalizeKitchenSelfOrderPriceGrosze,
   normalizeKitchenSelfOrderQuantity,
   resolveKitchenSelfOrderBrandName,
   sanitizeKitchenSelfOrderNote,
@@ -21,6 +22,9 @@ describe('kitchen self-order MVP wiring', () => {
   it('normalizes kiosk quantities and notes before persistence', () => {
     expect(normalizeKitchenSelfOrderQuantity(0)).toBe(1);
     expect(normalizeKitchenSelfOrderQuantity(200)).toBe(99);
+    expect(normalizeKitchenSelfOrderPriceGrosze(-1)).toBe(0);
+    expect(normalizeKitchenSelfOrderPriceGrosze(1234.5)).toBe(1235);
+    expect(normalizeKitchenSelfOrderPriceGrosze(99_999_999)).toBe(9_999_999);
     expect(sanitizeKitchenSelfOrderNote('  no   onion  ')).toBe('no onion');
     expect(sanitizeKitchenSelfOrderNote('')).toBeNull();
   });
@@ -31,7 +35,11 @@ describe('kitchen self-order MVP wiring', () => {
 
     expect(migrationSource).toContain('CREATE TABLE IF NOT EXISTS kitchen_self_orders');
     expect(migrationSource).toContain('CREATE TABLE IF NOT EXISTS kitchen_self_order_items');
+    expect(migrationSource).toContain('total_grosze');
+    expect(migrationSource).toContain('unit_price_grosze');
+    expect(migrationSource).toContain('line_total_grosze');
     expect(repoSource).toContain('formatKitchenSelfOrderNumber(sequence)');
+    expect(repoSource).toContain('normalizeKitchenSelfOrderPriceGrosze(item.unitPriceGrosze)');
     expect(repoSource).not.toContain('INSERT INTO orders');
     expect(repoSource).not.toContain('INSERT INTO order_items');
   });
@@ -51,7 +59,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).toContain('printKitchenSelfOrderCustomerSlip(ticket)');
   });
 
-  it('prints unpaid kitchen tickets and QR customer slips before cashier payment', () => {
+  it('prints unpaid kitchen tickets and QR payment slips before cashier payment', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const ticketSource = readSource('src/main/printing/kitchen-ticket.ts');
     const formatterSource = readSource('src/main/hardware/thermal/escpos-formatter.ts');
@@ -61,7 +69,10 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).not.toContain('productId: item.product_id');
     expect(posModuleSource).toContain("paymentStatus: 'UNPAID'");
     expect(posModuleSource).toContain('qrPayload,');
+    expect(posModuleSource).toContain('buildKitchenPaymentSlipLines');
+    expect(posModuleSource).toContain('unitPriceGrosze: normalizeKitchenSelfOrderPriceGrosze');
     expect(ticketSource).toContain('NIEOPLACONE / CHUA TRA TIEN');
+    expect(ticketSource).toContain('THANH TOAN TAI QUAY');
     expect(ticketSource).toContain('qrData: data.qrPayload');
     expect(formatterSource).toContain('formatQRCode(line.qrData');
   });
@@ -94,6 +105,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(appSource).toContain("useState<Step>('menu')");
     expect(appSource).toContain('function FulfillmentToggle');
     expect(appSource).toContain('function LanguageToggle');
+    expect(appSource).toContain('unitPriceGrosze: item.product.priceGrosze + modifierTotal(item)');
     expect(appSource).not.toContain("setStep('language')");
     expect(appSource).not.toContain("setStep('fulfillment')");
   });

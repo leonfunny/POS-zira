@@ -48,7 +48,12 @@ import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../databas
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
-import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import {
+  buildKitchenPaymentSlipLines,
+  buildKitchenTicketLines,
+  buildPickupSlipLines,
+  type KitchenTicketData,
+} from '../printing/kitchen-ticket';
 import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
@@ -101,6 +106,7 @@ import {
   formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
+  normalizeKitchenSelfOrderPriceGrosze,
   parseKitchenSelfOrderOptionsJson,
   resolveKitchenSelfOrderBrandName,
   resolveKitchenSelfOrderCheckoutAction,
@@ -2856,11 +2862,16 @@ export class PosModule extends BaseModule {
             .filter((group): group is NonNullable<typeof group> => !!group);
           const validation = validateKitchenSelfOrderModifierSelections(groups, item.modifiers);
           if (!validation.valid) throw new Error(`invalid_modifiers:${product.id}`);
+          const modifierTotalGrosze = validation.modifiers.reduce(
+            (sum, modifier) => sum + modifier.priceDeltaGrosze * modifier.quantity,
+            0,
+          );
           return {
             variantId: product.id,
             productId: product.templateId,
             name: product.name,
             quantity: item.quantity,
+            unitPriceGrosze: normalizeKitchenSelfOrderPriceGrosze(product.priceGrosze + modifierTotalGrosze),
             note: product.noteEnabled ? item.note : null,
             modifiers: validation.modifiers,
             options: groups.length === 0 ? item.options : [],
@@ -2888,9 +2899,12 @@ export class PosModule extends BaseModule {
           paymentStatus: 'UNPAID',
           qrPayload,
           brandName,
+          totalGrosze: created.total_grosze,
           items: created.items.map((item) => ({
             name: item.name_snapshot,
             quantity: item.quantity,
+            unitPriceGrosze: item.unit_price_grosze,
+            lineTotalGrosze: item.line_total_grosze,
             notes: [
               parseKitchenSelfOrderOptions(item.options_json).join(', '),
               item.note || '',
@@ -2904,6 +2918,10 @@ export class PosModule extends BaseModule {
         const finalOrder = kitchenSelfOrderRepo.markPrintResult(created.id, {
           kitchenPrinted: kitchenPrint.printed,
           customerSlipPrinted: slipPrint.printed,
+          kitchenRoute: kitchenPrint.route || null,
+          kitchenPrinterId: kitchenPrint.printerId || null,
+          kitchenJobId: kitchenPrint.jobId || null,
+          customerSlipRoute: slipPrint.route || null,
           error,
         }) || created;
 
@@ -2914,6 +2932,9 @@ export class PosModule extends BaseModule {
           kitchenPrinted: kitchenPrint.printed,
           customerSlipPrinted: slipPrint.printed,
           kitchenRoute: kitchenPrint.route,
+          kitchenPrinterId: kitchenPrint.printerId,
+          kitchenJobId: kitchenPrint.jobId,
+          kitchenStatus: kitchenPrint.status,
           slipRoute: slipPrint.route,
           qrPayload,
           error,
@@ -3144,7 +3165,7 @@ export class PosModule extends BaseModule {
    */
   private async printKitchenSelfOrderTicket(
     ticket: KitchenTicketData,
-  ): Promise<{ printed: boolean; route?: 'LOCAL' | 'SHARED_NETWORK'; error?: string }> {
+  ): Promise<{ printed: boolean; route?: 'LOCAL' | 'SHARED_NETWORK'; printerId?: string; jobId?: string; status?: string; error?: string }> {
     const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
     const localKitchen = printers[PrinterType.KITCHEN];
     if (localKitchen?.isConnected?.() && typeof localKitchen.printPlainLines === 'function') {
@@ -3155,15 +3176,28 @@ export class PosModule extends BaseModule {
       } catch (err: any) {
         logger.error(`[PosModule] Local kitchen self-order ticket failed for ${ticket.orderNumber}: ${err?.message || err}`);
       }
+    } else {
+      logger.info(`[PosModule] No local KITCHEN printer for kitchen self-order ${ticket.orderNumber}; trying shared KITCHEN route`);
     }
 
     const shared = await submitSharedKitchenPrint(ticket);
     if (shared.handled && shared.printed) {
-      return { printed: true, route: 'SHARED_NETWORK' };
+      logger.info(`[PosModule] Kitchen self-order ticket printed through shared KITCHEN route for ${ticket.orderNumber}${shared.printerId ? ` on ${shared.printerId}` : ''}`);
+      return {
+        printed: true,
+        route: 'SHARED_NETWORK',
+        printerId: shared.printerId,
+        jobId: shared.jobId,
+        status: shared.status,
+      };
     }
+    logger.warn(`[PosModule] Kitchen self-order ticket was not printed for ${ticket.orderNumber}: ${shared.error || 'no_kitchen_printer'}`);
     return {
       printed: false,
       route: shared.handled ? 'SHARED_NETWORK' : undefined,
+      printerId: shared.printerId,
+      jobId: shared.jobId,
+      status: shared.status,
       error: shared.error || 'no_kitchen_printer',
     };
   }
@@ -3184,12 +3218,12 @@ export class PosModule extends BaseModule {
     }
 
     try {
-      await printer.printPlainLines(buildPickupSlipLines({ ...ticket, kind: 'PICKUP_SLIP' }));
-      logger.info(`[PosModule] Kitchen self-order customer slip printed locally for ${ticket.orderNumber}`);
+      await printer.printPlainLines(buildKitchenPaymentSlipLines({ ...ticket, kind: 'PAYMENT_SLIP' }));
+      logger.info(`[PosModule] Kitchen self-order payment slip printed locally for ${ticket.orderNumber}`);
       return { printed: true, route: 'LOCAL' };
     } catch (err: any) {
       const error = err?.message || String(err);
-      logger.warn(`[PosModule] Kitchen self-order customer slip failed for ${ticket.orderNumber}: ${error}`);
+      logger.warn(`[PosModule] Kitchen self-order payment slip failed for ${ticket.orderNumber}: ${error}`);
       return { printed: false, error };
     }
   }

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildKitchenTicketLines, buildPickupSlipLines } from '../src/main/printing/kitchen-ticket';
+import { buildKitchenPaymentSlipLines, buildKitchenTicketLines, buildPickupSlipLines } from '../src/main/printing/kitchen-ticket';
 import type { KitchenTicketData } from '../src/shared/types';
 
 function readSource(relativePath: string): string {
@@ -30,6 +30,21 @@ describe('kitchen ticket builder', () => {
     expect(text).toContain('1x Chả giò');
     expect(text).toContain('>> không hành');
     expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/); // no money anywhere
+  });
+
+  it('keeps kitchen tickets price-free even when payment metadata is present', () => {
+    const lines = buildKitchenTicketLines({
+      ...baseTicket,
+      totalGrosze: 2900,
+      items: [
+        { name: 'Pho bo', quantity: 2, unitPriceGrosze: 1200, lineTotalGrosze: 2400 },
+        { name: 'Cha gio', quantity: 1, unitPriceGrosze: 500, lineTotalGrosze: 500 },
+      ],
+    });
+    const text = lines.map((l) => `${l.text || ''} ${l.rightText || ''}`).join('\n');
+
+    expect(text).toContain('2x Pho bo');
+    expect(text).not.toMatch(/zl|zł|PLN|\d+,\d{2}/);
   });
 
   it('item lines are large and bold for kitchen readability', () => {
@@ -136,6 +151,32 @@ describe('pickup number (so nhan do)', () => {
 
     expect(lines.some((line) => line.qrData === 'KSO1:test' && line.qrSize === 5)).toBe(true);
     expect(lines.map((l) => l.text).join('\n')).toContain('Scan at cashier');
+  });
+
+  it('builds a self-order payment slip with item totals, customer total, and QR recall', () => {
+    const lines = buildKitchenPaymentSlipLines({
+      ...baseTicket,
+      brandName: 'BuBu Bubble Tea',
+      orderNumber: 'K-042',
+      pickupNumber: 'K-042',
+      customerLanguage: 'vi',
+      fulfillmentType: 'TAKEAWAY',
+      totalGrosze: 2900,
+      qrPayload: 'KSO1:test',
+      items: [
+        { name: 'Pho bo', quantity: 2, unitPriceGrosze: 1200, lineTotalGrosze: 2400 },
+        { name: 'Cha gio', quantity: 1, unitPriceGrosze: 500, lineTotalGrosze: 500 },
+      ],
+    });
+    const text = lines.map((l) => `${l.text || ''} ${l.rightText || ''}`).join('\n');
+
+    expect(text).toContain('BuBu Bubble Tea');
+    expect(text).toContain('THANH TOAN TAI QUAY');
+    expect(text).toContain('K-042');
+    expect(text).toContain('MANG DI');
+    expect(text).toContain('2x Pho bo 24,00 zl');
+    expect(text).toContain('TONG CONG 29,00 zl');
+    expect(lines.some((line) => line.qrData === 'KSO1:test' && line.qrSize === 5)).toBe(true);
   });
 
   it('assigns a daily 4-digit number at order create when kitchen items exist', () => {

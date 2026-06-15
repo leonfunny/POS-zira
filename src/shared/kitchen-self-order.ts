@@ -94,6 +94,7 @@ export interface KitchenSelfOrderItemInput {
   productId?: string | null;
   name: string;
   quantity: number;
+  unitPriceGrosze?: number | null;
   note?: string | null;
   options?: string[] | null;
   modifiers?: KitchenSelfOrderModifierSnapshot[] | null;
@@ -202,6 +203,11 @@ export function businessDateFromIso(iso: string): string {
 
 export function normalizeKitchenSelfOrderQuantity(value: unknown): number {
   return Math.min(99, Math.max(1, Math.floor(Number(value) || 1)));
+}
+
+export function normalizeKitchenSelfOrderPriceGrosze(value: unknown): number {
+  const amount = Math.round(Number(value) || 0);
+  return Math.max(0, Math.min(9_999_999, amount));
 }
 
 export function sanitizeKitchenSelfOrderNote(value: unknown): string | null {

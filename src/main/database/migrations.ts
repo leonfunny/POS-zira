@@ -1445,4 +1445,20 @@ export const migrations: Migration[] = [
       ALTER TABLE categories ADD COLUMN kiosk_modifier_groups_json TEXT;
     `,
   },
+  {
+    version: 46,
+    name: 'kitchen_self_order_payment_slip_metadata',
+    // Kitchen self-order remains separate from paid POS orders. These columns
+    // snapshot customer-facing payment-slip totals and print routing diagnostics.
+    up: `
+      ALTER TABLE kitchen_self_orders ADD COLUMN total_grosze INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE kitchen_self_orders ADD COLUMN kitchen_route TEXT;
+      ALTER TABLE kitchen_self_orders ADD COLUMN kitchen_printer_id TEXT;
+      ALTER TABLE kitchen_self_orders ADD COLUMN kitchen_job_id TEXT;
+      ALTER TABLE kitchen_self_orders ADD COLUMN customer_slip_route TEXT;
+
+      ALTER TABLE kitchen_self_order_items ADD COLUMN unit_price_grosze INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE kitchen_self_order_items ADD COLUMN line_total_grosze INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
