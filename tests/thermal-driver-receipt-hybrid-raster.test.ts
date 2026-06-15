@@ -95,4 +95,28 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     expect([...printed.slice(0, 5)]).toEqual([0x1b, 0x70, 0x00, 0x19, 0xfa]);
     expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
   });
+
+  it('keeps QR commands native when plain-line text falls back to raster', async () => {
+    const driver = new ThermalDriver('COM1', 9600, 'SERIAL', 80, 48, false, {
+      charset: 'utf8',
+      cutMode: 'partial',
+    });
+    (driver as any).connected = true;
+
+    const raster = Buffer.from([0x1d, 0x76, 0x30, 0x00, 0xbb]);
+    const renderTextToRaster = vi.fn(async () => raster);
+    const printRaw = vi.fn(async () => undefined);
+    (driver as any).renderTextToRaster = renderTextToRaster;
+    (driver as any).printRaw = printRaw;
+
+    await driver.printPlainLines([
+      { text: 'Zażółć gesla', center: true },
+      { text: '', qrData: 'KSO1:test-payload', qrSize: 7 },
+    ]);
+
+    expect(renderTextToRaster).toHaveBeenCalledTimes(1);
+    const printed = printRaw.mock.calls[0][0] as Buffer;
+    expect(printed.includes(raster)).toBe(true);
+    expect(printed.toString('utf8')).toContain('KSO1:test-payload');
+  });
 });

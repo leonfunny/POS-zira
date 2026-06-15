@@ -44,7 +44,7 @@ import { draftProductSync } from '../sync/draft-product-sync';
 import { StaffSync } from '../sync/staff-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
-import { kitchenSelfOrderRepo } from '../database/repos/kitchen-self-order-repo';
+import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
@@ -96,6 +96,7 @@ import type {
 } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import {
+  KITCHEN_SELF_ORDER_QR_PREFIX,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
   type KitchenSelfOrderSubmitInput,
@@ -138,6 +139,72 @@ function moneyGroszeToPln(grosze: number): number {
 function positiveGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
   return amount > 0 ? amount : 0;
+}
+
+function base64UrlEncodeUtf8(value: string): string {
+  return Buffer.from(value, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function parseKitchenSelfOrderOptions(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function compactKitchenSelfOrderQrText(value: string | null): string | undefined {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, 80) : undefined;
+}
+
+function compactKitchenSelfOrderQrOptions(value: string | null): string[] | undefined {
+  const options = parseKitchenSelfOrderOptions(value)
+    .slice(0, 4)
+    .map((item) => item.slice(0, 60))
+    .filter(Boolean);
+  return options.length > 0 ? options : undefined;
+}
+
+const KITCHEN_SELF_ORDER_QR_WITH_NOTES_MAX_LENGTH = 600;
+
+function buildKitchenSelfOrderCompactQrPayload(order: KitchenSelfOrderWithItems, includeNotes: boolean) {
+  return {
+    t: 'KSO',
+    v: 1,
+    n: order.order_number,
+    i: order.items.map((item) => {
+      const qrItem: [string | null, number, string?, string[]?] = [item.variant_id, item.quantity];
+      if (includeNotes) {
+        const note = compactKitchenSelfOrderQrText(item.note);
+        const options = compactKitchenSelfOrderQrOptions(item.options_json);
+        if (note || options) {
+          qrItem[2] = note || '';
+          if (options) qrItem[3] = options;
+        }
+      }
+      return qrItem;
+    }),
+  };
+}
+
+function buildKitchenSelfOrderQrPayload(order: KitchenSelfOrderWithItems): string {
+  const withNotes = `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
+    buildKitchenSelfOrderCompactQrPayload(order, true),
+  ))}`;
+  if (withNotes.length <= KITCHEN_SELF_ORDER_QR_WITH_NOTES_MAX_LENGTH) return withNotes;
+
+  return `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
+    buildKitchenSelfOrderCompactQrPayload(order, false),
+  ))}`;
 }
 
 function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
@@ -2767,6 +2834,7 @@ export class PosModule extends BaseModule {
           sourceLabel,
           sourceMachineId: cfg.machineId || null,
         });
+        const qrPayload = buildKitchenSelfOrderQrPayload(created);
 
         const ticket: KitchenTicketData = {
           orderId: created.id,
@@ -2777,11 +2845,13 @@ export class PosModule extends BaseModule {
           kitchenLanguage: 'vi',
           customerLanguage: created.customer_language,
           pickupNumber: created.order_number,
+          paymentStatus: 'UNPAID',
+          qrPayload,
           items: created.items.map((item) => ({
             name: item.name_snapshot,
             quantity: item.quantity,
             notes: [
-              item.options_json ? JSON.parse(item.options_json).join(', ') : '',
+              parseKitchenSelfOrderOptions(item.options_json).join(', '),
               item.note || '',
             ].filter(Boolean).join(' | ') || null,
           })),
@@ -2804,6 +2874,7 @@ export class PosModule extends BaseModule {
           customerSlipPrinted: slipPrint.printed,
           kitchenRoute: kitchenPrint.route,
           slipRoute: slipPrint.route,
+          qrPayload,
           error,
         };
       } catch (e: any) {

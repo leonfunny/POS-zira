@@ -7,6 +7,8 @@ export type KitchenSelfOrderStatus =
   | 'PRINT_FAILED'
   | 'CANCELLED';
 
+export const KITCHEN_SELF_ORDER_QR_PREFIX = 'KSO1:';
+
 export interface KitchenSelfOrderItemInput {
   variantId?: string | null;
   productId?: string | null;
@@ -21,6 +23,27 @@ export interface KitchenSelfOrderSubmitInput {
   fulfillmentType: KitchenSelfOrderFulfillment;
   sourceLabel?: string | null;
   items: KitchenSelfOrderItemInput[];
+}
+
+export interface KitchenSelfOrderQrItem {
+  variantId?: string | null;
+  productId?: string | null;
+  name?: string | null;
+  quantity: number;
+  note?: string | null;
+  options?: string[];
+}
+
+export interface KitchenSelfOrderQrPayload {
+  type: 'KSO';
+  version: 1;
+  orderNumber: string;
+  orderId?: string;
+  createdAt?: string;
+  fulfillmentType?: KitchenSelfOrderFulfillment;
+  customerLanguage?: KitchenSelfOrderLanguage;
+  sourceLabel?: string | null;
+  items: KitchenSelfOrderQrItem[];
 }
 
 export function normalizeKitchenSelfOrderLanguage(value: unknown): KitchenSelfOrderLanguage {

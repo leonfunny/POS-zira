@@ -50,6 +50,33 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).toContain('printKitchenSelfOrderCustomerSlip(ticket)');
   });
 
+  it('prints unpaid kitchen tickets and QR customer slips before cashier payment', () => {
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const ticketSource = readSource('src/main/printing/kitchen-ticket.ts');
+    const formatterSource = readSource('src/main/hardware/thermal/escpos-formatter.ts');
+
+    expect(posModuleSource).toContain('buildKitchenSelfOrderQrPayload(created)');
+    expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');
+    expect(posModuleSource).not.toContain('productId: item.product_id');
+    expect(posModuleSource).toContain("paymentStatus: 'UNPAID'");
+    expect(posModuleSource).toContain('qrPayload,');
+    expect(ticketSource).toContain('NIEOPLACONE / CHUA TRA TIEN');
+    expect(ticketSource).toContain('qrData: data.qrPayload');
+    expect(formatterSource).toContain('formatQRCode(line.qrData');
+  });
+
+  it('lets the cashier POS scan the pickup-slip QR into the normal payment cart', () => {
+    const layoutSource = readSource('src/renderer/components/pos/POSLayout.tsx');
+
+    expect(layoutSource).toContain('decodeKitchenSelfOrderQr(code)');
+    expect(layoutSource).toContain('loadKitchenSelfOrderQr(kioskOrder)');
+    expect(layoutSource).toContain('window.electronAPI.pos.products.getById(variantId)');
+    expect(layoutSource).toContain('const cartItems: CartItem[] = []');
+    expect(layoutSource).toContain('saleClass.requiresScale');
+    expect(layoutSource).toContain('await window.electronAPI.pos.dispatch');
+    expect(layoutSource).toContain("type: 'cart/addItem'");
+  });
+
   it('operator launch settings are separate from store self-checkout settings', () => {
     const tabSource = readSource('src/renderer/components/SelfCheckoutTab.tsx');
 

@@ -70,6 +70,9 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
     lines.push({ text: '(KOPIA / IN LAI)', bold: true, center: true });
   }
   lines.push({ text: orderNumberLabel(data.orderNumber), bold: true, center: true, textSize: 'double-size' });
+  if (String(data.paymentStatus || '').toUpperCase() === 'UNPAID') {
+    lines.push({ text: 'NIEOPLACONE / CHUA TRA TIEN', bold: true, center: true, textSize: 'double-height' });
+  }
   if (fulfillment) {
     lines.push({ text: fulfillment, bold: true, center: true, textSize: 'double-height' });
   }
@@ -115,14 +118,17 @@ export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[]
     pl: {
       title: 'NUMER ZAMOWIENIA',
       keep: 'Zachowaj ten numer.',
+      scan: 'Zeskanuj przy kasie.',
     },
     vi: {
       title: 'SO DON',
       keep: 'Giu so nay de nhan mon.',
+      scan: 'Quet tai quay thu ngan.',
     },
     en: {
       title: 'ORDER NUMBER',
       keep: 'Keep this number for pickup.',
+      scan: 'Scan at cashier.',
     },
   }[lang];
   const lines: EscPosPlainLine[] = [];
@@ -133,6 +139,10 @@ export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[]
     lines.push({ text: fulfillment, bold: true, center: true });
   }
   lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  if (data.qrPayload) {
+    lines.push({ text: copy.scan, bold: true, center: true });
+    lines.push({ text: '', qrData: data.qrPayload, qrSize: 5 });
+  }
   lines.push({ text: copy.keep, center: true });
   lines.push({ text: '', separator: true });
   return lines;

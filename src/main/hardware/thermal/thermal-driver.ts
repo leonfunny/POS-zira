@@ -612,13 +612,44 @@ export class ThermalDriver {
     }
 
     const hasUnicode = lines.some((line) => this.plainLineHasNonAsciiText(line));
+    const hasQrData = lines.some((line) => !!line.qrData);
     const data = hasUnicode
-      ? await this.renderTextToRaster(lines)
+      ? hasQrData
+        ? await this.formatPlainLinesWithNativeQr(lines)
+        : await this.renderTextToRaster(lines)
       : Buffer.concat([
           this.formatter.formatPlainLinesAsText(lines, { includeInit: true }),
           this.formatter.getReceiptTrailer(),
         ]);
     await this.printRaw(data);
+  }
+
+  private async formatPlainLinesWithNativeQr(lines: EscPosPlainLine[]): Promise<Buffer> {
+    const parts: Buffer[] = [this.formatter.getInitCommand()];
+    let rasterSpan: EscPosPlainLine[] = [];
+
+    const flushRasterSpan = async () => {
+      if (rasterSpan.length === 0) return;
+      parts.push(await this.renderTextToRaster(rasterSpan, {
+        includeInit: false,
+        includeFeed: false,
+        includeCut: false,
+      }));
+      rasterSpan = [];
+    };
+
+    for (const line of lines) {
+      if (line.qrData) {
+        await flushRasterSpan();
+        parts.push(this.formatter.formatPlainLinesAsText([line]));
+      } else {
+        rasterSpan.push(line);
+      }
+    }
+
+    await flushRasterSpan();
+    parts.push(this.formatter.getReceiptTrailer());
+    return Buffer.concat(parts);
   }
 
   /**

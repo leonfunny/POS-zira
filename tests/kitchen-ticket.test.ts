@@ -71,10 +71,26 @@ describe('kitchen ticket builder', () => {
 
     expect(text).toContain('*** BEP ***');
     expect(text).toContain('K-042');
+    expect(text).not.toContain('CHUA TRA TIEN');
     expect(text).toContain('MANG DI');
     expect(text).toContain('KIOSK PC-YURI');
     expect(text).toContain('Ghi chu: it cay');
     expect(text).not.toContain('#K-042');
+  });
+
+  it('marks kitchen self-order tickets as unpaid when sent before cashier payment', () => {
+    const lines = buildKitchenTicketLines({
+      ...baseTicket,
+      orderNumber: 'K-043',
+      source: 'KIOSK PC-YURI',
+      kitchenLanguage: 'vi',
+      paymentStatus: 'UNPAID',
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('K-043');
+    expect(text).toContain('NIEOPLACONE');
+    expect(text).toContain('CHUA TRA TIEN');
   });
 });
 
@@ -93,6 +109,20 @@ describe('pickup number (so nhan do)', () => {
     expect(text).toContain('0007');
     expect(text).toContain('#POS-0042');
     expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/);
+  });
+
+  it('prints a QR payload on unpaid kiosk pickup slips for cashier recall', () => {
+    const lines = buildPickupSlipLines({
+      ...baseTicket,
+      orderNumber: 'K-044',
+      pickupNumber: 'K-044',
+      kind: 'PICKUP_SLIP',
+      customerLanguage: 'en',
+      qrPayload: 'KSO1:test',
+    });
+
+    expect(lines.some((line) => line.qrData === 'KSO1:test' && line.qrSize === 5)).toBe(true);
+    expect(lines.map((l) => l.text).join('\n')).toContain('Scan at cashier');
   });
 
   it('assigns a daily 4-digit number at order create when kitchen items exist', () => {

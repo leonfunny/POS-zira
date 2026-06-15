@@ -728,6 +728,10 @@ export interface KitchenTicketData {
   /** TICKET (default) = kitchen ticket; PICKUP_SLIP = the small customer
    *  slip with the big pickup number, printed next to the paragon. */
   kind?: 'TICKET' | 'PICKUP_SLIP';
+  /** Self-order kitchen tickets can be printed before cashier payment. */
+  paymentStatus?: 'UNPAID' | 'PAID' | string | null;
+  /** Optional customer-slip QR payload used by cashier POS to recall the cart. */
+  qrPayload?: string | null;
   items: KitchenTicketItem[];
 }
 

@@ -6,6 +6,8 @@ const BLIK_RECEIPT_PHONE = '729448788';
 export type EscPosPlainLine = {
   text: string;
   rightText?: string;
+  qrData?: string;
+  qrSize?: number;
   bold?: boolean;
   big?: boolean;
   center?: boolean;
@@ -584,7 +586,9 @@ export class EscPosFormatter {
       if (textSize === 'double-size') parts.push(ESCPOS.DOUBLE_SIZE_ON);
       if (textSize === 'double-height') parts.push(ESCPOS.DOUBLE_HEIGHT_ON);
 
-      if (line.separator) {
+      if (line.qrData) {
+        parts.push(this.formatQRCode(line.qrData, line.qrSize ?? 6));
+      } else if (line.separator) {
         parts.push(this.text(this.repeatChar(line.separatorChar ?? '-', this.charsPerLine)));
       } else if (line.rightText) {
         parts.push(this.formatLine(line.text, line.rightText));

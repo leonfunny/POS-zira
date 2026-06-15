@@ -8,7 +8,8 @@ import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName } from '../../../shared/catalog-names';
 import { normalizeSellBy } from '../../../shared/pos-sale';
-import type { ProductSaleClassification } from '../../../shared/product-sale-classifier';
+import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
+import { KITCHEN_SELF_ORDER_QR_PREFIX, type KitchenSelfOrderQrPayload } from '../../../shared/kitchen-self-order';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../shared/pos-price-guard';
 import rlog from '../../utils/logger';
 import { formatProductLabelPriceText } from '../../utils/product-label';
@@ -101,6 +102,55 @@ function canSellImportedVariant(variant: any, allowOversell = false): string | n
   if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
   if (!allowOversell && variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
   return null;
+}
+
+function base64UrlDecodeUtf8(value: string): string {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeKitchenSelfOrderQr(code: string): KitchenSelfOrderQrPayload | null {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith(KITCHEN_SELF_ORDER_QR_PREFIX)) return null;
+
+  try {
+    const parsed = JSON.parse(base64UrlDecodeUtf8(trimmed.slice(KITCHEN_SELF_ORDER_QR_PREFIX.length)));
+    if (parsed?.type === 'KSO' && parsed?.version === 1 && Array.isArray(parsed?.items)) {
+      return parsed as KitchenSelfOrderQrPayload;
+    }
+    if (parsed?.t !== 'KSO' || parsed?.v !== 1 || !Array.isArray(parsed?.i)) return null;
+    return {
+      type: 'KSO',
+      version: 1,
+      orderNumber: String(parsed.n || ''),
+      items: parsed.i.map((item: any) => {
+        if (!Array.isArray(item)) return { variantId: null, quantity: 1 };
+        const options = Array.isArray(item[3])
+          ? item[3].map((option: unknown) => String(option || '').trim()).filter(Boolean)
+          : [];
+        return {
+          variantId: item[0],
+          quantity: item[1],
+          note: typeof item[2] === 'string' ? item[2] : null,
+          options,
+        };
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeKioskQuantity(value: unknown): number {
+  return Math.min(99, Math.max(1, Math.floor(Number(value) || 1)));
+}
+
+function joinKioskLineNotes(parts: Array<string | null | undefined>): string | undefined {
+  const text = parts.map((part) => String(part || '').trim()).filter(Boolean).join(' | ');
+  return text || undefined;
 }
 
 function labelCopiesForCartItem(item: CartItem): number {
@@ -652,11 +702,76 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     }
   }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr, validateCartLinePrice]);
 
+  const loadKitchenSelfOrderQr = useCallback(async (payload: KitchenSelfOrderQrPayload) => {
+    if (!dispatch) return;
+    const currentState = await window.electronAPI.pos.getState().catch(() => state);
+    if ((currentState?.cart.items.length ?? state?.cart.items.length ?? 0) > 0) {
+      showScanToast('Clear cart before scanning a kiosk order', 'err');
+      return;
+    }
+    if (!payload.items.length) {
+      showScanToast('Kiosk order is empty', 'err');
+      return;
+    }
+
+    try {
+      const cartItems: CartItem[] = [];
+      for (const line of payload.items) {
+        const variantId = String(line.variantId || '').trim();
+        if (!variantId) {
+          throw new Error(`Missing product for ${line.name || payload.orderNumber}`);
+        }
+
+        const product = await window.electronAPI.pos.products.getById(variantId);
+        if (!product || product.is_active === 0) {
+          throw new Error(`Product not available: ${line.name || variantId}`);
+        }
+        if ((Number(product.retail_price) || 0) <= 0) {
+          throw new Error(`Product has no selling price: ${resolveName(product, language)}`);
+        }
+
+        const saleClass = classifyProductSale(product);
+        if (saleClass.requiresScale) {
+          throw new Error(`Weighted product must be added manually: ${resolveName(product, language)}`);
+        }
+        const quantity = normalizeKioskQuantity(line.quantity);
+        const options = Array.isArray(line.options) ? line.options.join(', ') : '';
+        const item = buildRetailCartItem(product, saleClass, quantity, crypto.randomUUID());
+        const anomaly = findLinePriceAnomaly(item.price, product.retail_price);
+        if (anomaly) {
+          throw new Error(formatPriceAnomalyMessage(resolveName(product, language) || product.name, anomaly));
+        }
+        cartItems.push({
+          ...item,
+          notes: joinKioskLineNotes([options, line.note || null]),
+        });
+      }
+
+      for (const item of cartItems) {
+        await window.electronAPI.pos.dispatch({ type: 'cart/addItem', payload: item });
+        rememberLastLabelVariant(item.variantId);
+      }
+
+      document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
+      showScanToast(`Loaded kiosk order ${payload.orderNumber}`, 'ok');
+    } catch (err: any) {
+      rlog.error('[POSLayout] Kiosk order QR load failed:', err?.message ?? err);
+      await window.electronAPI.pos.dispatch({ type: 'cart/clear' });
+      showScanToast(err?.message || 'Kiosk order scan failed', 'err');
+    }
+  }, [dispatch, language, rememberLastLabelVariant, showScanToast, state?.cart.items.length]);
+
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const code = barcodeBuffer.trim();
       setBarcodeBuffer('');
+      const kioskOrder = decodeKitchenSelfOrderQr(code);
+      if (kioskOrder) {
+        document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
+        await loadKitchenSelfOrderQr(kioskOrder);
+        return;
+      }
       if (code === PRINT_LAST_CART_LABEL_COMMAND) {
         document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
         await handlePrintLastCartLabelCommand();
@@ -710,7 +825,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, loadKitchenSelfOrderQr, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
 
   // Sync language/mode from config
   useEffect(() => {
