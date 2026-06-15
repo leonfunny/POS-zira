@@ -134,4 +134,11 @@ describe('POSNET Thermal profile routing', () => {
     expect(classifyPrinterCategory(zebra)).toEqual({ targetType: 'LABEL', protocol: 'ZEBRA' });
     expect(requiresManualPosnetProtocolSelection(zebra)).toBe(false);
   });
+
+  it('does not treat generic VID_0483 as a global Xprinter identity', () => {
+    const xprinterPattern = BRAND_PATTERNS.find((pattern) => pattern.brand === 'Xprinter');
+
+    expect(xprinterPattern?.vids).toContain('1FC9');
+    expect(xprinterPattern?.vids).not.toContain('0483');
+  });
 });

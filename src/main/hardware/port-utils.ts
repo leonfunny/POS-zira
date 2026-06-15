@@ -262,6 +262,32 @@ export async function getPresentPrinterVids(): Promise<Set<string>> {
   }
 }
 
+async function isUsbPrintPortPresent(portName: string): Promise<boolean> {
+  const portUpper = portName.trim().toUpperCase();
+  if (!/^(USB\d+|DOT4_\d+)$/i.test(portUpper)) return false;
+
+  try {
+    const psScript =
+      "$ErrorActionPreference = 'SilentlyContinue'\n" +
+      "$ProgressPreference = 'SilentlyContinue'\n" +
+      `$port = '${portUpper.replace(/'/g, "''")}'\n` +
+      "$devices = Get-PnpDevice -PresentOnly -Status OK -ErrorAction SilentlyContinue | Where-Object {\n" +
+      "  $_.InstanceId -like 'USBPRINT\\*' -and $_.InstanceId.ToUpper().EndsWith($port)\n" +
+      "}\n" +
+      "if ($devices) { Write-Output 'PRESENT' }\n";
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { encoding: 'utf8', timeout: 8000 },
+    );
+    return stdout.includes('PRESENT');
+  } catch (err: any) {
+    logger.warn(`[PortUtils] USBPRINT port scan failed for ${portUpper}:`, err.message);
+    return false;
+  }
+}
+
 /**
  * Check whether a Windows spooler printer is PHYSICALLY PRESENT right now.
  *
@@ -328,10 +354,16 @@ export async function isWindowsPrinterPresent(printerName: string): Promise<bool
       return isPresent;
     }
 
-    // USB spooler port: cross-check there's at least one present printer USB device
-    // matching this printer's brand. This catches the case where Windows still
-    // shows the printer in the spooler but the cable was unplugged.
+    // USB/DOT4 spooler port: prefer an exact same-port USBPRINT presence check.
+    // Some receipt printers expose generic/non-branded USB identities, so brand VID
+    // matching remains a fallback rather than the only way to prove presence.
     if (/^USB\d+$/i.test(portUpper) || /^DOT4_\d+$/i.test(portUpper)) {
+      const samePortPresent = await isUsbPrintPortPresent(portUpper);
+      if (samePortPresent) {
+        logger.info(`[PortUtils] "${printerName}" on ${portUpper}: USBPRINT port present=true`);
+        return true;
+      }
+
       const presentVids = await getPresentPrinterVids();
       // Find brand pattern matching this printer name
       const nameLower = printerName.toLowerCase();
