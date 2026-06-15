@@ -1,5 +1,9 @@
 # Kitchen Self-Order MVP Plan
 
+> UI, modifier, media, and checkout behavior in this MVP document is superseded by
+> `docs/KITCHEN_SELF_ORDER_DESIGN_CONTRACT.md`. This file remains the reference for
+> the original local-order, printing, pickup-number, and QR recall architecture.
+
 Target checkout: `D:\POS-zira\docs\KITCHEN_SELF_ORDER_MVP_PLAN.md`
 
 Date: 2026-06-10
