@@ -129,6 +129,15 @@ function applyProduct(entry: SyncLogEntry): boolean {
       ['customerDisplaySortOrder', 'customer_display_sort_order'],
       existing?.customer_display_sort_order ?? null,
     ),
+    kiosk_media_json: encodeJsonField(p.kioskMedia ?? p.kiosk_media),
+    kiosk_modifier_groups_json: encodeJsonField(
+      p.kioskModifierGroups ?? p.kiosk_modifier_groups ?? p.modifierGroups,
+    ),
+    kiosk_note_enabled: resolveNullableBooleanInteger(
+      p,
+      ['kioskNoteEnabled', 'kiosk_note_enabled'],
+      existing?.kiosk_note_enabled ?? 0,
+    ),
   }]);
 
   return true;
@@ -604,6 +613,24 @@ function encodeNameTranslations(payload: any): string | null {
   return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null;
 }
 
+function encodeJsonField(raw: any): string | null {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'string') {
+    try {
+      JSON.parse(raw);
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw !== 'object') return null;
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return null;
+  }
+}
+
 function hasOwn(obj: any, key: string): boolean {
   return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -630,6 +657,17 @@ function resolveNullableInteger(payload: any, keys: string[], fallback: number |
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
+function resolveNullableBooleanInteger(
+  payload: any,
+  keys: string[],
+  fallback: number | null,
+): number | null {
+  const explicit = firstOwnValue(payload, keys);
+  if (!explicit.found) return fallback ?? null;
+  if (explicit.value == null || explicit.value === '') return null;
+  return explicit.value === false || explicit.value === 0 || explicit.value === '0' ? 0 : 1;
+}
+
 function resolveCatalogSection(payload: any, fallback: string | null): string | null {
   const explicit = firstOwnValue(payload, ['customerDisplaySection', 'customer_display_section']);
   if (!explicit.found) return fallback ?? null;
@@ -654,8 +692,11 @@ function applyCategory(entry: SyncLogEntry): boolean {
     customer_display_section: string | null;
     customer_display_sort_order: number | null;
     kitchen_print: number | null;
+    kiosk_modifier_groups_json: string | null;
   }>(
-    'SELECT name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print FROM categories WHERE id = ?',
+    `SELECT name_translations, customer_display_enabled, customer_display_section,
+            customer_display_sort_order, kitchen_print, kiosk_modifier_groups_json
+     FROM categories WHERE id = ?`,
     [entry.entity_id],
   );
 
@@ -667,8 +708,12 @@ function applyCategory(entry: SyncLogEntry): boolean {
     : (existing?.kitchen_print ?? 0);
 
   database.run(
-    `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO categories (
+      id, name, icon, color, sort_order, updated_at, name_translations,
+      customer_display_enabled, customer_display_section,
+      customer_display_sort_order, kitchen_print, kiosk_modifier_groups_json
+    )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.entity_id,
       p.name ?? '',
@@ -685,6 +730,9 @@ function applyCategory(entry: SyncLogEntry): boolean {
         existing?.customer_display_sort_order ?? null,
       ),
       kitchenPrint,
+      encodeJsonField(
+        p.kioskModifierGroups ?? p.kiosk_modifier_groups ?? p.modifierGroups,
+      ) ?? existing?.kiosk_modifier_groups_json ?? null,
     ],
   );
 

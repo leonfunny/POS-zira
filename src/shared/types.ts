@@ -567,9 +567,15 @@ export interface AgentConfig {
   kitchenSelfOrderMonitor?: number;
   kitchenSelfOrderLanguage?: 'pl' | 'en' | 'vi';
   kitchenSelfOrderDefaultFulfillment?: 'DINE_IN' | 'TAKEAWAY';
+  kitchenSelfOrderFulfillmentOptions?: Array<'DINE_IN' | 'TAKEAWAY'>;
   kitchenSelfOrderSlipPrinterType?: 'RECEIPT' | 'LABEL';
   kitchenSelfOrderSlipPrinterId?: string;
   kitchenSelfOrderSourceLabel?: string;
+  kitchenSelfOrderBrandName?: string;
+  kitchenSelfOrderLogoUrl?: string;
+  kitchenSelfOrderAccentColor?: string;
+  kitchenSelfOrderCheckoutMode?: 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
+  kitchenSelfOrderReleasePolicy?: 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
 
   // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
@@ -732,6 +738,8 @@ export interface KitchenTicketData {
   paymentStatus?: 'UNPAID' | 'PAID' | string | null;
   /** Optional customer-slip QR payload used by cashier POS to recall the cart. */
   qrPayload?: string | null;
+  /** Customer-facing brand shown on pickup slips. */
+  brandName?: string | null;
   items: KitchenTicketItem[];
 }
 

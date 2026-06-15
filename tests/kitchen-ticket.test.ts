@@ -111,6 +111,19 @@ describe('pickup number (so nhan do)', () => {
     expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/);
   });
 
+  it('uses the configured brand name on customer pickup slips', () => {
+    const lines = buildPickupSlipLines({
+      ...baseTicket,
+      brandName: 'BuBu Bubble Tea',
+      pickupNumber: '0008',
+      kind: 'PICKUP_SLIP',
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('BuBu Bubble Tea');
+    expect(text).not.toContain('SAIGON MARKET');
+  });
+
   it('prints a QR payload on unpaid kiosk pickup slips for cashier recall', () => {
     const lines = buildPickupSlipLines({
       ...baseTicket,

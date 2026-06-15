@@ -1510,6 +1510,23 @@ export class ApiClient {
       }
       return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null;
     };
+    const encodeJsonField = (raw: any): string | null => {
+      if (raw == null || raw === '') return null;
+      if (typeof raw === 'string') {
+        try {
+          JSON.parse(raw);
+          return raw;
+        } catch {
+          return null;
+        }
+      }
+      if (typeof raw !== 'object') return null;
+      try {
+        return JSON.stringify(raw);
+      } catch {
+        return null;
+      }
+    };
 
     // Extract unique categories from embedded template.category
     const categoryMap = new Map<string, any>();
@@ -1528,6 +1545,9 @@ export class ApiClient {
           kitchen_print: cat.kitchenPrint === undefined && cat.kitchen_print === undefined
             ? null
             : ((cat.kitchenPrint ?? cat.kitchen_print) ? 1 : 0),
+          kiosk_modifier_groups_json: encodeJsonField(
+            cat.kioskModifierGroups ?? cat.kiosk_modifier_groups ?? cat.modifierGroups,
+          ),
         });
       }
     }
@@ -1628,6 +1648,28 @@ export class ApiClient {
         sale_unit: item.saleUnit ?? item.sale_unit ?? item.template?.baseUnit ?? item.template?.base_unit ?? null,
         sell_by: item.sellBy ?? item.sell_by ?? item.template?.sellBy ?? item.template?.sell_by ?? 'PIECE',
         name_translations: encodeTranslations(translationSource),
+        kiosk_media_json: encodeJsonField(
+          item.kioskMedia ?? item.kiosk_media ?? item.template?.kioskMedia ?? item.template?.kiosk_media,
+        ),
+        kiosk_modifier_groups_json: encodeJsonField(
+          item.kioskModifierGroups
+            ?? item.kiosk_modifier_groups
+            ?? item.modifierGroups
+            ?? item.template?.kioskModifierGroups
+            ?? item.template?.kiosk_modifier_groups
+            ?? item.template?.modifierGroups,
+        ),
+        kiosk_note_enabled: (
+          item.kioskNoteEnabled
+          ?? item.kiosk_note_enabled
+          ?? item.template?.kioskNoteEnabled
+          ?? item.template?.kiosk_note_enabled
+        ) == null
+          ? null
+          : ((item.kioskNoteEnabled
+            ?? item.kiosk_note_enabled
+            ?? item.template?.kioskNoteEnabled
+            ?? item.template?.kiosk_note_enabled) ? 1 : 0),
       };
     });
 

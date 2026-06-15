@@ -314,9 +314,27 @@ const store = new Store<AgentConfig>({
     kitchenSelfOrderMonitor: { type: 'number', default: 0 },
     kitchenSelfOrderLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     kitchenSelfOrderDefaultFulfillment: { type: 'string', enum: ['DINE_IN', 'TAKEAWAY'], default: 'DINE_IN' },
+    kitchenSelfOrderFulfillmentOptions: {
+      type: 'array',
+      items: { type: 'string', enum: ['DINE_IN', 'TAKEAWAY'] },
+      default: ['DINE_IN', 'TAKEAWAY'],
+    },
     kitchenSelfOrderSlipPrinterType: { type: 'string', enum: ['RECEIPT', 'LABEL'], default: 'RECEIPT' },
     kitchenSelfOrderSlipPrinterId: { type: 'string', default: '' },
     kitchenSelfOrderSourceLabel: { type: 'string', default: 'PC-YURI' },
+    kitchenSelfOrderBrandName: { type: 'string', default: '' },
+    kitchenSelfOrderLogoUrl: { type: 'string', default: '' },
+    kitchenSelfOrderAccentColor: { type: 'string', default: '#DA7756' },
+    kitchenSelfOrderCheckoutMode: {
+      type: 'string',
+      enum: ['PAY_AT_COUNTER', 'KIOSK_TERMINAL', 'ORDER_ONLY'],
+      default: 'PAY_AT_COUNTER',
+    },
+    kitchenSelfOrderReleasePolicy: {
+      type: 'string',
+      enum: ['ON_SUBMIT', 'ON_PAYMENT_CONFIRMED'],
+      default: 'ON_SUBMIT',
+    },
     // Booksy Sync settings
     booksy: {
       type: 'object',

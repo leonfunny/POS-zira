@@ -1433,4 +1433,16 @@ export const migrations: Migration[] = [
         ON fiscal_daily_report_runs(status, printed_at);
     `,
   },
+  {
+    version: 45,
+    name: 'kitchen_self_order_catalog_metadata',
+    // Nullable server-owned customer kiosk metadata. Existing catalogs keep
+    // legacy CONTAIN images, no modifiers, and notes disabled.
+    up: `
+      ALTER TABLE product_variants ADD COLUMN kiosk_media_json TEXT;
+      ALTER TABLE product_variants ADD COLUMN kiosk_modifier_groups_json TEXT;
+      ALTER TABLE product_variants ADD COLUMN kiosk_note_enabled INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE categories ADD COLUMN kiosk_modifier_groups_json TEXT;
+    `,
+  },
 ];

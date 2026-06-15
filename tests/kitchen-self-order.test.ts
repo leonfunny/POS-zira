@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatKitchenSelfOrderNumber,
   normalizeKitchenSelfOrderQuantity,
+  resolveKitchenSelfOrderBrandName,
   sanitizeKitchenSelfOrderNote,
 } from '../src/shared/kitchen-self-order';
 
@@ -95,5 +96,47 @@ describe('kitchen self-order MVP wiring', () => {
     expect(appSource).toContain('function LanguageToggle');
     expect(appSource).not.toContain("setStep('language')");
     expect(appSource).not.toContain("setStep('fulfillment')");
+  });
+
+  it('uses tenant brand copy instead of the old Saigon MVP placeholder', () => {
+    expect(resolveKitchenSelfOrderBrandName({
+      kitchenSelfOrderBrandName: 'BuBu Bubble Tea',
+      salonName: 'Wrong Store',
+    })).toBe('BuBu Bubble Tea');
+    expect(resolveKitchenSelfOrderBrandName({ salonName: 'Bubu Cafe' })).toBe('Bubu Cafe');
+    expect(resolveKitchenSelfOrderBrandName({ authUser: { salonName: 'Auth Cafe' } })).toBe('Auth Cafe');
+    expect(resolveKitchenSelfOrderBrandName({})).toBe('Zira POS');
+
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    expect(appSource).not.toMatch(/Saigon Market/i);
+    expect(appSource).toContain('menu?.brand.name');
+    expect(appSource).toContain('menu?.brand.logoUrl');
+    expect(appSource).toContain('menuLabel={t.menu}');
+  });
+
+  it('renders drink-friendly product images and does not show food modifier chips globally', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+
+    expect(appSource).not.toContain('h-24 w-full object-cover');
+    expect(appSource).toContain('object-contain');
+    expect(appSource).not.toContain('QUICK_OPTIONS');
+    expect(appSource).not.toContain('no onion');
+    expect(appSource).not.toContain('less spicy');
+  });
+
+  it('prioritizes a four-column visual catalog over an oversized cart rail', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const cssSource = readSource('src/renderer/index.css');
+
+    expect(appSource).toContain('grid-cols-[minmax(0,1fr)_320px]');
+    expect(appSource).toContain('className="kso-product-grid"');
+    expect(appSource).toContain('className="kso-product-media"');
+    expect(cssSource).toContain('@media (min-width: 1280px)');
+    expect(cssSource).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+    expect(cssSource).toContain('@media (min-width: 1600px)');
+    expect(cssSource).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(cssSource).toContain('height: 230px');
+    expect(appSource).not.toContain('grid-cols-[minmax(0,1fr)_390px]');
+    expect(appSource).not.toContain('h-36 w-full');
   });
 });

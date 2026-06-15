@@ -228,6 +228,97 @@ body.self-checkout-root {
   padding-bottom: 0.5rem;
 }
 
+.kso-shell {
+  --kso-accent: #da7756;
+}
+
+.kso-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kso-product-card {
+  display: flex;
+  height: 324px;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: var(--sc-surface);
+  text-align: left;
+  box-shadow: 0 5px 16px rgba(32, 36, 33, 0.08);
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+}
+
+.kso-product-card:active {
+  transform: scale(0.99);
+  border-color: var(--kso-accent);
+}
+
+.kso-product-media {
+  height: 216px;
+  flex: 0 0 216px;
+}
+
+.kso-primary-button,
+.kso-secondary-button {
+  display: inline-flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 0 18px;
+  font-size: 18px;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+.kso-primary-button {
+  background: var(--kso-accent);
+  color: white;
+}
+
+.kso-secondary-button {
+  border: 1px solid var(--sc-border);
+  background: white;
+  color: var(--sc-ink);
+}
+
+.kso-primary-button:active,
+.kso-secondary-button:active {
+  transform: scale(0.985);
+}
+
+.kso-primary-button:disabled {
+  background: #c8cec8;
+  color: rgba(32, 36, 33, 0.55);
+  cursor: not-allowed;
+}
+
+@media (min-width: 1280px) {
+  .kso-product-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1600px) {
+  .kso-product-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .kso-product-card {
+    height: 340px;
+  }
+
+  .kso-product-media {
+    height: 230px;
+    flex-basis: 230px;
+  }
+}
+
 .sc-secondary-action {
   min-height: 56px;
   border: 2px solid var(--sc-border);

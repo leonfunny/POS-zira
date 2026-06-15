@@ -48,6 +48,11 @@ function formatTimeHHMM(iso: string): string {
   return `${hh}:${mm}`;
 }
 
+function pickupSlipBrandName(data: KitchenTicketData): string {
+  const text = String(data.brandName || '').replace(/\s+/g, ' ').trim();
+  return text || 'Zira POS';
+}
+
 function formatQuantity(item: KitchenTicketItem): string {
   const unit = (item.unit || '').trim().toLowerCase();
   const isWeighted = unit && unit !== 'szt' && unit !== 'pcs';
@@ -132,7 +137,7 @@ export function buildPickupSlipLines(data: KitchenTicketData): EscPosPlainLine[]
     },
   }[lang];
   const lines: EscPosPlainLine[] = [];
-  lines.push({ text: 'SAIGON MARKET', bold: true, center: true });
+  lines.push({ text: pickupSlipBrandName(data), bold: true, center: true });
   lines.push({ text: `${copy.title} / NR ODBIORU`, bold: true, center: true });
   lines.push({ text: number, bold: true, center: true, textSize: 'double-size' });
   if (fulfillment) {

@@ -45,6 +45,7 @@ import { StaffSync } from '../sync/staff-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
+import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
@@ -97,8 +98,13 @@ import type {
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import {
   KITCHEN_SELF_ORDER_QR_PREFIX,
+  formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
+  parseKitchenSelfOrderOptionsJson,
+  resolveKitchenSelfOrderBrandName,
+  resolveKitchenSelfOrderCheckoutAction,
+  validateKitchenSelfOrderModifierSelections,
   type KitchenSelfOrderSubmitInput,
 } from '../../shared/kitchen-self-order';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
@@ -150,15 +156,8 @@ function base64UrlEncodeUtf8(value: string): string {
 }
 
 function parseKitchenSelfOrderOptions(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
-      : [];
-  } catch {
-    return [];
-  }
+  const parsed = parseKitchenSelfOrderOptionsJson(value);
+  return formatKitchenSelfOrderModifierLabels(parsed.modifiers, parsed.legacyOptions);
 }
 
 function compactKitchenSelfOrderQrText(value: string | null): string | undefined {
@@ -2781,6 +2780,7 @@ export class PosModule extends BaseModule {
             source: finalizedOrder?.source || 'SELF_CHECKOUT',
             pickupNumber,
             kind: 'PICKUP_SLIP',
+            brandName: resolveKitchenSelfOrderBrandName(getConfig()),
             items: [],
           };
           try {
@@ -2821,18 +2821,58 @@ export class PosModule extends BaseModule {
       }
     });
 
+    ipcMain.handle('kitchen-self-order:getMenu', () => buildKitchenSelfOrderMenu({
+      config: getConfig(),
+      categories: productRepo.getCategories(),
+      products: productRepo.getAll(),
+    }));
+
     ipcMain.handle('kitchen-self-order:submit', async (_e, payload: KitchenSelfOrderSubmitInput) => {
       try {
         const cfg = getConfig();
+        const menu = buildKitchenSelfOrderMenu({
+          config: cfg,
+          categories: productRepo.getCategories(),
+          products: productRepo.getAll(),
+        });
+        if (
+          resolveKitchenSelfOrderCheckoutAction(
+            menu.policies.checkoutMode,
+            menu.policies.kitchenReleasePolicy,
+          ) === 'REQUIRE_TERMINAL'
+        ) {
+          return { success: false, error: 'payment_confirmation_required' };
+        }
         const customerLanguage = normalizeKitchenSelfOrderLanguage(payload?.customerLanguage);
         const fulfillmentType = normalizeKitchenSelfOrderFulfillment(payload?.fulfillmentType);
         const sourceLabel = String(payload?.sourceLabel || cfg.kitchenSelfOrderSourceLabel || 'PC-YURI').trim() || 'PC-YURI';
+        const brandName = resolveKitchenSelfOrderBrandName(cfg);
+        const normalizedItems = (payload?.items || []).map((item) => {
+          const product = menu.products.find((candidate) => candidate.id === item.variantId);
+          if (!product) throw new Error('product_unavailable');
+          const groups = product.modifierGroupAttachmentIds
+            .map((attachmentId) => menu.modifierGroups.find((group) =>
+              group.attachmentId === attachmentId))
+            .filter((group): group is NonNullable<typeof group> => !!group);
+          const validation = validateKitchenSelfOrderModifierSelections(groups, item.modifiers);
+          if (!validation.valid) throw new Error(`invalid_modifiers:${product.id}`);
+          return {
+            variantId: product.id,
+            productId: product.templateId,
+            name: product.name,
+            quantity: item.quantity,
+            note: product.noteEnabled ? item.note : null,
+            modifiers: validation.modifiers,
+            options: groups.length === 0 ? item.options : [],
+          };
+        });
         const created = kitchenSelfOrderRepo.create({
           ...payload,
           customerLanguage,
           fulfillmentType,
           sourceLabel,
           sourceMachineId: cfg.machineId || null,
+          items: normalizedItems,
         });
         const qrPayload = buildKitchenSelfOrderQrPayload(created);
 
@@ -2847,6 +2887,7 @@ export class PosModule extends BaseModule {
           pickupNumber: created.order_number,
           paymentStatus: 'UNPAID',
           qrPayload,
+          brandName,
           items: created.items.map((item) => ({
             name: item.name_snapshot,
             quantity: item.quantity,
@@ -3184,6 +3225,7 @@ export class PosModule extends BaseModule {
         source: order.source || 'POS',
         isReprint: !!opts.reprint,
         pickupNumber: order.kitchen_number ?? null,
+        brandName: resolveKitchenSelfOrderBrandName(getConfig()),
         items: kitchenItems.map((item) => ({
           name: item.name,
           quantity: Number(item.sale_quantity ?? item.quantity) || 1,

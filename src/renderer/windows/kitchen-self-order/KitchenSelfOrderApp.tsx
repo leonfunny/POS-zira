@@ -2,35 +2,35 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
-  ChefHat,
-  Clock,
+  ChevronRight,
+  CircleAlert,
   Home,
   Image as ImageIcon,
   Minus,
+  Pencil,
   Plus,
-  Printer,
-  ReceiptText,
   Search,
   ShoppingCart,
+  X,
 } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import {
+  formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
   normalizeKitchenSelfOrderQuantity,
+  resolveKitchenSelfOrderCheckoutAction,
   sanitizeKitchenSelfOrderNote,
+  validateKitchenSelfOrderModifierSelections,
   type KitchenSelfOrderFulfillment,
   type KitchenSelfOrderLanguage,
+  type KitchenSelfOrderMenu,
+  type KitchenSelfOrderMenuCategory,
+  type KitchenSelfOrderMenuProduct,
+  type KitchenSelfOrderModifierGroup,
+  type KitchenSelfOrderModifierSnapshot,
 } from '../../../shared/kitchen-self-order';
-import {
-  getCategoryDepartment,
-  getProductPriceGrosze,
-  normalizeCatalogText,
-} from '../self-checkout/catalog-model';
-import type {
-  CatalogCategory,
-  SearchProduct,
-} from '../self-checkout/types';
+import { normalizeCatalogText } from '../self-checkout/catalog-model';
 
 declare global {
   interface Window {
@@ -38,174 +38,227 @@ declare global {
   }
 }
 
-type Step = 'menu' | 'confirm' | 'done';
+type Step = 'menu' | 'review' | 'terminal' | 'done';
 
 interface CartItem {
   lineId: string;
-  product: SearchProduct;
+  product: KitchenSelfOrderMenuProduct;
   quantity: number;
   note: string;
-  options: string[];
+  modifiers: KitchenSelfOrderModifierSnapshot[];
+}
+
+interface ConfiguratorState {
+  product: KitchenSelfOrderMenuProduct;
+  lineId: string | null;
 }
 
 interface SubmitResult {
   success?: boolean;
   orderNumber?: string;
-  kitchenPrinted?: boolean;
-  customerSlipPrinted?: boolean;
   error?: string | null;
 }
 
-const QUICK_OPTIONS: Record<KitchenSelfOrderLanguage, string[]> = {
-  pl: ['bez cebuli', 'mniej ostre', 'extra sos', 'bez kolendry'],
-  vi: ['khong hanh', 'it cay', 'them sot', 'khong rau mui'],
-  en: ['no onion', 'less spicy', 'extra sauce', 'no coriander'],
-};
-
 const COPY = {
   pl: {
-    chooseLanguage: 'Wybierz jezyk',
-    fulfillmentTitle: 'Gdzie jesz?',
-    dineIn: 'Na miejscu',
-    takeaway: 'Na wynos',
     menu: 'Menu',
     all: 'Wszystko',
-    search: 'Szukaj dania',
+    search: 'Szukaj w menu',
     cart: 'Koszyk',
-    emptyCart: 'Dodaj dania z menu.',
-    confirm: 'Sprawdz zamowienie',
-    submit: 'Zloz zamowienie',
-    submitting: 'Wysylanie...',
+    emptyCart: 'Wybierz pozycje z menu.',
+    reviewOrder: 'Sprawdź zamówienie',
+    reviewTitle: 'Twoje zamówienie',
+    placeOrder: 'Złóż zamówienie',
+    submitting: 'Wysyłanie...',
+    dineIn: 'Na miejscu',
+    takeaway: 'Na wynos',
+    note: 'Uwagi do przygotowania',
+    edit: 'Zmień',
+    add: 'Dodaj do koszyka',
+    save: 'Zapisz zmiany',
+    cancel: 'Anuluj',
     back: 'Wstecz',
-    note: 'Notatka dla kuchni',
-    doneTitle: 'Numer zamowienia',
-    keepNumber: 'Zachowaj numer zamowienia.',
-    newOrder: 'Nowe zamowienie',
-    kitchenPrinted: 'Kuchnia wydrukowana',
-    kitchenFailed: 'Druk kuchni nieudany',
-    slipPrinted: 'Slip wydrukowany',
-    slipMissing: 'Slip nie jest wydrukowany',
-    change: 'Zmien',
-    noProducts: 'Brak pozycji menu.',
+    required: 'Wymagane',
+    optional: 'Opcjonalne',
+    chooseUpTo: 'Wybierz maksymalnie',
+    subtotal: 'Razem',
+    noProducts: 'Brak pozycji w tej kategorii.',
+    loading: 'Ładowanie menu...',
+    submitError: 'Nie udało się złożyć zamówienia. Spróbuj ponownie lub poproś obsługę.',
+    terminalTitle: 'Płatność przy tym kiosku jest chwilowo niedostępna',
+    terminalBody: 'Wróć do zamówienia lub poproś obsługę o pomoc.',
+    returnReview: 'Wróć do zamówienia',
+    doneTitle: 'Numer zamówienia',
+    keepNumber: 'Zachowaj ten numer do odbioru.',
+    payAtCounter: 'Zapłać przy kasie i pokaż ten numer.',
+    newOrder: 'Nowe zamówienie',
+    autoReset: 'Nowe zamówienie rozpocznie się za',
+    seconds: 's',
   },
   vi: {
-    chooseLanguage: 'Chon ngon ngu',
-    fulfillmentTitle: 'Ban an o dau?',
-    dineIn: 'An tai quan',
-    takeaway: 'Mang di',
-    menu: 'Menu',
-    all: 'Tat ca',
-    search: 'Tim mon',
-    cart: 'Gio mon',
-    emptyCart: 'Chon mon trong menu.',
-    confirm: 'Kiem tra don',
-    submit: 'Dat mon',
-    submitting: 'Dang gui...',
-    back: 'Quay lai',
-    note: 'Ghi chu cho bep',
-    doneTitle: 'So don',
-    keepNumber: 'Vui long giu so nay de nhan mon.',
-    newOrder: 'Don moi',
-    kitchenPrinted: 'Da in bep',
-    kitchenFailed: 'Chua in duoc bep',
-    slipPrinted: 'Da in slip',
-    slipMissing: 'Chua in slip',
-    change: 'Doi',
-    noProducts: 'Chua co mon trong menu.',
+    menu: 'Thực đơn',
+    all: 'Tất cả',
+    search: 'Tìm trong thực đơn',
+    cart: 'Giỏ món',
+    emptyCart: 'Chọn món từ thực đơn.',
+    reviewOrder: 'Kiểm tra đơn',
+    reviewTitle: 'Đơn của bạn',
+    placeOrder: 'Đặt món',
+    submitting: 'Đang gửi...',
+    dineIn: 'Ăn tại quán',
+    takeaway: 'Mang đi',
+    note: 'Ghi chú chuẩn bị',
+    edit: 'Sửa',
+    add: 'Thêm vào giỏ',
+    save: 'Lưu thay đổi',
+    cancel: 'Hủy',
+    back: 'Quay lại',
+    required: 'Bắt buộc',
+    optional: 'Không bắt buộc',
+    chooseUpTo: 'Chọn tối đa',
+    subtotal: 'Tổng cộng',
+    noProducts: 'Không có món trong danh mục này.',
+    loading: 'Đang tải thực đơn...',
+    submitError: 'Không thể gửi đơn. Vui lòng thử lại hoặc nhờ nhân viên hỗ trợ.',
+    terminalTitle: 'Thanh toán tại kiosk hiện chưa khả dụng',
+    terminalBody: 'Quay lại đơn hàng hoặc nhờ nhân viên hỗ trợ.',
+    returnReview: 'Quay lại đơn',
+    doneTitle: 'Số đơn',
+    keepNumber: 'Giữ số này để nhận món.',
+    payAtCounter: 'Thanh toán tại quầy và đưa số này cho nhân viên.',
+    newOrder: 'Đơn mới',
+    autoReset: 'Đơn mới sẽ bắt đầu sau',
+    seconds: 'giây',
   },
   en: {
-    chooseLanguage: 'Choose language',
-    fulfillmentTitle: 'Where will you eat?',
-    dineIn: 'Dine in',
-    takeaway: 'Takeaway',
     menu: 'Menu',
     all: 'All',
-    search: 'Search dishes',
+    search: 'Search menu',
     cart: 'Cart',
-    emptyCart: 'Add dishes from the menu.',
-    confirm: 'Review order',
-    submit: 'Place order',
+    emptyCart: 'Choose items from the menu.',
+    reviewOrder: 'Review order',
+    reviewTitle: 'Your order',
+    placeOrder: 'Place order',
     submitting: 'Sending...',
+    dineIn: 'Dine in',
+    takeaway: 'Takeaway',
+    note: 'Preparation note',
+    edit: 'Edit',
+    add: 'Add to cart',
+    save: 'Save changes',
+    cancel: 'Cancel',
     back: 'Back',
-    note: 'Kitchen note',
+    required: 'Required',
+    optional: 'Optional',
+    chooseUpTo: 'Choose up to',
+    subtotal: 'Total',
+    noProducts: 'No items in this category.',
+    loading: 'Loading menu...',
+    submitError: 'We could not place the order. Try again or ask a staff member for help.',
+    terminalTitle: 'Kiosk payment is temporarily unavailable',
+    terminalBody: 'Return to your order or ask a staff member for help.',
+    returnReview: 'Return to order',
     doneTitle: 'Order number',
     keepNumber: 'Keep this number for pickup.',
+    payAtCounter: 'Pay at the counter and show this number.',
     newOrder: 'New order',
-    kitchenPrinted: 'Kitchen printed',
-    kitchenFailed: 'Kitchen print failed',
-    slipPrinted: 'Slip printed',
-    slipMissing: 'Slip not printed',
-    change: 'Change',
-    noProducts: 'No menu items.',
+    autoReset: 'A new order will start in',
+    seconds: 's',
   },
 };
+
 type CopyText = (typeof COPY)[KitchenSelfOrderLanguage];
 
 function formatPLN(grosze: number): string {
-  if (!Number.isFinite(grosze) || grosze <= 0) return '';
-  return `${(Math.round(grosze) / 100).toFixed(2).replace('.', ',')} zl`;
+  return `${(Math.round(grosze) / 100).toFixed(2).replace('.', ',')} zł`;
 }
 
 function makeLineId(productId: string): string {
   return `${productId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function isKitchenCategory(category: CatalogCategory | undefined): boolean {
-  return !!category && (category.kitchen_print === 1 || getCategoryDepartment(category) === 'kitchen');
+function localizedName(
+  entity: { name: string; nameTranslations?: string | null },
+  language: KitchenSelfOrderLanguage,
+): string {
+  return resolveName({
+    name: entity.name,
+    name_translations: entity.nameTranslations,
+  }, language);
 }
 
-function buildKitchenCatalog(categories: CatalogCategory[], products: SearchProduct[]) {
-  const byId = new Map(categories.map((category) => [category.id, category]));
-  const kitchenProducts = products.filter((product) => isKitchenCategory(product.category_id ? byId.get(product.category_id) : undefined));
-  if (kitchenProducts.length === 0) {
-    return { categories, products };
-  }
-  const ids = new Set(kitchenProducts.map((product) => product.category_id).filter(Boolean));
-  return {
-    categories: categories.filter((category) => ids.has(category.id)),
-    products: kitchenProducts,
-  };
+function modifierTotal(item: Pick<CartItem, 'modifiers'>): number {
+  return item.modifiers.reduce(
+    (sum, modifier) => sum + modifier.priceDeltaGrosze * modifier.quantity,
+    0,
+  );
+}
+
+function lineTotal(item: CartItem): number {
+  return (item.product.priceGrosze + modifierTotal(item)) * item.quantity;
+}
+
+function cartTotal(cart: CartItem[]): number {
+  return cart.reduce((sum, item) => sum + lineTotal(item), 0);
+}
+
+function defaultModifiers(groups: KitchenSelfOrderModifierGroup[]): KitchenSelfOrderModifierSnapshot[] {
+  return groups.flatMap((group) =>
+    group.options
+      .filter((option) => option.isDefault && option.isAvailable)
+      .slice(0, group.maxSelections)
+      .map((option) => ({
+        groupId: group.id,
+        groupName: group.name,
+        optionId: option.id,
+        optionName: option.name,
+        quantity: 1,
+        priceDeltaGrosze: option.priceDeltaGrosze,
+      })));
 }
 
 export default function KitchenSelfOrderApp() {
   const [step, setStep] = useState<Step>('menu');
   const [language, setLanguage] = useState<KitchenSelfOrderLanguage>('pl');
   const [fulfillment, setFulfillment] = useState<KitchenSelfOrderFulfillment>('DINE_IN');
-  const [categories, setCategories] = useState<CatalogCategory[]>([]);
-  const [products, setProducts] = useState<SearchProduct[]>([]);
+  const [menu, setMenu] = useState<KitchenSelfOrderMenu | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const [configurator, setConfigurator] = useState<ConfiguratorState | null>(null);
+  const [loadingMenu, setLoadingMenu] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+  const [resetCountdown, setResetCountdown] = useState(20);
   const t = COPY[language];
 
-  const refreshCatalog = useCallback(async () => {
-    setLoadingCatalog(true);
+  const refreshMenu = useCallback(async () => {
+    setLoadingMenu(true);
     try {
-      const [categoryRows, productRows] = await Promise.all([
-        window.electronAPI?.pos?.categories?.getAll?.().catch(() => []),
-        window.electronAPI?.pos?.products?.getAll?.().catch(() => []),
-      ]);
-      const built = buildKitchenCatalog(categoryRows || [], productRows || []);
-      setCategories(built.categories);
-      setProducts(built.products);
-      setActiveCategoryId((current) => current && built.categories.some((category) => category.id === current) ? current : null);
+      const nextMenu = await window.electronAPI?.kitchenSelfOrder?.getMenu?.();
+      if (nextMenu) {
+        setMenu(nextMenu);
+        setActiveCategoryId((current) =>
+          current && nextMenu.categories.some((category: KitchenSelfOrderMenuCategory) =>
+            category.id === current)
+            ? current
+            : null);
+      }
     } finally {
-      setLoadingCatalog(false);
+      setLoadingMenu(false);
     }
   }, []);
 
   useEffect(() => {
-    void refreshCatalog();
-    const unsubscribe = window.electronAPI?.pos?.sync?.onProductsSynced?.(() => {
-      void refreshCatalog();
+    void refreshMenu();
+    const unsubscribe = window.electronAPI?.kitchenSelfOrder?.onMenuChanged?.(() => {
+      void refreshMenu();
     });
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [refreshCatalog]);
+  }, [refreshMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,9 +267,11 @@ export default function KitchenSelfOrderApp() {
         const config = await window.electronAPI?.getConfig?.();
         if (cancelled || !config) return;
         setLanguage(normalizeKitchenSelfOrderLanguage(config.kitchenSelfOrderLanguage));
-        setFulfillment(normalizeKitchenSelfOrderFulfillment(config.kitchenSelfOrderDefaultFulfillment));
+        setFulfillment(normalizeKitchenSelfOrderFulfillment(
+          config.kitchenSelfOrderDefaultFulfillment,
+        ));
       } catch {
-        /* keep defaults */
+        /* keep safe defaults */
       }
     })();
     return () => {
@@ -224,23 +279,68 @@ export default function KitchenSelfOrderApp() {
     };
   }, []);
 
+  const resetSession = useCallback(() => {
+    setCart([]);
+    setQuery('');
+    setActiveCategoryId(null);
+    setConfigurator(null);
+    setSubmitResult(null);
+    setCustomerError(null);
+    setSubmitting(false);
+    setResetCountdown(20);
+    setStep('menu');
+  }, []);
+
+  useEffect(() => {
+    if (step !== 'done') return undefined;
+    setResetCountdown(20);
+    const interval = window.setInterval(() => {
+      setResetCountdown((current) => {
+        if (current <= 1) {
+          window.clearInterval(interval);
+          resetSession();
+          return 20;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [resetSession, step]);
+
+  useEffect(() => {
+    if (!menu || menu.policies.fulfillmentOptions.includes(fulfillment)) return;
+    setFulfillment(menu.policies.fulfillmentOptions[0]);
+  }, [fulfillment, menu]);
+
   const visibleProducts = useMemo(() => {
+    if (!menu) return [];
     const normalized = normalizeCatalogText(query);
-    return products
-      .filter((product) => !activeCategoryId || product.category_id === activeCategoryId)
-      .filter((product) => {
-        if (!normalized) return true;
-        const haystack = normalizeCatalogText(`${product.name || ''} ${product.sku || ''} ${product.barcode || ''}`);
-        return haystack.includes(normalized);
-      })
-      .slice(0, 80);
-  }, [activeCategoryId, products, query]);
+    return menu.products
+      .filter((product) => !activeCategoryId || product.categoryId === activeCategoryId)
+      .filter((product) =>
+        !normalized || normalizeCatalogText(
+          `${product.name} ${product.nameTranslations || ''}`,
+        ).includes(normalized))
+      .slice(0, 120);
+  }, [activeCategoryId, menu, query]);
 
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const groupsForProduct = useCallback((product: KitchenSelfOrderMenuProduct) => {
+    if (!menu) return [];
+    return product.modifierGroupAttachmentIds
+      .map((attachmentId) => menu.modifierGroups.find((group) =>
+        group.attachmentId === attachmentId))
+      .filter((group): group is KitchenSelfOrderModifierGroup => !!group);
+  }, [menu]);
 
-  const addProduct = (product: SearchProduct) => {
+  const openProduct = (product: KitchenSelfOrderMenuProduct) => {
+    const groups = groupsForProduct(product);
+    if (groups.length > 0) {
+      setConfigurator({ product, lineId: null });
+      return;
+    }
     setCart((current) => {
-      const existing = current.find((item) => item.product.id === product.id && item.note === '' && item.options.length === 0);
+      const existing = current.find((item) =>
+        item.product.id === product.id && item.modifiers.length === 0 && item.note === '');
       if (existing) {
         return current.map((item) => item.lineId === existing.lineId
           ? { ...item, quantity: normalizeKitchenSelfOrderQuantity(item.quantity + 1) }
@@ -253,98 +353,156 @@ export default function KitchenSelfOrderApp() {
           product,
           quantity: 1,
           note: '',
-          options: [],
+          modifiers: [],
         },
       ];
     });
   };
 
-  const updateCartLine = (lineId: string, patch: Partial<CartItem>) => {
+  const saveConfiguredItem = (
+    product: KitchenSelfOrderMenuProduct,
+    modifiers: KitchenSelfOrderModifierSnapshot[],
+    note: string,
+    lineId: string | null,
+  ) => {
+    setCart((current) => {
+      if (lineId) {
+        return current.map((item) => item.lineId === lineId
+          ? { ...item, modifiers, note }
+          : item);
+      }
+      return [
+        ...current,
+        {
+          lineId: makeLineId(product.id),
+          product,
+          quantity: 1,
+          note,
+          modifiers,
+        },
+      ];
+    });
+    setConfigurator(null);
+  };
+
+  const updateQuantity = (lineId: string, quantity: number) => {
     setCart((current) => current
-      .map((item) => item.lineId === lineId ? { ...item, ...patch } : item)
+      .map((item) => item.lineId === lineId ? { ...item, quantity } : item)
       .filter((item) => item.quantity > 0));
   };
 
-  const resetSession = () => {
-    setCart([]);
-    setQuery('');
-    setActiveCategoryId(null);
-    setSubmitResult(null);
-    setSubmitting(false);
-    setStep('menu');
+  const editLine = (lineId: string) => {
+    const item = cart.find((candidate) => candidate.lineId === lineId);
+    if (item) setConfigurator({ product: item.product, lineId });
   };
 
   const submitOrder = async () => {
-    if (cart.length === 0 || submitting) return;
+    if (!menu || cart.length === 0 || submitting) return;
+    const checkoutAction = resolveKitchenSelfOrderCheckoutAction(
+      menu.policies.checkoutMode,
+      menu.policies.kitchenReleasePolicy,
+    );
+    if (checkoutAction === 'REQUIRE_TERMINAL') {
+      setStep('terminal');
+      return;
+    }
+
     setSubmitting(true);
-    setSubmitResult(null);
+    setCustomerError(null);
     try {
       const result = await window.electronAPI?.kitchenSelfOrder?.submit?.({
         customerLanguage: language,
         fulfillmentType: fulfillment,
         items: cart.map((item) => ({
           variantId: item.product.id,
-          productId: item.product.template_id || null,
+          productId: item.product.templateId,
           name: item.product.name,
           quantity: item.quantity,
           note: sanitizeKitchenSelfOrderNote(item.note),
-          options: item.options,
+          modifiers: item.modifiers,
         })),
       });
       setSubmitResult(result || { success: false, error: 'no_response' });
       if (result?.success) {
         setCart([]);
         setStep('done');
+      } else {
+        setCustomerError(t.submitError);
       }
-    } catch (err: any) {
-      setSubmitResult({ success: false, error: err?.message || String(err) });
+    } catch {
+      setCustomerError(t.submitError);
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (step === 'confirm') {
+  const themeStyle = {
+    '--kso-accent': menu?.brand.accentColor || '#DA7756',
+  } as React.CSSProperties;
+
+  if (step === 'review') {
     return (
-      <KioskShell>
-        <div className="grid h-full grid-rows-[auto_1fr_auto] gap-5 p-5">
-          <header className="flex items-center justify-between gap-4">
-            <TopBack onBack={() => setStep('menu')} label={t.back} />
-            <h1 className="text-3xl font-black text-[var(--sc-ink)]">{t.confirm}</h1>
-            <div className="flex items-center gap-3">
-              <FulfillmentToggle
-                t={t}
-                fulfillment={fulfillment}
-                onChange={setFulfillment}
-              />
-              <LanguageToggle language={language} onChange={setLanguage} />
-            </div>
-          </header>
+      <KioskShell style={themeStyle}>
+        <ReviewScreen
+          cart={cart}
+          fulfillment={fulfillment}
+          fulfillmentOptions={menu?.policies.fulfillmentOptions || ['DINE_IN', 'TAKEAWAY']}
+          language={language}
+          t={t}
+          total={cartTotal(cart)}
+          submitting={submitting}
+          error={customerError}
+          onBack={() => setStep('menu')}
+          onEdit={editLine}
+          onQuantity={updateQuantity}
+          onSubmit={submitOrder}
+          onFulfillment={setFulfillment}
+          onLanguage={setLanguage}
+        />
+        {configurator && menu && (
+          <ProductConfigurator
+            key={`${configurator.product.id}:${configurator.lineId || 'new'}`}
+            product={configurator.product}
+            groups={groupsForProduct(configurator.product)}
+            initialItem={configurator.lineId
+              ? cart.find((item) => item.lineId === configurator.lineId) || null
+              : null}
+            language={language}
+            t={t}
+            onCancel={() => setConfigurator(null)}
+            onSave={(modifiers, note) => saveConfiguredItem(
+              configurator.product,
+              modifiers,
+              note,
+              configurator.lineId,
+            )}
+          />
+        )}
+      </KioskShell>
+    );
+  }
 
-          <div className="overflow-y-auto rounded-2xl border border-[var(--sc-border)] bg-white p-4">
-            <CartList
-              cart={cart}
-              language={language}
-              t={t}
-              editable
-              onUpdate={updateCartLine}
-            />
+  if (step === 'terminal') {
+    return (
+      <KioskShell style={themeStyle}>
+        <div className="flex h-full items-center justify-center p-8">
+          <div className="w-full max-w-2xl text-center">
+            <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-amber-50 text-amber-800">
+              <CircleAlert size={50} />
+            </div>
+            <h1 className="mt-7 text-4xl font-black text-[var(--sc-ink)]">{t.terminalTitle}</h1>
+            <p className="mx-auto mt-4 max-w-xl text-xl font-semibold leading-8 text-[var(--sc-muted)]">
+              {t.terminalBody}
+            </p>
+            <button
+              type="button"
+              onClick={() => setStep('review')}
+              className="kso-primary-button mt-8 min-w-[320px]"
+            >
+              <ArrowLeft size={24} />
+              {t.returnReview}
+            </button>
           </div>
-
-          {submitResult?.error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
-              {submitResult.error}
-            </div>
-          )}
-
-          <button
-            type="button"
-            disabled={cart.length === 0 || submitting}
-            onClick={submitOrder}
-            className="sc-action flex min-h-[78px] items-center justify-center gap-3 text-2xl"
-          >
-            <ReceiptText size={26} />
-            {submitting ? t.submitting : t.submit}
-          </button>
         </div>
       </KioskShell>
     );
@@ -352,206 +510,217 @@ export default function KitchenSelfOrderApp() {
 
   if (step === 'done') {
     const orderNumber = submitResult?.orderNumber || 'K----';
+    const completionText = menu?.policies.checkoutMode === 'PAY_AT_COUNTER'
+      ? t.payAtCounter
+      : t.keepNumber;
     return (
-      <KioskShell>
-        <div className="mx-auto flex h-full max-w-4xl flex-col items-center justify-center gap-7 px-8 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-            <Check size={38} />
+      <KioskShell style={themeStyle}>
+        <div className="mx-auto flex h-full max-w-4xl flex-col items-center justify-center gap-6 px-8 text-center">
+          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-50 text-[var(--sc-success)]">
+            <Check size={46} strokeWidth={3} />
           </div>
           <div>
             <div className="text-2xl font-black text-[var(--sc-muted)]">{t.doneTitle}</div>
-            <div className="mt-3 rounded-[28px] bg-[var(--sc-ink)] px-12 py-7 text-7xl font-black text-white">
+            <div className="mt-3 rounded-3xl bg-[var(--sc-ink)] px-14 py-7 text-7xl font-black text-white">
               {orderNumber}
             </div>
-            <p className="mt-5 text-2xl font-bold text-[var(--sc-ink)]">{t.keepNumber}</p>
+            <p className="mx-auto mt-5 max-w-2xl text-2xl font-bold text-[var(--sc-ink)]">
+              {completionText}
+            </p>
           </div>
-
-          <div className="grid w-full gap-3 md:grid-cols-2">
-            <StatusPill
-              ok={!!submitResult?.kitchenPrinted}
-              icon={<ChefHat size={22} />}
-              label={submitResult?.kitchenPrinted ? t.kitchenPrinted : t.kitchenFailed}
-            />
-            <StatusPill
-              ok={!!submitResult?.customerSlipPrinted}
-              icon={<Printer size={22} />}
-              label={submitResult?.customerSlipPrinted ? t.slipPrinted : t.slipMissing}
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={resetSession}
-            className="sc-action flex min-h-[72px] min-w-[260px] items-center justify-center gap-3 px-8 text-xl"
-          >
+          <button type="button" onClick={resetSession} className="kso-primary-button min-w-[280px]">
             <Home size={24} />
             {t.newOrder}
           </button>
+          <div className="text-base font-bold text-[var(--sc-muted)]">
+            {t.autoReset} {resetCountdown} {t.seconds}
+          </div>
         </div>
       </KioskShell>
     );
   }
 
   return (
-    <KioskShell>
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_390px] gap-5 p-5">
-        <main className="grid min-h-0 grid-rows-[auto_auto_1fr] gap-4">
-          <header className="flex items-center justify-between gap-5">
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-black uppercase tracking-[0.16em] text-[var(--sc-primary-deep)]">
-                Saigon Market
-              </div>
-              <h1 className="text-4xl font-black leading-tight text-[var(--sc-ink)]">{t.menu}</h1>
-              <div className="mt-1 flex items-center gap-2 text-base font-bold text-[var(--sc-muted)]">
-                <Clock size={16} />
-                {fulfillment === 'TAKEAWAY' ? t.takeaway : t.dineIn}
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-3">
+    <KioskShell style={themeStyle}>
+      <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-3 p-3">
+        <main className="grid min-h-0 grid-rows-[64px_52px_1fr] gap-3">
+          <header className="flex min-w-0 items-center justify-between gap-4">
+            <BrandHeader menu={menu} menuLabel={t.menu} />
+            <div className="flex shrink-0 items-center gap-2">
               <FulfillmentToggle
                 t={t}
                 fulfillment={fulfillment}
+                options={menu?.policies.fulfillmentOptions || ['DINE_IN', 'TAKEAWAY']}
                 onChange={setFulfillment}
               />
               <LanguageToggle language={language} onChange={setLanguage} />
             </div>
           </header>
 
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            <CategoryButton
-              label={t.all}
-              active={!activeCategoryId}
-              onClick={() => setActiveCategoryId(null)}
-            />
-            {categories.map((category) => (
+          <div className="flex min-w-0 gap-3">
+            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
               <CategoryButton
-                key={category.id}
-                label={resolveName(category, language)}
-                active={activeCategoryId === category.id}
-                onClick={() => setActiveCategoryId(category.id)}
+                label={t.all}
+                active={!activeCategoryId}
+                onClick={() => setActiveCategoryId(null)}
               />
-            ))}
-          </div>
-
-          <div className="grid min-h-0 grid-rows-[auto_1fr] gap-4">
-            <label className="flex h-14 items-center gap-3 rounded-2xl border border-[var(--sc-border)] bg-white px-4">
-              <Search size={22} className="text-[var(--sc-muted)]" />
+              {(menu?.categories || []).map((category) => (
+                <CategoryButton
+                  key={category.id}
+                  label={localizedName(category, language)}
+                  active={activeCategoryId === category.id}
+                  onClick={() => setActiveCategoryId(category.id)}
+                />
+              ))}
+            </div>
+            <label className="flex h-[52px] w-[270px] shrink-0 items-center gap-3 rounded-lg border border-[var(--sc-border)] bg-white px-4">
+              <Search size={21} className="text-[var(--sc-muted)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t.search}
-                className="h-full min-w-0 flex-1 bg-transparent text-xl font-bold text-[var(--sc-ink)] outline-none placeholder:text-[var(--sc-muted)]"
+                className="h-full min-w-0 flex-1 bg-transparent text-base font-bold text-[var(--sc-ink)] outline-none placeholder:text-[var(--sc-muted)]"
               />
             </label>
+          </div>
 
-            <div className="min-h-0 overflow-y-auto pr-1">
-              {loadingCatalog ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-white text-xl font-bold text-[var(--sc-muted)]">
-                  {t.menu}
-                </div>
-              ) : visibleProducts.length === 0 ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-[var(--sc-border)] bg-white text-xl font-bold text-[var(--sc-muted)]">
-                  {t.noProducts}
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
-                  {visibleProducts.map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      product={product}
-                      language={language}
-                      onAdd={addProduct}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="min-h-0 overflow-y-auto pr-1">
+            {loadingMenu ? (
+              <EmptyState label={t.loading} />
+            ) : visibleProducts.length === 0 ? (
+              <EmptyState label={t.noProducts} />
+            ) : (
+              <div className="kso-product-grid">
+                {visibleProducts.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    language={language}
+                    onOpen={openProduct}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </main>
 
-        <aside className="grid min-h-0 grid-rows-[auto_1fr_auto] rounded-2xl border border-[var(--sc-border)] bg-white">
-          <div className="flex items-center justify-between border-b border-[var(--sc-border)] p-4">
-            <h2 className="flex items-center gap-2 text-2xl font-black text-[var(--sc-ink)]">
-              <ShoppingCart size={25} />
-              {t.cart}
-            </h2>
-            <span className="rounded-full bg-[var(--sc-primary-soft)] px-3 py-1 text-sm font-black text-[var(--sc-primary-deep)]">
-              {cartCount}
-            </span>
-          </div>
-          <div className="min-h-0 overflow-y-auto p-4">
-            <CartList
-              cart={cart}
-              language={language}
-              t={t}
-              editable
-              onUpdate={updateCartLine}
-            />
-          </div>
-          <div className="border-t border-[var(--sc-border)] p-4">
-            <button
-              type="button"
-              disabled={cart.length === 0}
-              onClick={() => setStep('confirm')}
-              className="sc-action flex w-full items-center justify-center gap-3 text-xl"
-            >
-              <Check size={24} />
-              {t.confirm}
-            </button>
-          </div>
-        </aside>
+        <CartPanel
+          cart={cart}
+          language={language}
+          t={t}
+          onEdit={editLine}
+          onQuantity={updateQuantity}
+          onReview={() => setStep('review')}
+        />
       </div>
+
+      {configurator && menu && (
+        <ProductConfigurator
+          key={`${configurator.product.id}:${configurator.lineId || 'new'}`}
+          product={configurator.product}
+          groups={groupsForProduct(configurator.product)}
+          initialItem={configurator.lineId
+            ? cart.find((item) => item.lineId === configurator.lineId) || null
+            : null}
+          language={language}
+          t={t}
+          onCancel={() => setConfigurator(null)}
+          onSave={(modifiers, note) => saveConfiguredItem(
+            configurator.product,
+            modifiers,
+            note,
+            configurator.lineId,
+          )}
+        />
+      )}
     </KioskShell>
   );
 }
 
-function KioskShell({ children }: { children: React.ReactNode }) {
+function KioskShell({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style: React.CSSProperties;
+}) {
   return (
-    <div className="sc-shell h-full overflow-hidden">
+    <div className="sc-shell kso-shell h-full overflow-hidden" style={style}>
       {children}
     </div>
   );
 }
 
-function TopBack({ label, onBack }: { label: string; onBack: () => void }) {
+function BrandHeader({
+  menu,
+  menuLabel,
+}: {
+  menu: KitchenSelfOrderMenu | null;
+  menuLabel: string;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onBack}
-      className="flex min-h-[48px] items-center gap-2 rounded-full border border-[var(--sc-border)] bg-white px-4 text-base font-black text-[var(--sc-ink)]"
-    >
-      <ArrowLeft size={20} />
+    <div className="flex min-w-0 items-center gap-3">
+      {menu?.brand.logoUrl ? (
+        <img
+          src={menu.brand.logoUrl}
+          alt=""
+          className="h-12 w-12 shrink-0 rounded-lg object-contain"
+          onError={(event) => { event.currentTarget.style.display = 'none'; }}
+        />
+      ) : (
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent)] text-lg font-black text-white">
+          {(menu?.brand.name || 'Z').slice(0, 1).toUpperCase()}
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="truncate text-xs font-black uppercase tracking-[0.14em] text-[var(--sc-muted)]">
+          {menu?.brand.name || 'Zira POS'}
+        </div>
+        <h1 className="truncate text-3xl font-black leading-tight text-[var(--sc-ink)]">
+          {menuLabel}
+        </h1>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="flex h-full min-h-[240px] items-center justify-center rounded-lg border border-[var(--sc-border)] bg-white text-xl font-bold text-[var(--sc-muted)]">
       {label}
-    </button>
+    </div>
   );
 }
 
 function FulfillmentToggle({
   t,
   fulfillment,
+  options,
   onChange,
 }: {
   t: CopyText;
   fulfillment: KitchenSelfOrderFulfillment;
+  options: KitchenSelfOrderFulfillment[];
   onChange: (value: KitchenSelfOrderFulfillment) => void;
 }) {
+  const labels: Record<KitchenSelfOrderFulfillment, string> = {
+    DINE_IN: t.dineIn,
+    TAKEAWAY: t.takeaway,
+  };
   return (
-    <div className="flex rounded-full border border-[var(--sc-border)] bg-white p-1">
-      {[
-        ['DINE_IN', t.dineIn],
-        ['TAKEAWAY', t.takeaway],
-      ].map(([value, label]) => (
+    <div className="flex rounded-lg border border-[var(--sc-border)] bg-white p-1">
+      {options.map((value) => (
         <button
           key={value}
           type="button"
-          onClick={() => onChange(value as KitchenSelfOrderFulfillment)}
-          className={`min-h-[42px] rounded-full px-4 text-sm font-black ${
+          onClick={() => onChange(value)}
+          className={`min-h-[48px] rounded-md px-4 text-sm font-black ${
             fulfillment === value
               ? 'bg-[var(--sc-ink)] text-white'
               : 'text-[var(--sc-muted)]'
           }`}
         >
-          {label}
+          {labels[value]}
         </button>
       ))}
     </div>
@@ -566,19 +735,19 @@ function LanguageToggle({
   onChange: (value: KitchenSelfOrderLanguage) => void;
 }) {
   return (
-    <div className="flex rounded-full border border-[var(--sc-border)] bg-white p-1">
-      {[
+    <div className="flex rounded-lg border border-[var(--sc-border)] bg-white p-1">
+      {([
         ['pl', 'PL'],
         ['vi', 'VI'],
         ['en', 'EN'],
-      ].map(([value, label]) => (
+      ] as const).map(([value, label]) => (
         <button
           key={value}
           type="button"
-          onClick={() => onChange(value as KitchenSelfOrderLanguage)}
-          className={`min-h-[42px] rounded-full px-3 text-sm font-black ${
+          onClick={() => onChange(value)}
+          className={`min-h-[48px] min-w-[48px] rounded-md px-2 text-sm font-black ${
             language === value
-              ? 'bg-[var(--sc-primary)] text-white'
+              ? 'bg-[var(--kso-accent)] text-white'
               : 'text-[var(--sc-muted)]'
           }`}
         >
@@ -602,7 +771,7 @@ function CategoryButton({
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-[46px] shrink-0 rounded-full border px-5 text-base font-black ${
+      className={`h-[52px] shrink-0 rounded-lg border px-5 text-base font-black ${
         active
           ? 'border-[var(--sc-ink)] bg-[var(--sc-ink)] text-white'
           : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
@@ -616,161 +785,557 @@ function CategoryButton({
 function ProductCard({
   product,
   language,
-  onAdd,
+  onOpen,
 }: {
-  product: SearchProduct;
+  product: KitchenSelfOrderMenuProduct;
   language: KitchenSelfOrderLanguage;
-  onAdd: (product: SearchProduct) => void;
+  onOpen: (product: KitchenSelfOrderMenuProduct) => void;
 }) {
-  const imageUrl = product.thumbnail_url || product.image_url || '';
-  const price = formatPLN(getProductPriceGrosze(product));
+  const name = localizedName(product, language);
   return (
     <button
       type="button"
-      onClick={() => onAdd(product)}
-      className="sc-focusable flex min-h-[190px] flex-col overflow-hidden rounded-2xl border border-[var(--sc-border)] bg-white text-left shadow-[0_12px_28px_rgba(32,36,33,0.07)]"
+      onClick={() => onOpen(product)}
+      className="kso-product-card sc-focusable group"
     >
-      {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt=""
-          className="h-24 w-full object-cover"
-          onError={(event) => { (event.currentTarget as HTMLImageElement).style.display = 'none'; }}
-        />
-      ) : (
-        <div className="flex h-24 w-full items-center justify-center bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]">
-          <ImageIcon size={34} />
+      <ProductImage product={product} name={name} className="kso-product-media" />
+      <div className="grid min-h-0 flex-1 grid-rows-[44px_48px] px-4 pb-3 pt-3">
+        <div className="line-clamp-2 text-base font-black leading-[1.35] text-[var(--sc-ink)]">
+          {name}
         </div>
-      )}
-      <div className="flex min-h-0 flex-1 flex-col p-3">
-        <div className="line-clamp-2 text-lg font-black leading-snug text-[var(--sc-ink)]">
-          {resolveName(product, language)}
-        </div>
-        <div className="mt-auto pt-2 text-lg font-black text-[var(--sc-primary-deep)]">
-          {price}
+        <div className="flex items-end justify-between gap-3">
+          <div className="text-lg font-black text-[var(--sc-ink)]">
+            {formatPLN(product.priceGrosze)}
+          </div>
+          <span
+            aria-hidden="true"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent)] text-white transition-transform group-active:scale-95"
+          >
+            <Plus size={23} strokeWidth={3} />
+          </span>
         </div>
       </div>
     </button>
   );
 }
 
-function CartList({
-  cart,
-  language,
-  t,
-  editable,
-  onUpdate,
+function ProductImage({
+  product,
+  name,
+  className,
 }: {
-  cart: CartItem[];
-  language: KitchenSelfOrderLanguage;
-  t: CopyText;
-  editable: boolean;
-  onUpdate: (lineId: string, patch: Partial<CartItem>) => void;
+  product: KitchenSelfOrderMenuProduct;
+  name: string;
+  className: string;
 }) {
-  if (cart.length === 0) {
+  const [failed, setFailed] = useState(false);
+  if (!product.media.url || failed) {
     return (
-      <div className="flex min-h-[180px] items-center justify-center rounded-xl bg-[var(--sc-surface-muted)] px-4 text-center text-lg font-bold text-[var(--sc-muted)]">
-        {t.emptyCart}
+      <div className={`${className} flex items-center justify-center bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]`}>
+        <ImageIcon size={42} />
       </div>
     );
   }
-
+  const focal = product.media.focalPoint || { x: 0.5, y: 0.5 };
   return (
-    <div className="space-y-3">
-      {cart.map((item) => (
-        <div key={item.lineId} className="rounded-xl border border-[var(--sc-border)] bg-white p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-base font-black leading-snug text-[var(--sc-ink)]">
-                {resolveName(item.product, language)}
-              </div>
-              {item.options.length > 0 && (
-                <div className="mt-1 text-sm font-bold text-[var(--sc-primary-deep)]">
-                  {item.options.join(', ')}
-                </div>
-              )}
-            </div>
-            {editable && (
-              <div className="flex shrink-0 items-center gap-2">
-                <QtyButton onClick={() => onUpdate(item.lineId, { quantity: item.quantity - 1 })}>
-                  <Minus size={18} />
-                </QtyButton>
-                <div className="w-8 text-center text-lg font-black">{item.quantity}</div>
-                <QtyButton onClick={() => onUpdate(item.lineId, { quantity: normalizeKitchenSelfOrderQuantity(item.quantity + 1) })}>
-                  <Plus size={18} />
-                </QtyButton>
-              </div>
-            )}
-          </div>
-
-          {editable && (
-            <>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {QUICK_OPTIONS[language].map((option) => {
-                  const selected = item.options.includes(option);
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => onUpdate(item.lineId, {
-                        options: selected
-                          ? item.options.filter((value) => value !== option)
-                          : [...item.options, option],
-                      })}
-                      className={`rounded-full border px-3 py-2 text-xs font-black ${
-                        selected
-                          ? 'border-[var(--sc-primary)] bg-[var(--sc-primary-soft)] text-[var(--sc-primary-deep)]'
-                          : 'border-[var(--sc-border)] bg-white text-[var(--sc-muted)]'
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  );
-                })}
-              </div>
-              <input
-                value={item.note}
-                onChange={(event) => onUpdate(item.lineId, { note: event.target.value })}
-                placeholder={t.note}
-                className="mt-3 h-11 w-full rounded-xl border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-3 text-sm font-bold text-[var(--sc-ink)] outline-none focus:ring-2 focus:ring-[var(--sc-primary)]/30"
-              />
-            </>
-          )}
-        </div>
-      ))}
+    <div className={`${className} overflow-hidden bg-[var(--sc-surface-muted)]`}>
+      <img
+        src={product.media.url}
+        alt={name}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+        className="h-full w-full"
+        style={{
+          objectFit: product.media.fit === 'COVER' ? 'cover' : 'contain',
+          objectPosition: `${focal.x * 100}% ${focal.y * 100}%`,
+          transform: `scale(${product.media.zoom})`,
+        }}
+      />
     </div>
   );
 }
 
-function QtyButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function CartPanel({
+  cart,
+  language,
+  t,
+  onEdit,
+  onQuantity,
+  onReview,
+}: {
+  cart: CartItem[];
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  onEdit: (lineId: string) => void;
+  onQuantity: (lineId: string, quantity: number) => void;
+  onReview: () => void;
+}) {
+  const count = cart.reduce((sum, item) => sum + item.quantity, 0);
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] text-[var(--sc-ink)]"
-    >
-      {children}
-    </button>
+    <aside className="grid min-h-0 grid-rows-[64px_1fr_auto] rounded-lg border border-[var(--sc-border)] bg-white">
+      <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-4">
+        <h2 className="flex items-center gap-2 text-xl font-black text-[var(--sc-ink)]">
+          <ShoppingCart size={23} />
+          {t.cart}
+        </h2>
+        <span className="flex h-8 min-w-8 items-center justify-center rounded-full bg-[var(--sc-primary-soft)] px-2 text-sm font-black text-[var(--sc-primary-deep)]">
+          {count}
+        </span>
+      </div>
+      <div className="min-h-0 overflow-y-auto p-3">
+        {cart.length === 0 ? (
+          <div className="flex min-h-[180px] items-center justify-center rounded-lg bg-[var(--sc-surface-muted)] px-4 text-center text-base font-bold text-[var(--sc-muted)]">
+            {t.emptyCart}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {cart.map((item) => (
+              <CartLine
+                key={item.lineId}
+                item={item}
+                language={language}
+                t={t}
+                onEdit={onEdit}
+                onQuantity={onQuantity}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="border-t border-[var(--sc-border)] p-3">
+        <div className="mb-3 flex items-end justify-between">
+          <span className="text-sm font-black uppercase tracking-wide text-[var(--sc-muted)]">
+            {t.subtotal}
+          </span>
+          <span className="text-2xl font-black text-[var(--sc-ink)]">
+            {formatPLN(cartTotal(cart))}
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={cart.length === 0}
+          onClick={onReview}
+          className="kso-primary-button w-full"
+        >
+          <Check size={22} />
+          {t.reviewOrder}
+        </button>
+      </div>
+    </aside>
   );
 }
 
-function StatusPill({
-  ok,
-  icon,
-  label,
+function CartLine({
+  item,
+  language,
+  t,
+  onEdit,
+  onQuantity,
 }: {
-  ok: boolean;
-  icon: React.ReactNode;
-  label: string;
+  item: CartItem;
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  onEdit: (lineId: string) => void;
+  onQuantity: (lineId: string, quantity: number) => void;
+}) {
+  const labels = formatKitchenSelfOrderModifierLabels(item.modifiers);
+  const editable = item.product.noteEnabled || item.product.modifierGroupAttachmentIds.length > 0;
+  return (
+    <div className="rounded-lg border border-[var(--sc-border)] p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-base font-black leading-snug text-[var(--sc-ink)]">
+            {localizedName(item.product, language)}
+          </div>
+          {labels.length > 0 && (
+            <div className="mt-1 text-sm font-semibold leading-5 text-[var(--sc-muted)]">
+              {labels.join(' · ')}
+            </div>
+          )}
+        </div>
+        {editable && (
+          <button
+            type="button"
+            onClick={() => onEdit(item.lineId)}
+            aria-label={t.edit}
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--sc-muted)] hover:bg-[var(--sc-surface-muted)]"
+          >
+            <Pencil size={18} />
+          </button>
+        )}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <QuantityControl
+          quantity={item.quantity}
+          onChange={(quantity) => onQuantity(item.lineId, quantity)}
+        />
+        <div className="text-base font-black text-[var(--sc-ink)]">
+          {formatPLN(lineTotal(item))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuantityControl({
+  quantity,
+  onChange,
+}: {
+  quantity: number;
+  onChange: (quantity: number) => void;
 }) {
   return (
-    <div className={`flex min-h-[62px] items-center justify-center gap-2 rounded-xl border px-4 text-base font-black ${
-      ok
-        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-        : 'border-amber-200 bg-amber-50 text-amber-800'
-    }`}>
-      {icon}
-      {label}
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(quantity - 1)}
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]"
+      >
+        <Minus size={18} />
+      </button>
+      <div className="w-9 text-center text-lg font-black">{quantity}</div>
+      <button
+        type="button"
+        onClick={() => onChange(normalizeKitchenSelfOrderQuantity(quantity + 1))}
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]"
+      >
+        <Plus size={18} />
+      </button>
+    </div>
+  );
+}
+
+function ProductConfigurator({
+  product,
+  groups,
+  initialItem,
+  language,
+  t,
+  onCancel,
+  onSave,
+}: {
+  product: KitchenSelfOrderMenuProduct;
+  groups: KitchenSelfOrderModifierGroup[];
+  initialItem: CartItem | null;
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  onCancel: () => void;
+  onSave: (modifiers: KitchenSelfOrderModifierSnapshot[], note: string) => void;
+}) {
+  const [modifiers, setModifiers] = useState<KitchenSelfOrderModifierSnapshot[]>(
+    initialItem?.modifiers || defaultModifiers(groups),
+  );
+  const [note, setNote] = useState(initialItem?.note || '');
+  const validation = validateKitchenSelfOrderModifierSelections(groups, modifiers);
+
+  const toggleOption = (
+    group: KitchenSelfOrderModifierGroup,
+    optionId: string,
+  ) => {
+    const option = group.options.find((candidate) => candidate.id === optionId);
+    if (!option || !option.isAvailable) return;
+    const existing = modifiers.find((modifier) =>
+      modifier.groupId === group.id && modifier.optionId === option.id);
+    const snapshot: KitchenSelfOrderModifierSnapshot = {
+      groupId: group.id,
+      groupName: group.name,
+      optionId: option.id,
+      optionName: option.name,
+      quantity: 1,
+      priceDeltaGrosze: option.priceDeltaGrosze,
+    };
+
+    if (group.selectionMode === 'SINGLE') {
+      setModifiers((current) => [
+        ...current.filter((modifier) => modifier.groupId !== group.id),
+        snapshot,
+      ]);
+      return;
+    }
+    if (existing) {
+      setModifiers((current) => current.filter((modifier) =>
+        !(modifier.groupId === group.id && modifier.optionId === option.id)));
+      return;
+    }
+    const selectedCount = modifiers.filter((modifier) => modifier.groupId === group.id).length;
+    if (selectedCount >= group.maxSelections) return;
+    setModifiers((current) => [...current, snapshot]);
+  };
+
+  const setOptionQuantity = (
+    group: KitchenSelfOrderModifierGroup,
+    optionId: string,
+    quantity: number,
+  ) => {
+    const option = group.options.find((candidate) => candidate.id === optionId);
+    const max = Math.max(1, Number(option?.maxQuantity) || 9);
+    setModifiers((current) => current.map((modifier) =>
+      modifier.groupId === group.id && modifier.optionId === optionId
+        ? { ...modifier, quantity: Math.min(max, Math.max(1, quantity)) }
+        : modifier));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="grid max-h-[94vh] w-full max-w-6xl grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-xl bg-white shadow-2xl"
+      >
+        <div className="border-r border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-5">
+          <ProductImage
+            product={product}
+            name={localizedName(product, language)}
+            className="aspect-[4/3] w-full rounded-lg"
+          />
+          <h2 className="mt-5 text-2xl font-black leading-tight text-[var(--sc-ink)]">
+            {localizedName(product, language)}
+          </h2>
+          <div className="mt-2 text-2xl font-black text-[var(--sc-primary-deep)]">
+            {formatPLN(product.priceGrosze + validation.modifierTotalGrosze)}
+          </div>
+        </div>
+
+        <div className="grid min-h-0 grid-rows-[64px_1fr_auto]">
+          <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5">
+            <div className="text-lg font-black text-[var(--sc-ink)]">
+              {initialItem ? t.edit : t.add}
+            </div>
+            <button
+              type="button"
+              onClick={onCancel}
+              aria-label={t.cancel}
+              className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)]"
+            >
+              <X size={22} />
+            </button>
+          </div>
+
+          <div className="min-h-0 overflow-y-auto p-5">
+            <div className="space-y-6">
+              {groups.map((group) => {
+                const selected = modifiers.filter((modifier) => modifier.groupId === group.id);
+                const hasError = selected.length < group.minSelections;
+                return (
+                  <section key={group.id}>
+                    <div className="mb-3 flex items-end justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl font-black text-[var(--sc-ink)]">
+                          {localizedName(group, language)}
+                        </h3>
+                        <div className={`mt-1 text-sm font-bold ${hasError ? 'text-[var(--sc-danger)]' : 'text-[var(--sc-muted)]'}`}>
+                          {group.minSelections > 0 ? t.required : t.optional}
+                          {group.maxSelections > 1 ? ` · ${t.chooseUpTo} ${group.maxSelections}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {group.options.filter((option) => option.isAvailable).map((option) => {
+                        const selection = selected.find((modifier) => modifier.optionId === option.id);
+                        return (
+                          <div
+                            key={option.id}
+                            className={`min-h-[64px] rounded-lg border-2 p-3 ${
+                              selection
+                                ? 'border-[var(--kso-accent)] bg-[var(--sc-primary-soft)]'
+                                : 'border-[var(--sc-border)] bg-white'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleOption(group, option.id)}
+                              className="flex w-full items-center justify-between gap-3 text-left"
+                            >
+                              <span className="font-black text-[var(--sc-ink)]">
+                                {localizedName(option, language)}
+                              </span>
+                              <span className="shrink-0 font-black text-[var(--sc-primary-deep)]">
+                                {option.priceDeltaGrosze > 0
+                                  ? `+${formatPLN(option.priceDeltaGrosze)}`
+                                  : ''}
+                              </span>
+                            </button>
+                            {selection && group.allowOptionQuantity && (
+                              <div className="mt-3 flex justify-end">
+                                <QuantityControl
+                                  quantity={selection.quantity}
+                                  onChange={(quantity) =>
+                                    setOptionQuantity(group, option.id, quantity)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+
+              {product.noteEnabled && (
+                <label className="block">
+                  <span className="text-lg font-black text-[var(--sc-ink)]">{t.note}</span>
+                  <textarea
+                    value={note}
+                    maxLength={180}
+                    onChange={(event) => setNote(event.target.value)}
+                    className="mt-3 min-h-[96px] w-full resize-none rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4 text-base font-semibold outline-none focus:border-[var(--kso-accent)]"
+                  />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 border-t border-[var(--sc-border)] p-4">
+            <button type="button" onClick={onCancel} className="kso-secondary-button">
+              {t.cancel}
+            </button>
+            <button
+              type="button"
+              disabled={!validation.valid}
+              onClick={() => onSave(validation.modifiers, note)}
+              className="kso-primary-button min-w-[240px]"
+            >
+              <Check size={22} />
+              {initialItem ? t.save : t.add}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewScreen({
+  cart,
+  fulfillment,
+  fulfillmentOptions,
+  language,
+  t,
+  total,
+  submitting,
+  error,
+  onBack,
+  onEdit,
+  onQuantity,
+  onSubmit,
+  onFulfillment,
+  onLanguage,
+}: {
+  cart: CartItem[];
+  fulfillment: KitchenSelfOrderFulfillment;
+  fulfillmentOptions: KitchenSelfOrderFulfillment[];
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  total: number;
+  submitting: boolean;
+  error: string | null;
+  onBack: () => void;
+  onEdit: (lineId: string) => void;
+  onQuantity: (lineId: string, quantity: number) => void;
+  onSubmit: () => void;
+  onFulfillment: (value: KitchenSelfOrderFulfillment) => void;
+  onLanguage: (value: KitchenSelfOrderLanguage) => void;
+}) {
+  return (
+    <div className="grid h-full grid-rows-[68px_1fr] gap-4 p-4">
+      <header className="flex items-center justify-between gap-4">
+        <button type="button" onClick={onBack} className="kso-secondary-button">
+          <ArrowLeft size={22} />
+          {t.back}
+        </button>
+        <h1 className="text-3xl font-black text-[var(--sc-ink)]">{t.reviewTitle}</h1>
+        <div className="flex items-center gap-2">
+          <FulfillmentToggle
+            t={t}
+            fulfillment={fulfillment}
+            options={fulfillmentOptions}
+            onChange={onFulfillment}
+          />
+          <LanguageToggle language={language} onChange={onLanguage} />
+        </div>
+      </header>
+
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_360px] gap-4">
+        <div className="min-h-0 overflow-y-auto rounded-lg border border-[var(--sc-border)] bg-white p-4">
+          <div className="space-y-3">
+            {cart.map((item) => {
+              const labels = formatKitchenSelfOrderModifierLabels(item.modifiers);
+              return (
+                <div
+                  key={item.lineId}
+                  className="grid grid-cols-[112px_minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-[var(--sc-border)] p-3"
+                >
+                  <ProductImage
+                    product={item.product}
+                    name={localizedName(item.product, language)}
+                    className="h-24 w-28 rounded-lg"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xl font-black leading-snug text-[var(--sc-ink)]">
+                      {localizedName(item.product, language)}
+                    </div>
+                    {labels.length > 0 && (
+                      <div className="mt-1 text-base font-semibold text-[var(--sc-muted)]">
+                        {labels.join(' · ')}
+                      </div>
+                    )}
+                    {item.note && (
+                      <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
+                        {item.note}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onEdit(item.lineId)}
+                      className="mt-2 inline-flex min-h-[48px] items-center gap-2 font-black text-[var(--sc-primary-deep)]"
+                    >
+                      <Pencil size={17} />
+                      {t.edit}
+                    </button>
+                  </div>
+                  <div className="flex flex-col items-end gap-3">
+                    <div className="text-xl font-black text-[var(--sc-ink)]">
+                      {formatPLN(lineTotal(item))}
+                    </div>
+                    <QuantityControl
+                      quantity={item.quantity}
+                      onChange={(quantity) => onQuantity(item.lineId, quantity)}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <aside className="flex flex-col rounded-lg border border-[var(--sc-border)] bg-white p-5">
+          <div className="text-sm font-black uppercase tracking-wide text-[var(--sc-muted)]">
+            {fulfillment === 'TAKEAWAY' ? t.takeaway : t.dineIn}
+          </div>
+          <div className="mt-5 flex items-end justify-between border-t border-[var(--sc-border)] pt-5">
+            <span className="text-lg font-black text-[var(--sc-muted)]">{t.subtotal}</span>
+            <span className="text-4xl font-black text-[var(--sc-ink)]">{formatPLN(total)}</span>
+          </div>
+          {error && (
+            <div role="alert" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-base font-bold text-[var(--sc-danger)]">
+              {error}
+            </div>
+          )}
+          <div className="mt-auto">
+            <button
+              type="button"
+              disabled={cart.length === 0 || submitting}
+              onClick={onSubmit}
+              className="kso-primary-button w-full"
+            >
+              {submitting ? t.submitting : t.placeOrder}
+              {!submitting && <ChevronRight size={24} />}
+            </button>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

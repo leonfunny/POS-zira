@@ -142,6 +142,11 @@ export interface ProductVariantRow {
   name_translations?: string | null;
   customer_display_enabled?: number | null;
   customer_display_sort_order?: number | null;
+  /** Server-owned customer kiosk media presentation metadata. */
+  kiosk_media_json?: string | null;
+  /** Server-owned modifier groups attached directly to this product. */
+  kiosk_modifier_groups_json?: string | null;
+  kiosk_note_enabled?: number | null;
 }
 
 export interface CategoryRow {
@@ -158,6 +163,8 @@ export interface CategoryRow {
   customer_display_sort_order?: number | null;
   /** 1 = items in this category print a kitchen ticket on sale (migration v39). */
   kitchen_print?: number | null;
+  /** Server-owned modifier groups inherited by products in this category. */
+  kiosk_modifier_groups_json?: string | null;
 }
 
 // Hide template rows that have variant children. The sync layer mirrors
@@ -322,9 +329,31 @@ export const productRepo = {
         throw new Error(`Invalid product: missing id or name (id=${p.id})`);
       }
       database.run(
-        `INSERT OR REPLACE INTO product_variants (id, template_id, name, sku, barcode, retail_price, category_id, image_url, in_stock, vat_rate, is_active, updated_at, available_qty, price_gross, price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, sell_by, name_translations, customer_display_enabled, customer_display_sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0, p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23, p.is_active ?? 1, p.updated_at, p.available_qty ?? 0, p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0, p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit, p.sell_by ?? 'PIECE', p.name_translations ?? null, p.customer_display_enabled ?? 1, p.customer_display_sort_order ?? null],
+        `INSERT OR REPLACE INTO product_variants (
+          id, template_id, name, sku, barcode, retail_price, category_id, image_url,
+          in_stock, vat_rate, is_active, updated_at, available_qty, price_gross,
+          price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, sell_by,
+          name_translations, customer_display_enabled, customer_display_sort_order,
+          kiosk_media_json, kiosk_modifier_groups_json, kiosk_note_enabled
+        )
+         VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          COALESCE(?, (SELECT kiosk_media_json FROM product_variants WHERE id = ?)),
+          COALESCE(?, (SELECT kiosk_modifier_groups_json FROM product_variants WHERE id = ?)),
+          COALESCE(?, (SELECT kiosk_note_enabled FROM product_variants WHERE id = ?), 0)
+        )`,
+        [
+          p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0,
+          p.category_id, p.image_url, p.in_stock ?? 0, p.vat_rate ?? 23,
+          p.is_active ?? 1, p.updated_at, p.available_qty ?? 0,
+          p.price_gross ?? 0, p.price_net ?? 0, p.vat_amount ?? 0,
+          p.is_on_sale ?? 0, p.thumbnail_url, p.sale_unit, p.sell_by ?? 'PIECE',
+          p.name_translations ?? null, p.customer_display_enabled ?? 1,
+          p.customer_display_sort_order ?? null,
+          p.kiosk_media_json ?? null, p.id,
+          p.kiosk_modifier_groups_json ?? null, p.id,
+          p.kiosk_note_enabled ?? null, p.id,
+        ],
       );
     }
   },
@@ -416,9 +445,23 @@ export const productRepo = {
       database.run(
         // kitchen_print: COALESCE keeps the locally-known flag when an older
         // backend payload omits it (NULL), instead of silently resetting it.
-        `INSERT OR REPLACE INTO categories (id, name, icon, color, sort_order, updated_at, name_translations, customer_display_enabled, customer_display_section, customer_display_sort_order, kitchen_print)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0))`,
-        [c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at, c.name_translations ?? null, c.customer_display_enabled ?? 1, c.customer_display_section ?? null, c.customer_display_sort_order ?? null, c.kitchen_print ?? null, c.id],
+        `INSERT OR REPLACE INTO categories (
+          id, name, icon, color, sort_order, updated_at, name_translations,
+          customer_display_enabled, customer_display_section,
+          customer_display_sort_order, kitchen_print, kiosk_modifier_groups_json
+        )
+         VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0),
+          COALESCE(?, (SELECT kiosk_modifier_groups_json FROM categories WHERE id = ?))
+        )`,
+        [
+          c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at,
+          c.name_translations ?? null, c.customer_display_enabled ?? 1,
+          c.customer_display_section ?? null, c.customer_display_sort_order ?? null,
+          c.kitchen_print ?? null, c.id,
+          c.kiosk_modifier_groups_json ?? null, c.id,
+        ],
       );
     }
   },

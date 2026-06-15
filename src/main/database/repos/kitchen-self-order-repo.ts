@@ -6,7 +6,7 @@ import {
   normalizeKitchenSelfOrderLanguage,
   normalizeKitchenSelfOrderQuantity,
   sanitizeKitchenSelfOrderNote,
-  sanitizeKitchenSelfOrderOptions,
+  serializeKitchenSelfOrderOptions,
   type KitchenSelfOrderFulfillment,
   type KitchenSelfOrderLanguage,
   type KitchenSelfOrderStatus,
@@ -93,7 +93,7 @@ export const kitchenSelfOrderRepo = {
         name: sanitizeKitchenSelfOrderNote(item.name) || 'Pozycja',
         quantity: normalizeKitchenSelfOrderQuantity(item.quantity),
         note: sanitizeKitchenSelfOrderNote(item.note),
-        options: sanitizeKitchenSelfOrderOptions(item.options),
+        optionsJson: serializeKitchenSelfOrderOptions(item.modifiers, item.options),
         sortOrder: index,
       }))
       .filter((item) => item.quantity > 0);
@@ -153,7 +153,7 @@ export const kitchenSelfOrderRepo = {
             item.productId,
             item.name,
             item.quantity,
-            item.options.length > 0 ? JSON.stringify(item.options) : null,
+            item.optionsJson,
             item.note,
             item.sortOrder,
           ],
