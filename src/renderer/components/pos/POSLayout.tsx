@@ -26,6 +26,7 @@ import QuickAddCameraModal, {
   QuickAddPreparedResult,
 } from './QuickAddCameraModal';
 import AddProductWebviewPanel from './AddProductWebviewPanel';
+import DebtWebviewPanel from './DebtWebviewPanel';
 import { buildRetailCartItem, formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
@@ -237,6 +238,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   }>({ open: false, ean: '', preview: null, loading: false, error: null });
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [showDebt, setShowDebt] = useState(false);
   const [homeResetKey, setHomeResetKey] = useState(0);
   // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
   // must reconcile it in order history before that order can print again.
@@ -899,6 +901,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         onExistingProductScanned={handleAddProductPanelBarcode}
         onClose={() => setShowAddProduct(false)}
       />
+      <DebtWebviewPanel
+        open={showDebt}
+        salonCode={(config as any)?.salonCode}
+        onClose={() => setShowDebt(false)}
+      />
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {/* Header - shared across all modes */}
@@ -947,6 +954,18 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               {clock.toLocaleTimeString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
+
+          {/* Debt ledger (so no) */}
+          <button
+            onClick={() => setShowDebt(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors touch-manipulation"
+            title="So no"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+            </svg>
+            <span>So no</span>
+          </button>
 
           {/* Fullscreen icon button */}
           {onFullscreen && (
