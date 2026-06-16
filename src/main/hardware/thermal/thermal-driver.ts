@@ -171,6 +171,9 @@ export class ThermalDriver {
     if (this.connectionType === 'USB') {
       if (cachedPrinters) {
         stillAvailable = cachedPrinters.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
+        if (!stillAvailable && !this.windowsTextMode) {
+          stillAvailable = await isWindowsPrinterPresent(this.printerNameOrPort);
+        }
       } else {
         const printers = await listWindowsPrinters();
         const inSpooler = printers.some(p => p.toLowerCase() === this.printerNameOrPort.toLowerCase());
