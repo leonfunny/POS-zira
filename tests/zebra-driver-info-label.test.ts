@@ -129,6 +129,36 @@ describe("ZebraDriver.printInfoLabel", () => {
     }
   });
 
+  it("prints KSO payment labels through a dedicated method instead of product-label printLabel", async () => {
+    const configured = new ZebraDriver("ZDesigner GK420d", 50, 30);
+    (configured as any).connected = true;
+    const labelSpy = vi.spyOn(configured as any, "printRaw").mockResolvedValue(undefined);
+
+    try {
+      await configured.printKitchenPaymentLabel({
+        orderId: "kso-1",
+        orderNumber: "K-042",
+        pickupNumber: "K-042",
+        createdAt: "2026-06-16T10:00:00.000Z",
+        source: "KIOSK PC-YURI",
+        fulfillmentType: "DINE_IN",
+        customerLanguage: "pl",
+        totalGrosze: 2900,
+        qrPayload: "KSO1:test",
+        items: [{ name: "Pho bo", quantity: 2, unitPriceGrosze: 1200, lineTotalGrosze: 2400 }],
+      });
+
+      const zpl: string = labelSpy.mock.calls[0][0];
+      expect(zpl).toContain("DO ZAPLATY");
+      expect(zpl).toContain("K-042");
+      expect(zpl).toContain("^BQN,2,2");
+      expect(zpl).not.toContain("^BE,");
+    } finally {
+      labelSpy.mockRestore();
+      configured.disconnect();
+    }
+  });
+
   it("throws when disconnected", async () => {
     (driver as any).connected = false;
     await expect(driver.printInfoLabel(sample)).rejects.toThrow();

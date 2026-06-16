@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import logger from '../../logger';
 import { ZplFormatter, type ZplTextProfile } from './zpl-formatter';
-import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo, InfoLabelData } from '../../../shared/types';
+import { ReceiptData, LabelData, CheckinConfirmationData, PrinterStatusInfo, InfoLabelData, type KitchenTicketData } from '../../../shared/types';
 import { listWindowsPrinters, sanitizePrinterName, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { type RecoveryResult } from '../detection/types';
 
@@ -502,6 +502,22 @@ try {
 
     await this.printRaw(zpl, { fast: true });
     logger.info('[ZebraDriver] Label printed successfully');
+  }
+
+  /**
+   * Print a compact kitchen self-order payment slip on label media.
+   */
+  async printKitchenPaymentLabel(data: KitchenTicketData): Promise<void> {
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
+
+    logger.info(`[ZebraDriver] Printing kitchen payment label for ${data.orderNumber}...`);
+    const zpl = this.formatter.formatKitchenPaymentLabel(data);
+    logger.debug(`[ZebraDriver] ZPL:\n${zpl}`);
+
+    await this.printRaw(zpl, { fast: true });
+    logger.info('[ZebraDriver] Kitchen payment label printed successfully');
   }
 
   /**

@@ -50,6 +50,13 @@ export interface CheckoutDraftState {
   customerNip?: string;
   customerName?: string;
   requiresInvoice?: boolean;
+  kitchenSelfOrder?: {
+    orderNumber: string;
+    orderId?: string;
+    sourceLabel?: string | null;
+    fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
+    kitchenAlreadyReleased?: boolean;
+  };
 }
 
 export interface PosSessionState {

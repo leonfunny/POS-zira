@@ -1,4 +1,4 @@
-import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData, InfoLabelData, ManufacturerRole } from '../../../shared/types';
+import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData, InfoLabelData, ManufacturerRole, type KitchenTicketData } from '../../../shared/types';
 
 /**
  * ZPL command mappings for barcode types
@@ -283,6 +283,48 @@ export class ZplFormatter {
     // End ZPL format
     lines.push('^XZ');
 
+    return lines.join('\n');
+  }
+
+  /**
+   * Dedicated 50x30-ish payment slip for kitchen self-order kiosks.
+   * This intentionally does not reuse the product label layout: no product
+   * barcode, no item list, just the counter payment QR and human order number.
+   */
+  formatKitchenPaymentLabel(data: KitchenTicketData): string {
+    const total = Math.max(
+      0,
+      Math.round(Number(data.totalGrosze) || data.items.reduce((sum, item) => {
+        const explicit = Math.round(Number(item.lineTotalGrosze) || 0);
+        if (explicit > 0) return sum + explicit;
+        const quantity = Math.max(1, Math.round(Number(item.quantity) || 1));
+        return sum + Math.max(0, Math.round(Number(item.unitPriceGrosze) || 0)) * quantity;
+      }, 0)),
+    );
+    const orderNumber = this.sanitizeText(data.pickupNumber || data.orderNumber || '----', 24);
+    const qrPayload = this.sanitizeText(data.qrPayload || '', 1200);
+    const totalText = `RAZEM ${(total / 100).toFixed(2).replace('.', ',')} zl`;
+    const left = this.mmToDots(3);
+    const qrX = this.mmToDots(31);
+    const qrY = this.mmToDots(4);
+    const lines: string[] = [
+      '^XA',
+      '^CI28',
+      `^PW${this.mmToDots(this.labelWidth)}`,
+      `^FO${left},${this.mmToDots(2)}^A0,${this.mmToDots(3)},${this.mmToDots(3)}^FDDO ZAPLATY^FS`,
+      `^FO${left},${this.mmToDots(6)}^A0,${this.mmToDots(7)},${this.mmToDots(7)}^FD${orderNumber}^FS`,
+      `^FO${left},${this.mmToDots(14)}^A0,${this.mmToDots(3)},${this.mmToDots(3)}^FD${totalText}^FS`,
+      `^FO${left},${this.mmToDots(19)}^A0,${this.mmToDots(2.3)},${this.mmToDots(2.3)}^FDSKANUJ PRZY KASIE^FS`,
+      `^FO${left},${this.mmToDots(23)}^A0,${this.mmToDots(2.1)},${this.mmToDots(2.1)}^FDPOKAZ W KASIE^FS`,
+    ];
+
+    if (qrPayload) {
+      lines.push(`^FO${qrX},${qrY}`);
+      lines.push('^BQN,2,2');
+      lines.push(`^FDQA,${qrPayload}^FS`);
+    }
+
+    lines.push('^XZ');
     return lines.join('\n');
   }
 

@@ -466,9 +466,22 @@ interface ElectronAPI {
       }>;
     }) => Promise<{
       success: boolean;
+      orderId?: string;
       orderNumber?: string;
       kitchenPrinted?: boolean;
       customerSlipPrinted?: boolean;
+      canRetrySlip?: boolean;
+      qrPayload?: string;
+      error?: string | null;
+    }>;
+    reprintSlip: (orderId: string) => Promise<{
+      success: boolean;
+      orderId?: string;
+      orderNumber?: string;
+      kitchenPrinted?: boolean;
+      customerSlipPrinted?: boolean;
+      canRetrySlip?: boolean;
+      qrPayload?: string;
       error?: string | null;
     }>;
     close: () => Promise<{ success: boolean; error?: string }>;

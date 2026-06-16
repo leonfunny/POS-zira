@@ -253,3 +253,52 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).toContain("^BY3");
   });
 });
+
+describe("ZplFormatter.formatKitchenPaymentLabel", () => {
+  it("renders a compact KSO payment label without using the product label layout", () => {
+    const f = new ZplFormatter(50, 30, 203, "ascii");
+    const zpl = f.formatKitchenPaymentLabel({
+      orderId: "kso-1",
+      orderNumber: "K-042",
+      pickupNumber: "K-042",
+      createdAt: "2026-06-16T10:00:00.000Z",
+      source: "KIOSK PC-YURI",
+      fulfillmentType: "DINE_IN",
+      customerLanguage: "pl",
+      totalGrosze: 2900,
+      qrPayload: "KSO1:test",
+      items: [
+        { name: "Pho bo", quantity: 2, unitPriceGrosze: 1200, lineTotalGrosze: 2400 },
+      ],
+    });
+
+    expect(zpl).toContain("^PW400");
+    expect(zpl).not.toContain("^LL");
+    expect(zpl).toContain("DO ZAPLATY");
+    expect(zpl).toContain("K-042");
+    expect(zpl).toContain("RAZEM 29,00 zl");
+    expect(zpl).toContain("SKANUJ PRZY KASIE");
+    expect(zpl).toContain("^BQN,2,2");
+    expect(zpl).toContain("^FDQA,KSO1:test^FS");
+    expect(zpl).not.toContain("Pho bo");
+    expect(zpl).not.toContain("^BE,");
+    expect(zpl).not.toContain("^BC,");
+  });
+
+  it("does not truncate compact KSO QR payloads", () => {
+    const payload = `KSO1:${"a".repeat(420)}`;
+    const f = new ZplFormatter(50, 30, 203, "ascii");
+    const zpl = f.formatKitchenPaymentLabel({
+      orderId: "kso-1",
+      orderNumber: "K-042",
+      createdAt: "2026-06-16T10:00:00.000Z",
+      source: "KIOSK PC-YURI",
+      customerLanguage: "pl",
+      totalGrosze: 2900,
+      qrPayload: payload,
+      items: [],
+    });
+
+    expect(zpl).toContain(`^FDQA,${payload}^FS`);
+  });
+});

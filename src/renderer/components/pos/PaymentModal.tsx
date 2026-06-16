@@ -378,6 +378,7 @@ export default function PaymentModal({
     const numberSeries: 'FISCAL' | 'ORDER' =
       seriesHasCash || seriesHasBlik || method === 'INVOICE' ? 'ORDER' : 'FISCAL';
 
+    const kitchenSelfOrderCheckout = checkoutDraft?.kitchenSelfOrder?.kitchenAlreadyReleased === true;
     const order = {
       id: orderId,
       order_number: null as string | null,
@@ -396,7 +397,7 @@ export default function PaymentModal({
       customer_name: extraOrderFields?.customer_name ?? null,
       customer_nip: customerNipForOrder,
       shift_id: shiftId,
-      source: 'POS',
+      source: kitchenSelfOrderCheckout ? 'KITCHEN_SELF_ORDER' : 'POS',
       table_id: extraOrderFields?.table_id ?? null,
       covers: extraOrderFields?.covers ?? null,
       order_type: extraOrderFields?.order_type ?? 'standard',
@@ -407,6 +408,7 @@ export default function PaymentModal({
       created_at: new Date().toISOString(),
       synced_at: null,
       payment_tenders: tendersJson,
+      kitchen_number: kitchenSelfOrderCheckout ? checkoutDraft?.kitchenSelfOrder?.orderNumber ?? null : null,
     };
 
     const items = cart.items.map((item) => ({

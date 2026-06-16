@@ -49,11 +49,11 @@ import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import {
-  buildKitchenPaymentSlipLines,
   buildKitchenTicketLines,
   buildPickupSlipLines,
   type KitchenTicketData,
 } from '../printing/kitchen-ticket';
+import { printKitchenSelfOrderCustomerSlipToPrinter } from '../printing/kitchen-payment-slip-printer';
 import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
 import { tableRepo } from '../database/repos/table-repo';
@@ -181,13 +181,21 @@ function compactKitchenSelfOrderQrOptions(value: string | null): string[] | unde
 
 const KITCHEN_SELF_ORDER_QR_WITH_NOTES_MAX_LENGTH = 600;
 
-function buildKitchenSelfOrderCompactQrPayload(order: KitchenSelfOrderWithItems, includeNotes: boolean) {
+function buildKitchenSelfOrderCompactQrPayload(
+  order: KitchenSelfOrderWithItems,
+  includeNotes: boolean,
+  kitchenAlreadyReleased: boolean,
+) {
   return {
     t: 'KSO',
     v: 1,
+    id: order.id,
     n: order.order_number,
+    f: order.fulfillment_type,
+    s: order.source_label || null,
+    kr: kitchenAlreadyReleased ? 1 : 0,
     i: order.items.map((item) => {
-      const qrItem: [string | null, number, string?, string[]?] = [item.variant_id, item.quantity];
+      const qrItem: [string | null, number, string?, string[]?, number?] = [item.variant_id, item.quantity];
       if (includeNotes) {
         const note = compactKitchenSelfOrderQrText(item.note);
         const options = compactKitchenSelfOrderQrOptions(item.options_json);
@@ -196,20 +204,57 @@ function buildKitchenSelfOrderCompactQrPayload(order: KitchenSelfOrderWithItems,
           if (options) qrItem[3] = options;
         }
       }
+      if (item.unit_price_grosze > 0) qrItem[4] = item.unit_price_grosze;
       return qrItem;
     }),
   };
 }
 
-function buildKitchenSelfOrderQrPayload(order: KitchenSelfOrderWithItems): string {
+function buildKitchenSelfOrderQrPayload(
+  order: KitchenSelfOrderWithItems,
+  options: { kitchenAlreadyReleased?: boolean } = {},
+): string {
+  const kitchenAlreadyReleased = options.kitchenAlreadyReleased !== false;
   const withNotes = `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
-    buildKitchenSelfOrderCompactQrPayload(order, true),
+    buildKitchenSelfOrderCompactQrPayload(order, true, kitchenAlreadyReleased),
   ))}`;
   if (withNotes.length <= KITCHEN_SELF_ORDER_QR_WITH_NOTES_MAX_LENGTH) return withNotes;
 
   return `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
-    buildKitchenSelfOrderCompactQrPayload(order, false),
+    buildKitchenSelfOrderCompactQrPayload(order, false, kitchenAlreadyReleased),
   ))}`;
+}
+
+function buildKitchenSelfOrderTicket(
+  order: KitchenSelfOrderWithItems,
+  brandName: string,
+  qrPayload: string | null,
+  fallbackSourceLabel = 'PC-YURI',
+): KitchenTicketData {
+  return {
+    orderId: order.id,
+    orderNumber: order.order_number,
+    createdAt: order.created_at,
+    source: `KIOSK ${order.source_label || fallbackSourceLabel || 'PC-YURI'}`,
+    fulfillmentType: order.fulfillment_type,
+    kitchenLanguage: 'vi',
+    customerLanguage: order.customer_language,
+    pickupNumber: order.order_number,
+    paymentStatus: 'UNPAID',
+    qrPayload,
+    brandName,
+    totalGrosze: order.total_grosze,
+    items: order.items.map((item) => ({
+      name: item.name_snapshot,
+      quantity: item.quantity,
+      unitPriceGrosze: item.unit_price_grosze,
+      lineTotalGrosze: item.line_total_grosze,
+      notes: [
+        parseKitchenSelfOrderOptions(item.options_json).join(', '),
+        item.note || '',
+      ].filter(Boolean).join(' | ') || null,
+    })),
+  };
 }
 
 function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmountGrosze: number, order: any): number[] {
@@ -2885,35 +2930,15 @@ export class PosModule extends BaseModule {
           sourceMachineId: cfg.machineId || null,
           items: normalizedItems,
         });
-        const qrPayload = buildKitchenSelfOrderQrPayload(created);
-
-        const ticket: KitchenTicketData = {
-          orderId: created.id,
-          orderNumber: created.order_number,
-          createdAt: created.created_at,
-          source: `KIOSK ${created.source_label || sourceLabel}`,
-          fulfillmentType: created.fulfillment_type,
-          kitchenLanguage: 'vi',
-          customerLanguage: created.customer_language,
-          pickupNumber: created.order_number,
-          paymentStatus: 'UNPAID',
-          qrPayload,
-          brandName,
-          totalGrosze: created.total_grosze,
-          items: created.items.map((item) => ({
-            name: item.name_snapshot,
-            quantity: item.quantity,
-            unitPriceGrosze: item.unit_price_grosze,
-            lineTotalGrosze: item.line_total_grosze,
-            notes: [
-              parseKitchenSelfOrderOptions(item.options_json).join(', '),
-              item.note || '',
-            ].filter(Boolean).join(' | ') || null,
-          })),
-        };
-
-        const kitchenPrint = await this.printKitchenSelfOrderTicket(ticket);
-        const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
+        const kitchenTicket = buildKitchenSelfOrderTicket(created, brandName, null, sourceLabel);
+        const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
+        const qrPayload = buildKitchenSelfOrderQrPayload(created, {
+          kitchenAlreadyReleased: kitchenPrint.printed,
+        });
+        const ticket = buildKitchenSelfOrderTicket(created, brandName, qrPayload, sourceLabel);
+        const slipPrint = kitchenPrint.printed
+          ? await this.printKitchenSelfOrderCustomerSlip(ticket)
+          : { printed: false, error: 'kitchen_not_printed' };
         const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
         const finalOrder = kitchenSelfOrderRepo.markPrintResult(created.id, {
           kitchenPrinted: kitchenPrint.printed,
@@ -2924,13 +2949,16 @@ export class PosModule extends BaseModule {
           customerSlipRoute: slipPrint.route || null,
           error,
         }) || created;
+        const success = kitchenPrint.printed && slipPrint.printed;
 
         return {
-          success: true,
+          success,
           order: finalOrder,
+          orderId: finalOrder.id,
           orderNumber: finalOrder.order_number,
           kitchenPrinted: kitchenPrint.printed,
           customerSlipPrinted: slipPrint.printed,
+          canRetrySlip: kitchenPrint.printed && !slipPrint.printed,
           kitchenRoute: kitchenPrint.route,
           kitchenPrinterId: kitchenPrint.printerId,
           kitchenJobId: kitchenPrint.jobId,
@@ -2942,6 +2970,53 @@ export class PosModule extends BaseModule {
       } catch (e: any) {
         logger.error(`[PosModule] Kitchen self-order submit failed: ${e?.message || e}`);
         return { success: false, error: e?.message || String(e) };
+      }
+    });
+
+    ipcMain.handle('kitchen-self-order:reprintSlip', async (_e, orderId: string) => {
+      const id = String(orderId || '').trim();
+      if (!id) return { success: false, error: 'missing_order_id', canRetrySlip: false };
+
+      try {
+        const order = kitchenSelfOrderRepo.getById(id);
+        if (!order) return { success: false, error: 'order_not_found', canRetrySlip: false };
+        if (!order.kitchen_printed) {
+          return {
+            success: false,
+            orderId: order.id,
+            orderNumber: order.order_number,
+            kitchenPrinted: false,
+            customerSlipPrinted: false,
+            canRetrySlip: false,
+            error: 'kitchen_not_printed',
+          };
+        }
+
+        const cfg = getConfig();
+        const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || 'PC-YURI').trim() || 'PC-YURI';
+        const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
+        const ticket = buildKitchenSelfOrderTicket(order, resolveKitchenSelfOrderBrandName(cfg), qrPayload, sourceLabel);
+        const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
+        const updated = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
+          customerSlipPrinted: slipPrint.printed,
+          customerSlipRoute: slipPrint.route || null,
+          error: slipPrint.error || null,
+        }) || order;
+
+        return {
+          success: slipPrint.printed,
+          orderId: updated.id,
+          orderNumber: updated.order_number,
+          kitchenPrinted: !!updated.kitchen_printed,
+          customerSlipPrinted: slipPrint.printed,
+          canRetrySlip: !slipPrint.printed,
+          slipRoute: slipPrint.route,
+          qrPayload,
+          error: slipPrint.error || null,
+        };
+      } catch (e: any) {
+        logger.error(`[PosModule] Kitchen self-order slip reprint failed: ${e?.message || e}`);
+        return { success: false, error: e?.message || String(e), canRetrySlip: true };
       }
     });
 
@@ -3210,22 +3285,13 @@ export class PosModule extends BaseModule {
     const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
     const printer = printers[printerType];
 
-    if (!printer?.isConnected?.()) {
-      return { printed: false, error: `${printerType.toLowerCase()}_printer_not_connected` };
-    }
-    if (typeof printer.printPlainLines !== 'function') {
-      return { printed: false, error: `${printerType.toLowerCase()}_printer_plain_text_unavailable` };
-    }
-
-    try {
-      await printer.printPlainLines(buildKitchenPaymentSlipLines({ ...ticket, kind: 'PAYMENT_SLIP' }));
+    const result = await printKitchenSelfOrderCustomerSlipToPrinter(ticket, printerType, printer);
+    if (result.printed) {
       logger.info(`[PosModule] Kitchen self-order payment slip printed locally for ${ticket.orderNumber}`);
-      return { printed: true, route: 'LOCAL' };
-    } catch (err: any) {
-      const error = err?.message || String(err);
-      logger.warn(`[PosModule] Kitchen self-order payment slip failed for ${ticket.orderNumber}: ${error}`);
-      return { printed: false, error };
+    } else {
+      logger.warn(`[PosModule] Kitchen self-order payment slip failed for ${ticket.orderNumber}: ${result.error || 'unknown'}`);
     }
+    return result;
   }
 
   /**
@@ -3244,6 +3310,10 @@ export class PosModule extends BaseModule {
     try {
       const order = orderRepo.getById(orderId);
       if (!order) return { printed: false, kitchenItems: 0, error: 'order_not_found' };
+      if (!opts.reprint && String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER') {
+        logger.info(`[PosModule] Skipping automatic kitchen ticket for paid kiosk order ${order.order_number || orderId}: already released on submit`);
+        return { printed: true, kitchenItems: 0 };
+      }
       const items = orderRepo.getItemsByOrderId(orderId);
       const kitchenItems = items.filter((item) => {
         if (!item.variant_id) return false;

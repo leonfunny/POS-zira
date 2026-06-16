@@ -24,7 +24,7 @@ describe('retail POS long-press label printing', () => {
   it('prints the product barcode, name, price, and sku through the Zebra label path', () => {
     expect(retailTemplate).toContain('const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {');
     expect(retailTemplate).toContain('const barcode = product.barcode?.trim();');
-    expect(retailTemplate).toContain('const priceGrosze = Number(product.retail_price) || 0;');
+    expect(retailTemplate).toContain("const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));");
     expect(retailTemplate).toContain('window.electronAPI.printLabel(barcode, displayName, {');
     expect(retailTemplate).toContain('priceText,');
     expect(retailTemplate).toContain('sku: product.sku?.trim() || undefined');

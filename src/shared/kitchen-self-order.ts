@@ -114,6 +114,8 @@ export interface KitchenSelfOrderQrItem {
   quantity: number;
   note?: string | null;
   options?: string[];
+  unitPriceGrosze?: number | null;
+  lineTotalGrosze?: number | null;
 }
 
 export interface KitchenSelfOrderQrPayload {
@@ -125,8 +127,11 @@ export interface KitchenSelfOrderQrPayload {
   fulfillmentType?: KitchenSelfOrderFulfillment;
   customerLanguage?: KitchenSelfOrderLanguage;
   sourceLabel?: string | null;
+  kitchenAlreadyReleased?: boolean;
   items: KitchenSelfOrderQrItem[];
 }
+
+export type KitchenSelfOrderCheckoutPriceSource = 'CATALOG' | 'QR_SNAPSHOT' | 'NONE';
 
 export function normalizeKitchenSelfOrderLanguage(value: unknown): KitchenSelfOrderLanguage {
   return value === 'vi' || value === 'en' ? value : 'pl';
@@ -208,6 +213,23 @@ export function normalizeKitchenSelfOrderQuantity(value: unknown): number {
 export function normalizeKitchenSelfOrderPriceGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
   return Math.max(0, Math.min(9_999_999, amount));
+}
+
+export function resolveKitchenSelfOrderCheckoutUnitPrice(
+  catalogPriceGrosze: unknown,
+  snapshotUnitPriceGrosze: unknown,
+): { unitPriceGrosze: number; source: KitchenSelfOrderCheckoutPriceSource } {
+  const catalog = normalizeKitchenSelfOrderPriceGrosze(catalogPriceGrosze);
+  if (catalog > 0) {
+    return { unitPriceGrosze: catalog, source: 'CATALOG' };
+  }
+
+  const snapshot = normalizeKitchenSelfOrderPriceGrosze(snapshotUnitPriceGrosze);
+  if (snapshot > 0) {
+    return { unitPriceGrosze: snapshot, source: 'QR_SNAPSHOT' };
+  }
+
+  return { unitPriceGrosze: 0, source: 'NONE' };
 }
 
 export function sanitizeKitchenSelfOrderNote(value: unknown): string | null {

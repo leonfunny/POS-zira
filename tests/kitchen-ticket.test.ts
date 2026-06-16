@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildKitchenPaymentSlipLines, buildKitchenTicketLines, buildPickupSlipLines } from '../src/main/printing/kitchen-ticket';
+import {
+  buildKitchenPaymentSlipLines,
+  buildKitchenTicketLines,
+  buildPickupSlipLines,
+} from '../src/main/printing/kitchen-ticket';
 import type { KitchenTicketData } from '../src/shared/types';
 
 function readSource(relativePath: string): string {
@@ -209,6 +213,7 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(posModuleSource).toContain('void this.printKitchenTicketForOrder(id)');
     expect(posModuleSource).toContain("'pos:kitchen-ticket-failed'");
     expect(posModuleSource).toContain("ipcMain.handle('pos:orders:printKitchenTicket'");
+    expect(posModuleSource).toContain("String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER'");
     // The idempotent duplicate-create return happens in the catch BEFORE the
     // kitchen hook, so a retried sale can't print a second ticket.
     const dupIndex = posModuleSource.indexOf('duplicate: true');

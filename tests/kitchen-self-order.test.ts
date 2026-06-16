@@ -4,6 +4,7 @@ import {
   formatKitchenSelfOrderNumber,
   normalizeKitchenSelfOrderPriceGrosze,
   normalizeKitchenSelfOrderQuantity,
+  resolveKitchenSelfOrderCheckoutUnitPrice,
   resolveKitchenSelfOrderBrandName,
   sanitizeKitchenSelfOrderNote,
 } from '../src/shared/kitchen-self-order';
@@ -27,6 +28,21 @@ describe('kitchen self-order MVP wiring', () => {
     expect(normalizeKitchenSelfOrderPriceGrosze(99_999_999)).toBe(9_999_999);
     expect(sanitizeKitchenSelfOrderNote('  no   onion  ')).toBe('no onion');
     expect(sanitizeKitchenSelfOrderNote('')).toBeNull();
+  });
+
+  it('uses QR price snapshots only as checkout fallback data', () => {
+    expect(resolveKitchenSelfOrderCheckoutUnitPrice(2900, 1)).toEqual({
+      unitPriceGrosze: 2900,
+      source: 'CATALOG',
+    });
+    expect(resolveKitchenSelfOrderCheckoutUnitPrice(0, 2900)).toEqual({
+      unitPriceGrosze: 2900,
+      source: 'QR_SNAPSHOT',
+    });
+    expect(resolveKitchenSelfOrderCheckoutUnitPrice(0, 0)).toEqual({
+      unitPriceGrosze: 0,
+      source: 'NONE',
+    });
   });
 
   it('uses separate local tables instead of POS orders/order_items', () => {
@@ -54,8 +70,10 @@ describe('kitchen self-order MVP wiring', () => {
     expect(windowSource).toContain('preload-kitchen-self-order.js');
     expect(viteSource).toContain('windows/kitchen-self-order/index.html');
     expect(preloadSource).toContain('kitchen-self-order:submit');
+    expect(preloadSource).toContain('kitchen-self-order:reprintSlip');
     expect(posModuleSource).toContain("ipcMain.handle('kitchen-self-order:submit'");
-    expect(posModuleSource).toContain('printKitchenSelfOrderTicket(ticket)');
+    expect(posModuleSource).toContain("ipcMain.handle('kitchen-self-order:reprintSlip'");
+    expect(posModuleSource).toContain('printKitchenSelfOrderTicket(kitchenTicket)');
     expect(posModuleSource).toContain('printKitchenSelfOrderCustomerSlip(ticket)');
   });
 
@@ -64,12 +82,19 @@ describe('kitchen self-order MVP wiring', () => {
     const ticketSource = readSource('src/main/printing/kitchen-ticket.ts');
     const formatterSource = readSource('src/main/hardware/thermal/escpos-formatter.ts');
 
-    expect(posModuleSource).toContain('buildKitchenSelfOrderQrPayload(created)');
+    expect(posModuleSource).toContain('buildKitchenSelfOrderQrPayload(created, {');
+    expect(posModuleSource).toContain('kitchenAlreadyReleased: kitchenPrint.printed');
+    expect(posModuleSource).toContain('success = kitchenPrint.printed && slipPrint.printed');
+    expect(posModuleSource).toContain('canRetrySlip: kitchenPrint.printed && !slipPrint.printed');
     expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');
+    expect(posModuleSource).toContain('kr: kitchenAlreadyReleased ? 1 : 0');
+    expect(posModuleSource).toContain('item.unit_price_grosze > 0');
+    expect(posModuleSource).not.toContain('if (item.line_total_grosze > 0) qrItem');
     expect(posModuleSource).not.toContain('productId: item.product_id');
     expect(posModuleSource).toContain("paymentStatus: 'UNPAID'");
     expect(posModuleSource).toContain('qrPayload,');
-    expect(posModuleSource).toContain('buildKitchenPaymentSlipLines');
+    expect(posModuleSource).toContain('printKitchenSelfOrderCustomerSlipToPrinter');
+    expect(ticketSource).toContain('buildKitchenPaymentSlipLines');
     expect(posModuleSource).toContain('unitPriceGrosze: normalizeKitchenSelfOrderPriceGrosze');
     expect(ticketSource).toContain('NIEOPLACONE / CHUA TRA TIEN');
     expect(ticketSource).toContain('THANH TOAN TAI QUAY');
@@ -82,11 +107,43 @@ describe('kitchen self-order MVP wiring', () => {
 
     expect(layoutSource).toContain('decodeKitchenSelfOrderQr(code)');
     expect(layoutSource).toContain('loadKitchenSelfOrderQr(kioskOrder)');
+    expect(layoutSource).toContain('handleUnknownBarcodeScanned');
+    expect(layoutSource).toContain('onUnknownBarcodeScanned={handleUnknownBarcodeScanned}');
     expect(layoutSource).toContain('window.electronAPI.pos.products.getById(variantId)');
     expect(layoutSource).toContain('const cartItems: CartItem[] = []');
+    expect(layoutSource).toContain('resolveKitchenSelfOrderCheckoutUnitPrice');
+    expect(layoutSource).toContain("priceResolution.source === 'QR_SNAPSHOT'");
+    expect(layoutSource).toContain("type: 'checkoutDraft/update'");
+    expect(layoutSource).toContain('kitchenAlreadyReleased: payload.kitchenAlreadyReleased !== false');
     expect(layoutSource).toContain('saleClass.requiresScale');
     expect(layoutSource).toContain('await window.electronAPI.pos.dispatch');
     expect(layoutSource).toContain("type: 'cart/addItem'");
+  });
+
+  it('blocks the done screen on customer slip failure and retries only the slip', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const repoSource = readSource('src/main/database/repos/kitchen-self-order-repo.ts');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(appSource).toContain('result?.canRetrySlip');
+    expect(appSource).toContain('kitchenSelfOrder?.reprintSlip?.(orderId)');
+    expect(appSource).toContain('orderLockedForSlipRetry');
+    expect(appSource).toContain('setCart([]);');
+    expect(repoSource).toContain('markCustomerSlipResult');
+    expect(posModuleSource).toContain('const order = kitchenSelfOrderRepo.getById(id)');
+    expect(posModuleSource).toContain('const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket)');
+    expect(posModuleSource).not.toContain('await this.printKitchenSelfOrderTicket(ticket);');
+  });
+
+  it('marks QR-paid kiosk orders so checkout does not print a second kitchen ticket', () => {
+    const paymentSource = readSource('src/renderer/components/pos/PaymentModal.tsx');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(paymentSource).toContain('kitchenSelfOrderCheckout');
+    expect(paymentSource).toContain("source: kitchenSelfOrderCheckout ? 'KITCHEN_SELF_ORDER' : 'POS'");
+    expect(paymentSource).toContain('kitchen_number: kitchenSelfOrderCheckout');
+    expect(posModuleSource).toContain("String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER'");
+    expect(posModuleSource).toContain('already released on submit');
   });
 
   it('operator launch settings are separate from store self-checkout settings', () => {

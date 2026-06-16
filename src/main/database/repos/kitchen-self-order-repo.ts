@@ -229,4 +229,40 @@ export const kitchenSelfOrderRepo = {
     );
     return this.getById(id);
   },
+
+  markCustomerSlipResult(
+    id: string,
+    result: {
+      customerSlipPrinted: boolean;
+      customerSlipRoute?: string | null;
+      error?: string | null;
+    },
+  ): KitchenSelfOrderWithItems | null {
+    const current = this.getById(id);
+    if (!current) return null;
+    const kitchenPrinted = !!current.kitchen_printed;
+    const status: KitchenSelfOrderStatus = kitchenPrinted && result.customerSlipPrinted
+      ? 'PRINTED'
+      : kitchenPrinted || result.customerSlipPrinted
+        ? 'PARTIAL_PRINT'
+        : 'PRINT_FAILED';
+    database.run(
+      `UPDATE kitchen_self_orders
+       SET status = ?,
+           printed_at = ?,
+           customer_slip_printed = ?,
+           customer_slip_route = ?,
+           error = ?
+       WHERE id = ?`,
+      [
+        status,
+        result.customerSlipPrinted ? new Date().toISOString() : current.printed_at,
+        result.customerSlipPrinted ? 1 : 0,
+        result.customerSlipRoute || current.customer_slip_route || null,
+        result.customerSlipPrinted ? null : result.error || null,
+        id,
+      ],
+    );
+    return this.getById(id);
+  },
 };

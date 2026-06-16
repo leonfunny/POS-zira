@@ -55,7 +55,11 @@ interface ConfiguratorState {
 
 interface SubmitResult {
   success?: boolean;
+  orderId?: string;
   orderNumber?: string;
+  kitchenPrinted?: boolean;
+  customerSlipPrinted?: boolean;
+  canRetrySlip?: boolean;
   error?: string | null;
 }
 
@@ -85,6 +89,8 @@ const COPY = {
     noProducts: 'Brak pozycji w tej kategorii.',
     loading: 'Ładowanie menu...',
     submitError: 'Nie udało się złożyć zamówienia. Spróbuj ponownie lub poproś obsługę.',
+    slipPrintError: 'Zamowienie jest w kuchni, ale slip nie wydrukowal sie. Sprobuj ponownie albo popros obsluge.',
+    retrySlip: 'Ponow druk slipu',
     terminalTitle: 'Płatność przy tym kiosku jest chwilowo niedostępna',
     terminalBody: 'Wróć do zamówienia lub poproś obsługę o pomoc.',
     returnReview: 'Wróć do zamówienia',
@@ -120,6 +126,8 @@ const COPY = {
     noProducts: 'Không có món trong danh mục này.',
     loading: 'Đang tải thực đơn...',
     submitError: 'Không thể gửi đơn. Vui lòng thử lại hoặc nhờ nhân viên hỗ trợ.',
+    slipPrintError: 'Don da gui bep, phieu thanh toan chua in. Thu in lai hoac nho nhan vien.',
+    retrySlip: 'In lai phieu',
     terminalTitle: 'Thanh toán tại kiosk hiện chưa khả dụng',
     terminalBody: 'Quay lại đơn hàng hoặc nhờ nhân viên hỗ trợ.',
     returnReview: 'Quay lại đơn',
@@ -155,6 +163,8 @@ const COPY = {
     noProducts: 'No items in this category.',
     loading: 'Loading menu...',
     submitError: 'We could not place the order. Try again or ask a staff member for help.',
+    slipPrintError: 'The kitchen has the order, but the payment slip did not print. Retry the slip or ask staff.',
+    retrySlip: 'Retry slip',
     terminalTitle: 'Kiosk payment is temporarily unavailable',
     terminalBody: 'Return to your order or ask a staff member for help.',
     returnReview: 'Return to order',
@@ -396,8 +406,32 @@ export default function KitchenSelfOrderApp() {
     if (item) setConfigurator({ product: item.product, lineId });
   };
 
+  const retryCustomerSlip = async (orderId: string | undefined) => {
+    if (!orderId || submitting) return;
+    setSubmitting(true);
+    setCustomerError(null);
+    try {
+      const result = await window.electronAPI?.kitchenSelfOrder?.reprintSlip?.(orderId);
+      setSubmitResult(result || { success: false, orderId, canRetrySlip: true, error: 'no_response' });
+      if (result?.success) {
+        setCart([]);
+        setStep('done');
+      } else {
+        setCustomerError(t.slipPrintError);
+      }
+    } catch {
+      setCustomerError(t.slipPrintError);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submitOrder = async () => {
     if (!menu || cart.length === 0 || submitting) return;
+    if (submitResult?.canRetrySlip && submitResult.orderId) {
+      await retryCustomerSlip(submitResult.orderId);
+      return;
+    }
     const checkoutAction = resolveKitchenSelfOrderCheckoutAction(
       menu.policies.checkoutMode,
       menu.policies.kitchenReleasePolicy,
@@ -427,6 +461,8 @@ export default function KitchenSelfOrderApp() {
       if (result?.success) {
         setCart([]);
         setStep('done');
+      } else if (result?.canRetrySlip) {
+        setCustomerError(t.slipPrintError);
       } else {
         setCustomerError(t.submitError);
       }
@@ -440,6 +476,7 @@ export default function KitchenSelfOrderApp() {
   const themeStyle = {
     '--kso-accent': menu?.brand.accentColor || '#DA7756',
   } as React.CSSProperties;
+  const orderLockedForSlipRetry = !!(submitResult?.canRetrySlip && submitResult.orderId);
 
   if (step === 'review') {
     return (
@@ -453,7 +490,11 @@ export default function KitchenSelfOrderApp() {
           total={cartTotal(cart)}
           submitting={submitting}
           error={customerError}
-          onBack={() => setStep('menu')}
+          orderLocked={orderLockedForSlipRetry}
+          submitLabel={orderLockedForSlipRetry ? t.retrySlip : t.placeOrder}
+          onBack={() => {
+            if (!orderLockedForSlipRetry) setStep('menu');
+          }}
           onEdit={editLine}
           onQuantity={updateQuantity}
           onSubmit={submitOrder}
@@ -981,25 +1022,29 @@ function CartLine({
 
 function QuantityControl({
   quantity,
+  disabled = false,
   onChange,
 }: {
   quantity: number;
+  disabled?: boolean;
   onChange: (quantity: number) => void;
 }) {
   return (
     <div className="flex items-center gap-1">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => onChange(quantity - 1)}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]"
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] disabled:opacity-40"
       >
         <Minus size={18} />
       </button>
       <div className="w-9 text-center text-lg font-black">{quantity}</div>
       <button
         type="button"
+        disabled={disabled}
         onClick={() => onChange(normalizeKitchenSelfOrderQuantity(quantity + 1))}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)]"
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] disabled:opacity-40"
       >
         <Plus size={18} />
       </button>
@@ -1217,6 +1262,8 @@ function ReviewScreen({
   total,
   submitting,
   error,
+  orderLocked,
+  submitLabel,
   onBack,
   onEdit,
   onQuantity,
@@ -1232,6 +1279,8 @@ function ReviewScreen({
   total: number;
   submitting: boolean;
   error: string | null;
+  orderLocked: boolean;
+  submitLabel: string;
   onBack: () => void;
   onEdit: (lineId: string) => void;
   onQuantity: (lineId: string, quantity: number) => void;
@@ -1242,7 +1291,7 @@ function ReviewScreen({
   return (
     <div className="grid h-full grid-rows-[68px_1fr] gap-4 p-4">
       <header className="flex items-center justify-between gap-4">
-        <button type="button" onClick={onBack} className="kso-secondary-button">
+        <button type="button" onClick={onBack} disabled={orderLocked} className="kso-secondary-button disabled:opacity-50">
           <ArrowLeft size={22} />
           {t.back}
         </button>
@@ -1252,7 +1301,9 @@ function ReviewScreen({
             t={t}
             fulfillment={fulfillment}
             options={fulfillmentOptions}
-            onChange={onFulfillment}
+            onChange={(value) => {
+              if (!orderLocked) onFulfillment(value);
+            }}
           />
           <LanguageToggle language={language} onChange={onLanguage} />
         </div>
@@ -1287,14 +1338,16 @@ function ReviewScreen({
                         {item.note}
                       </div>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => onEdit(item.lineId)}
-                      className="mt-2 inline-flex min-h-[48px] items-center gap-2 font-black text-[var(--sc-primary-deep)]"
-                    >
-                      <Pencil size={17} />
-                      {t.edit}
-                    </button>
+                    {!orderLocked && (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(item.lineId)}
+                        className="mt-2 inline-flex min-h-[48px] items-center gap-2 font-black text-[var(--sc-primary-deep)]"
+                      >
+                        <Pencil size={17} />
+                        {t.edit}
+                      </button>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-3">
                     <div className="text-xl font-black text-[var(--sc-ink)]">
@@ -1302,6 +1355,7 @@ function ReviewScreen({
                     </div>
                     <QuantityControl
                       quantity={item.quantity}
+                      disabled={orderLocked}
                       onChange={(quantity) => onQuantity(item.lineId, quantity)}
                     />
                   </div>
@@ -1331,7 +1385,7 @@ function ReviewScreen({
               onClick={onSubmit}
               className="kso-primary-button w-full"
             >
-              {submitting ? t.submitting : t.placeOrder}
+              {submitting ? t.submitting : submitLabel}
               {!submitting && <ChevronRight size={24} />}
             </button>
           </div>
