@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  decodeKitchenSelfOrderQr,
+  encodeKitchenSelfOrderUuidToken,
   formatKitchenSelfOrderNumber,
   normalizeKitchenSelfOrderPriceGrosze,
   normalizeKitchenSelfOrderQuantity,
@@ -42,6 +44,36 @@ describe('kitchen self-order MVP wiring', () => {
     expect(resolveKitchenSelfOrderCheckoutUnitPrice(0, 0)).toEqual({
       unitPriceGrosze: 0,
       source: 'NONE',
+    });
+  });
+
+  it('decodes compact label QR payloads with base64url UUID tokens', () => {
+    const orderId = 'b344bf97-a4c3-487f-a63c-990cb293512d';
+    const variantId = 'ac45b4fa-d3b8-48e5-81fa-90c9c795ade0';
+    const payload = `KSO1:${Buffer.from(JSON.stringify({
+      t: 'K',
+      v: 1,
+      id: encodeKitchenSelfOrderUuidToken(orderId),
+      n: 'K-001',
+      f: 'D',
+      s: 'PC-YURI',
+      k: 1,
+      i: [[encodeKitchenSelfOrderUuidToken(variantId), 2, 2490]],
+    }), 'utf8').toString('base64url')}`;
+
+    expect(decodeKitchenSelfOrderQr(payload)).toEqual({
+      type: 'KSO',
+      version: 1,
+      orderNumber: 'K-001',
+      orderId,
+      fulfillmentType: 'DINE_IN',
+      sourceLabel: 'PC-YURI',
+      kitchenAlreadyReleased: true,
+      items: [{
+        variantId,
+        quantity: 2,
+        unitPriceGrosze: 2490,
+      }],
     });
   });
 
@@ -87,6 +119,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).toContain('success = kitchenPrint.printed && slipPrint.printed');
     expect(posModuleSource).toContain('canRetrySlip: kitchenPrint.printed && !slipPrint.printed');
     expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');
+    expect(posModuleSource).toContain('buildKitchenSelfOrderLabelQrPayload(order, kitchenAlreadyReleased)');
     expect(posModuleSource).toContain('kr: kitchenAlreadyReleased ? 1 : 0');
     expect(posModuleSource).toContain('item.unit_price_grosze > 0');
     expect(posModuleSource).not.toContain('if (item.line_total_grosze > 0) qrItem');

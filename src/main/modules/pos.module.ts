@@ -103,6 +103,7 @@ import type {
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import {
   KITCHEN_SELF_ORDER_QR_PREFIX,
+  encodeKitchenSelfOrderUuidToken,
   formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
@@ -210,6 +211,29 @@ function buildKitchenSelfOrderCompactQrPayload(
   };
 }
 
+function buildKitchenSelfOrderLabelQrPayload(
+  order: KitchenSelfOrderWithItems,
+  kitchenAlreadyReleased: boolean,
+) {
+  const encodeId = (value: string | null): string | null =>
+    encodeKitchenSelfOrderUuidToken(value) || value || null;
+
+  return {
+    t: 'K',
+    v: 1,
+    id: encodeId(order.id),
+    n: order.order_number,
+    f: order.fulfillment_type === 'TAKEAWAY' ? 'T' : 'D',
+    s: order.source_label || null,
+    k: kitchenAlreadyReleased ? 1 : 0,
+    i: order.items.map((item) => {
+      const qrItem: [string | null, number, number?] = [encodeId(item.variant_id), item.quantity];
+      if (item.unit_price_grosze > 0) qrItem[2] = item.unit_price_grosze;
+      return qrItem;
+    }),
+  };
+}
+
 function buildKitchenSelfOrderQrPayload(
   order: KitchenSelfOrderWithItems,
   options: { kitchenAlreadyReleased?: boolean; includeNotes?: boolean } = {},
@@ -217,7 +241,7 @@ function buildKitchenSelfOrderQrPayload(
   const kitchenAlreadyReleased = options.kitchenAlreadyReleased !== false;
   if (options.includeNotes === false) {
     return `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
-      buildKitchenSelfOrderCompactQrPayload(order, false, kitchenAlreadyReleased),
+      buildKitchenSelfOrderLabelQrPayload(order, kitchenAlreadyReleased),
     ))}`;
   }
   const withNotes = `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
@@ -226,7 +250,7 @@ function buildKitchenSelfOrderQrPayload(
   if (withNotes.length <= KITCHEN_SELF_ORDER_QR_WITH_NOTES_MAX_LENGTH) return withNotes;
 
   return `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
-    buildKitchenSelfOrderCompactQrPayload(order, false, kitchenAlreadyReleased),
+    buildKitchenSelfOrderLabelQrPayload(order, kitchenAlreadyReleased),
   ))}`;
 }
 

@@ -16,4 +16,14 @@ describe('Windows USB printer presence checks', () => {
     expect(samePortIndex).toBeGreaterThan(0);
     expect(vidFallbackIndex).toBeGreaterThan(samePortIndex);
   });
+
+  it('keeps discovered USB spooler printers when a USBPRINT device exists on the same port', () => {
+    const source = readSource('src/main/hardware/driver-installer.ts');
+    const samePortIndex = source.indexOf('const samePortPresent = await isUsbPrintPortPresent(portUpper)');
+    const vidFallbackIndex = source.indexOf('backendPresent = bp.vids.some');
+
+    expect(source).toContain("import { listSerialPorts, isUsbPrintPortPresent } from './port-utils'");
+    expect(samePortIndex).toBeGreaterThan(0);
+    expect(vidFallbackIndex).toBeGreaterThan(samePortIndex);
+  });
 });

@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import logger from '../logger';
 import { BRAND_PATTERNS } from './detection/types';
-import { listSerialPorts } from './port-utils';
+import { listSerialPorts, isUsbPrintPortPresent } from './port-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -389,6 +389,21 @@ foreach ($vid in $vids) {
         // Network printer — trust the spooler (can't probe without sending data)
         backendPresent = true;
         reason = `network port ${portUpper}, trusting spooler`;
+      } else if (/^(USB\d+|DOT4_\d+)$/i.test(portUpper)) {
+        const samePortPresent = await isUsbPrintPortPresent(portUpper);
+        if (samePortPresent) {
+          backendPresent = true;
+          reason = `${portUpper} has present USBPRINT device`;
+        } else if (bp && bp.vids.length > 0) {
+          backendPresent = bp.vids.some(v => presentVidsLower.has(v.toLowerCase()));
+          reason = `brand=${bp.brand} VIDs=[${bp.vids.join(',')}] ${backendPresent ? 'matched present PnP' : 'NOT matched (ghost)'}`;
+        } else if (bp) {
+          backendPresent = true;
+          reason = `brand=${bp.brand} has no VID table on ${portUpper}, trusting spooler`;
+        } else {
+          backendPresent = true;
+          reason = `unknown brand on ${portUpper}, trusting spooler (no VID cross-check possible)`;
+        }
       } else if (bp && bp.vids.length > 0) {
         // USB / DOT4 / custom port name with KNOWN brand → require VID present
         backendPresent = bp.vids.some(v => presentVidsLower.has(v.toLowerCase()));
