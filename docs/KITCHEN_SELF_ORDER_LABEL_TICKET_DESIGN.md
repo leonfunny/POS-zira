@@ -1,6 +1,8 @@
 # Kitchen Self-Order — Customer Label (50x30) & Kitchen Ticket Improvements
 
 - **Date:** 2026-06-17
+- **Revision:** v4 — gatekeeper approved v3 for writing-plans; recorded the no-notes recall-display tradeoff
+  + acceptance test + scope-creep guard (§4.6, §8). (v3 below.)
 - **Revision:** v3 — app-bot gatekeeper P1: the label cannot choose a compact QR with the current code path
   (`formatKitchenPaymentLabel` only receives `data.qrPayload`; `printKitchenSelfOrderCustomerSlip` has no `order`).
   Replaced the hand-wavy "prefer compact payload" with a concrete wiring (§4.5/§5) and a payload-aware QR sizer
@@ -72,7 +74,8 @@ Two artifacts are produced when a customer submits an order at the kitchen self-
 
 **Non-goals (YAGNI — dropped per decisions)** — per-item labels; customer status display; multi-kiosk number
 prefixing; changing release timing (stays `ON_SUBMIT`); listing items on the label (count only); **localizing
-modifier snapshots** to kitchen language (see §4.3).
+modifier snapshots** to kitchen language (see §4.3); **re-fetching modifiers via a server / `orderId` lookup at
+recall** (the label's no-notes QR loses modifier display by design — see §4.6).
 
 ---
 
@@ -188,6 +191,18 @@ needs the real module count. Use the existing `qrcode` dependency:
 
 Priority for space: **order number (largest) → QR (scannable, right-aligned) → count·total → secondary**.
 
+### 4.6 Recall display tradeoff (gatekeeper note) — ACCEPTED
+Because the label carries the no-notes `labelQrPayload`, scanning it at the POS loads the cart with the correct
+**item, quantity, and snapshot price**, but **modifiers/notes are intentionally absent** in the cart line. Recall
+joins `options + note` into the cart line's `notes` (`POSLayout.tsx` → `joinKioskLineNotes([options, line.note])`);
+with the no-notes payload that resolves to empty. Price stays correct because the compact payload **always carries
+`unitPriceGrosze`** (emitted outside the `includeNotes` gate). So a cashier may see a higher-priced line without the
+"+ topping / less ice" context — **accepted**: the label is for fast counter payment and the kitchen already
+received the modifiers on submit.
+
+**Scope-creep guard:** do NOT add a server / `orderId` lookup to re-fetch modifiers for the recalled cart. Keep the
+change surgical to the label/ticket render path.
+
 ---
 
 ## 5. Shared type & adapter changes
@@ -253,7 +268,10 @@ receiver.)*
   formatter chose, and that a QR block is present.
 - **Label uses the compact payload**: assert `formatKitchenPaymentLabel` renders `data.labelQrPayload` when set
   (falls back to `data.qrPayload` when absent), and that `buildKitchenSelfOrderQrPayload(order, {includeNotes:false})`
-  is always ≤ the with-notes variant and omits note/option fields.
+  is always ≤ the with-notes variant and omits note/option fields **but still includes `unitPriceGrosze`**.
+- **Recall of `labelQrPayload` (gatekeeper acceptance §4.6)**: loading the no-notes label QR yields the correct
+  item id, quantity, snapshot unit price, and order metadata (orderNumber/orderId/fulfillment); the cart line's
+  modifier/note display is intentionally empty.
 
 **Manual acceptance (required before go-live, not just unit)**
 - **Print-smoke on the real kiosk Zebra**: print the label with a near-worst-case (~600-char) QR payload and a
