@@ -15,11 +15,10 @@ interface KitchenPrintSettingsProps {
 }
 
 /**
- * Settings → "In đơn bếp": mark which categories are kitchen categories.
- * Every sold item from a flagged category prints a kitchen ticket (no
- * prices) on the salon's kitchen printer — the local KITCHEN printer when
- * this machine has one, otherwise the salon printer registered under the
- * KITCHEN role via a backend print job.
+ * Settings → "In đơn bếp": mark which categories are available in the
+ * customer kitchen self-order menu. When a customer submits that flow, the
+ * kitchen ticket prints on the local KITCHEN printer or the salon printer
+ * registered under the KITCHEN role via a backend print job.
  *
  * The flag lives on the BACKEND category (categories.kitchen_print) so one
  * toggle applies to every terminal; the toggle PATCHes through the existing
@@ -100,7 +99,7 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
       <p className="text-xs text-slate-400 mb-4">
         {tOr(
           'settings.kitchenPrintDesc',
-          'Items from marked categories automatically print a kitchen ticket (no prices) when an order is paid — on this machine’s kitchen printer, or the salon printer registered under the KITCHEN role.',
+          'Marked categories appear in the customer kitchen self-order menu and print a kitchen ticket when the customer submits that order.',
         )}
       </p>
 

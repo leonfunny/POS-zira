@@ -142,8 +142,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(paymentSource).toContain('kitchenSelfOrderCheckout');
     expect(paymentSource).toContain("source: kitchenSelfOrderCheckout ? 'KITCHEN_SELF_ORDER' : 'POS'");
     expect(paymentSource).toContain('kitchen_number: kitchenSelfOrderCheckout');
-    expect(posModuleSource).toContain("String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER'");
-    expect(posModuleSource).toContain('already released on submit');
+    expect(posModuleSource).not.toContain('void this.printKitchenTicketForOrder(id)');
   });
 
   it('operator launch settings are separate from store self-checkout settings', () => {

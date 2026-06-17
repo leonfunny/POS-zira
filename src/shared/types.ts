@@ -729,7 +729,7 @@ export interface KitchenTicketData {
   source: string;
   /** Optional first-class kitchen/self-order fulfillment choice. */
   fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
-  /** Kitchen ticket language. Existing POS kitchen tickets default to PL. */
+  /** Kitchen ticket language. Customer kitchen self-orders default to VI. */
   kitchenLanguage?: 'pl' | 'vi' | 'en' | string | null;
   /** Customer slip language. Existing pickup slips default to PL. */
   customerLanguage?: 'pl' | 'vi' | 'en' | string | null;

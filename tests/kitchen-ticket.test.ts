@@ -218,11 +218,12 @@ describe('pickup number (so nhan do)', () => {
     expect(text).toContain('· 2 món');
   });
 
-  it('assigns a daily 4-digit number at order create when kitchen items exist', () => {
+  it('does not assign a new kitchen number to normal POS order creates', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/order-repo.ts');
 
-    expect(posModuleSource).toContain('normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber()');
+    expect(posModuleSource).not.toContain('normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber()');
+    expect(posModuleSource).not.toContain('const hasKitchenItems = (normalizedItems || []).some');
     expect(repoSource).toContain("date(created_at) = date('now')");
     expect(repoSource).toContain("String(next).padStart(4, '0')");
   });
@@ -242,21 +243,15 @@ describe('pickup number (so nhan do)', () => {
 });
 
 describe('kitchen ticket pipeline wiring', () => {
-  it('fires after order create, never blocking the sale, and skips duplicates', () => {
+  it('does not auto-print kitchen tickets from normal POS order creation', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
 
-    expect(posModuleSource).toContain('void this.printKitchenTicketForOrder(id)');
-    expect(posModuleSource).toContain("'pos:kitchen-ticket-failed'");
-    expect(posModuleSource).toContain("ipcMain.handle('pos:orders:printKitchenTicket'");
-    expect(posModuleSource).toContain("String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER'");
-    // The idempotent duplicate-create return happens in the catch BEFORE the
-    // kitchen hook, so a retried sale can't print a second ticket.
-    const dupIndex = posModuleSource.indexOf('duplicate: true');
-    const hookIndex = posModuleSource.indexOf('void this.printKitchenTicketForOrder(id)');
-    expect(dupIndex).toBeGreaterThan(hookIndex);
+    expect(posModuleSource).not.toContain('void this.printKitchenTicketForOrder(id)');
+    expect(posModuleSource).not.toContain("'pos:kitchen-ticket-failed'");
+    expect(posModuleSource).not.toContain("ipcMain.handle('pos:orders:printKitchenTicket'");
   });
 
-  it('prefers the dedicated local kitchen printer and never the receipt fallback', () => {
+  it('self-order kitchen release prefers the dedicated local kitchen printer and never the receipt fallback', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     expect(posModuleSource).toContain('printers[PrinterType.KITCHEN]');
     expect(posModuleSource).toContain('submitSharedKitchenPrint(ticket)');
@@ -288,7 +283,7 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(applicatorSource).toContain("firstOwnValue(p, ['kitchenPrint', 'kitchen_print'])");
   });
 
-  it('exposes the Settings toggle and the Order History reprint button', () => {
+  it('exposes the Settings toggle without exposing a POS Order History kitchen-print action', () => {
     const settingsSource = readSource('src/renderer/components/Settings.tsx');
     const kitchenSettingsSource = readSource('src/renderer/components/pos/KitchenPrintSettings.tsx');
     const modalSource = readSource('src/renderer/components/pos/OrderHistoryModal.tsx');
@@ -296,8 +291,8 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(settingsSource).toContain('<KitchenPrintSettings');
     expect(kitchenSettingsSource).toContain('updateCategory(category.id');
     expect(kitchenSettingsSource).toContain('kitchenPrint: next');
-    expect(modalSource).toContain('handlePrintKitchenTicket(order.id)');
-    expect(modalSource).toContain('pos.history.printKitchenTicket');
+    expect(modalSource).not.toContain('handlePrintKitchenTicket(order.id)');
+    expect(modalSource).not.toContain('pos.history.printKitchenTicket');
   });
 });
 

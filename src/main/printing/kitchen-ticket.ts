@@ -1,9 +1,8 @@
-// Kitchen ticket: what the cooks see when a paid order contains items from a
-// kitchen-flagged category (categories.kitchen_print = 1). Deliberately NO
-// prices — the kitchen needs order number, time, source, items, quantities,
-// and notes, in a large readable font. Rendering goes through the thermal
-// driver's plain-line path so Vietnamese/Polish names fall back to raster
-// instead of printing mangled code-page text.
+// Kitchen ticket: what the cooks see when a customer kitchen self-order is
+// submitted. Deliberately NO prices — the kitchen needs order number, time,
+// source, items, quantities, and notes in a large readable font. Rendering
+// goes through the thermal driver's plain-line path so Vietnamese/Polish names
+// fall back to raster instead of printing mangled code-page text.
 import type { EscPosPlainLine } from '../hardware/thermal/escpos-formatter';
 import type { KitchenTicketData, KitchenTicketItem } from '../../shared/types';
 

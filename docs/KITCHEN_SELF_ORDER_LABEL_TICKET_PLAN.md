@@ -699,30 +699,11 @@ and insert immediately after it:
         });
 ```
 
-- [ ] **Step 7: Set `modifiers: []` on the POS-order kitchen ticket**
+- [ ] **Step 7: POS-order kitchen ticket path is obsolete**
 
-In `printKitchenTicketForOrder`, in the `items: kitchenItems.map(...)`, change:
-
-```typescript
-        items: kitchenItems.map((item) => ({
-          name: item.name,
-          quantity: Number(item.sale_quantity ?? item.quantity) || 1,
-          unit: item.sale_unit ?? null,
-          notes: item.notes ?? null,
-        })),
-```
-
-to:
-
-```typescript
-        items: kitchenItems.map((item) => ({
-          name: item.name,
-          quantity: Number(item.sale_quantity ?? item.quantity) || 1,
-          unit: item.sale_unit ?? null,
-          modifiers: [],
-          notes: item.notes ?? null,
-        })),
-```
+Normal POS payment must print only the customer receipt. Kitchen tickets are
+released by `kitchen-self-order:submit`; cashier checkout of a scanned KSO QR
+must not print a second kitchen ticket.
 
 - [ ] **Step 8: Run tests + typecheck**
 

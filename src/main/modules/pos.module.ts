@@ -1780,20 +1780,6 @@ export class PosModule extends BaseModule {
           };
         });
 
-        // Daily pickup number: assigned once per order with kitchen items.
-        // The same number prints on the kitchen ticket and the customer
-        // pickup slip so the kitchen hands food to the matching number.
-        if (!normalizedOrder.kitchen_number) {
-          const hasKitchenItems = (normalizedItems || []).some((item: any) => {
-            if (!item.variant_id) return false;
-            const lineProduct = productRepo.getById(item.variant_id);
-            return !!lineProduct?.category_id && productRepo.isKitchenPrintCategory(lineProduct.category_id);
-          });
-          if (hasKitchenItems) {
-            normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber();
-          }
-        }
-
         const id = orderRepo.create(normalizedOrder, normalizedItems);
         let stockChanged = false;
         const allowNegativeStock = getConfig().allowOversell === true;
@@ -1857,21 +1843,6 @@ export class PosModule extends BaseModule {
             logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
           }
 
-          // Kitchen ticket (fire-and-forget): items from kitchen-flagged
-          // categories print to the kitchen printer. Never blocks the sale;
-          // the idempotent duplicate-create path returns earlier and thus
-          // never prints a second ticket.
-          void this.printKitchenTicketForOrder(id)
-            .then((kt) => {
-              if (kt.kitchenItems > 0 && !kt.printed) {
-                notifyPosRenderers(this.container, 'pos:kitchen-ticket-failed', {
-                  orderId: id,
-                  error: kt.error || 'kitchen_print_failed',
-                });
-              }
-            })
-            .catch(() => undefined);
-
           return { success: true, id };
       }
       catch (e: any) {
@@ -1919,12 +1890,6 @@ export class PosModule extends BaseModule {
       } catch {
         return [];
       }
-    });
-
-    // Manual kitchen-ticket print (Order History "print kitchen ticket").
-    ipcMain.handle('pos:orders:printKitchenTicket', async (_e, orderId: string) => {
-      const result = await this.printKitchenTicketForOrder(String(orderId || ''), { reprint: true });
-      return { success: result.printed, ...result };
     });
 
     ipcMain.handle('pos:orders:getDetail', (_e, orderId: string) => {
@@ -3246,8 +3211,8 @@ export class PosModule extends BaseModule {
   }
 
   /**
-   * Kitchen self-order ticket path. This is intentionally separate from the
-   * paid POS order kitchen hook: no stock, no fiscal receipt, no sales order.
+   * Kitchen self-order ticket path: no stock, no fiscal receipt, no sales order.
+   * Normal POS payment prints only the customer receipt.
    */
   private async printKitchenSelfOrderTicket(
     ticket: KitchenTicketData,
@@ -3303,79 +3268,6 @@ export class PosModule extends BaseModule {
       logger.warn(`[PosModule] Kitchen self-order payment slip failed for ${ticket.orderNumber}: ${result.error || 'unknown'}`);
     }
     return result;
-  }
-
-  /**
-   * Print the kitchen ticket for an order: items whose category is flagged
-   * kitchen_print=1, large font, no prices. Route preference:
-   *   1) the DEDICATED local KITCHEN printer (never the receipt-printer
-   *      fallback — kitchen tickets must not mix into the bill printer),
-   *   2) the salon's shared KITCHEN role via a backend KITCHEN_TICKET job.
-   * Never blocks or fails the sale — callers fire-and-forget and surface
-   * failures as a cashier notification + Order History reprint.
-   */
-  private async printKitchenTicketForOrder(
-    orderId: string,
-    opts: { reprint?: boolean } = {},
-  ): Promise<{ printed: boolean; kitchenItems: number; route?: 'LOCAL' | 'SHARED_NETWORK'; error?: string }> {
-    try {
-      const order = orderRepo.getById(orderId);
-      if (!order) return { printed: false, kitchenItems: 0, error: 'order_not_found' };
-      if (!opts.reprint && String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER') {
-        logger.info(`[PosModule] Skipping automatic kitchen ticket for paid kiosk order ${order.order_number || orderId}: already released on submit`);
-        return { printed: true, kitchenItems: 0 };
-      }
-      const items = orderRepo.getItemsByOrderId(orderId);
-      const kitchenItems = items.filter((item) => {
-        if (!item.variant_id) return false;
-        const product = productRepo.getById(item.variant_id);
-        return !!product?.category_id && productRepo.isKitchenPrintCategory(product.category_id);
-      });
-      if (kitchenItems.length === 0) return { printed: false, kitchenItems: 0, error: 'no_kitchen_items' };
-
-      const ticket: KitchenTicketData = {
-        orderId,
-        orderNumber: order.order_number || orderId.slice(0, 8),
-        createdAt: order.created_at || new Date().toISOString(),
-        source: order.source || 'POS',
-        isReprint: !!opts.reprint,
-        pickupNumber: order.kitchen_number ?? null,
-        brandName: resolveKitchenSelfOrderBrandName(getConfig()),
-        items: kitchenItems.map((item) => ({
-          name: item.name,
-          quantity: Number(item.sale_quantity ?? item.quantity) || 1,
-          unit: item.sale_unit ?? null,
-          modifiers: [],
-          notes: item.notes ?? null,
-        })),
-      };
-
-      const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
-      const localKitchen = printers[PrinterType.KITCHEN];
-      if (localKitchen?.isConnected?.() && typeof localKitchen.printPlainLines === 'function') {
-        try {
-          await localKitchen.printPlainLines(buildKitchenTicketLines(ticket));
-          logger.info(`[PosModule] Kitchen ticket printed locally for order ${ticket.orderNumber}`);
-          return { printed: true, kitchenItems: kitchenItems.length, route: 'LOCAL' };
-        } catch (err: any) {
-          logger.error(`[PosModule] Local kitchen ticket failed for ${ticket.orderNumber}: ${err?.message || err}`);
-          // fall through to the shared route
-        }
-      }
-
-      const shared = await submitSharedKitchenPrint(ticket);
-      if (shared.handled && shared.printed) {
-        return { printed: true, kitchenItems: kitchenItems.length, route: 'SHARED_NETWORK' };
-      }
-      return {
-        printed: false,
-        kitchenItems: kitchenItems.length,
-        route: shared.handled ? 'SHARED_NETWORK' : undefined,
-        error: shared.error || 'no_kitchen_printer',
-      };
-    } catch (e: any) {
-      return { printed: false, kitchenItems: 0, error: e?.message || String(e) };
-    }
   }
 
   registerEventHandlers(bus: EventBus): void {
