@@ -65,6 +65,14 @@ function formatQuantity(item: KitchenTicketItem): string {
   return `${Math.max(1, Math.round(Number(item.quantity) || 1))}x`;
 }
 
+export function kitchenItemCount(items: KitchenTicketItem[]): number {
+  return items.reduce((sum, item) => {
+    const unit = (item.unit || '').trim().toLowerCase();
+    const weighted = unit !== '' && unit !== 'szt' && unit !== 'pcs';
+    return sum + (weighted ? 1 : Math.max(1, Math.round(Number(item.quantity) || 1)));
+  }, 0);
+}
+
 function formatMoney(grosze: unknown): string {
   const amount = Math.max(0, Math.round(Number(grosze) || 0));
   return `${(amount / 100).toFixed(2).replace('.', ',')} zl`;

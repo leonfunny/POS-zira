@@ -4,6 +4,7 @@ import {
   buildKitchenPaymentSlipLines,
   buildKitchenTicketLines,
   buildPickupSlipLines,
+  kitchenItemCount,
 } from '../src/main/printing/kitchen-ticket';
 import type { KitchenTicketData } from '../src/shared/types';
 
@@ -263,5 +264,16 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(kitchenSettingsSource).toContain('kitchenPrint: next');
     expect(modalSource).toContain('handlePrintKitchenTicket(order.id)');
     expect(modalSource).toContain('pos.history.printKitchenTicket');
+  });
+});
+
+describe('kitchenItemCount', () => {
+  it('sums piece quantities and counts weighted items as one', () => {
+    expect(kitchenItemCount([{ name: 'a', quantity: 2 }, { name: 'b', quantity: 1 }])).toBe(3);
+    expect(kitchenItemCount([{ name: 'a', quantity: 0.5, unit: 'kg' }])).toBe(1);
+    expect(kitchenItemCount([
+      { name: 'a', quantity: 2, unit: 'szt' },
+      { name: 'b', quantity: 0.75, unit: 'kg' },
+    ])).toBe(3);
   });
 });
