@@ -710,6 +710,9 @@ export interface KitchenTicketItem {
   quantity: number;
   /** kg for weighted items; null/'szt' renders as a plain count. */
   unit?: string | null;
+  /** Readable modifier labels (e.g. "Duong: 50%"). Rendered one per line. */
+  modifiers?: string[];
+  /** Free-text customer note only (modifiers live in `modifiers`). */
   notes?: string | null;
   /** Customer payment slip only. Kitchen tickets must not render prices. */
   unitPriceGrosze?: number | null;
@@ -742,6 +745,9 @@ export interface KitchenTicketData {
   paymentStatus?: 'UNPAID' | 'PAID' | string | null;
   /** Optional customer-slip QR payload used by cashier POS to recall the cart. */
   qrPayload?: string | null;
+  /** Compact (no-notes) QR for the LABEL printer only; smaller so it always
+   *  fits/scan on a 50x30 label. Local-only - never sent over the shared route. */
+  labelQrPayload?: string | null;
   /** Customer-facing brand shown on pickup slips. */
   brandName?: string | null;
   /** Customer payment slip only. Existing kitchen tickets can omit it. */
