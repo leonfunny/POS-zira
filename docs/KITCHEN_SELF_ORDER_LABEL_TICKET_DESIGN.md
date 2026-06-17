@@ -1,9 +1,11 @@
 # Kitchen Self-Order — Customer Label (50x30) & Kitchen Ticket Improvements
 
 - **Date:** 2026-06-17
-- **Revision:** v2 — incorporated app-bot review (QR physical fit, deterministic ASCII-fold,
-  shared-route rollout caveat, modifier language decision, count semantics). All 5 findings verified
-  against code and accepted.
+- **Revision:** v3 — app-bot gatekeeper P1: the label cannot choose a compact QR with the current code path
+  (`formatKitchenPaymentLabel` only receives `data.qrPayload`; `printKitchenSelfOrderCustomerSlip` has no `order`).
+  Replaced the hand-wavy "prefer compact payload" with a concrete wiring (§4.5/§5) and a payload-aware QR sizer
+  using the existing `qrcode` dependency. (v2 had added: QR physical fit, deterministic ASCII-fold, shared-route
+  rollout caveat, modifier language decision, count semantics — all 5 verified against code.)
 - **Status:** Approved design (brainstorm). Pending implementation plan.
 - **Scope:** POS-zira app only. **No backend, no DB schema, no print-routing changes.**
 - **Related:** `docs/KITCHEN_SELF_ORDER_DESIGN_CONTRACT.md`, `docs/KITCHEN_SELF_ORDER_MVP_PLAN.md`
@@ -19,7 +21,8 @@
 - **Không làm màn hình trạng thái** "đang phục vụ / món sẵn sàng".
 - **Modifier trên phiếu bếp**: mỗi lựa chọn 1 dòng, in đậm; ghi chú khách tách riêng & nổi bật.
 - **Nội dung nhãn**: brand · loại đơn · `SỐ ĐƠN` to · QR · `số món · tổng tiền` · dòng hướng dẫn · giờ.
-- **Fold ASCII tất định cho nhãn**; **QR tự co cho vừa khổ**; modifier in theo **nhãn canonical** trong snapshot;
+- **Fold ASCII tất định cho nhãn**; **QR tự co theo payload** (dùng dep `qrcode` tính module, right-align) +
+  **nhãn dùng payload no-notes riêng** (`labelQrPayload`); modifier in theo **nhãn canonical** trong snapshot;
   count weighted = 1 món; rollout cần cập nhật **cả kiosk lẫn POS máy in bếp**.
 
 ---
@@ -148,16 +151,42 @@ appear on Vietnamese tickets in practice.
 `isWeighted(unit)` = unit is set and not in `{'', 'szt', 'pcs'}`. A 0.5 kg item counts as **1**. Used by both
 the kitchen-ticket header (§3.1) and the label count (§4.1). Lives next to the existing `formatQuantity` helper.
 
-### 4.5 QR must fit & scan (fixes review #1) — DECISION
-The QR is the counter-recall key; it must never be clipped. Make it **adaptive**, mirroring `zpl-formatter.ts:589`:
-- Compute the QR's printed width from its payload (module count × magnification ÷ dpmm) and **choose
-  magnification/position so `qrX + qrWidth ≤ labelWidth − rightMargin`** (never beyond `^PW`).
-- Reserve a fixed QR box on the right; lay text in the remaining left column.
-- Prefer the **compact (no-notes) KSO payload** for the label to keep the QR small (recall only needs
-  order id + items; notes are not needed at the counter). If even the compact payload cannot fit at the minimum
-  readable magnification, log a warning and still print the largest fitting QR.
+### 4.5 QR must fit & scan (fixes review #1 + gatekeeper P1) — DECISION
 
-Priority for vertical/horizontal space: **order number (largest) → QR (scannable) → count·total → secondary**.
+The QR is the counter-recall key; it must never be clipped. Two concrete changes (both required):
+
+**(a) Feed the label a dedicated compact payload — the wiring that makes "no-notes" real.**
+The current flow builds ONE `qrPayload` (with-notes, fallback no-notes only if >600) and passes the same
+`KitchenTicketData` to receipt and label alike; the label cannot decide. Fix:
+- Add an `includeNotes?: boolean` option to `buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased,
+  includeNotes })` (default `true` = current behaviour). When `false`, build the compact no-notes payload directly
+  (`buildKitchenSelfOrderCompactQrPayload(order, false, …)`). The underlying compact builder already takes the
+  `includeNotes` flag.
+- Add `labelQrPayload?: string` to `KitchenTicketData`.
+- At BOTH slip call sites (`kitchen-self-order:submit` and `kitchen-self-order:reprintSlip`), set
+  `labelQrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased, includeNotes: false })` on the
+  ticket. The **receipt** slip keeps using `qrPayload` (with-notes) unchanged.
+- `formatKitchenPaymentLabel` uses `data.labelQrPayload ?? data.qrPayload`.
+- The label QR is local-only (printed on the kiosk's own LABEL printer); `labelQrPayload` never travels the shared
+  route, so it adds no app-to-app concern.
+- Rationale: the label QR is for counter **payment recall** only (order id + items + qty + unit price). Notes /
+  modifiers are not needed there (kitchen already fired on submit), and dropping them keeps the QR small.
+
+**(b) Payload-aware adaptive sizing — not the dimension-only helper at `:589`.**
+`zpl-formatter.ts:589` sizes by label dimensions only and is **not payload-aware**; a long KSO byte-mode payload
+needs the real module count. Use the existing `qrcode` dependency:
+- Compute modules for the chosen payload at the printer's ECC level Q:
+  `const modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size;`
+  (Byte mode — the base64url payload contains lowercase/`_`, so both `qrcode` and the printer's `^BQ` auto mode
+  select byte mode; module counts align.)
+- Choose magnification `M` and **right-align** the QR so it fits:
+  `qrWidthDots = modules * M`; pick the largest `M` in `[2..6]` with
+  `qrWidthDots ≤ mmToDots(labelWidth) − mmToDots(leftColMin) − mmToDots(margin)`; set
+  `qrX = mmToDots(labelWidth) − qrWidthDots − mmToDots(margin)`. Text lays out in `[left .. qrX]`.
+- If even `M = 2` does not fit, log a warning and print at `M = 2` (the compact payload + 50mm width should not
+  hit this in practice; the manual scan acceptance §8 is the backstop).
+
+Priority for space: **order number (largest) → QR (scannable, right-aligned) → count·total → secondary**.
 
 ---
 
@@ -171,6 +200,11 @@ Priority for vertical/horizontal space: **order number (largest) → QR (scannab
   returns readable labels for both the structured and legacy option shapes.
 - **`printKitchenTicketForOrder`** (POS orders, same file): pass `modifiers: []`, keep `notes: item.notes`
   → renders note only → no regression.
+- **`KitchenTicketData`** (`src/shared/types.ts`): add `labelQrPayload?: string` (compact, label-only).
+- **`buildKitchenSelfOrderQrPayload`** (`pos.module.ts`): add `includeNotes?: boolean` option (default `true`,
+  preserving current with-notes→fallback behaviour); `false` builds the compact payload directly.
+- **Slip call sites** (`kitchen-self-order:submit` and `:reprintSlip`): compute and attach
+  `labelQrPayload` (no-notes) on the ticket passed to `printKitchenSelfOrderCustomerSlip`. Receipt path unchanged.
 
 ---
 
@@ -194,10 +228,10 @@ receiver.)*
 
 | File | Change |
 |------|--------|
-| `src/shared/types.ts` | `KitchenTicketItem`: add `modifiers?: string[]` |
+| `src/shared/types.ts` | `KitchenTicketItem`: add `modifiers?: string[]`; `KitchenTicketData`: add `labelQrPayload?: string` |
 | `src/main/printing/kitchen-ticket.ts` | `buildKitchenTicketLines`: header count + per-line modifiers + `!!` note; add `kitchenItemCount` helper |
-| `src/main/modules/pos.module.ts` | adapter split modifiers/notes; `printKitchenTicketForOrder` `modifiers: []` |
-| `src/main/hardware/zebra/zpl-formatter.ts` | `formatKitchenPaymentLabel`: i18n copy + brand/fulfillment/count/time, deterministic ASCII fold, adaptive QR; reusable `latinToAscii` helper |
+| `src/main/modules/pos.module.ts` | adapter split modifiers/notes; `printKitchenTicketForOrder` `modifiers: []`; `buildKitchenSelfOrderQrPayload` `includeNotes` option; attach `labelQrPayload` at `submit` + `reprintSlip` |
+| `src/main/hardware/zebra/zpl-formatter.ts` | `formatKitchenPaymentLabel`: i18n copy + brand/fulfillment/count/time, deterministic ASCII fold, payload-aware adaptive QR (`qrcode` module count, right-aligned, uses `data.labelQrPayload ?? data.qrPayload`); reusable `latinToAscii` helper |
 | `src/main/printing/kitchen-ticket.ts` (optional) | `buildKitchenPaymentSlipLines`: add count line for parity |
 
 ---
@@ -212,8 +246,14 @@ receiver.)*
   `'ascii'` profiles (and/or via `ZebraDriver` with a **non-matching** printer name) with a Vietnamese
   `brandName`; assert the emitted ZPL contains **no non-ASCII byte**, and the correct per-language copy for
   pl/vi/en.
-- **Label QR fit (catches review #1)**: for payloads of ~300 / 450 / 600 chars, assert the chosen QR
-  magnification/position yields `qrX + qrWidth ≤ labelWidth` (no clip past `^PW`), and that a QR block is present.
+- **Label QR fit (catches review #1, payload-aware)**: using the same `qrcode` dependency, compute
+  `modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size` for representative orders
+  (e.g. 1 / 4 / 8 items → real `labelQrPayload` lengths), and assert
+  `qrX + modules * magnification / dotsPerMm ≤ labelWidth − margin` (no clip past `^PW`) at the magnification the
+  formatter chose, and that a QR block is present.
+- **Label uses the compact payload**: assert `formatKitchenPaymentLabel` renders `data.labelQrPayload` when set
+  (falls back to `data.qrPayload` when absent), and that `buildKitchenSelfOrderQrPayload(order, {includeNotes:false})`
+  is always ≤ the with-notes variant and omits note/option fields.
 
 **Manual acceptance (required before go-live, not just unit)**
 - **Print-smoke on the real kiosk Zebra**: print the label with a near-worst-case (~600-char) QR payload and a
@@ -229,8 +269,11 @@ receiver.)*
 
 - 50x30mm + QR is tight; order number stays dominant, secondary lines small. The adaptive QR (§4.5) trades a
   little size for guaranteed fit.
-- Compact (no-notes) KSO payload is preferred for the label; if the payload is still too large to scan at the
-  minimum magnification, the label prints the largest fitting QR and logs a warning.
+- Compact (no-notes) KSO payload is used for the label (§4.5a); if it is still too large to fit at the minimum
+  magnification, the label prints the largest fitting QR and logs a warning.
+- QR fit math assumes the printer's `^BQ` auto mode selects the same byte-mode QR version as the `qrcode` library
+  for the same data + ECC Q. This holds for byte-mode base64url data, but the **manual print-smoke + scan
+  acceptance (§8) is the authoritative backstop** before go-live.
 - ZPL device font cannot render diacritics → label is ASCII-folded deterministically (§4.2). Full-diacritic labels
   would need a downloaded Unicode TTF / raster — out of scope.
 - `K-NNN` is a per-machine daily counter; correct for a single kiosk. Revisit if a second kiosk is added.
