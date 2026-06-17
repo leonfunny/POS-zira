@@ -1,6 +1,11 @@
 # Kitchen Self-Order — Customer Label (50x30) & Kitchen Ticket Improvements
 
 - **Date:** 2026-06-17
+- **Revision:** v5 — gatekeeper plan-review: (1) `sanitizeAscii` gets a final `[^\x20-\x7E]` guard + ASCII
+  separators (the `·` U+00B7 survived NFD strip and broke the no-non-ASCII test); (2) dropped the impossible
+  600-char/8-item QR claim — measured compact payloads are ~237/313/469 chars for 1/2/4 items, ~777 for 8, which
+  cannot fit a 50x30 at any ECC; label QR now uses ECC M, `leftColMm 22`, fits ~4 items (the stated max), with a
+  documented physical capacity limit; shortened the instruction copy to fit the narrower left column.
 - **Revision:** v4 — gatekeeper approved v3 for writing-plans; recorded the no-notes recall-display tradeoff
   + acceptance test + scope-creep guard (§4.6, §8). (v3 below.)
 - **Revision:** v3 — app-bot gatekeeper P1: the label cannot choose a compact QR with the current code path
@@ -118,7 +123,7 @@ Target (shown with diacritics for clarity; printed ASCII per §4.2):
    SO DON                ┌──────┐
     K-042                │  QR  │  big order number  +  recall QR (adaptive, §4.5)
    3 mon · 34,00 zl      └──────┘  item count · total
-   > Quet / ra quay tra tien      instruction
+   > Ra quay tra tien             instruction
    14:23                          time
 ```
 
@@ -130,7 +135,7 @@ Add: brand (`data.brandName`), fulfillment, item count (§4.4), time. Keep big o
 |-----|----|----|----|
 | order-number label | `NR ZAMOWIENIA` | `SO DON` | `ORDER NO` |
 | count word | `poz.` | `mon` | `items` |
-| instruction | `Zeskanuj / zaplac przy kasie` | `Quet / ra quay tra tien` | `Scan / pay at counter` |
+| instruction | `Zaplac przy kasie` | `Ra quay tra tien` | `Pay at counter` |
 | fulfillment takeaway | `NA WYNOS` | `MANG DI` | `TAKEAWAY` |
 | fulfillment dine-in | `NA MIEJSCU` | `AN TAI QUAN` | `DINE IN` |
 
@@ -178,16 +183,19 @@ The current flow builds ONE `qrPayload` (with-notes, fallback no-notes only if >
 **(b) Payload-aware adaptive sizing — not the dimension-only helper at `:589`.**
 `zpl-formatter.ts:589` sizes by label dimensions only and is **not payload-aware**; a long KSO byte-mode payload
 needs the real module count. Use the existing `qrcode` dependency:
-- Compute modules for the chosen payload at the printer's ECC level Q:
-  `const modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size;`
+- Compute modules for the chosen payload at the printer's ECC level **M** (lower than the receipt slip's, so a
+  larger order still fits the small 50x30 label):
+  `const modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;` and emit `^FDMA,…`.
   (Byte mode — the base64url payload contains lowercase/`_`, so both `qrcode` and the printer's `^BQ` auto mode
   select byte mode; module counts align.)
-- Choose magnification `M` and **right-align** the QR so it fits:
-  `qrWidthDots = modules * M`; pick the largest `M` in `[2..6]` with
-  `qrWidthDots ≤ mmToDots(labelWidth) − mmToDots(leftColMin) − mmToDots(margin)`; set
-  `qrX = mmToDots(labelWidth) − qrWidthDots − mmToDots(margin)`. Text lays out in `[left .. qrX]`.
-- If even `M = 2` does not fit, log a warning and print at `M = 2` (the compact payload + 50mm width should not
-  hit this in practice; the manual scan acceptance §8 is the backstop).
+- Choose magnification `mag` and **right-align** the QR so it fits:
+  `qrWidthDots = modules * mag`; pick the largest `mag` in `[2..4]` with
+  `qrWidthDots ≤ mmToDots(labelWidth) − mmToDots(leftColMm) − mmToDots(margin)` (`leftColMm = 22`, `margin = 2`);
+  set `qrX = mmToDots(labelWidth) − qrWidthDots − mmToDots(margin)`. Text lays out in `[left .. qrX]`.
+- **Physical capacity:** the compact payload grows with item count (~237 chars at 1 item → ~469 at 4). On a 50x30
+  label this fits up to ~4 items at ECC M / `mag = 2` — the shop's stated typical maximum. Larger orders exceed
+  what a scannable QR + content can hold on 50x30; the formatter clamps `qrX` to the left-column floor and prints
+  the largest fitting QR (best-effort). For routinely larger orders, use RECEIPT-mode slip or a bigger label.
 
 Priority for space: **order number (largest) → QR (scannable, right-aligned) → count·total → secondary**.
 
@@ -261,11 +269,10 @@ receiver.)*
   `'ascii'` profiles (and/or via `ZebraDriver` with a **non-matching** printer name) with a Vietnamese
   `brandName`; assert the emitted ZPL contains **no non-ASCII byte**, and the correct per-language copy for
   pl/vi/en.
-- **Label QR fit (catches review #1, payload-aware)**: using the same `qrcode` dependency, compute
-  `modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size` for representative orders
-  (e.g. 1 / 4 / 8 items → real `labelQrPayload` lengths), and assert
-  `qrX + modules * magnification / dotsPerMm ≤ labelWidth − margin` (no clip past `^PW`) at the magnification the
-  formatter chose, and that a QR block is present.
+- **Label QR fit (catches review #1, payload-aware)**: using the same `qrcode` dependency at ECC M, for realistic
+  compact-payload sizes (~1/2/4 items → ~237 / 313 / 469 chars), assert
+  `qrX + modules * magnification ≤ mmToDots(labelWidth)` (no clip past `^PW`) at the magnification the formatter
+  chose, and that a QR block is present. (Beyond ~4 items is over capacity — documented in §4.5b, not asserted.)
 - **Label uses the compact payload**: assert `formatKitchenPaymentLabel` renders `data.labelQrPayload` when set
   (falls back to `data.qrPayload` when absent), and that `buildKitchenSelfOrderQrPayload(order, {includeNotes:false})`
   is always ≤ the with-notes variant and omits note/option fields **but still includes `unitPriceGrosze`**.
@@ -274,9 +281,9 @@ receiver.)*
   modifier/note display is intentionally empty.
 
 **Manual acceptance (required before go-live, not just unit)**
-- **Print-smoke on the real kiosk Zebra**: print the label with a near-worst-case (~600-char) QR payload and a
-  Vietnamese brand; **scan the QR at the POS to confirm order recall**; eyeball no overflow/clipping and that
-  count/total/fulfillment render.
+- **Print-smoke on the real kiosk Zebra**: place a realistic order (3–4 items, the typical maximum) with a
+  Vietnamese brand; **scan the label QR at the POS to confirm order recall**; eyeball no overflow/clipping and
+  that count/total/fulfillment render.
 
 **Regression** — baseline is green (4 files / 53 tests per app-bot); existing kitchen-ticket + ZPL tests pass;
 `typecheck:renderer` + `tsc -p tsconfig.main.json` clean; vitest green.
@@ -287,10 +294,11 @@ receiver.)*
 
 - 50x30mm + QR is tight; order number stays dominant, secondary lines small. The adaptive QR (§4.5) trades a
   little size for guaranteed fit.
-- Compact (no-notes) KSO payload is used for the label (§4.5a); if it is still too large to fit at the minimum
-  magnification, the label prints the largest fitting QR and logs a warning.
+- Compact (no-notes) KSO payload is used for the label (§4.5a). It fits up to ~4 items on 50x30 at ECC M; beyond
+  that the label prints the largest fitting QR (best-effort) — see the capacity note in §4.5b. (`zpl-formatter.ts`
+  imports no logger, so over-capacity is not logged; the manual print-smoke is the check.)
 - QR fit math assumes the printer's `^BQ` auto mode selects the same byte-mode QR version as the `qrcode` library
-  for the same data + ECC Q. This holds for byte-mode base64url data, but the **manual print-smoke + scan
+  for the same data + ECC M. This holds for byte-mode base64url data, but the **manual print-smoke + scan
   acceptance (§8) is the authoritative backstop** before go-live.
 - ZPL device font cannot render diacritics → label is ASCII-folded deterministically (§4.2). Full-diacritic labels
   would need a downloaded Unicode TTF / raster — out of scope.

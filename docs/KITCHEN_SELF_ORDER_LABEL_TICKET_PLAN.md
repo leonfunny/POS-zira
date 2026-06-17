@@ -401,17 +401,19 @@ describe('formatKitchenPaymentLabel', () => {
     }
   });
 
-  it('keeps the QR within the label width for representative payloads', () => {
+  it('keeps the QR within the label width for realistic compact payloads (~1/2/4 items)', () => {
     const dotsPerMm = 203 / 25.4;
     const labelDots = Math.round(50 * dotsPerMm);
-    for (const len of [120, 250, 400]) {
-      const payload = 'KSO1:' + 'a'.repeat(len);
+    // Measured no-notes compact payload sizes with UUID variant ids: 1≈237, 2≈313, 4≈469 chars.
+    // (Beyond ~4 items the compact QR exceeds 50x30 capacity — a documented physical limit, not tested here.)
+    for (const total of [237, 313, 469]) {
+      const payload = 'KSO1:' + 'a'.repeat(total - 5);
       const zpl = new ZplFormatter(50, 30).formatKitchenPaymentLabel({ ...labelData, labelQrPayload: payload });
       const m = zpl.match(/\^FO(\d+),\d+\n\^BQN,2,(\d)/);
       expect(m).toBeTruthy();
       const x = Number(m![1]);
       const mag = Number(m![2]);
-      const modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size;
+      const modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;
       expect(x + modules * mag).toBeLessThanOrEqual(labelDots);
     }
   });
@@ -440,9 +442,9 @@ type KitchenLabelLang = 'pl' | 'vi' | 'en';
 const KITCHEN_LABEL_COPY: Record<KitchenLabelLang, {
   order: string; count: string; pay: string; takeaway: string; dineIn: string;
 }> = {
-  pl: { order: 'NR ZAMOWIENIA', count: 'poz.', pay: 'Zeskanuj / zaplac przy kasie', takeaway: 'NA WYNOS', dineIn: 'NA MIEJSCU' },
-  vi: { order: 'SO DON', count: 'mon', pay: 'Quet / ra quay tra tien', takeaway: 'MANG DI', dineIn: 'AN TAI QUAN' },
-  en: { order: 'ORDER NO', count: 'items', pay: 'Scan / pay at counter', takeaway: 'TAKEAWAY', dineIn: 'DINE IN' },
+  pl: { order: 'NR ZAMOWIENIA', count: 'poz.', pay: 'Zaplac przy kasie', takeaway: 'NA WYNOS', dineIn: 'NA MIEJSCU' },
+  vi: { order: 'SO DON', count: 'mon', pay: 'Ra quay tra tien', takeaway: 'MANG DI', dineIn: 'AN TAI QUAN' },
+  en: { order: 'ORDER NO', count: 'items', pay: 'Pay at counter', takeaway: 'TAKEAWAY', dineIn: 'DINE IN' },
 };
 
 function kitchenLabelLang(value: unknown): KitchenLabelLang {
@@ -470,24 +472,27 @@ Inside the `ZplFormatter` class, add these two private methods (next to `sanitiz
 
 ```typescript
   /** Like sanitizeText but ALWAYS folds Latin/Vietnamese to ASCII, independent
-   *  of textProfile — the Zebra device font cannot render diacritics. */
+   *  of textProfile — the Zebra device font cannot render diacritics. The final
+   *  guard drops EVERY non-printable-ASCII byte (e.g. '·' U+00B7, which NFD does
+   *  not strip), guaranteeing the no-non-ASCII invariant the label test asserts. */
   private sanitizeAscii(text: string, maxLength: number = 50): string {
     return this.transliterateLatinToAscii(text)
-      .replace(/[\x00-\x1F\x7F]/g, '')
-      .replace(/[\^~]/g, '')
+      .replace(/[\^~]/g, '')          // ZPL special chars (printable ASCII)
+      .replace(/[^\x20-\x7E]/g, '')   // FINAL GUARD: every byte outside printable ASCII
       .trim()
       .substring(0, maxLength);
   }
 
   /** Pick a QR magnification + right-aligned x so the QR fits the label width
-   *  for the given payload (module count from the qrcode lib at ECC Q). */
+   *  for the given payload (module count from the qrcode lib at ECC M — lower
+   *  than the receipt slip so larger orders fit the small 50x30 label). */
   private kitchenLabelQrLayout(payload: string): { magnification: number; x: number } {
     const marginMm = 2;
-    const leftColMm = 24;
+    const leftColMm = 22;
     const maxQrMm = Math.max(10, this.labelWidth - leftColMm - marginMm);
     let modules = 25;
     try {
-      modules = QRCode.create(payload, { errorCorrectionLevel: 'Q' }).modules.size;
+      modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;
     } catch {
       modules = 25;
     }
@@ -529,9 +534,9 @@ Replace the entire existing `formatKitchenPaymentLabel(data: KitchenTicketData):
     const orderNumber = this.sanitizeAscii(data.pickupNumber || data.orderNumber || '----', 24);
     const brand = this.sanitizeAscii(data.brandName || 'Zira POS', 28);
     const fulfillment = kitchenLabelFulfillment(data.fulfillmentType, lang);
-    const headerText = fulfillment ? `${brand}  ·  ${fulfillment}` : brand;
+    const headerText = fulfillment ? `${brand}  -  ${fulfillment}` : brand;
     const totalText = this.sanitizeAscii(
-      `${kitchenItemCount(data.items)} ${copy.count}  ·  ${(total / 100).toFixed(2).replace('.', ',')} zl`,
+      `${kitchenItemCount(data.items)} ${copy.count}  -  ${(total / 100).toFixed(2).replace('.', ',')} zl`,
       40,
     );
     const time = kitchenLabelTime(data.createdAt);
@@ -554,7 +559,7 @@ Replace the entire existing `formatKitchenPaymentLabel(data: KitchenTicketData):
       const qr = this.kitchenLabelQrLayout(payload);
       lines.push(`^FO${qr.x},${this.mmToDots(4)}`);
       lines.push(`^BQN,2,${qr.magnification}`);
-      lines.push(`^FDQA,${payload}^FS`);
+      lines.push(`^FDMA,${payload}^FS`); // ECC M — matches kitchenLabelQrLayout
     }
 
     lines.push('^XZ');
@@ -763,10 +768,15 @@ git commit -m "test(kitchen-self-order): green suite + typecheck after label/tic
 **Files:** none (manual acceptance on winpc + the kiosk Zebra)
 
 > This is the authoritative backstop for QR scan + ASCII rendering (spec §8). Not automatable.
+>
+> **Capacity note:** the label QR is sized from the *real* compact payload, which grows with item count
+> (~237 chars at 1 item → ~469 at 4). On a 50x30 label the QR reliably fits up to ~4 items at ECC M; larger
+> orders exceed what a 50x30 + scannable QR can hold (the formatter right-aligns the largest fitting QR). Test
+> with a realistic order, not a synthetic max-length string.
 
 - [ ] **Step 1: Build & run the app on the kiosk machine** (per the POS-zira deploy flow).
 
-- [ ] **Step 2: Place a kitchen self-order with ≥4 items and several modifiers** (e.g. sugar/ice/topping) from the kiosk; choose Vietnamese.
+- [ ] **Step 2: Place a realistic kitchen self-order (3–4 items, the shop's typical maximum) with several modifiers** (e.g. sugar/ice/topping) from the kiosk; choose Vietnamese.
 
 - [ ] **Step 3: Inspect the 50x30 label:** order number large and centered/left; `SO DON`, `MANG DI`/`AN TAI QUAN`, count + total, instruction, time — all readable ASCII; brand not garbled; **QR not clipped** at the right edge.
 
