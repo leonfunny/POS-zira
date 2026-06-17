@@ -149,9 +149,9 @@ describe("ZebraDriver.printInfoLabel", () => {
       });
 
       const zpl: string = labelSpy.mock.calls[0][0];
-      expect(zpl).toContain("DO ZAPLATY");
+      expect(zpl).toContain("NR ZAMOWIENIA");
       expect(zpl).toContain("K-042");
-      expect(zpl).toContain("^BQN,2,2");
+      expect(zpl).toContain("^FDMA,KSO1:test^FS");
       expect(zpl).not.toContain("^BE,");
     } finally {
       labelSpy.mockRestore();
