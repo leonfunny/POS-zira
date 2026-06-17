@@ -202,6 +202,22 @@ describe('pickup number (so nhan do)', () => {
     expect(lines.some((line) => line.qrData === 'KSO1:test' && line.qrSize === 5)).toBe(true);
   });
 
+  it('payment slip renders modifiers and note and shows an item count', () => {
+    const lines = buildKitchenPaymentSlipLines({
+      ...baseTicket,
+      customerLanguage: 'vi',
+      totalGrosze: 3400,
+      items: [
+        { name: 'Trà sữa', quantity: 2, unitPriceGrosze: 1200, modifiers: ['Đường: 50%'], notes: 'ít đá' },
+      ],
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('» Đường: 50%');
+    expect(text).toContain('!! ít đá');
+    expect(text).toContain('· 2 món');
+  });
+
   it('assigns a daily 4-digit number at order create when kitchen items exist', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/order-repo.ts');

@@ -216,6 +216,8 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
     0,
     Math.round(Number(data.totalGrosze) || data.items.reduce((sum, item) => sum + lineTotal(item), 0)),
   );
+  const slipCount = kitchenItemCount(data.items);
+  const slipItemWord = lang === 'vi' ? 'món' : lang === 'en' ? 'items' : 'poz.';
 
   lines.push({ text: pickupSlipBrandName(data), bold: true, center: true });
   lines.push({ text: copy.title, bold: true, center: true });
@@ -224,7 +226,7 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
   if (fulfillment) {
     lines.push({ text: fulfillment, bold: true, center: true });
   }
-  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}  · ${slipCount} ${slipItemWord}`, center: true });
   lines.push({ text: '', separator: true });
 
   for (const item of data.items) {
@@ -234,9 +236,13 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
     if (unitPrice > 0 && quantity > 1) {
       lines.push({ text: `   ${formatMoney(unitPrice)} / szt` });
     }
+    for (const modifier of item.modifiers || []) {
+      const modifierText = String(modifier || '').trim();
+      if (modifierText) lines.push({ text: `   » ${modifierText}` });
+    }
     const notes = (item.notes || '').trim();
     if (notes) {
-      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
+      lines.push({ text: `   !! ${notes}` });
     }
   }
 
