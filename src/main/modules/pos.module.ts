@@ -212,9 +212,14 @@ function buildKitchenSelfOrderCompactQrPayload(
 
 function buildKitchenSelfOrderQrPayload(
   order: KitchenSelfOrderWithItems,
-  options: { kitchenAlreadyReleased?: boolean } = {},
+  options: { kitchenAlreadyReleased?: boolean; includeNotes?: boolean } = {},
 ): string {
   const kitchenAlreadyReleased = options.kitchenAlreadyReleased !== false;
+  if (options.includeNotes === false) {
+    return `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
+      buildKitchenSelfOrderCompactQrPayload(order, false, kitchenAlreadyReleased),
+    ))}`;
+  }
   const withNotes = `${KITCHEN_SELF_ORDER_QR_PREFIX}${base64UrlEncodeUtf8(JSON.stringify(
     buildKitchenSelfOrderCompactQrPayload(order, true, kitchenAlreadyReleased),
   ))}`;
@@ -249,10 +254,8 @@ function buildKitchenSelfOrderTicket(
       quantity: item.quantity,
       unitPriceGrosze: item.unit_price_grosze,
       lineTotalGrosze: item.line_total_grosze,
-      notes: [
-        parseKitchenSelfOrderOptions(item.options_json).join(', '),
-        item.note || '',
-      ].filter(Boolean).join(' | ') || null,
+      modifiers: parseKitchenSelfOrderOptions(item.options_json),
+      notes: item.note || null,
     })),
   };
 }
@@ -2936,6 +2939,10 @@ export class PosModule extends BaseModule {
           kitchenAlreadyReleased: kitchenPrint.printed,
         });
         const ticket = buildKitchenSelfOrderTicket(created, brandName, qrPayload, sourceLabel);
+        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(created, {
+          kitchenAlreadyReleased: kitchenPrint.printed,
+          includeNotes: false,
+        });
         const slipPrint = kitchenPrint.printed
           ? await this.printKitchenSelfOrderCustomerSlip(ticket)
           : { printed: false, error: 'kitchen_not_printed' };
@@ -2996,6 +3003,10 @@ export class PosModule extends BaseModule {
         const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || 'PC-YURI').trim() || 'PC-YURI';
         const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
         const ticket = buildKitchenSelfOrderTicket(order, resolveKitchenSelfOrderBrandName(cfg), qrPayload, sourceLabel);
+        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
+          kitchenAlreadyReleased: true,
+          includeNotes: false,
+        });
         const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
         const updated = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
           customerSlipPrinted: slipPrint.printed,
@@ -3334,6 +3345,7 @@ export class PosModule extends BaseModule {
           name: item.name,
           quantity: Number(item.sale_quantity ?? item.quantity) || 1,
           unit: item.sale_unit ?? null,
+          modifiers: [],
           notes: item.notes ?? null,
         })),
       };

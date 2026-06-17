@@ -357,3 +357,21 @@ describe('kitchen self-order IPC and cache wiring', () => {
     expect(posModule).toContain('formatKitchenSelfOrderModifierLabels');
   });
 });
+
+describe('kitchen self-order label/ticket wiring (pos.module source)', () => {
+  const src = readSource('src/main/modules/pos.module.ts');
+
+  it('adapter passes modifiers separately and a free-text-only note', () => {
+    expect(src).toContain('modifiers: parseKitchenSelfOrderOptions(item.options_json)');
+    expect(src).toContain('notes: item.note || null,');
+  });
+
+  it('buildKitchenSelfOrderQrPayload accepts an includeNotes option', () => {
+    expect(src).toMatch(/includeNotes\?: boolean/);
+  });
+
+  it('attaches a no-notes labelQrPayload at submit and reprint', () => {
+    const matches = src.match(/ticket\.labelQrPayload = buildKitchenSelfOrderQrPayload\([^)]*includeNotes: false/gs);
+    expect(matches && matches.length).toBeGreaterThanOrEqual(2);
+  });
+});
