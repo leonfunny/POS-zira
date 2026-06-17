@@ -102,8 +102,10 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
   if (fulfillment) {
     lines.push({ text: fulfillment, bold: true, center: true, textSize: 'double-height' });
   }
+  const count = kitchenItemCount(data.items);
+  const itemWord = lang === 'vi' ? 'món' : lang === 'en' ? 'items' : 'poz.';
   lines.push({
-    text: `${formatTimeHHMM(data.createdAt)}  ·  ${sourceLabel(data.source)}`,
+    text: `${formatTimeHHMM(data.createdAt)}  ·  ${sourceLabel(data.source)}  · ${count} ${itemWord}`,
     center: true,
   });
   lines.push({ text: '', separator: true });
@@ -114,9 +116,13 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
       bold: true,
       textSize: 'double-height',
     });
+    for (const modifier of item.modifiers || []) {
+      const text = String(modifier || '').trim();
+      if (text) lines.push({ text: `   » ${text}`, bold: true });
+    }
     const notes = (item.notes || '').trim();
     if (notes) {
-      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
+      lines.push({ text: `   !! ${notes}`, bold: true });
     }
   }
 

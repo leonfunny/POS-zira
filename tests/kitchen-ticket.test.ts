@@ -33,7 +33,7 @@ describe('kitchen ticket builder', () => {
     expect(text).toContain('KIOSK'); // SELF_CHECKOUT → KIOSK label
     expect(text).toContain('2x Phở bò');
     expect(text).toContain('1x Chả giò');
-    expect(text).toContain('>> không hành');
+    expect(text).toContain('!! không hành');
     expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/); // no money anywhere
   });
 
@@ -94,8 +94,26 @@ describe('kitchen ticket builder', () => {
     expect(text).not.toContain('CHUA TRA TIEN');
     expect(text).toContain('MANG DI');
     expect(text).toContain('KIOSK PC-YURI');
-    expect(text).toContain('Ghi chu: it cay');
+    expect(text).toContain('!! it cay');
     expect(text).not.toContain('#K-042');
+  });
+
+  it('renders each modifier on its own » line, the note on a !! line, and a header count', () => {
+    const lines = buildKitchenTicketLines({
+      ...baseTicket,
+      kitchenLanguage: 'vi',
+      items: [
+        { name: 'Trà sữa', quantity: 2, modifiers: ['Đường: 50%', 'Đá: ít'], notes: 'ít đá giùm em' },
+        { name: 'Chè thái', quantity: 1, modifiers: ['+ trân châu'] },
+      ],
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('» Đường: 50%');
+    expect(text).toContain('» Đá: ít');
+    expect(text).toContain('» + trân châu');
+    expect(text).toContain('!! ít đá giùm em');
+    expect(text).toContain('· 3 món'); // 2 + 1
   });
 
   it('marks kitchen self-order tickets as unpaid when sent before cashier payment', () => {
