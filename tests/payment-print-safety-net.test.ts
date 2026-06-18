@@ -50,9 +50,15 @@ function makeFakePrinter(opts: {
   printRejects?: boolean;
   drawerRejects?: boolean;
   connected?: boolean;
+  connectSucceeds?: boolean;
 }) {
+  let connected = opts.connected !== false;
   return {
-    isConnected: () => opts.connected !== false,
+    connect: vi.fn(async () => {
+      if (opts.connectSucceeds) connected = true;
+      return connected;
+    }),
+    isConnected: () => connected,
     printReceipt: vi.fn(async () => {
       if (opts.printRejects) throw new Error('printer offline');
     }),
@@ -85,10 +91,10 @@ const sampleOrder = {
   id: 'order-1',
   order_number: 'POS-20260505-0001',
   status: 'COMPLETED',
-  total: 1234,
-  subtotal: 1234,
+  total: 750,
+  subtotal: 750,
   payment_method: 'CASH' as const,
-  payment_amount: 1234,
+  payment_amount: 750,
   staff_name: 'Anna',
   created_at: '2026-05-05T10:00:00.000Z',
   refund_amount: null,
@@ -372,6 +378,18 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(result.receiptPrinted).toBe(false);
   });
 
+  it('reconnects a configured receipt printer before treating it as unavailable', async () => {
+    const printer = makeFakePrinter({ connected: false, connectSucceeds: true });
+    const ctl = buildController(printer);
+
+    const result = await ctl.completeCashPayment('order-1');
+
+    expect(result.success).toBe(true);
+    expect(result.receiptPrinted).toBe(true);
+    expect(printer.connect).toHaveBeenCalledTimes(1);
+    expect(printer.printReceipt).toHaveBeenCalledTimes(1);
+  });
+
   it('openCashDrawer directly returns false when no drawer/printer hardware is available', async () => {
     const ctl = buildController(null);
     await expect(ctl.openCashDrawer()).resolves.toBe(false);
@@ -413,6 +431,12 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
   it('prints the Polish catalog name on the customer receipt while keeping order rows canonical', async () => {
     const printer = makeFakePrinter({});
     const ctl = buildController(printer);
+    orderRepoGetById.mockReturnValue({
+      ...sampleOrder,
+      total: 100,
+      subtotal: 100,
+      payment_amount: 100,
+    });
     orderRepoGetItemsByOrderId.mockReturnValue([
       {
         name: 'Máy POS Ingenico Move/5000 Elavon',

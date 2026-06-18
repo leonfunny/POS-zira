@@ -329,6 +329,12 @@ export class PosModule extends BaseModule {
 
     // Get printer accessor from hardware module
     const getPrinterForType = (type: string) => {
+      const hardware = this.container.getOptional<any>(SERVICE_TOKENS.HARDWARE_MODULE);
+      const printer = typeof hardware?.getPrinterForType === 'function'
+        ? hardware.getPrinterForType(type as PrinterType)
+        : null;
+      if (printer) return printer;
+
       const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
       return printers[type] || null;
     };
