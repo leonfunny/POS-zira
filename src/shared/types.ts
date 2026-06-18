@@ -265,6 +265,10 @@ export interface ScaleConfig {
 export interface LanFirstReceiverConfig {
   enabled?: boolean;
   port?: number;
+  auth?: {
+    sharedSecret?: string;
+    allowUnauthenticated?: boolean;
+  };
 }
 
 export interface LanFirstKitchenSenderTargetConfig {
@@ -277,6 +281,9 @@ export interface LanFirstKitchenSenderConfig {
   enabled?: boolean;
   timeoutMs?: number;
   targets?: Record<string, LanFirstKitchenSenderTargetConfig>;
+  auth?: {
+    sharedSecret?: string;
+  };
 }
 
 export type ScaleReadResult =

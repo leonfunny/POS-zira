@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHmac } from 'crypto';
 import type { AgentConfig, KitchenTicketData, LanFirstPrintFailureClass } from '../src/shared/types';
 import { PrinterType } from '../src/shared/types';
 import { hashLanFirstPrintPayload } from '../src/main/printing/lan-first-payload-hash';
@@ -95,6 +96,7 @@ const ticket: KitchenTicketData = {
     { name: 'Pho bo', quantity: 1, modifiers: ['No onion'] },
   ],
 };
+const LAN_SHARED_SECRET = 'test-lan-secret';
 
 function config(): AgentConfig {
   return {
@@ -105,7 +107,11 @@ function config(): AgentConfig {
     isPaired: true,
     autoStart: false,
     machineId: 'target-machine',
-    lanFirstReceiver: { enabled: true, port: 0 },
+    lanFirstReceiver: {
+      enabled: true,
+      port: 0,
+      auth: { sharedSecret: LAN_SHARED_SECRET },
+    },
   } as AgentConfig;
 }
 
@@ -137,11 +143,36 @@ function validRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function postJson(port: number, body: unknown) {
+function authHeaders(bodyJson: string, timestamp = Date.now(), secret = LAN_SHARED_SECRET) {
+  return {
+    'content-type': 'application/json',
+    'x-zira-lan-first-machine-id': 'source-machine',
+    'x-zira-lan-first-timestamp': String(timestamp),
+    'x-zira-lan-first-signature': createHmac('sha256', secret)
+      .update(`${timestamp}.${bodyJson}`)
+      .digest('hex'),
+  };
+}
+
+async function postJson(
+  port: number,
+  body: unknown,
+  options: {
+    sign?: boolean;
+    timestamp?: number;
+    headers?: Record<string, string>;
+  } = {},
+) {
+  const bodyJson = JSON.stringify(body);
+  const headers = options.headers ?? (
+    options.sign === false
+      ? { 'content-type': 'application/json' }
+      : authHeaders(bodyJson, options.timestamp)
+  );
   const response = await fetch(`http://127.0.0.1:${port}/print/kitchen-ticket`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    headers,
+    body: bodyJson,
   });
   return {
     status: response.status,
@@ -180,6 +211,62 @@ describe('LanFirstKitchenTicketReceiverService', () => {
     expect(port).toBeGreaterThan(0);
     return { ledger, printExecutor, port: port as number };
   }
+
+  it('does not start when enabled without a shared secret', async () => {
+    service = new LanFirstKitchenTicketReceiverService({
+      getConfig: () => ({
+        ...config(),
+        lanFirstReceiver: { enabled: true, port: 0 },
+      } as AgentConfig),
+      printKitchenTicket: vi.fn(async () => undefined),
+    });
+
+    await service.applyConfig();
+
+    expect(service.getStatus()).toMatchObject({
+      running: false,
+      port: null,
+    });
+    expect(service.getStatus().error).toMatch(/shared secret/i);
+  });
+
+  it('rejects missing LAN auth before ledger and print', async () => {
+    const { port, ledger, printExecutor } = await start();
+
+    const result = await postJson(port, validRequest(), { sign: false });
+
+    expect(result.status).toBe(401);
+    expect(ledger.rows.size).toBe(0);
+    expect(printExecutor).not.toHaveBeenCalled();
+  });
+
+  it('rejects bad LAN auth before ledger and print', async () => {
+    const { port, ledger, printExecutor } = await start();
+    const bodyJson = JSON.stringify(validRequest());
+
+    const result = await postJson(port, validRequest(), {
+      headers: {
+        ...authHeaders(bodyJson),
+        'x-zira-lan-first-signature': 'bad-signature',
+      },
+    });
+
+    expect(result.status).toBe(403);
+    expect(ledger.rows.size).toBe(0);
+    expect(printExecutor).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale LAN auth before ledger and print', async () => {
+    const { port, ledger, printExecutor } = await start();
+
+    const result = await postJson(port, validRequest(), {
+      timestamp: Date.now() - (5 * 60 * 1000),
+    });
+
+    expect(result.status).toBe(401);
+    expect(ledger.rows.size).toBe(0);
+    expect(printExecutor).not.toHaveBeenCalled();
+  });
 
   it('rejects non-kitchen LAN_FIRST request shapes', async () => {
     const { port, printExecutor } = await start();

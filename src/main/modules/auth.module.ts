@@ -67,7 +67,7 @@ function isValidExternalUrl(url: string): boolean {
 
 function getRendererConfig(): AgentConfig {
   const config = getConfig();
-  const sanitized: AgentConfig = {
+  let sanitized: AgentConfig = {
     ...config,
     apiKey: '',
     authToken: '',
@@ -91,6 +91,62 @@ function getRendererConfig(): AgentConfig {
   hidden.encryptedAiApiKey = '';
   hidden.encryptedTelegramToken = '';
   hidden.encryptedRemotePin = '';
+  sanitized = sanitizeLanFirstSecretsForRenderer(sanitized);
+  return sanitized;
+}
+
+function sanitizeLanFirstSecretsForRenderer(config: AgentConfig): AgentConfig {
+  return {
+    ...config,
+    lanFirstReceiver: config.lanFirstReceiver ? {
+      ...config.lanFirstReceiver,
+      auth: config.lanFirstReceiver.auth ? {
+        ...config.lanFirstReceiver.auth,
+        sharedSecret: '',
+      } : config.lanFirstReceiver.auth,
+    } : config.lanFirstReceiver,
+    lanFirstKitchenSender: config.lanFirstKitchenSender ? {
+      ...config.lanFirstKitchenSender,
+      auth: config.lanFirstKitchenSender.auth ? {
+        ...config.lanFirstKitchenSender.auth,
+        sharedSecret: '',
+      } : config.lanFirstKitchenSender.auth,
+    } : config.lanFirstKitchenSender,
+  };
+}
+
+function sanitizeLanFirstSecretsFromRendererUpdate(config: Partial<AgentConfig>): Partial<AgentConfig> {
+  if (!config.lanFirstReceiver && !config.lanFirstKitchenSender) return config;
+
+  const current = getConfig();
+  const sanitized: Partial<AgentConfig> = { ...config };
+
+  if (config.lanFirstReceiver) {
+    const currentAuth = current.lanFirstReceiver?.auth || {};
+    const incomingAuth = config.lanFirstReceiver.auth || {};
+    sanitized.lanFirstReceiver = {
+      ...config.lanFirstReceiver,
+      auth: {
+        ...currentAuth,
+        ...incomingAuth,
+        sharedSecret: currentAuth.sharedSecret || '',
+      },
+    };
+  }
+
+  if (config.lanFirstKitchenSender) {
+    const currentAuth = current.lanFirstKitchenSender?.auth || {};
+    const incomingAuth = config.lanFirstKitchenSender.auth || {};
+    sanitized.lanFirstKitchenSender = {
+      ...config.lanFirstKitchenSender,
+      auth: {
+        ...currentAuth,
+        ...incomingAuth,
+        sharedSecret: currentAuth.sharedSecret || '',
+      },
+    };
+  }
+
   return sanitized;
 }
 
@@ -172,14 +228,16 @@ export class AuthModule extends BaseModule {
         (sanitized as any)[key] = value;
       }
 
-      if (Object.keys(sanitized).length === 0) {
-        return getConfig(); // Nothing to set after filtering
+      const safeConfig = sanitizeLanFirstSecretsFromRendererUpdate(sanitized);
+
+      if (Object.keys(safeConfig).length === 0) {
+        return getRendererConfig(); // Nothing to set after filtering
       }
 
-      const result = setConfig(sanitized);
+      setConfig(safeConfig);
       // Notify modules (hardware reinit, telegram restart, AI key change, etc.)
       if (this.eventBus) {
-        this.eventBus.emit('config:changed', { changedKeys: Object.keys(sanitized) });
+        this.eventBus.emit('config:changed', { changedKeys: Object.keys(safeConfig) });
       }
       // Notify ALL renderer windows. Settings lives in the main window while
       // the POS window caches config at mount — without this ping a toggle
@@ -191,7 +249,7 @@ export class AuthModule extends BaseModule {
           try { win.webContents.send('config-updated'); } catch { /* window closing */ }
         }
       }
-      return result;
+      return getRendererConfig();
     });
 
     // ─── Connection ─────────────────────────────────────────────

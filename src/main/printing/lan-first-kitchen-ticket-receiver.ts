@@ -18,6 +18,7 @@ import {
 } from '../database/repos/lan-first-print-attempt-repo';
 import logger from '../logger';
 import { ApiClient } from '../network/api-client';
+import { validateLanFirstAuthHeaders } from './lan-first-auth';
 import { hashLanFirstPrintPayload } from './lan-first-payload-hash';
 
 export const DEFAULT_LAN_FIRST_KITCHEN_TICKET_PORT = 17892;
@@ -117,7 +118,7 @@ function coerceLanFirstKitchenTicketPort(
   return fallback;
 }
 
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
+function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let totalBytes = 0;
     const chunks: Buffer[] = [];
@@ -133,21 +134,20 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
     });
 
     req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw.trim()) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error('Request body is not valid JSON'));
-      }
+      resolve(Buffer.concat(chunks).toString('utf8'));
     });
 
     req.on('error', reject);
   });
+}
+
+function parseJsonBody(raw: string): unknown {
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('Request body is not valid JSON');
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -288,6 +288,15 @@ export class LanFirstKitchenTicketReceiverService {
       return;
     }
 
+    const sharedSecret = String(receiverConfig.auth?.sharedSecret || '').trim();
+    const allowUnauthenticated = receiverConfig.auth?.allowUnauthenticated === true;
+    if (!sharedSecret && !allowUnauthenticated) {
+      await this.stop();
+      this.lastError = 'LAN_FIRST receiver shared secret is required';
+      logger.warn('[LanFirstKitchen] LAN_FIRST receiver not started: shared secret is required');
+      return;
+    }
+
     const port = coerceLanFirstKitchenTicketPort(receiverConfig.port);
     if (this.server && this.activePort === port) return;
 
@@ -338,7 +347,10 @@ export class LanFirstKitchenTicketReceiverService {
     this.server = server;
     const address = server.address() as AddressInfo | null;
     this.activePort = address?.port ?? port;
-    logger.warn(`[LanFirstKitchen] LAN_FIRST kitchen ticket receiver listening on 0.0.0.0:${this.activePort}; auth is disabled and service must remain config-gated`);
+    const receiverConfig = this.getConfig().lanFirstReceiver;
+    const allowUnauthenticated = receiverConfig?.auth?.allowUnauthenticated === true;
+    const authMode = allowUnauthenticated ? 'auth disabled by explicit dev flag' : 'auth enabled';
+    logger.warn(`[LanFirstKitchen] LAN_FIRST kitchen ticket receiver listening on 0.0.0.0:${this.activePort}; ${authMode}`);
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -370,18 +382,46 @@ export class LanFirstKitchenTicketReceiverService {
       return;
     }
 
-    let parsed: unknown;
+    let rawBody: string;
     try {
-      parsed = await readJsonBody(req);
+      rawBody = await readRequestBody(req);
     } catch (error) {
       sendJson(res, 400, { success: false, error: errorMessage(error) });
       return;
     }
 
-    await this.handlePrintRequest(parsed, res);
+    const receiverConfig = this.getConfig().lanFirstReceiver;
+    const sharedSecret = String(receiverConfig?.auth?.sharedSecret || '').trim();
+    const allowUnauthenticated = receiverConfig?.auth?.allowUnauthenticated === true;
+    let authenticatedSourceMachineId = '';
+    if (sharedSecret) {
+      const auth = validateLanFirstAuthHeaders({
+        headers: req.headers,
+        bodyJson: rawBody,
+        sharedSecret,
+      });
+      if (!auth.ok) {
+        sendJson(res, auth.statusCode, { success: false, error: auth.error });
+        return;
+      }
+      authenticatedSourceMachineId = auth.sourceMachineId;
+    } else if (!allowUnauthenticated) {
+      sendJson(res, 401, { success: false, error: 'LAN_FIRST auth shared secret is required' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseJsonBody(rawBody);
+    } catch (error) {
+      sendJson(res, 400, { success: false, error: errorMessage(error) });
+      return;
+    }
+
+    await this.handlePrintRequest(parsed, res, authenticatedSourceMachineId);
   }
 
-  private async handlePrintRequest(input: unknown, res: ServerResponse): Promise<void> {
+  private async handlePrintRequest(input: unknown, res: ServerResponse, authenticatedSourceMachineId = ''): Promise<void> {
     const shape = validateKitchenRequestShape(input);
     if (!shape.request) {
       sendJson(res, 400, { success: false, error: shape.error });
@@ -389,6 +429,11 @@ export class LanFirstKitchenTicketReceiverService {
     }
 
     const request = shape.request;
+    if (authenticatedSourceMachineId && request.sourceMachineId !== authenticatedSourceMachineId) {
+      sendJson(res, 403, { success: false, error: 'sourceMachineId does not match LAN auth header' });
+      return;
+    }
+
     const hashError = validatePayloadHash(request);
     if (hashError) {
       sendJson(res, 400, { success: false, error: hashError });

@@ -17,6 +17,7 @@ import { getConfig, getSecureApiKey, getSecureAuthToken } from '../config/store'
 import { ApiClient } from '../network/api-client';
 import logger from '../logger';
 import type { KitchenTicketData } from './kitchen-ticket';
+import { buildLanFirstAuthHeaders } from './lan-first-auth';
 import { hashLanFirstPrintPayload } from './lan-first-payload-hash';
 
 const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
@@ -235,6 +236,7 @@ async function postLanFirstKitchenTicket(
   target: { host: string; port: number; timeoutMs?: number },
   timeoutMs: number,
   body: ReserveLanFirstPrintJobRequest,
+  sharedSecret: string,
 ): Promise<
   | { action: 'ACCEPTED'; status: string }
   | { action: 'FALLBACK'; reason: string }
@@ -246,10 +248,18 @@ async function postLanFirstKitchenTicket(
     : null;
 
   try {
+    const bodyJson = JSON.stringify(body);
     const response = await fetch(`http://${target.host}:${target.port}/print/kitchen-ticket`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildLanFirstAuthHeaders({
+          sourceMachineId: body.sourceMachineId,
+          sharedSecret,
+          bodyJson,
+        }),
+      },
+      body: bodyJson,
       signal: controller?.signal,
     });
     const json = await readLanJson(response);
@@ -305,6 +315,12 @@ async function submitLanFirstKitchenPrint(
     return { handled: false, printed: false, printerId: route.printerId, error: 'missing_lan_first_target' };
   }
 
+  const sharedSecret = String(config.lanFirstKitchenSender?.auth?.sharedSecret || '').trim();
+  if (!sharedSecret) {
+    logger.warn('[SharedKitchenPrinter] LAN_FIRST sender missing shared secret; falling back to existing backend create-job path');
+    return { handled: false, printed: false, printerId: route.printerId, error: 'missing_lan_first_shared_secret' };
+  }
+
   const hashInput = {
     jobType: 'KITCHEN_TICKET' as const,
     printerType: 'KITCHEN' as const,
@@ -341,7 +357,7 @@ async function submitLanFirstKitchenPrint(
   };
 
   const timeoutMs = Number(target.timeoutMs || config.lanFirstKitchenSender?.timeoutMs || LAN_FIRST_DEFAULT_TIMEOUT_MS);
-  const lanResult = await postLanFirstKitchenTicket(target, timeoutMs, activeBody);
+  const lanResult = await postLanFirstKitchenTicket(target, timeoutMs, activeBody, sharedSecret);
   if (lanResult.action === 'ACCEPTED') {
     return {
       handled: true,

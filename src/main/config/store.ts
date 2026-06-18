@@ -49,11 +49,18 @@ const defaultConfig: AgentConfig = {
   lanFirstReceiver: {
     enabled: false,
     port: 17892,
+    auth: {
+      sharedSecret: '',
+      allowUnauthenticated: false,
+    },
   },
   lanFirstKitchenSender: {
     enabled: false,
     timeoutMs: 2000,
     targets: {},
+    auth: {
+      sharedSecret: '',
+    },
   },
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
@@ -139,6 +146,14 @@ const lanFirstReceiverConfigSchema = {
   properties: {
     enabled: { type: 'boolean', default: false },
     port: { type: 'number', default: 17892 },
+    auth: {
+      type: 'object',
+      properties: {
+        sharedSecret: { type: 'string', default: '' },
+        allowUnauthenticated: { type: 'boolean', default: false },
+      },
+      default: {},
+    },
   },
   default: {},
 };
@@ -158,6 +173,13 @@ const lanFirstKitchenSenderConfigSchema = {
           timeoutMs: { type: 'number' },
         },
         default: {},
+      },
+      default: {},
+    },
+    auth: {
+      type: 'object',
+      properties: {
+        sharedSecret: { type: 'string', default: '' },
       },
       default: {},
     },

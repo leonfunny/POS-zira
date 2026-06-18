@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHmac } from 'crypto';
 import { PrintJobType, PrinterType, type KitchenTicketData } from '../src/shared/types';
 
 const {
@@ -74,6 +75,7 @@ const readyKitchenPrinter = {
   isOnline: true,
   agentIsOnline: true,
 };
+const LAN_SHARED_SECRET = 'test-lan-secret';
 
 function lanResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -141,6 +143,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {},
       },
     });
@@ -170,12 +173,50 @@ describe('submitSharedKitchenPrint', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('when LAN_FIRST sender is enabled without a shared secret, skips LAN_FIRST and uses the existing create-job path', async () => {
+    getConfig.mockReturnValue({
+      serverUrl: 'https://api.example.test',
+      machineId: 'machine-2',
+      lanFirstKitchenSender: {
+        enabled: true,
+        targets: {
+          'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
+        },
+      },
+    });
+    getSecureAuthToken.mockReturnValue('jwt-token');
+    getSecureApiKey.mockReturnValue('api-key-1');
+    createPrintJob.mockResolvedValue({ jobId: 'legacy-job-no-lan-secret', status: 'QUEUED', sent: true });
+
+    const result = await submitSharedKitchenPrint(ticket);
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      printerId: 'kitchen-printer-1',
+      jobId: 'legacy-job-no-lan-secret',
+      status: 'QUEUED',
+    });
+    expect(reserveLanFirstPrintJobWithApiKey).not.toHaveBeenCalled();
+    expect(dispatchLanFirstPrintJobWithApiKey).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(createPrintJob).toHaveBeenCalledWith(
+      'jwt-token',
+      expect.objectContaining({
+        jobType: PrintJobType.KITCHEN_TICKET,
+        printerType: PrinterType.KITCHEN,
+        printerId: 'kitchen-printer-1',
+      }),
+    );
+  });
+
   it('uses a deterministic LAN_FIRST idempotencyKey for identical normal kitchen tickets', async () => {
     getConfig.mockReturnValue({
       serverUrl: 'https://api.example.test',
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -202,6 +243,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -231,6 +273,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -249,12 +292,24 @@ describe('submitSharedKitchenPrint', () => {
       status: 'COMPLETED',
     });
     expect(reserveLanFirstPrintJobWithApiKey).toHaveBeenCalledTimes(1);
+    const fetchOptions = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string>; body: string };
+    const timestamp = fetchOptions.headers['x-zira-lan-first-timestamp'];
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:17892/print/kitchen-ticket',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'x-zira-lan-first-machine-id': 'machine-2',
+          'x-zira-lan-first-timestamp': expect.any(String),
+          'x-zira-lan-first-signature': expect.any(String),
+        }),
       }),
+    );
+    expect(fetchOptions.headers['x-zira-lan-first-signature']).toBe(
+      createHmac('sha256', LAN_SHARED_SECRET)
+        .update(`${timestamp}.${fetchOptions.body}`)
+        .digest('hex'),
     );
     expect(dispatchLanFirstPrintJobWithApiKey).not.toHaveBeenCalled();
     expect(createPrintJob).not.toHaveBeenCalled();
@@ -266,6 +321,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -292,6 +348,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -330,6 +387,7 @@ describe('submitSharedKitchenPrint', () => {
       lanFirstKitchenSender: {
         enabled: true,
         timeoutMs: 10,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -362,6 +420,7 @@ describe('submitSharedKitchenPrint', () => {
       lanFirstKitchenSender: {
         enabled: true,
         timeoutMs: 10,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -391,6 +450,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -427,6 +487,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -461,6 +522,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -498,6 +560,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -529,6 +592,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
@@ -571,6 +635,7 @@ describe('submitSharedKitchenPrint', () => {
       machineId: 'machine-2',
       lanFirstKitchenSender: {
         enabled: true,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
         targets: {
           'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
         },
