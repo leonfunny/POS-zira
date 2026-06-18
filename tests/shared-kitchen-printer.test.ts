@@ -44,7 +44,7 @@ vi.mock('../src/main/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { submitSharedKitchenPrint } from '../src/main/printing/shared-kitchen-printer';
+import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../src/main/printing/shared-kitchen-printer';
 
 const ticket: KitchenTicketData = {
   orderId: 'kso-1',
@@ -118,5 +118,39 @@ describe('submitSharedKitchenPrint', () => {
       status: 'FAILED',
     });
     expect(result.error).toContain('failed');
+  });
+
+  it('keeps the shared pickup slip route blocking so unrelated receipt-slip behavior is unchanged', async () => {
+    listPrinterAssignments.mockResolvedValue({
+      assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'receipt-printer-1' }],
+    });
+    listSalonPrinters.mockResolvedValue({
+      printers: [{
+        ...readyKitchenPrinter,
+        id: 'receipt-printer-1',
+        printerType: 'RECEIPT',
+        displayName: 'Receipt printer',
+      }],
+    });
+    createPrintJob.mockResolvedValue({ jobId: 'job-2', status: 'COMPLETED', sent: true });
+
+    const result = await submitSharedPickupSlip(ticket);
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: true,
+      printerId: 'receipt-printer-1',
+      jobId: 'job-2',
+      status: 'COMPLETED',
+    });
+    expect(createPrintJob).toHaveBeenCalledWith(
+      'jwt-token',
+      expect.objectContaining({
+        printerType: PrinterType.RECEIPT,
+        printerId: 'receipt-printer-1',
+        waitForCompletion: true,
+        timeoutMs: 30000,
+      }),
+    );
   });
 });

@@ -20,6 +20,7 @@ const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
 // the printer registered under the kiosk's shared receipt role (POS1).
 const SHARED_SLIP_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
+const SHARED_PLAIN_JOB_TIMEOUT_MS = 30_000;
 
 let kitchenEndpointUnavailableUntil = 0;
 
@@ -137,7 +138,7 @@ async function resolveSharedKitchenPrinter(
 export async function submitSharedKitchenPrint(
   ticket: KitchenTicketData,
 ): Promise<SharedKitchenPrintResult> {
-  return submitSharedPlainPrint(ticket, SHARED_KITCHEN_ROLE, PrinterType.KITCHEN);
+  return submitSharedPlainPrint(ticket, SHARED_KITCHEN_ROLE, PrinterType.KITCHEN, false);
 }
 
 /**
@@ -152,6 +153,7 @@ export async function submitSharedPickupSlip(
     { ...slip, kind: 'PICKUP_SLIP' },
     SHARED_SLIP_ROLE,
     PrinterType.RECEIPT,
+    true,
   );
 }
 
@@ -159,6 +161,7 @@ async function submitSharedPlainPrint(
   ticket: KitchenTicketData,
   role: SalonPrinterRole,
   printerType: PrinterType,
+  waitForCompletion: boolean,
 ): Promise<SharedKitchenPrintResult> {
   const token = getSecureAuthToken();
   const apiKey = getSecureApiKey();
@@ -182,7 +185,8 @@ async function submitSharedPlainPrint(
     jobType: PrintJobType.KITCHEN_TICKET,
     printerType,
     printerId: route.printerId,
-    waitForCompletion: false,
+    waitForCompletion,
+    ...(waitForCompletion ? { timeoutMs: SHARED_PLAIN_JOB_TIMEOUT_MS } : {}),
     referenceType: 'KITCHEN_TICKET',
     referenceId: ticket.orderId,
     payload: ticket,
