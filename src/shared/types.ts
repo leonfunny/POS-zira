@@ -267,6 +267,18 @@ export interface LanFirstReceiverConfig {
   port?: number;
 }
 
+export interface LanFirstKitchenSenderTargetConfig {
+  host?: string;
+  port?: number;
+  timeoutMs?: number;
+}
+
+export interface LanFirstKitchenSenderConfig {
+  enabled?: boolean;
+  timeoutMs?: number;
+  targets?: Record<string, LanFirstKitchenSenderTargetConfig>;
+}
+
 export type ScaleReadResult =
   | {
       success: true;
@@ -484,6 +496,7 @@ export interface AgentConfig {
   labelHeight?: number;
   scale?: ScaleConfig;
   lanFirstReceiver?: LanFirstReceiverConfig;
+  lanFirstKitchenSender?: LanFirstKitchenSenderConfig;
 
   // Server settings
   serverUrl: string;

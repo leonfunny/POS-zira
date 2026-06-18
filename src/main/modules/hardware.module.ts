@@ -58,6 +58,10 @@ import { database } from '../database/database';
 import { fiscalDailyReportRunRepo } from '../database/repos/fiscal-daily-report-run-repo';
 import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import {
+  lanFirstPrintAttemptRepo,
+  type BeginLanFirstPrintAttemptInput,
+} from '../database/repos/lan-first-print-attempt-repo';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
 import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -863,6 +867,52 @@ export class HardwareModule extends BaseModule {
       throw new LanFirstSafeBeforePrintError('Kitchen ticket requires a thermal (ESC/POS) printer');
     }
     await (targetPrinter as any).printPlainLines(lines);
+  }
+
+  private getLanFirstKitchenPrintAttemptInput(job: any): BeginLanFirstPrintAttemptInput | null {
+    if (job?.dispatchMode !== 'LAN_FIRST') return null;
+    if (job?.jobType !== PrintJobType.KITCHEN_TICKET) return null;
+    if (job?.printerType !== PrinterType.KITCHEN) return null;
+    const idempotencyKey = typeof job.idempotencyKey === 'string' ? job.idempotencyKey.trim() : '';
+    const payloadHash = typeof job.payloadHash === 'string' ? job.payloadHash.trim() : '';
+    const printerId = typeof job.printerId === 'string' ? job.printerId.trim() : '';
+    const jobId = typeof job.jobId === 'string' ? job.jobId.trim() : '';
+    if (!idempotencyKey || !payloadHash || !printerId || !jobId) return null;
+    return { idempotencyKey, payloadHash, jobId, printerId };
+  }
+
+  private async applyLanFirstSocketDedupe(
+    job: any,
+    socket: SocketClient | null | undefined,
+  ): Promise<{ shouldPrint: boolean; input?: BeginLanFirstPrintAttemptInput }> {
+    const input = this.getLanFirstKitchenPrintAttemptInput(job);
+    if (!input) return { shouldPrint: true };
+
+    const decision = await lanFirstPrintAttemptRepo.beginPrintAttempt(input);
+    if (decision.action === 'PRINT') return { shouldPrint: true, input };
+
+    if (decision.action === 'REJECT') {
+      const message = `LAN_FIRST ${decision.reason}`;
+      socket?.sendJobStatus(job.jobId, 'FAILED', message);
+      return { shouldPrint: false };
+    }
+
+    if (decision.status === 'COMPLETED') {
+      socket?.sendJobStatus(job.jobId, 'COMPLETED');
+      return { shouldPrint: false };
+    }
+
+    if (decision.status === 'PRINTING') {
+      socket?.sendJobStatus(job.jobId, 'PRINTING');
+      return { shouldPrint: false };
+    }
+
+    socket?.sendJobStatus(
+      job.jobId,
+      'FAILED',
+      `LAN_FIRST duplicate not retryable${decision.failureClass ? ` (${decision.failureClass})` : ''}`,
+    );
+    return { shouldPrint: false };
   }
 
   async printLanFirstKitchenTicket(request: LanFirstKitchenTicketPrintRequest): Promise<void> {
@@ -2350,9 +2400,14 @@ export class HardwareModule extends BaseModule {
     const { printerType, config: printerConfig } = this.getPrinterConfigForJob(job);
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     const fiscal = this.isFiscalJob(job);
+    const lanFirstDedupe = await this.applyLanFirstSocketDedupe(job, socket);
+    if (!lanFirstDedupe.shouldPrint) return;
+    const lanFirstInput = lanFirstDedupe.input;
 
     for (let attempt = 0; attempt <= PRINT_JOB_MAX_RETRIES; attempt++) {
-      const targetPrinter = this.getPrinterForJob(job);
+      const targetPrinter = lanFirstInput
+        ? this.printersById[lanFirstInput.printerId] || null
+        : this.getPrinterForJob(job);
 
       if (!targetPrinter?.isConnected()) {
         if (attempt < PRINT_JOB_MAX_RETRIES) {
@@ -2365,6 +2420,13 @@ export class HardwareModule extends BaseModule {
           ? `FISCAL PRINTER ${printerType} NOT CONNECTED — sale must be blocked`
           : `Printer ${printerType} not connected`;
         logger.error(`[HardwareModule] Job ${job.jobId}: ${failMsg}`);
+        if (lanFirstInput) {
+          await lanFirstPrintAttemptRepo.markFailed({
+            ...lanFirstInput,
+            failureClass: 'SAFE_BEFORE_PRINT',
+            errorMessage: failMsg,
+          });
+        }
         socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
         return;
       }
@@ -2465,11 +2527,24 @@ export class HardwareModule extends BaseModule {
           }
         }
 
-        socket?.sendJobStatus(job.jobId, 'COMPLETED');
         if (job.printerId) localPrinterRepo.markUsed(job.printerId);
+        if (lanFirstInput) {
+          await lanFirstPrintAttemptRepo.markCompleted(lanFirstInput);
+        }
+        socket?.sendJobStatus(job.jobId, 'COMPLETED');
         return; // success — exit retry loop
       } catch (error: any) {
         logger.error(`[HardwareModule] Job ${job.jobId} attempt ${attempt + 1} failed:`, error);
+        if (lanFirstInput) {
+          const failMsg = error?.message || String(error);
+          await lanFirstPrintAttemptRepo.markFailed({
+            ...lanFirstInput,
+            failureClass: error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
+            errorMessage: failMsg,
+          });
+          socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+          return;
+        }
 
         if (attempt < PRINT_JOB_MAX_RETRIES) {
           logger.info(`[HardwareModule] Retrying in ${PRINT_JOB_RETRY_DELAY}ms...`);
