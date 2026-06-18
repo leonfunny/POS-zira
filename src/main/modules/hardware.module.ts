@@ -25,6 +25,11 @@ import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
 import { readScaleWeight } from '../hardware/scale/scale-reader-service';
 import { getScaleNetworkInfo, ScaleNetworkService } from '../hardware/scale/scale-network-service';
+import {
+  LanFirstKitchenTicketReceiverService,
+  LanFirstSafeBeforePrintError,
+  type LanFirstKitchenTicketPrintRequest,
+} from '../printing/lan-first-kitchen-ticket-receiver';
 import { listSerialPorts, listWindowsPrintersDetailed, getVidForPort } from '../hardware/port-utils';
 import { validateProtocolAgainstVid, type ValidationResult as PortValidationResult } from '../hardware/detection/vid-protocol-registry';
 import {
@@ -116,6 +121,7 @@ export class HardwareModule extends BaseModule {
   // Barcode scanner
   private scanner: HidScanner | null = null;
   private scaleNetworkService: ScaleNetworkService | null = null;
+  private lanFirstKitchenTicketReceiver: LanFirstKitchenTicketReceiverService | null = null;
   // Posnet detection services
   private deviceRegistry: DeviceProfileRegistry | null = null;
   private detectionService: DeviceDetectionService | null = null;
@@ -199,6 +205,14 @@ export class HardwareModule extends BaseModule {
     );
     await this.scaleNetworkService.applyConfig().catch((err: any) => {
       logger.warn('[HardwareModule] Remote scale share did not start:', err?.message || err);
+    });
+
+    this.lanFirstKitchenTicketReceiver = new LanFirstKitchenTicketReceiverService({
+      getConfig: () => getConfig(),
+      printKitchenTicket: (request) => this.printLanFirstKitchenTicket(request),
+    });
+    await this.lanFirstKitchenTicketReceiver.applyConfig().catch((err: any) => {
+      logger.warn('[HardwareModule] LAN_FIRST kitchen ticket receiver did not start:', err?.message || err);
     });
 
     // Initialize Posnet detection services
@@ -614,6 +628,9 @@ export class HardwareModule extends BaseModule {
         if (payload.changedKeys.includes('scale')) {
           await this.scaleNetworkService?.applyConfig();
         }
+        if (payload.changedKeys.includes('lanFirstReceiver')) {
+          await this.lanFirstKitchenTicketReceiver?.applyConfig();
+        }
       } catch (err) {
         logger.error('[HardwareModule] Unhandled error in config:changed handler:', err);
       }
@@ -836,6 +853,49 @@ export class HardwareModule extends BaseModule {
     }
     const target = this.getPrinterConfigForJob(job);
     return this.getPrinterForType(target.printerType);
+  }
+
+  private async printKitchenTicketPayload(targetPrinter: PrinterDriver, ticket: KitchenTicketData): Promise<void> {
+    const lines = ticket?.kind === 'PICKUP_SLIP'
+      ? buildPickupSlipLines(ticket)
+      : buildKitchenTicketLines(ticket);
+    if (typeof (targetPrinter as any).printPlainLines !== 'function') {
+      throw new LanFirstSafeBeforePrintError('Kitchen ticket requires a thermal (ESC/POS) printer');
+    }
+    await (targetPrinter as any).printPlainLines(lines);
+  }
+
+  async printLanFirstKitchenTicket(request: LanFirstKitchenTicketPrintRequest): Promise<void> {
+    const job = {
+      jobId: request.jobId,
+      jobType: PrintJobType.KITCHEN_TICKET,
+      printerType: PrinterType.KITCHEN,
+      printerId: request.printerId,
+      payload: request.payload,
+      referenceType: request.referenceType,
+      referenceId: request.referenceId,
+    };
+    const { printerType } = this.getPrinterConfigForJob(job);
+    if (printerType !== PrinterType.KITCHEN) {
+      throw new LanFirstSafeBeforePrintError('LAN_FIRST KITCHEN_TICKET requires a KITCHEN printer');
+    }
+
+    let targetPrinter = this.printersById[request.printerId];
+    if (!targetPrinter) {
+      throw new LanFirstSafeBeforePrintError(`Printer ${request.printerId} is not initialized`);
+    }
+
+    if (!targetPrinter.isConnected()) {
+      await this.runHealthCheck();
+      targetPrinter = this.printersById[request.printerId];
+    }
+
+    if (!targetPrinter?.isConnected()) {
+      throw new LanFirstSafeBeforePrintError(`Printer ${request.printerId} not connected`);
+    }
+
+    await this.printKitchenTicketPayload(targetPrinter, request.payload);
+    if (request.printerId) localPrinterRepo.markUsed(request.printerId);
   }
 
   getDeviceStatus(): DeviceStatus {
@@ -2321,14 +2381,7 @@ export class HardwareModule extends BaseModule {
           // thermal plain-line path so Vietnamese/Polish dish names raster
           // instead of printing mangled code-page text.
           const ticket = job.payload as KitchenTicketData;
-          const lines = ticket?.kind === 'PICKUP_SLIP'
-            ? buildPickupSlipLines(ticket)
-            : buildKitchenTicketLines(ticket);
-          if (typeof (targetPrinter as any).printPlainLines === 'function') {
-            await (targetPrinter as any).printPlainLines(lines);
-          } else {
-            throw new Error('Kitchen ticket requires a thermal (ESC/POS) printer');
-          }
+          await this.printKitchenTicketPayload(targetPrinter, ticket);
         } else if (isLabel) {
           if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
           if (job.jobType === PrintJobType.INFO_LABEL) {
@@ -2502,6 +2555,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.lanFirstKitchenTicketReceiver?.stop();
     await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on stop failed:', err?.message); } }
@@ -2513,6 +2567,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.lanFirstKitchenTicketReceiver?.stop();
     await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on destroy failed:', err?.message); } }

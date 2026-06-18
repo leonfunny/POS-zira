@@ -46,6 +46,10 @@ const defaultConfig: AgentConfig = {
       timeoutMs: 2000,
     },
   },
+  lanFirstReceiver: {
+    enabled: false,
+    port: 17892,
+  },
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
     : 'https://api.enail.pro',
@@ -121,6 +125,15 @@ const scaleConfigSchema = {
       },
       default: {},
     },
+  },
+  default: {},
+};
+
+const lanFirstReceiverConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    port: { type: 'number', default: 17892 },
   },
   default: {},
 };
@@ -233,6 +246,7 @@ const store = new Store<AgentConfig>({
     labelWidth: { type: 'number', default: 50 },
     labelHeight: { type: 'number', default: 30 },
     scale: scaleConfigSchema,
+    lanFirstReceiver: lanFirstReceiverConfigSchema,
     serverUrl: { type: 'string', default: 'https://api.enail.pro' },
     isPaired: { type: 'boolean', default: false },
     autoStart: { type: 'boolean', default: true },

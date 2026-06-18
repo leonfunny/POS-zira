@@ -425,6 +425,8 @@ class Database {
       'fiscal_daily_report_runs',
       // Local print journal (which printer printed each order receipt copy)
       'print_attempts',
+      // LAN_FIRST receiver dedupe ledger
+      'lan_first_print_attempts',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

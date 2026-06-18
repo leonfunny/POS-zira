@@ -262,6 +262,11 @@ export interface ScaleConfig {
   remote?: ScaleRemoteConfig;
 }
 
+export interface LanFirstReceiverConfig {
+  enabled?: boolean;
+  port?: number;
+}
+
 export type ScaleReadResult =
   | {
       success: true;
@@ -478,6 +483,7 @@ export interface AgentConfig {
   labelWidth?: number;
   labelHeight?: number;
   scale?: ScaleConfig;
+  lanFirstReceiver?: LanFirstReceiverConfig;
 
   // Server settings
   serverUrl: string;

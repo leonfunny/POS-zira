@@ -3,6 +3,7 @@ import {
   PrintJobType,
   PrinterType,
   type AgentConfig,
+  type KitchenTicketData,
   type PrinterConfig,
   type ReceiptData,
 } from '../src/shared/types';
@@ -64,6 +65,7 @@ vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
     printDailyReport = vi.fn();
     printXReport = vi.fn();
     printZReport = vi.fn();
+    printPlainLines = vi.fn();
   }
   return { ThermalDriver };
 });
@@ -356,5 +358,83 @@ describe('HardwareModule print job runtime guards', () => {
 
     expect(mock.thermalInstances).toHaveLength(1);
     expect(firstDriver.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('LAN_FIRST kitchen printing requires the exact printerId driver and never falls back by KITCHEN type', async () => {
+    const fallbackKitchenRow = {
+      id: 'kitchen-fallback',
+      printer_type: PrinterType.KITCHEN,
+      display_name: 'kitchen fallback',
+      protocol: 'WINDOWS',
+      is_enabled: 1,
+      windows_printer_name: 'Kitchen Epson',
+      supports_cash_drawer: 0,
+    };
+    const missingKitchenRow = {
+      ...fallbackKitchenRow,
+      id: 'kitchen-missing',
+      display_name: 'kitchen missing',
+      windows_printer_name: 'Missing Epson',
+    };
+    const fallbackConfig: PrinterConfig = {
+      enabled: true,
+      protocol: 'WINDOWS',
+      serverPrinterId: 'kitchen-fallback',
+      windowsPrinter: 'Kitchen Epson',
+      paperWidth: 80,
+      charsPerLine: 48,
+    };
+    const missingConfig: PrinterConfig = {
+      ...fallbackConfig,
+      serverPrinterId: 'kitchen-missing',
+      windowsPrinter: 'Missing Epson',
+    };
+
+    mock.getEnabled.mockReturnValue([fallbackKitchenRow]);
+    mock.getAll.mockReturnValue([fallbackKitchenRow, missingKitchenRow]);
+    mock.getById.mockImplementation((id: string) => (
+      id === 'kitchen-missing'
+        ? missingKitchenRow
+        : id === 'kitchen-fallback'
+          ? fallbackKitchenRow
+          : null
+    ));
+    mock.rowToPrinterConfig.mockImplementation((row: { id: string }) => (
+      row.id === 'kitchen-missing' ? missingConfig : fallbackConfig
+    ));
+
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    const ticket: KitchenTicketData = {
+      orderId: 'order-1',
+      orderNumber: 'K-001',
+      createdAt: '2026-06-18T10:00:00.000Z',
+      source: 'SELF_CHECKOUT',
+      items: [{ name: 'Pho bo', quantity: 1 }],
+    };
+
+    await expect(module.printLanFirstKitchenTicket({
+      jobId: 'job-1',
+      idempotencyKey: 'idem-1',
+      payloadHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      dispatchMode: 'LAN_FIRST',
+      sourceMachineId: 'source-machine',
+      targetMachineId: 'target-machine',
+      printerId: 'kitchen-missing',
+      jobType: 'KITCHEN_TICKET',
+      printerType: 'KITCHEN',
+      referenceType: 'KITCHEN_TICKET',
+      referenceId: 'order-1',
+      payload: ticket,
+    })).rejects.toThrow(/not initialized|not connected/i);
+
+    expect(mock.thermalInstances[0].printPlainLines).not.toHaveBeenCalled();
+    expect(mock.markUsed).not.toHaveBeenCalledWith('kitchen-missing');
   });
 });

@@ -1461,4 +1461,27 @@ export const migrations: Migration[] = [
       ALTER TABLE kitchen_self_order_items ADD COLUMN line_total_grosze INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 47,
+    name: 'lan_first_print_attempts',
+    // Receiver-side LAN_FIRST guard. The idempotency key is the hard barrier
+    // against duplicate physical kitchen-ticket prints.
+    up: `
+      CREATE TABLE IF NOT EXISTS lan_first_print_attempts (
+        idempotency_key TEXT PRIMARY KEY,
+        payload_hash TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        printer_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        failure_class TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_lan_first_print_attempts_status
+        ON lan_first_print_attempts(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_lan_first_print_attempts_job
+        ON lan_first_print_attempts(job_id);
+    `,
+  },
 ];
