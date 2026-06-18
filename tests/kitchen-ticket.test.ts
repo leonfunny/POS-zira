@@ -263,7 +263,7 @@ describe('kitchen ticket pipeline wiring', () => {
 
     expect(sharedSource).toContain("SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN'");
     expect(sharedSource).toContain('jobType: PrintJobType.KITCHEN_TICKET');
-    expect(sharedSource).toContain('waitForCompletion: true');
+    expect(sharedSource).toContain('waitForCompletion: false');
     expect(hardwareSource).toContain('job.jobType === PrintJobType.KITCHEN_TICKET');
     expect(hardwareSource).toContain('buildKitchenTicketLines(ticket)');
   });

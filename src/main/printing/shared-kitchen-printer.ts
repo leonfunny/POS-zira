@@ -20,7 +20,6 @@ const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
 // the printer registered under the kiosk's shared receipt role (POS1).
 const SHARED_SLIP_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
-const KITCHEN_JOB_TIMEOUT_MS = 30_000;
 
 let kitchenEndpointUnavailableUntil = 0;
 
@@ -183,8 +182,7 @@ async function submitSharedPlainPrint(
     jobType: PrintJobType.KITCHEN_TICKET,
     printerType,
     printerId: route.printerId,
-    waitForCompletion: true,
-    timeoutMs: KITCHEN_JOB_TIMEOUT_MS,
+    waitForCompletion: false,
     referenceType: 'KITCHEN_TICKET',
     referenceId: ticket.orderId,
     payload: ticket,
@@ -202,14 +200,17 @@ async function submitSharedPlainPrint(
       : await client.createPrintJobWithApiKey(apiKey!, body, config.machineId);
     const jobId = (result.jobId || result.id) as string | undefined;
     const status = finalStatusFromResponse(result);
+    const sent = result.sent !== false;
+    const failedStatus = ['FAILED', 'TIMEOUT', 'CANCELLED', 'ERROR'].includes(status);
 
-    if (status === 'COMPLETED') {
-      logger.info(`[SharedKitchenPrinter] kitchen ticket completed on printer ${route.printerId}${jobId ? ` as job ${jobId}` : ''}`);
-      return { handled: true, printed: true, printerId: route.printerId, jobId, status };
+    if (sent && !failedStatus) {
+      const acceptedStatus = status || 'SENT';
+      logger.info(`[SharedKitchenPrinter] kitchen ticket accepted on printer ${route.printerId}${jobId ? ` as job ${jobId}` : ''}`);
+      return { handled: true, printed: true, printerId: route.printerId, jobId, status: acceptedStatus };
     }
 
     const responseMessage = result.errorMessage || result.message;
-    const error = `Shared kitchen print ${status ? status.toLowerCase() : 'did not complete'}${responseMessage ? `: ${responseMessage}` : ''}`;
+    const error = `Shared kitchen print ${status ? status.toLowerCase() : 'was not accepted'}${responseMessage ? `: ${responseMessage}` : ''}`;
     logger.error(`[SharedKitchenPrinter] ${error}${jobId ? ` (${jobId})` : ''}`);
     return { handled: true, printed: false, printerId: route.printerId, jobId, status, error };
   } catch (err: any) {
