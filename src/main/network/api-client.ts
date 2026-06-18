@@ -5,11 +5,16 @@ import {
   ConnectResponse,
   CreatePrintJobRequest,
   CreatePrintJobResponse,
+  DispatchLanFirstPrintJobRequest,
   AgentPrintersResponse,
+  LanFirstPrintJobResponse,
+  LanFirstPrintResultResponse,
   PrinterConfig,
   PrinterProtocol,
   PrintersConfig,
   PrinterType,
+  ReportLanFirstPrintResultRequest,
+  ReserveLanFirstPrintJobRequest,
   SalonPrinterAssignmentResponse,
   SalonPrinterAssignmentsResponse,
   SalonPrintersListOptions,
@@ -954,6 +959,50 @@ export class ApiClient {
     return this.requestWithPrintAgentApiKey(
       'POST',
       '/print-agent/agent/jobs',
+      apiKey,
+      body,
+      machineId,
+    );
+  }
+
+  async reserveLanFirstPrintJobWithApiKey(
+    apiKey: string,
+    body: ReserveLanFirstPrintJobRequest,
+    machineId?: string,
+  ): Promise<LanFirstPrintJobResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      '/print-agent/agent/jobs/reserve',
+      apiKey,
+      body,
+      machineId,
+    );
+  }
+
+  async dispatchLanFirstPrintJobWithApiKey(
+    apiKey: string,
+    jobId: string,
+    body: DispatchLanFirstPrintJobRequest,
+    machineId?: string,
+  ): Promise<LanFirstPrintJobResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      `/print-agent/agent/jobs/${encodeURIComponent(jobId)}/dispatch`,
+      apiKey,
+      body,
+      machineId,
+    );
+  }
+
+  async reportLanFirstPrintResultWithApiKey(
+    apiKey: string,
+    jobId: string,
+    body: ReportLanFirstPrintResultRequest,
+    machineId?: string,
+  ): Promise<LanFirstPrintResultResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      `/print-agent/agent/jobs/${encodeURIComponent(jobId)}/lan-result`,
       apiKey,
       body,
       machineId,

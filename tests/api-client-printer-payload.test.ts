@@ -126,3 +126,112 @@ describe('ApiClient printer payload normalization', () => {
     });
   });
 });
+
+describe('ApiClient LAN_FIRST print-agent API-key methods', () => {
+  const reserveBody = {
+    jobId: 'job-1',
+    idempotencyKey: 'idem-1',
+    payloadHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    dispatchMode: 'LAN_FIRST',
+    sourceMachineId: 'pos-a',
+    targetMachineId: 'pos-b',
+    jobType: 'KITCHEN_TICKET',
+    printerType: 'KITCHEN',
+    printerId: 'printer-1',
+    referenceType: 'KITCHEN_TICKET',
+    referenceId: 'order-1',
+    payload: { items: [] },
+  };
+
+  function mockJsonResponse(body: Record<string, unknown> = { ok: true }) {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  }
+
+  it('reserves a LAN_FIRST job on the no-emit reserve endpoint with API-key machine auth', async () => {
+    mockJsonResponse({ jobId: 'job-1', status: 'RESERVED' });
+
+    await new ApiClient('https://api.test').reserveLanFirstPrintJobWithApiKey(
+      'api-key-1',
+      reserveBody,
+      'machine-1',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/v1/print-agent/agent/jobs/reserve');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-print-agent-api-key': 'api-key-1',
+        'x-print-agent-machine-id': 'machine-1',
+      },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(reserveBody);
+  });
+
+  it('dispatches a reserved LAN_FIRST job through backend fallback with API-key machine auth', async () => {
+    const body = {
+      idempotencyKey: reserveBody.idempotencyKey,
+      payloadHash: reserveBody.payloadHash,
+      dispatchMode: 'LAN_FIRST',
+      sourceMachineId: 'pos-a',
+      targetMachineId: 'pos-b',
+      printerId: 'printer-1',
+      reason: 'LAN_TIMEOUT',
+    };
+    mockJsonResponse({ jobId: 'job-1', status: 'QUEUED' });
+
+    await new ApiClient('https://api.test').dispatchLanFirstPrintJobWithApiKey(
+      'api-key-1',
+      'job-1',
+      body,
+      'machine-1',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/v1/print-agent/agent/jobs/job-1/dispatch');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-print-agent-api-key': 'api-key-1',
+        'x-print-agent-machine-id': 'machine-1',
+      },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(body);
+  });
+
+  it('reports LAN_DIRECT print result with API-key machine auth', async () => {
+    const body = {
+      status: 'FAILED',
+      failureClass: 'SAFE_BEFORE_PRINT',
+      errorMessage: 'printer offline',
+      idempotencyKey: reserveBody.idempotencyKey,
+      payloadHash: reserveBody.payloadHash,
+      transport: 'LAN_DIRECT',
+    };
+    mockJsonResponse({ jobId: 'job-1', status: 'FAILED' });
+
+    await new ApiClient('https://api.test').reportLanFirstPrintResultWithApiKey(
+      'api-key-1',
+      'job-1',
+      body,
+      'machine-1',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/v1/print-agent/agent/jobs/job-1/lan-result');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-print-agent-api-key': 'api-key-1',
+        'x-print-agent-machine-id': 'machine-1',
+      },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(body);
+  });
+});

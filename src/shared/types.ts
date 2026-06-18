@@ -790,6 +790,81 @@ export interface CreatePrintJobResponse {
   [key: string]: unknown;
 }
 
+export type LanFirstPayloadHash = `sha256:${string}`;
+export type LanFirstDispatchMode = 'LAN_FIRST';
+export type LanFirstPrintTransport = 'LAN_DIRECT';
+export type LanFirstPrintResultStatus = 'COMPLETED' | 'FAILED' | 'PRINTING';
+export type LanFirstPrintFailureClass = 'SAFE_BEFORE_PRINT' | 'UNCERTAIN_AFTER_PRINT' | 'FINAL';
+
+export interface LanFirstPrintPayloadHashInput {
+  jobType: 'KITCHEN_TICKET';
+  printerType: 'KITCHEN';
+  printerId: string;
+  referenceType: 'KITCHEN_TICKET';
+  referenceId: string;
+  payload: unknown;
+}
+
+export interface ReserveLanFirstPrintJobRequest extends LanFirstPrintPayloadHashInput {
+  jobId: string;
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  dispatchMode: LanFirstDispatchMode;
+  sourceMachineId: string;
+  targetMachineId: string;
+}
+
+export interface DispatchLanFirstPrintJobRequest {
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  dispatchMode: LanFirstDispatchMode;
+  sourceMachineId: string;
+  targetMachineId: string;
+  printerId: string;
+  reason: string;
+}
+
+export interface ReportLanFirstPrintResultRequest {
+  status: LanFirstPrintResultStatus;
+  failureClass: LanFirstPrintFailureClass | null;
+  errorMessage: string | null;
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  transport: LanFirstPrintTransport;
+}
+
+export interface LanFirstPrintJobResponse {
+  jobId?: string;
+  id?: string;
+  state?: string;
+  status?: string;
+  idempotencyKey?: string | null;
+  payloadHash?: LanFirstPayloadHash | null;
+  dispatchMode?: 'LAN_FIRST' | 'BACKEND' | string | null;
+  sourceMachineId?: string | null;
+  targetMachineId?: string | null;
+  printerId?: string | null;
+  targetAgentId?: string | null;
+  duplicate?: boolean;
+  backendDispatched?: boolean;
+  dispatchReason?: string | null;
+  lanToken?: string | null;
+  lanTokenExpiresAt?: string | null;
+  sent?: boolean;
+  message?: string;
+  errorMessage?: string;
+  [key: string]: unknown;
+}
+
+export interface LanFirstPrintResultResponse {
+  jobId?: string;
+  id?: string;
+  status?: string;
+  message?: string;
+  errorMessage?: string;
+  [key: string]: unknown;
+}
+
 // Device status
 export interface DeviceStatus {
   printerConnected: boolean;
