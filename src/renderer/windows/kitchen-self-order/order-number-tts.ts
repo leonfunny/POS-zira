@@ -4,6 +4,7 @@
 import {
   ClipPlayer,
   buildNumberSequence,
+  cancelPolishSpeech,
   speakPolishText,
   warmUpClips,
 } from '../../lib/pl-tts-engine';
@@ -50,7 +51,7 @@ export async function playOrderNumberAnnouncement(n: number): Promise<void> {
 
 export function cancelOrderNumberAnnouncement(): void {
   player.cancel();
-  if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
+  cancelPolishSpeech();
 }
 
 export function warmUpOrderNumberClips(): void {

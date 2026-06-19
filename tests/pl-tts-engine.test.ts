@@ -19,12 +19,50 @@ class FakeAudio {
   load() {}
 }
 
+// ─── Fake speechSynthesis (for speakPolishText / cancelPolishSpeech tests) ──
+interface FakeVoice { lang: string; name: string }
+const speech = {
+  spoke: [] as SpeechSynthesisUtterance[],
+  cancels: 0,
+  voices: [] as FakeVoice[],
+  listeners: new Map<string, Set<() => void>>(),
+  cancel: () => { speech.cancels += 1; },
+  speak: (utter: SpeechSynthesisUtterance) => { speech.spoke.push(utter); },
+  getVoices: (): FakeVoice[] => speech.voices,
+  addEventListener: (event: string, cb: () => void) => {
+    if (!speech.listeners.has(event)) speech.listeners.set(event, new Set());
+    speech.listeners.get(event)!.add(cb);
+  },
+  removeEventListener: (event: string, cb: () => void) => {
+    speech.listeners.get(event)?.delete(cb);
+  },
+  fireVoicesChanged: () => {
+    speech.listeners.get('voiceschanged')?.forEach((cb) => cb());
+  },
+};
+
+class FakeUtterance {
+  text: string;
+  lang = '';
+  rate = 1;
+  volume = 1;
+  voice: unknown = null;
+  constructor(text: string) { this.text = text; }
+}
+
 beforeEach(() => {
   audios.length = 0;
+  speech.spoke = [];
+  speech.cancels = 0;
+  speech.voices = [];
+  speech.listeners = new Map();
   FakeAudio.autoEndAfterPlay = true;
   FakeAudio.autoErrorAfterPlay = false;
   vi.stubGlobal('Audio', FakeAudio);
+  vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance);
+  vi.stubGlobal('speechSynthesis', speech);
   vi.stubGlobal('document', { baseURI: 'http://test.local/windows/self-checkout/' });
+  vi.stubGlobal('window', { speechSynthesis: speech });
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
@@ -80,7 +118,51 @@ describe('cancel does not look like failure', () => {
     const firstAudio = audios[0];
     const second = p.play(['5.mp3']); // cancels first
     firstAudio?.onerror?.();
+    // Release the second clip so it resolves promptly (no 4s CLIP_TIMEOUT_MS wait).
+    audios[audios.length - 1]?.onended?.();
     const [r1] = await Promise.all([first, second]);
     expect(r1).toBe('cancelled');
+  });
+});
+
+describe('speakPolishText / cancelPolishSpeech generation guard', () => {
+  it('speakPolishText does not speak when cancelPolishSpeech fires before the voice resolves', async () => {
+    // voices starts empty so ensurePolishVoice waits for voiceschanged
+    speech.voices = [];
+    const { speakPolishText, cancelPolishSpeech } = await import('../src/renderer/lib/pl-tts-engine');
+
+    speakPolishText('Test');
+    // Cancel BEFORE voiceschanged fires — should bump generation and prevent speak
+    cancelPolishSpeech();
+
+    // Now populate voices and fire the event (the pending voice lookup resolves here)
+    speech.voices = [{ lang: 'pl-PL', name: 'Test Polish' }];
+    speech.fireVoicesChanged();
+
+    // Let all microtasks/promises drain
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // speak must NOT have been called
+    expect(speech.spoke).toHaveLength(0);
+    // cancel() must have been called at least once (by cancelPolishSpeech)
+    expect(speech.cancels).toBeGreaterThanOrEqual(1);
+  });
+
+  it('speakPolishText DOES speak when no cancel fires before the voice resolves', async () => {
+    speech.voices = [];
+    const { speakPolishText } = await import('../src/renderer/lib/pl-tts-engine');
+
+    speakPolishText('Test');
+
+    speech.voices = [{ lang: 'pl-PL', name: 'Test Polish' }];
+    speech.fireVoicesChanged();
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(speech.spoke).toHaveLength(1);
   });
 });

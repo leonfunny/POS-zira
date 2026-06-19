@@ -136,13 +136,25 @@ export async function ensurePolishVoice(): Promise<SpeechSynthesisVoice | null> 
   });
 }
 
+let polishSpeechGeneration = 0;
+
+// Cancel any in-flight or pending Polish speech. Bumps the generation so a
+// speakPolishText() call whose voice lookup is still pending will not speak
+// after this returns.
+export function cancelPolishSpeech(): void {
+  polishSpeechGeneration += 1;
+  if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
+}
+
 export function speakPolishText(text: string, rate = 1.08): void {
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  const myGen = polishSpeechGeneration;
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = 'pl-PL';
   utter.rate = rate;
   utter.volume = 1;
   void ensurePolishVoice().then((voice) => {
+    if (myGen !== polishSpeechGeneration) return; // cancelled while the voice resolved
     if (voice) utter.voice = voice;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);

@@ -4,6 +4,7 @@
 import {
   ClipPlayer,
   buildNumberSequence,
+  cancelPolishSpeech,
   ensurePolishVoice,
   polishUnit,
   speakPolishText,
@@ -64,7 +65,7 @@ export async function playAnnouncement(method: Method, totalGrosze: number): Pro
 
 export function cancelAnnouncement(): void {
   player.cancel();
-  if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
+  cancelPolishSpeech();
 }
 
 export function warmUpClipCache(): void {
