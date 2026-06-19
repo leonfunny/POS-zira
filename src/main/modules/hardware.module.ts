@@ -26,6 +26,7 @@ import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
 import { readScaleWeight } from '../hardware/scale/scale-reader-service';
 import { getScaleNetworkInfo, ScaleNetworkService } from '../hardware/scale/scale-network-service';
 import {
+  getLanFirstKitchenNetworkInfo,
   LanFirstKitchenTicketReceiverService,
   LanFirstSafeBeforePrintError,
   type LanFirstKitchenTicketPrintRequest,
@@ -271,6 +272,14 @@ export class HardwareModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.SCALE_GET_NETWORK_INFO, () => {
       return this.scaleNetworkService?.getStatus() || {
         ...getScaleNetworkInfo(),
+        running: false,
+        port: null,
+      };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_NETWORK_INFO, () => {
+      return this.lanFirstKitchenTicketReceiver?.getNetworkInfo() || {
+        ...getLanFirstKitchenNetworkInfo(),
         running: false,
         port: null,
       };

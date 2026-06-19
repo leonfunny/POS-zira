@@ -180,6 +180,19 @@ async function postJson(
   };
 }
 
+async function postAuthTest(port: number, body: unknown, sign = true) {
+  const bodyJson = JSON.stringify(body);
+  const response = await fetch(`http://127.0.0.1:${port}/auth-test`, {
+    method: 'POST',
+    headers: sign ? authHeaders(bodyJson) : { 'content-type': 'application/json' },
+    body: bodyJson,
+  });
+  return {
+    status: response.status,
+    body: await response.json(),
+  };
+}
+
 describe('LanFirstKitchenTicketReceiverService', () => {
   let service: LanFirstKitchenTicketReceiverService | null = null;
 
@@ -264,6 +277,17 @@ describe('LanFirstKitchenTicketReceiverService', () => {
     });
 
     expect(result.status).toBe(401);
+    expect(ledger.rows.size).toBe(0);
+    expect(printExecutor).not.toHaveBeenCalled();
+  });
+
+  it('accepts signed non-print auth tests without touching ledger or printer', async () => {
+    const { port, ledger, printExecutor } = await start();
+
+    const result = await postAuthTest(port, { probe: true });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ success: true, status: 'AUTH_OK', running: true });
     expect(ledger.rows.size).toBe(0);
     expect(printExecutor).not.toHaveBeenCalled();
   });

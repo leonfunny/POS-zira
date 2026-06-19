@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import type { AddressInfo } from 'net';
+import { networkInterfaces } from 'os';
 import type {
   AgentConfig,
   KitchenTicketData,
+  LanFirstKitchenNetworkInfo,
   LanFirstPayloadHash,
   LanFirstPrintFailureClass,
   LanFirstPrintResultStatus,
@@ -264,6 +266,24 @@ function errorMessage(error: unknown): string {
   return String(error || 'unknown error');
 }
 
+export function getLanFirstKitchenNetworkInfo(): LanFirstKitchenNetworkInfo {
+  const ips: string[] = [];
+  const interfaces = networkInterfaces();
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      ips.push(entry.address);
+    }
+  }
+
+  return {
+    ips,
+    suggestedHost: ips.find((ip) => ip.startsWith('192.168.')) || ips[0] || '127.0.0.1',
+    defaultPort: DEFAULT_LAN_FIRST_KITCHEN_TICKET_PORT,
+  };
+}
+
 export class LanFirstKitchenTicketReceiverService {
   private server: Server | null = null;
   private activePort: number | null = null;
@@ -309,6 +329,15 @@ export class LanFirstKitchenTicketReceiverService {
       running: !!this.server,
       port: this.activePort,
       defaultPort: DEFAULT_LAN_FIRST_KITCHEN_TICKET_PORT,
+      error: this.lastError,
+    };
+  }
+
+  getNetworkInfo(): LanFirstKitchenNetworkInfo {
+    return {
+      ...getLanFirstKitchenNetworkInfo(),
+      running: !!this.server,
+      port: this.activePort,
       error: this.lastError,
     };
   }
@@ -372,6 +401,30 @@ export class LanFirstKitchenTicketReceiverService {
       return;
     }
 
+    if (url.pathname === '/auth-test') {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { success: false, error: 'Method not allowed' });
+        return;
+      }
+
+      let rawBody: string;
+      try {
+        rawBody = await readRequestBody(req);
+      } catch (error) {
+        sendJson(res, 400, { success: false, error: errorMessage(error) });
+        return;
+      }
+
+      const auth = this.validateAuth(req, rawBody);
+      if (!auth.ok) {
+        sendJson(res, auth.statusCode, { success: false, error: auth.error });
+        return;
+      }
+
+      sendJson(res, 200, { success: true, status: 'AUTH_OK', ...this.getStatus() });
+      return;
+    }
+
     if (url.pathname !== '/print/kitchen-ticket') {
       sendJson(res, 404, { success: false, error: 'Not found' });
       return;
@@ -390,23 +443,9 @@ export class LanFirstKitchenTicketReceiverService {
       return;
     }
 
-    const receiverConfig = this.getConfig().lanFirstReceiver;
-    const sharedSecret = String(receiverConfig?.auth?.sharedSecret || '').trim();
-    const allowUnauthenticated = receiverConfig?.auth?.allowUnauthenticated === true;
-    let authenticatedSourceMachineId = '';
-    if (sharedSecret) {
-      const auth = validateLanFirstAuthHeaders({
-        headers: req.headers,
-        bodyJson: rawBody,
-        sharedSecret,
-      });
-      if (!auth.ok) {
-        sendJson(res, auth.statusCode, { success: false, error: auth.error });
-        return;
-      }
-      authenticatedSourceMachineId = auth.sourceMachineId;
-    } else if (!allowUnauthenticated) {
-      sendJson(res, 401, { success: false, error: 'LAN_FIRST auth shared secret is required' });
+    const auth = this.validateAuth(req, rawBody);
+    if (!auth.ok) {
+      sendJson(res, auth.statusCode, { success: false, error: auth.error });
       return;
     }
 
@@ -418,7 +457,34 @@ export class LanFirstKitchenTicketReceiverService {
       return;
     }
 
-    await this.handlePrintRequest(parsed, res, authenticatedSourceMachineId);
+    await this.handlePrintRequest(parsed, res, auth.sourceMachineId);
+  }
+
+  private validateAuth(
+    req: IncomingMessage,
+    rawBody: string,
+  ): { ok: true; sourceMachineId: string } | { ok: false; statusCode: number; error: string } {
+    const receiverConfig = this.getConfig().lanFirstReceiver;
+    const sharedSecret = String(receiverConfig?.auth?.sharedSecret || '').trim();
+    const allowUnauthenticated = receiverConfig?.auth?.allowUnauthenticated === true;
+
+    if (sharedSecret) {
+      const auth = validateLanFirstAuthHeaders({
+        headers: req.headers,
+        bodyJson: rawBody,
+        sharedSecret,
+      });
+      if (!auth.ok) {
+        return { ok: false, statusCode: auth.statusCode, error: auth.error };
+      }
+      return { ok: true, sourceMachineId: auth.sourceMachineId };
+    }
+
+    if (!allowUnauthenticated) {
+      return { ok: false, statusCode: 401, error: 'LAN_FIRST auth shared secret is required' };
+    }
+
+    return { ok: true, sourceMachineId: '' };
   }
 
   private async handlePrintRequest(input: unknown, res: ServerResponse, authenticatedSourceMachineId = ''): Promise<void> {

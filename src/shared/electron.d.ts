@@ -275,6 +275,17 @@ interface ElectronAPI {
       error?: string;
     }>;
   };
+  lanFirstKitchen: {
+    getNetworkInfo: () => Promise<import('./types').LanFirstKitchenNetworkInfo>;
+    getPairingStatus: () => Promise<import('./types').LanFirstKitchenPairingStatus>;
+    setPairingCode: (
+      scope: import('./types').LanFirstKitchenPairingScope,
+      pairingCode: string,
+    ) => Promise<{ success: boolean; error?: string }>;
+    testRoute: (
+      request: import('./types').LanFirstKitchenTestRouteRequest,
+    ) => Promise<import('./types').LanFirstKitchenTestRouteResponse>;
+  };
   testPrint: () => Promise<{ success: boolean; error?: string; results?: Record<string, boolean> }>;
   printLabel: (
     barcode: string,

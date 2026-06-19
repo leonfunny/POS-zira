@@ -286,6 +286,42 @@ export interface LanFirstKitchenSenderConfig {
   };
 }
 
+export type LanFirstKitchenPairingScope = 'receiver' | 'sender';
+
+export interface LanFirstKitchenPairingCodeRequest {
+  scope: LanFirstKitchenPairingScope;
+  pairingCode: string;
+}
+
+export interface LanFirstKitchenPairingStatus {
+  receiverHasPairingCode: boolean;
+  senderHasPairingCode: boolean;
+}
+
+export interface LanFirstKitchenNetworkInfo {
+  ips: string[];
+  suggestedHost: string;
+  defaultPort: number;
+  running?: boolean;
+  port?: number | null;
+  error?: string;
+}
+
+export interface LanFirstKitchenTestRouteRequest {
+  host: string;
+  port: number;
+  pairingCode?: string;
+  timeoutMs?: number;
+}
+
+export interface LanFirstKitchenTestRouteResponse {
+  success: boolean;
+  status?: string;
+  httpStatus?: number;
+  message?: string;
+  error?: string;
+}
+
 export type ScaleReadResult =
   | {
       success: true;
@@ -1132,6 +1168,10 @@ export const IPC_CHANNELS = {
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   SCALE_READ_WEIGHT: 'scale:read-weight',
   SCALE_GET_NETWORK_INFO: 'scale:get-network-info',
+  LAN_FIRST_KITCHEN_GET_NETWORK_INFO: 'lan-first-kitchen:get-network-info',
+  LAN_FIRST_KITCHEN_GET_PAIRING_STATUS: 'lan-first-kitchen:get-pairing-status',
+  LAN_FIRST_KITCHEN_SET_PAIRING_CODE: 'lan-first-kitchen:set-pairing-code',
+  LAN_FIRST_KITCHEN_TEST_ROUTE: 'lan-first-kitchen:test-route',
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',

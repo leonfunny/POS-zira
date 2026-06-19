@@ -19,6 +19,9 @@ import {
   AuthUser,
   ConnectResponse,
   AgentPrintersResponse,
+  LanFirstKitchenPairingCodeRequest,
+  LanFirstKitchenTestRouteRequest,
+  LanFirstKitchenTestRouteResponse,
   SalonPrinterRole,
   SalonPrintersListOptions,
   ServerPrinterMapping,
@@ -41,6 +44,7 @@ import type { BackupRunReason, LocalBackupService } from '../database/backup-ser
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
 import { listWindowsPrintersDetailed } from '../hardware/port-utils';
 import logger from '../logger';
+import { buildLanFirstAuthHeaders } from '../printing/lan-first-auth';
 
 /** Simple in-memory rate limiter */
 class RateLimiter {
@@ -150,6 +154,14 @@ function sanitizeLanFirstSecretsFromRendererUpdate(config: Partial<AgentConfig>)
   return sanitized;
 }
 
+function sanitizeKitchenPairingCode(value: unknown): string {
+  return String(value || '').replace(/[^0-9]/g, '').slice(0, 6);
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
 function resolveAuthSalonId(payload: any): string {
   const user = payload?.user ?? payload ?? {};
   return user.salonId || user.salon_id || user.salon?.id || payload?.salon?.id || '';
@@ -193,6 +205,19 @@ export class AuthModule extends BaseModule {
 
     logger.info('[AuthModule] Initialized');
     this.setState(ModuleState.READY);
+  }
+
+  private notifyConfigChanged(changedKeys: string[]): void {
+    if (this.eventBus) {
+      this.eventBus.emit('config:changed', { changedKeys });
+    }
+    // Ping only, no payload: each window re-fetches via get-config so
+    // sanitized config remains the only renderer-visible config shape.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try { win.webContents.send('config-updated'); } catch { /* window closing */ }
+      }
+    }
   }
 
   registerIpcHandlers(): void {
@@ -393,6 +418,114 @@ export class AuthModule extends BaseModule {
     });
 
     // ─── Auth: Telegram Login ───────────────────────────────────
+    ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_PAIRING_STATUS, async () => {
+      const config = getConfig();
+      return {
+        receiverHasPairingCode: !!String(config.lanFirstReceiver?.auth?.sharedSecret || '').trim(),
+        senderHasPairingCode: !!String(config.lanFirstKitchenSender?.auth?.sharedSecret || '').trim(),
+      };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_SET_PAIRING_CODE, async (_event, request: LanFirstKitchenPairingCodeRequest) => {
+      const code = sanitizeKitchenPairingCode(request?.pairingCode);
+      if (code.length !== 6) {
+        return { success: false, error: 'Pairing code must be 6 digits' };
+      }
+
+      const config = getConfig();
+      if (request?.scope === 'receiver') {
+        setConfig({
+          lanFirstReceiver: {
+            ...(config.lanFirstReceiver || {}),
+            auth: {
+              ...(config.lanFirstReceiver?.auth || {}),
+              sharedSecret: code,
+            },
+          },
+        });
+        this.notifyConfigChanged(['lanFirstReceiver']);
+        return { success: true };
+      }
+
+      if (request?.scope === 'sender') {
+        setConfig({
+          lanFirstKitchenSender: {
+            ...(config.lanFirstKitchenSender || {}),
+            auth: {
+              ...(config.lanFirstKitchenSender?.auth || {}),
+              sharedSecret: code,
+            },
+          },
+        });
+        this.notifyConfigChanged(['lanFirstKitchenSender']);
+        return { success: true };
+      }
+
+      return { success: false, error: 'Invalid LAN kitchen pairing scope' };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_TEST_ROUTE, async (_event, request: LanFirstKitchenTestRouteRequest): Promise<LanFirstKitchenTestRouteResponse> => {
+      const host = String(request?.host || '').trim();
+      const port = Number(request?.port);
+      if (!host) return { success: false, error: 'Kitchen POS host is required' };
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        return { success: false, error: 'Kitchen POS port is invalid' };
+      }
+
+      const config = getConfig();
+      const typedCode = sanitizeKitchenPairingCode(request?.pairingCode);
+      const sharedSecret = typedCode || String(config.lanFirstKitchenSender?.auth?.sharedSecret || '').trim();
+      if (!sharedSecret) {
+        return { success: false, error: 'Sender pairing code is required' };
+      }
+
+      const sourceMachineId = String(config.machineId || 'settings-test').trim();
+      const bodyJson = JSON.stringify({ probe: 'LAN_FIRST_KITCHEN_AUTH_TEST' });
+      const timeoutMs = Number.isInteger(Number(request?.timeoutMs)) ? Math.max(500, Number(request.timeoutMs)) : 2000;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(`http://${hostForUrl(host)}:${port}/auth-test`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...buildLanFirstAuthHeaders({
+              sourceMachineId,
+              sharedSecret,
+              bodyJson,
+            }),
+          },
+          body: bodyJson,
+          signal: controller.signal,
+        });
+        const json = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (response.ok && json.success === true) {
+          return {
+            success: true,
+            status: String(json.status || 'AUTH_OK'),
+            httpStatus: response.status,
+            message: 'Wi-Fi route authenticated',
+          };
+        }
+        return {
+          success: false,
+          status: String(json.status || ''),
+          httpStatus: response.status,
+          error: String(json.error || json.message || `Receiver returned HTTP ${response.status}`),
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err?.name === 'AbortError'
+            ? `Wi-Fi route test timed out after ${timeoutMs} ms`
+            : err?.message || 'Wi-Fi route test failed',
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
     ipcMain.handle(IPC_CHANNELS.AUTH_TELEGRAM_LOGIN_TOKEN, async () => {
       try {
         const config = getConfig();

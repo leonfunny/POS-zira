@@ -167,6 +167,26 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).toContain('Hardware settings still stay on the owner POS');
   });
 
+  it('wires Kitchen Wi-Fi Direct setup through explicit LAN_FIRST IPC', () => {
+    expect(settingsSource).toContain('Kitchen Wi-Fi Direct');
+    expect(settingsSource).toContain('buildLanFirstKitchenSenderConfig');
+    expect(settingsSource).toContain('getReadyKitchenWifiPrinters(salonInventoryPrinters)');
+    expect(settingsSource).toContain("window.electronAPI.lanFirstKitchen.setPairingCode('receiver'");
+    expect(settingsSource).toContain("window.electronAPI.lanFirstKitchen.setPairingCode('sender'");
+    expect(settingsSource).toContain('window.electronAPI.lanFirstKitchen.testRoute');
+    expect(settingsSource).toContain("window.electronAPI.printAgentPrinters.upsertAssignment('KITCHEN'");
+    expect(settingsSource).toContain('Test Wi-Fi route');
+
+    expect(sharedTypesSource).toContain("LAN_FIRST_KITCHEN_SET_PAIRING_CODE: 'lan-first-kitchen:set-pairing-code'");
+    expect(sharedTypesSource).toContain("LAN_FIRST_KITCHEN_TEST_ROUTE: 'lan-first-kitchen:test-route'");
+    expect(preloadSource).toContain('lanFirstKitchen: {');
+    expect(preloadSource).toContain('setPairingCode: (scope:');
+    expect(electronDtsSource).toContain('lanFirstKitchen: {');
+    expect(authModuleSource).toContain('ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_SET_PAIRING_CODE');
+    expect(authModuleSource).toContain('sanitizeKitchenPairingCode');
+    expect(hardwareModuleSource).toContain('ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_NETWORK_INFO');
+  });
+
   it('labels backend printer rows as this POS local config', () => {
     expect(settingsSource).toContain('Local printer config (this POS)');
     expect(settingsSource).toContain("Agent ID: {currentAgentId || 'not paired'}");

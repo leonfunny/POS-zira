@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
+import { buildLanFirstKitchenSenderConfig, DEFAULT_LAN_FIRST_KITCHEN_PORT, DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS, getReadyKitchenWifiPrinters } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
@@ -582,6 +583,19 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   } | null>(null);
   const [scaleTesting, setScaleTesting] = useState(false);
   const [scaleTestResult, setScaleTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [lanKitchenReceiveEnabled, setLanKitchenReceiveEnabled] = useState(config?.lanFirstReceiver?.enabled ?? false);
+  const [lanKitchenReceivePort, setLanKitchenReceivePort] = useState(String(config?.lanFirstReceiver?.port || DEFAULT_LAN_FIRST_KITCHEN_PORT));
+  const [lanKitchenReceiverPairingCode, setLanKitchenReceiverPairingCode] = useState('');
+  const [lanKitchenSenderEnabled, setLanKitchenSenderEnabled] = useState(config?.lanFirstKitchenSender?.enabled ?? false);
+  const [lanKitchenSelectedPrinterId, setLanKitchenSelectedPrinterId] = useState('');
+  const [lanKitchenTargetHost, setLanKitchenTargetHost] = useState('');
+  const [lanKitchenTargetPort, setLanKitchenTargetPort] = useState(String(DEFAULT_LAN_FIRST_KITCHEN_PORT));
+  const [lanKitchenSenderPairingCode, setLanKitchenSenderPairingCode] = useState('');
+  const [lanKitchenNetworkInfo, setLanKitchenNetworkInfo] = useState<LanFirstKitchenNetworkInfo | null>(null);
+  const [lanKitchenPairingStatus, setLanKitchenPairingStatus] = useState<LanFirstKitchenPairingStatus | null>(null);
+  const [lanKitchenSaving, setLanKitchenSaving] = useState(false);
+  const [lanKitchenTesting, setLanKitchenTesting] = useState(false);
+  const [lanKitchenResult, setLanKitchenResult] = useState<{ success: boolean; message: string } | null>(null);
   const [receiptSellerName, setReceiptSellerName] = useState(config?.receiptSellerName || '');
   const [receiptSellerAddress, setReceiptSellerAddress] = useState(config?.receiptSellerAddress || '');
   const [receiptSellerNip, setReceiptSellerNip] = useState(config?.receiptSellerNip || '');
@@ -675,6 +689,39 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const latestPrinterPayloadRef = useRef(buildPrinterPayloadFromConfig(config));
   const latestPrinterSignatureRef = useRef(getPrinterPayloadSignature(latestPrinterPayloadRef.current));
   const componentMountedRef = useRef(true);
+
+  const refreshLanKitchenStatus = useCallback(async () => {
+    const api = window.electronAPI.lanFirstKitchen;
+    if (!api) return;
+    try {
+      const [network, pairing] = await Promise.all([
+        api.getNetworkInfo(),
+        api.getPairingStatus(),
+      ]);
+      setLanKitchenNetworkInfo(network);
+      setLanKitchenPairingStatus(pairing);
+    } catch {
+      setLanKitchenNetworkInfo(null);
+      setLanKitchenPairingStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    refreshLanKitchenStatus().catch(() => {
+      if (mounted) {
+        setLanKitchenNetworkInfo(null);
+        setLanKitchenPairingStatus(null);
+      }
+    });
+    const timer = lanKitchenReceiveEnabled ? window.setTimeout(() => {
+      if (mounted) refreshLanKitchenStatus().catch(() => {});
+    }, 900) : undefined;
+    return () => {
+      mounted = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [lanKitchenReceiveEnabled, lanKitchenReceivePort, refreshLanKitchenStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -1048,6 +1095,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setScaleRemoteHost(config.scale?.remote?.host || '');
       setScaleRemotePort(String(config.scale?.remote?.port || DEFAULT_SCALE_SHARE_PORT));
       setScaleRemoteToken(config.scale?.remote?.token || '');
+      setLanKitchenReceiveEnabled(config.lanFirstReceiver?.enabled ?? false);
+      setLanKitchenReceivePort(String(config.lanFirstReceiver?.port || DEFAULT_LAN_FIRST_KITCHEN_PORT));
+      setLanKitchenSenderEnabled(config.lanFirstKitchenSender?.enabled ?? false);
       setReceiptSellerName(config.receiptSellerName || '');
       setReceiptSellerAddress(config.receiptSellerAddress || '');
       setReceiptSellerNip(config.receiptSellerNip || '');
@@ -2087,6 +2137,23 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const selectedSharedPrinterId = sharedReceiptAssignment?.printerId || '';
   const sharedReceiptPrinters = salonPrinters.filter((printer) => isSharedReceiptRouteCandidate(printer, selectedSharedPrinterId));
   const salonInventoryPrinters = salonPrinterInventory.length > 0 ? salonPrinterInventory : salonPrinters;
+  const readyKitchenWifiPrinters = useMemo(
+    () => getReadyKitchenWifiPrinters(salonInventoryPrinters),
+    [salonInventoryPrinters],
+  );
+  const kitchenAssignment = printerAssignments.find((assignment) => assignment.role === 'KITCHEN') || null;
+  const selectedLanKitchenPrinter = readyKitchenWifiPrinters.find((printer) => printer.id === lanKitchenSelectedPrinterId)
+    || (kitchenAssignment
+      ? readyKitchenWifiPrinters.find((printer) => printer.id === kitchenAssignment.printerId)
+      : null)
+    || readyKitchenWifiPrinters[0]
+    || null;
+  const selectedLanKitchenTargetKey = selectedLanKitchenPrinter?.machineId
+    ? `${selectedLanKitchenPrinter.machineId}:${selectedLanKitchenPrinter.id}`
+    : '';
+  const selectedLanKitchenTarget = selectedLanKitchenTargetKey
+    ? config?.lanFirstKitchenSender?.targets?.[selectedLanKitchenTargetKey]
+    : undefined;
   const fiscalDailyReportRetries = Math.min(5, Math.max(0, fiscalDailyReport.maxAttempts - 1));
   const fiscalDailyReportRetryMinuteOptions = Array.from(
     new Set([...FISCAL_DAILY_REPORT_RETRY_MINUTE_OPTIONS, fiscalDailyReport.retryMinutes]),
@@ -2134,6 +2201,127 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       : currentPosHasShareableReceiptPrinter
         ? 'This POS has receipt printers configured, but none are ready.'
         : 'Set this up on the POS that has the receipt printer connected.';
+
+  const saveLanKitchenWifiDirect = async (): Promise<boolean> => {
+    setLanKitchenSaving(true);
+    setLanKitchenResult(null);
+    try {
+      const receiverPort = parseScalePortNumber(lanKitchenReceivePort, DEFAULT_LAN_FIRST_KITCHEN_PORT);
+      let senderConfig: NonNullable<AgentConfig['lanFirstKitchenSender']> = {
+        ...(config?.lanFirstKitchenSender || {}),
+        enabled: false,
+        timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
+      };
+
+      if (lanKitchenSenderEnabled) {
+        const senderResult = buildLanFirstKitchenSenderConfig({
+          current: config?.lanFirstKitchenSender,
+          enabled: true,
+          selectedPrinterId: lanKitchenSelectedPrinterId,
+          host: lanKitchenTargetHost,
+          port: lanKitchenTargetPort,
+          timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
+          printers: readyKitchenWifiPrinters,
+        });
+        if (!senderResult.ok) {
+          setLanKitchenResult({ success: false, message: senderResult.error });
+          return false;
+        }
+        senderConfig = senderResult.config;
+      }
+
+      await Promise.resolve(onConfigChange({
+        lanFirstReceiver: {
+          enabled: lanKitchenReceiveEnabled,
+          port: receiverPort,
+          auth: {
+            allowUnauthenticated: false,
+          },
+        },
+        lanFirstKitchenSender: senderConfig,
+      }));
+
+      if (lanKitchenReceiverPairingCode.trim()) {
+        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('receiver', lanKitchenReceiverPairingCode);
+        if (!result.success) {
+          setLanKitchenResult({ success: false, message: result.error || 'Failed to save receiver pairing code' });
+          return false;
+        }
+        setLanKitchenReceiverPairingCode('');
+      }
+
+      if (lanKitchenSenderPairingCode.trim()) {
+        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('sender', lanKitchenSenderPairingCode);
+        if (!result.success) {
+          setLanKitchenResult({ success: false, message: result.error || 'Failed to save sender pairing code' });
+          return false;
+        }
+        setLanKitchenSenderPairingCode('');
+      }
+
+      if (
+        lanKitchenSenderEnabled
+        && lanKitchenSelectedPrinterId
+        && kitchenAssignment?.printerId !== lanKitchenSelectedPrinterId
+      ) {
+        await window.electronAPI.printAgentPrinters.upsertAssignment('KITCHEN', lanKitchenSelectedPrinterId);
+        await loadSharedPrinterRouting();
+      }
+
+      await refreshLanKitchenStatus();
+      setLanKitchenResult({ success: true, message: 'Kitchen Wi-Fi Direct settings saved' });
+      return true;
+    } catch (err: any) {
+      setLanKitchenResult({ success: false, message: err?.message || 'Failed to save Kitchen Wi-Fi Direct settings' });
+      return false;
+    } finally {
+      setLanKitchenSaving(false);
+    }
+  };
+
+  const handleSaveLanKitchenWifiDirect = async () => {
+    await saveLanKitchenWifiDirect();
+  };
+
+  const handleTestLanKitchenWifiRoute = async () => {
+    if (lanKitchenTesting) return;
+    setLanKitchenTesting(true);
+    try {
+      const saved = await saveLanKitchenWifiDirect();
+      if (!saved) return;
+      const response: LanFirstKitchenTestRouteResponse = await window.electronAPI.lanFirstKitchen.testRoute({
+        host: lanKitchenTargetHost.trim(),
+        port: parseScalePortNumber(lanKitchenTargetPort, DEFAULT_LAN_FIRST_KITCHEN_PORT),
+        pairingCode: lanKitchenSenderPairingCode.trim() || undefined,
+        timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
+      });
+      setLanKitchenResult({
+        success: response.success,
+        message: response.success
+          ? response.message || 'Wi-Fi route authenticated'
+          : response.error || 'Wi-Fi route test failed',
+      });
+    } finally {
+      setLanKitchenTesting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedLanKitchenPrinter) return;
+    if (!lanKitchenSelectedPrinterId || !readyKitchenWifiPrinters.some((printer) => printer.id === lanKitchenSelectedPrinterId)) {
+      setLanKitchenSelectedPrinterId(selectedLanKitchenPrinter.id);
+    }
+    if (selectedLanKitchenTarget?.host) {
+      setLanKitchenTargetHost(selectedLanKitchenTarget.host);
+      setLanKitchenTargetPort(String(selectedLanKitchenTarget.port || DEFAULT_LAN_FIRST_KITCHEN_PORT));
+    }
+  }, [
+    lanKitchenSelectedPrinterId,
+    readyKitchenWifiPrinters,
+    selectedLanKitchenPrinter,
+    selectedLanKitchenTarget?.host,
+    selectedLanKitchenTarget?.port,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -3431,6 +3619,204 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   </div>
                 )}
               </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-lg p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Kitchen Wi-Fi Direct</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    LAN-first is used only for KITCHEN_TICKET jobs. Backend routing stays as fallback.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => refreshLanKitchenStatus()}
+                    className="min-h-10 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveLanKitchenWifiDirect}
+                    disabled={lanKitchenSaving || lanKitchenTesting}
+                    className="min-h-10 px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {lanKitchenSaving ? 'Saving...' : 'Save Wi-Fi setup'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">Receive kitchen orders over Wi-Fi</div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Local IP: {lanKitchenNetworkInfo?.suggestedHost || 'detecting'} - Port {lanKitchenNetworkInfo?.port || lanKitchenReceivePort || DEFAULT_LAN_FIRST_KITCHEN_PORT}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLanKitchenReceiveEnabled((enabled) => !enabled)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                        lanKitchenReceiveEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          lanKitchenReceiveEnabled ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-600">Port</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={lanKitchenReceivePort}
+                        onChange={(e) => setLanKitchenReceivePort(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-600">Pairing code</span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={8}
+                          value={lanKitchenReceiverPairingCode}
+                          onChange={(e) => setLanKitchenReceiverPairingCode(e.target.value)}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                          placeholder={lanKitchenPairingStatus?.receiverHasPairingCode ? 'Saved' : '6 digits'}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setLanKitchenReceiverPairingCode(createScalePairingCode())}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          New
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                    <span className={`rounded-full px-2 py-1 ${lanKitchenNetworkInfo?.running ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {lanKitchenNetworkInfo?.running ? 'Receiver running' : 'Receiver stopped'}
+                    </span>
+                    <span className={`rounded-full px-2 py-1 ${lanKitchenPairingStatus?.receiverHasPairingCode ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {lanKitchenPairingStatus?.receiverHasPairingCode ? 'Pairing code saved' : 'No pairing code'}
+                    </span>
+                    {lanKitchenNetworkInfo?.error && (
+                      <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">{lanKitchenNetworkInfo.error}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">Use Wi-Fi first for kitchen tickets</div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Select a ready KITCHEN printer; Settings saves the machine/printer target internally.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLanKitchenSenderEnabled((enabled) => !enabled)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                        lanKitchenSenderEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          lanKitchenSenderEnabled ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 space-y-3">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-600">Kitchen printer</span>
+                      <select
+                        value={lanKitchenSelectedPrinterId}
+                        onChange={(e) => setLanKitchenSelectedPrinterId(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                      >
+                        <option value="">Select ready kitchen printer</option>
+                        {readyKitchenWifiPrinters.map((printer) => (
+                          <option key={printer.id} value={printer.id}>
+                            {getServerPrinterName(printer)} - {getServerPrinterOwnerLabel(printer)}
+                          </option>
+                        ))}
+                      </select>
+                      {readyKitchenWifiPrinters.length === 0 && (
+                        <div className="mt-1 text-xs text-amber-700">No ready KITCHEN printer is available in salon printers.</div>
+                      )}
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-slate-600">Kitchen POS host/IP</span>
+                        <input
+                          type="text"
+                          value={lanKitchenTargetHost}
+                          onChange={(e) => setLanKitchenTargetHost(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                          placeholder="192.168.1.50"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-slate-600">Port</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={lanKitchenTargetPort}
+                          onChange={(e) => setLanKitchenTargetPort(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-600">Sender pairing code</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={8}
+                        value={lanKitchenSenderPairingCode}
+                        onChange={(e) => setLanKitchenSenderPairingCode(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-300"
+                        placeholder={lanKitchenPairingStatus?.senderHasPairingCode ? 'Saved' : 'Same 6 digits as receiver'}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={handleTestLanKitchenWifiRoute}
+                      disabled={lanKitchenTesting || lanKitchenSaving || !lanKitchenTargetHost.trim()}
+                      className="min-h-10 w-full rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      {lanKitchenTesting ? 'Testing Wi-Fi route...' : 'Test Wi-Fi route'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {lanKitchenResult && (
+                <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${lanKitchenResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {lanKitchenResult.message}
+                </div>
+              )}
             </div>
 
             <div className="border border-slate-200 rounded-lg p-4">

@@ -216,4 +216,61 @@ describe('AuthModule LAN_FIRST config sanitization', () => {
       },
     }));
   });
+
+  it('explicit LAN_FIRST kitchen pairing IPC stores receiver code without exposing it through GET_CONFIG', async () => {
+    registerAuthHandlers();
+
+    const setPairingCode = handlers.get('lan-first-kitchen:set-pairing-code');
+    expect(setPairingCode).toBeTypeOf('function');
+
+    await setPairingCode!({}, {
+      scope: 'receiver',
+      pairingCode: ' 123-456 ',
+    });
+
+    expect(setConfigMock).toHaveBeenCalledWith(expect.objectContaining({
+      lanFirstReceiver: {
+        enabled: true,
+        port: 17892,
+        auth: {
+          sharedSecret: '123456',
+          allowUnauthenticated: true,
+        },
+      },
+    }));
+
+    const getRendererConfig = handlers.get(IPC_CHANNELS.GET_CONFIG);
+    const result = getRendererConfig!({}) as AgentConfig;
+    expect(result.lanFirstReceiver?.auth?.sharedSecret).toBe('');
+  });
+
+  it('explicit LAN_FIRST kitchen pairing IPC stores sender code without changing receiver code', async () => {
+    registerAuthHandlers();
+
+    const setPairingCode = handlers.get('lan-first-kitchen:set-pairing-code');
+    expect(setPairingCode).toBeTypeOf('function');
+
+    await setPairingCode!({}, {
+      scope: 'sender',
+      pairingCode: '654321',
+    });
+
+    expect(setConfigMock).toHaveBeenCalledWith(expect.objectContaining({
+      lanFirstKitchenSender: {
+        enabled: true,
+        timeoutMs: 1234,
+        targets: {
+          'target-machine:kitchen-printer': { host: '127.0.0.1', port: 17892 },
+        },
+        auth: {
+          sharedSecret: '654321',
+        },
+      },
+    }));
+    expect(setConfigMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      lanFirstReceiver: expect.objectContaining({
+        auth: expect.objectContaining({ sharedSecret: '654321' }),
+      }),
+    }));
+  });
 });
