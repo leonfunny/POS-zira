@@ -59,7 +59,7 @@ const ticket: KitchenTicketData = {
   orderId: 'kso-1',
   orderNumber: 'K-001',
   createdAt: '2026-06-18T10:00:00.000Z',
-  source: 'KIOSK PC-YURI',
+  source: 'KIOSK',
   items: [{ name: 'Pho', quantity: 1 }],
 };
 

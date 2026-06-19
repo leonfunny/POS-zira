@@ -183,6 +183,13 @@ const lanFirstKitchenSenderConfigSchema = {
       },
       default: {},
     },
+    manualTarget: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        port: { type: 'number' },
+      },
+    },
   },
   default: {},
 };
@@ -385,7 +392,7 @@ const store = new Store<AgentConfig>({
     },
     kitchenSelfOrderSlipPrinterType: { type: 'string', enum: ['RECEIPT', 'LABEL'], default: 'RECEIPT' },
     kitchenSelfOrderSlipPrinterId: { type: 'string', default: '' },
-    kitchenSelfOrderSourceLabel: { type: 'string', default: 'PC-YURI' },
+    kitchenSelfOrderSourceLabel: { type: 'string', default: '' },
     kitchenSelfOrderBrandName: { type: 'string', default: '' },
     kitchenSelfOrderLogoUrl: { type: 'string', default: '' },
     kitchenSelfOrderAccentColor: { type: 'string', default: '#DA7756' },

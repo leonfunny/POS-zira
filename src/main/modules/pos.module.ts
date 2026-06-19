@@ -258,13 +258,13 @@ function buildKitchenSelfOrderTicket(
   order: KitchenSelfOrderWithItems,
   brandName: string,
   qrPayload: string | null,
-  fallbackSourceLabel = 'PC-YURI',
+  fallbackSourceLabel = '',
 ): KitchenTicketData {
   return {
     orderId: order.id,
     orderNumber: order.order_number,
     createdAt: order.created_at,
-    source: `KIOSK ${order.source_label || fallbackSourceLabel || 'PC-YURI'}`,
+    source: (() => { const l = (order.source_label || fallbackSourceLabel || '').trim(); return l ? `KIOSK ${l}` : 'KIOSK'; })(),
     fulfillmentType: order.fulfillment_type,
     kitchenLanguage: 'vi',
     customerLanguage: order.customer_language,
@@ -2894,7 +2894,7 @@ export class PosModule extends BaseModule {
         }
         const customerLanguage = normalizeKitchenSelfOrderLanguage(payload?.customerLanguage);
         const fulfillmentType = normalizeKitchenSelfOrderFulfillment(payload?.fulfillmentType);
-        const sourceLabel = String(payload?.sourceLabel || cfg.kitchenSelfOrderSourceLabel || 'PC-YURI').trim() || 'PC-YURI';
+        const sourceLabel = String(payload?.sourceLabel || cfg.kitchenSelfOrderSourceLabel || '').trim();
         const brandName = resolveKitchenSelfOrderBrandName(cfg);
         const normalizedItems = (payload?.items || []).map((item) => {
           const product = menu.products.find((candidate) => candidate.id === item.variantId);
@@ -2995,7 +2995,7 @@ export class PosModule extends BaseModule {
         }
 
         const cfg = getConfig();
-        const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || 'PC-YURI').trim() || 'PC-YURI';
+        const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || '').trim();
         const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
         const ticket = buildKitchenSelfOrderTicket(order, resolveKitchenSelfOrderBrandName(cfg), qrPayload, sourceLabel);
         ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {

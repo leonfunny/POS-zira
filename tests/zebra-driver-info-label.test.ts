@@ -140,7 +140,7 @@ describe("ZebraDriver.printInfoLabel", () => {
         orderNumber: "K-042",
         pickupNumber: "K-042",
         createdAt: "2026-06-16T10:00:00.000Z",
-        source: "KIOSK PC-YURI",
+        source: "KIOSK",
         fulfillmentType: "DINE_IN",
         customerLanguage: "pl",
         totalGrosze: 2900,

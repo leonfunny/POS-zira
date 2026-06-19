@@ -54,7 +54,7 @@ function getKitchenSelfOrderCopy(language: Language) {
     return {
       badge: 'Kiosk đơn bếp',
       title: 'Kitchen Self-Order',
-      desc: 'Flow riêng cho PC-YURI: khách chọn món, POS1 in phiếu bếp, PC-YURI hiện số đơn.',
+      desc: 'Flow riêng cho kiosk bếp: khách chọn món, POS1 in phiếu bếp, kiosk hiện số đơn.',
       launch: 'Mở kiosk đặt món',
       opening: 'Đang mở...',
       settings: 'Cài đặt kitchen kiosk',
@@ -63,7 +63,7 @@ function getKitchenSelfOrderCopy(language: Language) {
       fulfillment: 'Mặc định ăn tại quán/mang đi',
       dineIn: 'Na miejscu',
       takeaway: 'Na wynos',
-      slipPrinter: 'Máy in slip PC-YURI',
+      slipPrinter: 'Máy in slip kiosk',
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Tách khỏi self-checkout store',
@@ -74,7 +74,7 @@ function getKitchenSelfOrderCopy(language: Language) {
     return {
       badge: 'Kiosk kuchenny',
       title: 'Kitchen Self-Order',
-      desc: 'Oddzielny flow dla PC-YURI: klient wybiera dania, POS1 drukuje bon kuchenny, PC-YURI pokazuje numer.',
+      desc: 'Oddzielny flow dla kiosku kuchennego: klient wybiera dania, POS1 drukuje bon kuchenny, kiosk pokazuje numer.',
       launch: 'Otworz kiosk zamowien',
       opening: 'Otwieranie...',
       settings: 'Ustawienia kiosku kuchni',
@@ -83,7 +83,7 @@ function getKitchenSelfOrderCopy(language: Language) {
       fulfillment: 'Domyslnie na miejscu/na wynos',
       dineIn: 'Na miejscu',
       takeaway: 'Na wynos',
-      slipPrinter: 'Drukarka slip PC-YURI',
+      slipPrinter: 'Drukarka slip kiosku',
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Oddzielone od self-checkout sklepu',
@@ -93,7 +93,7 @@ function getKitchenSelfOrderCopy(language: Language) {
   return {
     badge: 'Kitchen kiosk',
     title: 'Kitchen Self-Order',
-    desc: 'Separate PC-YURI flow: customer picks food, POS1 prints the kitchen ticket, PC-YURI shows the order number.',
+    desc: 'Separate kitchen-kiosk flow: customer picks food, POS1 prints the kitchen ticket, the kiosk shows the order number.',
     launch: 'Open food-order kiosk',
     opening: 'Opening...',
     settings: 'Kitchen kiosk settings',
@@ -102,7 +102,7 @@ function getKitchenSelfOrderCopy(language: Language) {
     fulfillment: 'Default dine-in/takeaway',
     dineIn: 'Dine in',
     takeaway: 'Takeaway',
-    slipPrinter: 'PC-YURI slip printer',
+    slipPrinter: 'Kiosk slip printer',
     receipt: 'Receipt',
     label: 'Label',
     isolated: 'Separate from store self-checkout',
@@ -221,7 +221,6 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
         kitchenSelfOrderDefaultFulfillment: kitchenFulfillment,
         kitchenSelfOrderSlipPrinterType: kitchenSlipPrinterType,
         kitchenSelfOrderVoiceEnabled: kitchenVoiceEnabled,
-        kitchenSelfOrderSourceLabel: 'PC-YURI',
       });
       const result = await window.electronAPI.window.open('kitchenSelfOrder');
       if (!result?.success) {
@@ -473,7 +472,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
             <SettingField
               icon={<Printer size={17} />}
               label={kitchenCopy.slipPrinter}
-              help="Best-effort local print on PC-YURI."
+              help="Best-effort local print on the kiosk."
             >
               <select
                 value={kitchenSlipPrinterType}

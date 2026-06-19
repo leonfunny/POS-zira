@@ -56,7 +56,7 @@ describe('kitchen self-order MVP wiring', () => {
       id: encodeKitchenSelfOrderUuidToken(orderId),
       n: 'K-001',
       f: 'D',
-      s: 'PC-YURI',
+      s: 'KIOSK',
       k: 1,
       i: [[encodeKitchenSelfOrderUuidToken(variantId), 2, 2490]],
     }), 'utf8').toString('base64url')}`;
@@ -67,7 +67,7 @@ describe('kitchen self-order MVP wiring', () => {
       orderNumber: 'K-001',
       orderId,
       fulfillmentType: 'DINE_IN',
-      sourceLabel: 'PC-YURI',
+      sourceLabel: 'KIOSK',
       kitchenAlreadyReleased: true,
       items: [{
         variantId,

@@ -82,7 +82,7 @@ describe('kitchen ticket builder', () => {
       ...baseTicket,
       orderNumber: 'K-042',
       pickupNumber: 'K-042',
-      source: 'KIOSK PC-YURI',
+      source: 'KIOSK',
       fulfillmentType: 'TAKEAWAY',
       kitchenLanguage: 'vi',
       items: [{ name: 'Pho bo', quantity: 2, notes: 'it cay' }],
@@ -93,7 +93,7 @@ describe('kitchen ticket builder', () => {
     expect(text).toContain('K-042');
     expect(text).not.toContain('CHUA TRA TIEN');
     expect(text).toContain('MANG DI');
-    expect(text).toContain('KIOSK PC-YURI');
+    expect(text).toContain('KIOSK');
     expect(text).toContain('!! it cay');
     expect(text).not.toContain('#K-042');
   });
@@ -120,7 +120,7 @@ describe('kitchen ticket builder', () => {
     const lines = buildKitchenTicketLines({
       ...baseTicket,
       orderNumber: 'K-043',
-      source: 'KIOSK PC-YURI',
+      source: 'KIOSK',
       kitchenLanguage: 'vi',
       paymentStatus: 'UNPAID',
     });
