@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
-import { buildLanFirstKitchenSenderConfig, DEFAULT_LAN_FIRST_KITCHEN_PORT, DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS, getReadyKitchenWifiPrinters } from '../../shared/lan-first-kitchen-settings';
+import { DEFAULT_LAN_FIRST_KITCHEN_PORT, DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS, getReadyKitchenWifiPrinters, planLanKitchenSave } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
@@ -2151,9 +2151,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const selectedLanKitchenTargetKey = selectedLanKitchenPrinter?.machineId
     ? `${selectedLanKitchenPrinter.machineId}:${selectedLanKitchenPrinter.id}`
     : '';
-  const selectedLanKitchenTarget = selectedLanKitchenTargetKey
+  const selectedLanKitchenTarget = (selectedLanKitchenTargetKey
     ? config?.lanFirstKitchenSender?.targets?.[selectedLanKitchenTargetKey]
-    : undefined;
+    : undefined) || config?.lanFirstKitchenSender?.manualTarget;
   const fiscalDailyReportRetries = Math.min(5, Math.max(0, fiscalDailyReport.maxAttempts - 1));
   const fiscalDailyReportRetryMinuteOptions = Array.from(
     new Set([...FISCAL_DAILY_REPORT_RETRY_MINUTE_OPTIONS, fiscalDailyReport.retryMinutes]),
@@ -2206,43 +2206,24 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     setLanKitchenSaving(true);
     setLanKitchenResult(null);
     try {
-      const receiverPort = parseScalePortNumber(lanKitchenReceivePort, DEFAULT_LAN_FIRST_KITCHEN_PORT);
-      let senderConfig: NonNullable<AgentConfig['lanFirstKitchenSender']> = {
-        ...(config?.lanFirstKitchenSender || {}),
-        enabled: false,
-        timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
-      };
+      const plan = planLanKitchenSave({
+        receiveEnabled: lanKitchenReceiveEnabled,
+        receivePort: lanKitchenReceivePort,
+        senderEnabled: lanKitchenSenderEnabled,
+        selectedPrinterId: lanKitchenSelectedPrinterId,
+        host: lanKitchenTargetHost,
+        port: lanKitchenTargetPort,
+        timeoutMs: config?.lanFirstKitchenSender?.timeoutMs,
+        printers: readyKitchenWifiPrinters,
+        receiverPairingCode: lanKitchenReceiverPairingCode,
+        senderPairingCode: lanKitchenSenderPairingCode,
+        currentSender: config?.lanFirstKitchenSender,
+      });
 
-      if (lanKitchenSenderEnabled) {
-        const senderResult = buildLanFirstKitchenSenderConfig({
-          current: config?.lanFirstKitchenSender,
-          enabled: true,
-          selectedPrinterId: lanKitchenSelectedPrinterId,
-          host: lanKitchenTargetHost,
-          port: lanKitchenTargetPort,
-          timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
-          printers: readyKitchenWifiPrinters,
-        });
-        if (!senderResult.ok) {
-          setLanKitchenResult({ success: false, message: senderResult.error });
-          return false;
-        }
-        senderConfig = senderResult.config;
-      }
-
-      await Promise.resolve(onConfigChange({
-        lanFirstReceiver: {
-          enabled: lanKitchenReceiveEnabled,
-          port: receiverPort,
-          auth: {
-            allowUnauthenticated: false,
-          },
-        },
-        lanFirstKitchenSender: senderConfig,
-      }));
-
-      if (lanKitchenReceiverPairingCode.trim()) {
-        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('receiver', lanKitchenReceiverPairingCode);
+      // Persist pairing codes FIRST so a half-configured sender target can
+      // never discard a code the user just typed.
+      if (plan.receiverCode) {
+        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('receiver', plan.receiverCode);
         if (!result.success) {
           setLanKitchenResult({ success: false, message: result.error || 'Failed to save receiver pairing code' });
           return false;
@@ -2250,14 +2231,19 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         setLanKitchenReceiverPairingCode('');
       }
 
-      if (lanKitchenSenderPairingCode.trim()) {
-        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('sender', lanKitchenSenderPairingCode);
+      if (plan.senderCode) {
+        const result = await window.electronAPI.lanFirstKitchen.setPairingCode('sender', plan.senderCode);
         if (!result.success) {
           setLanKitchenResult({ success: false, message: result.error || 'Failed to save sender pairing code' });
           return false;
         }
         setLanKitchenSenderPairingCode('');
       }
+
+      await Promise.resolve(onConfigChange({
+        lanFirstReceiver: plan.receiverPatch,
+        lanFirstKitchenSender: plan.senderPatch,
+      }));
 
       if (
         lanKitchenSenderEnabled
@@ -2269,7 +2255,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       }
 
       await refreshLanKitchenStatus();
-      setLanKitchenResult({ success: true, message: 'Kitchen Wi-Fi Direct settings saved' });
+      setLanKitchenResult(
+        plan.warnings.length > 0
+          ? { success: true, message: `Saved. ${plan.warnings.join('; ')}` }
+          : { success: true, message: 'Kitchen Wi-Fi Direct settings saved' },
+      );
       return true;
     } catch (err: any) {
       setLanKitchenResult({ success: false, message: err?.message || 'Failed to save Kitchen Wi-Fi Direct settings' });
@@ -2285,6 +2275,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   const handleTestLanKitchenWifiRoute = async () => {
     if (lanKitchenTesting) return;
+    const senderCode = lanKitchenSenderPairingCode.trim();
     setLanKitchenTesting(true);
     try {
       const saved = await saveLanKitchenWifiDirect();
@@ -2292,7 +2283,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       const response: LanFirstKitchenTestRouteResponse = await window.electronAPI.lanFirstKitchen.testRoute({
         host: lanKitchenTargetHost.trim(),
         port: parseScalePortNumber(lanKitchenTargetPort, DEFAULT_LAN_FIRST_KITCHEN_PORT),
-        pairingCode: lanKitchenSenderPairingCode.trim() || undefined,
+        pairingCode: senderCode || undefined,
         timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
       });
       setLanKitchenResult({

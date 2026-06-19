@@ -281,6 +281,7 @@ export interface LanFirstKitchenSenderConfig {
   enabled?: boolean;
   timeoutMs?: number;
   targets?: Record<string, LanFirstKitchenSenderTargetConfig>;
+  manualTarget?: LanFirstKitchenSenderTargetConfig;
   auth?: {
     sharedSecret?: string;
   };
