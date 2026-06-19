@@ -399,6 +399,7 @@ const store = new Store<AgentConfig>({
       enum: ['ON_SUBMIT', 'ON_PAYMENT_CONFIRMED'],
       default: 'ON_SUBMIT',
     },
+    kitchenSelfOrderVoiceEnabled: { type: 'boolean', default: true },
     // Booksy Sync settings
     booksy: {
       type: 'object',

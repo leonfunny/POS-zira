@@ -638,6 +638,7 @@ export interface AgentConfig {
   kitchenSelfOrderAccentColor?: string;
   kitchenSelfOrderCheckoutMode?: 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
   kitchenSelfOrderReleasePolicy?: 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
+  kitchenSelfOrderVoiceEnabled?: boolean;   // Speak the pickup number (Polish) on the done screen.
 
   // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
