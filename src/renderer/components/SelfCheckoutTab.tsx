@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldAlert,
   Utensils,
+  Volume2,
   XCircle,
 } from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
@@ -66,6 +67,7 @@ function getKitchenSelfOrderCopy(language: Language) {
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Tách khỏi self-checkout store',
+      voiceLabel: 'Đọc số đơn bằng giọng nói',
     };
   }
   if (language === 'pl') {
@@ -85,6 +87,7 @@ function getKitchenSelfOrderCopy(language: Language) {
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Oddzielone od self-checkout sklepu',
+      voiceLabel: 'Odczytaj numer zamówienia głosowo',
     };
   }
   return {
@@ -103,6 +106,7 @@ function getKitchenSelfOrderCopy(language: Language) {
     receipt: 'Receipt',
     label: 'Label',
     isolated: 'Separate from store self-checkout',
+    voiceLabel: 'Speak the order number',
   };
 }
 
@@ -120,6 +124,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
   const [kitchenMonitor, setKitchenMonitor] = useState<number>(0);
   const [kitchenFulfillment, setKitchenFulfillment] = useState<KitchenFulfillment>('DINE_IN');
   const [kitchenSlipPrinterType, setKitchenSlipPrinterType] = useState<KitchenSlipPrinterType>('RECEIPT');
+  const [kitchenVoiceEnabled, setKitchenVoiceEnabled] = useState<boolean>(true);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [opening, setOpening] = useState(false);
   const [kitchenOpening, setKitchenOpening] = useState(false);
@@ -137,6 +142,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     setKitchenMonitor(typeof c.kitchenSelfOrderMonitor === 'number' ? c.kitchenSelfOrderMonitor : 0);
     setKitchenFulfillment(c.kitchenSelfOrderDefaultFulfillment === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE_IN');
     setKitchenSlipPrinterType(c.kitchenSelfOrderSlipPrinterType === 'LABEL' ? 'LABEL' : 'RECEIPT');
+    setKitchenVoiceEnabled(c.kitchenSelfOrderVoiceEnabled !== false);
   }, [config]);
 
   useEffect(() => {
@@ -214,6 +220,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
         kitchenSelfOrderMonitor: kitchenMonitor,
         kitchenSelfOrderDefaultFulfillment: kitchenFulfillment,
         kitchenSelfOrderSlipPrinterType: kitchenSlipPrinterType,
+        kitchenSelfOrderVoiceEnabled: kitchenVoiceEnabled,
         kitchenSelfOrderSourceLabel: 'PC-YURI',
       });
       const result = await window.electronAPI.window.open('kitchenSelfOrder');
@@ -479,6 +486,25 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               >
                 <option value="RECEIPT">{kitchenCopy.receipt}</option>
                 <option value="LABEL">{kitchenCopy.label}</option>
+              </select>
+            </SettingField>
+
+            <SettingField
+              icon={<Volume2 size={17} />}
+              label={kitchenCopy.voiceLabel}
+              help="Polish voice reads the pickup number once on the done screen."
+            >
+              <select
+                value={kitchenVoiceEnabled ? 'on' : 'off'}
+                onChange={(e) => {
+                  const v = e.target.value === 'on';
+                  setKitchenVoiceEnabled(v);
+                  persist({ kitchenSelfOrderVoiceEnabled: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
               </select>
             </SettingField>
           </div>
