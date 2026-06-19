@@ -20,7 +20,7 @@
 - **Config flag:** `kitchenSelfOrderVoiceEnabled`, boolean, default `true`.
 - **Tri-state cancel:** the clip player returns `'played' | 'failed' | 'cancelled'`. Web Speech fallback fires **only on `'failed'`**.
 - **Order-number parse:** strict `^K-(\d+)$`, accept `1..999`, else skip the announcement.
-- **Verification:** `npm run build` (BOTH `build:main` and `build:renderer`) + `npx vitest run` must pass. Audio audibility is a manual on-PC gate (SSH cannot hear).
+- **Verification:** `npm run build` (BOTH `build:main` and `build:renderer`) must pass. For tests, the FEATURE's tests must pass (`pl-tts-engine`, `kitchen-order-number-tts`, the three static config/toggle/wiring tests, and the pre-existing `polish-amount-tts` + `polish-amount-tts-player`) AND introduce no NEW failures. NOTE: `npx vitest run` over the whole repo does NOT come back fully green — this branch carries ~8 pre-existing baseline failures in unrelated files (orders-tab, retail-voice-search, settings-navigation, pos-searchbar, retail-sync) that are independent of this feature; the gate is "feature tests green + zero new regressions", not "whole suite green". Audio audibility is a manual on-PC gate (SSH cannot hear).
 - **Run commands over SSH** (`ssh winpc`, cmd.exe) from `C:\POS-zira`. Renderer/main builds may fail with `EBUSY` if a dev server is running — report, don't retry blindly.
 
 ---
@@ -1013,7 +1013,7 @@ Expected: `build:main` and `build:renderer` both succeed.
 - [ ] **Step 2: Full test suite**
 
 Run: `ssh winpc "cd C:\POS-zira && npx vitest run"`
-Expected: PASS, including `pl-tts-engine`, `polish-amount-tts`, `polish-amount-tts-player`, `kitchen-order-number-tts`, and the three static tests. No regressions in the existing self-checkout / kitchen suites.
+Expected: the FEATURE's tests pass — `pl-tts-engine`, `polish-amount-tts`, `polish-amount-tts-player`, `kitchen-order-number-tts`, and the three static tests — with NO new regressions in the self-checkout / kitchen suites. The whole-repo run is NOT fully green: ~8 pre-existing baseline failures remain in unrelated files (orders-tab-static, retail-voice-search, settings-navigation-tabs, pos-searchbar-scan-submit, retail-sync-respects-filter). Those predate this feature and reference none of its files — verify the failing set is unchanged from baseline rather than expecting zero failures.
 
 - [ ] **Step 3: Report the manual release gate (cannot be done over SSH — spec P2b)**
 
@@ -1046,3 +1046,18 @@ Summarize commits, test results, build status, and the open manual gate / clip-r
 **Placeholder scan:** No TBD/TODO; every code step shows full code. Task 2 render is explicitly optional with a documented fallback (not a placeholder).
 
 **Type consistency:** `PlayResult` and engine names defined in Task 1 are consumed verbatim in Task 3. `shouldAnnounceOrderNumber`/`playOrderNumberAnnouncement`/`primeOrderNumberAudio`/`cancelOrderNumberAnnouncement`/`warmUpOrderNumberClips` defined in Task 3, imported identically in Task 6. Config key `kitchenSelfOrderVoiceEnabled` identical across Tasks 4/5/6. `voiceLabel` added to all three copy branches (Task 5) so the union type stays consistent.
+
+---
+
+## Completion Status (post-execution)
+
+Executed 2026-06-19 via subagent-driven development. All 6 code tasks implemented, per-task reviewed, and final whole-branch reviewed.
+
+- Build: `npm run build` (main + renderer) PASS.
+- Feature tests GREEN: `pl-tts-engine` (incl. cancel-safe Web Speech guard), `kitchen-order-number-tts`, the 3 static config/toggle/wiring tests, plus `polish-amount-tts` + `polish-amount-tts-player`.
+- Whole-repo `vitest run`: 8 PRE-EXISTING baseline failures remain in 5 unrelated files (orders-tab-static, retail-voice-search, settings-navigation-tabs, pos-searchbar-scan-submit, retail-sync-respects-filter). Confirmed independent of this feature (none reference any changed file). NOT regressions.
+- Post-review fix: cancel-safe Web Speech fallback (generation guard so a "New order"/reset during the pending voice lookup cannot blurt) — commit `46ee285`.
+- `kso_*.mp3` clips NOT rendered (no `GOOGLE_TTS_API_KEY`): the feature runs on the Web Speech fallback today; render+commit the clips later for the high-quality voice.
+
+### Still OPEN — manual on-PC release gate (cannot be verified over SSH)
+On PC-YURI with a built app: place a test self-order → confirm the Polish line is audible once on the done screen; the Settings toggle silences it; tapping "New order" mid-announcement stops audio with NO Web-Speech blurt.
