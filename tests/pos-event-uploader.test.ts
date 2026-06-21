@@ -1,24 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const repo = {
-  listReady: vi.fn(),
-  markAcked: vi.fn(),
-  markFailed: vi.fn(),
-  countPending: vi.fn(() => 0),
-  countDeadLetter: vi.fn(() => 0),
-  oldestPendingAt: vi.fn(() => null),
-  lastAckedAt: vi.fn(() => null),
-  toEnvelope: vi.fn((r: any) => ({
-    eventId: r.event_id,
-    eventType: r.event_type,
-    schemaVersion: 1,
-    occurredAt: r.occurred_at,
-    reliabilityClass: r.reliability_class,
-    payload: {},
-  })),
-};
-
-const postPosEvents = vi.fn();
+// vi.mock factories are hoisted above this file's top-level consts, so anything
+// they reference must be created with vi.hoisted (otherwise the factory hits the
+// temporal dead zone: "Cannot access 'repo' before initialization").
+const { repo, postPosEvents } = vi.hoisted(() => ({
+  repo: {
+    listReady: vi.fn(),
+    markAcked: vi.fn(),
+    markFailed: vi.fn(),
+    countPending: vi.fn(() => 0),
+    countDeadLetter: vi.fn(() => 0),
+    oldestPendingAt: vi.fn(() => null),
+    lastAckedAt: vi.fn(() => null),
+    toEnvelope: vi.fn((r: any) => ({
+      eventId: r.event_id,
+      eventType: r.event_type,
+      schemaVersion: 1,
+      occurredAt: r.occurred_at,
+      reliabilityClass: r.reliability_class,
+      payload: {},
+    })),
+  },
+  postPosEvents: vi.fn(),
+}));
 
 vi.mock('../src/main/database/repos/pos-event-outbox-repo', () => ({
   posEventOutboxRepo: repo,
