@@ -425,6 +425,11 @@ class Database {
       'fiscal_daily_report_runs',
       // Local print journal (which printer printed each order receipt copy)
       'print_attempts',
+      // ERP-AI cashflow event outbox: salon-scoped financial events. MUST be
+      // cleared on tenant switch — otherwise pending events from the previous
+      // salon would upload under the new salon's token (toEnvelope omits salonId,
+      // backend trusts the JWT salon) and be attributed to the wrong tenant.
+      'pos_event_outbox',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

@@ -56,6 +56,7 @@ import {
 import { printKitchenSelfOrderCustomerSlipToPrinter } from '../printing/kitchen-payment-slip-printer';
 import { submitSharedKitchenPrint, submitSharedPickupSlip } from '../printing/shared-kitchen-printer';
 import { printAttemptRepo } from '../database/repos/print-attempt-repo';
+import { posEventEmitter } from '../events/pos-event-emitter';
 import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
 import { staffRepo } from '../database/repos/staff-repo';
@@ -327,12 +328,21 @@ export class PosModule extends BaseModule {
     };
     const recordPrintAttempt = (input: ReceiptPrintJournalInput) => {
       const meta = resolvePrinterMeta(input);
-      printAttemptRepo.record({
+      const row = printAttemptRepo.record({
         orderId: input.orderId,
         documentType: input.documentType,
         printerType: input.printerType,
         printerName: meta.name,
         printerTarget: meta.target,
+        route: input.route,
+        status: input.status,
+        error: input.error,
+      });
+      posEventEmitter.emitReceiptPrintAttempted({
+        printAttemptId: row.id,
+        orderId: input.orderId,
+        documentType: input.documentType,
+        printerType: String(input.printerType),
         route: input.route,
         status: input.status,
         error: input.error,
@@ -377,6 +387,19 @@ export class PosModule extends BaseModule {
             backendOrderId,
             status: input.status,
             body,
+          });
+          posEventEmitter.emitFiscalReceiptEmitted({
+            orderId: input.orderId,
+            backendOrderId,
+            status: input.status,
+            grossTotalMinor:
+              input.grossTotal != null
+                ? Math.round(input.grossTotal * 100)
+                : order?.total ?? null,
+            printerProtocol: 'FISCAL',
+            printJobId: input.printJobId || null,
+            error: input.error || null,
+            occurredAt: eventAt,
           });
           const flush = await database.save();
           if (!flush.success) {
@@ -1963,6 +1986,16 @@ export class PosModule extends BaseModule {
             items: data?.items,
           });
           if (result.stockChanged) notifyPosRenderers(this.container, 'pos:products-synced');
+          // ERP-AI outbox: an order created UNPAID and finalized via this path
+          // never passed through the paid branch of orderRepo.create(). Emit now;
+          // emitOrderFinalized is idempotent (dedupe_key) so a re-emit of an
+          // already-emitted order is a no-op.
+          if (result.updated) {
+            const paidOrder = orderRepo.getById(orderId);
+            if (paidOrder && (paidOrder.payment_method || paidOrder.payment_tenders)) {
+              posEventEmitter.emitOrderFinalized(paidOrder, orderRepo.getItemsByOrderId(orderId));
+            }
+          }
           return { success: result.updated, localOnly: true };
         }
 
@@ -2034,6 +2067,14 @@ export class PosModule extends BaseModule {
           database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [orderId]);
         }
         database.markDirty();
+        // ERP-AI outbox: a synced order paid via this mutation path. Idempotent
+        // emit (no-op if create() already emitted it when paid).
+        if (data?.type === 'payment') {
+          const paidOrder = orderRepo.getById(orderId);
+          if (paidOrder && (paidOrder.payment_method || paidOrder.payment_tenders)) {
+            posEventEmitter.emitOrderFinalized(paidOrder, orderRepo.getItemsByOrderId(orderId));
+          }
+        }
         return { success: true, order: canonical, mutation: response.mutation ?? null };
       } catch (e: any) {
         logger.error(`[PosModule] Order mutation failed for ${orderId}: ${e.message}`);
@@ -2483,6 +2524,17 @@ export class PosModule extends BaseModule {
         orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined);
         database.markDirty();
 
+        // ERP-AI outbox: emit the DELTA of this refund (not cumulative total).
+        posEventEmitter.emitRefundIssued({
+          localOrderId: orderId,
+          backendOrderId: order.backend_id,
+          amountMinor: validation.refundAmountGrosze ?? requestedAmountGrosze,
+          method: order.payment_method,
+          reason: refundReason,
+          refundedAt: new Date().toISOString(),
+          items: deltaRefundLines,
+        });
+
         // Print refund receipt
         let receiptPrinted = false;
         try {
@@ -2759,8 +2811,10 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:open-cash-drawer', async () => {
       try {
         const drawerOpened = await this.paymentController?.openCashDrawer() ?? false;
+        posEventEmitter.emitCashDrawerOpened({ reason: 'manual', success: drawerOpened });
         return toCashDrawerIpcResult(drawerOpened);
       } catch (e: any) {
+        posEventEmitter.emitCashDrawerOpened({ reason: 'manual', success: false });
         return toCashDrawerIpcResult(false, e);
       }
     });

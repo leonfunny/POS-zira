@@ -3,6 +3,7 @@ import { orderRepo } from '../database/repos/order-repo';
 import { DailyReportData, PrinterType } from '../../shared/types';
 import { apiClient } from '../network/api-client';
 import { getConfigValue, getSecureAuthToken } from '../config/store';
+import { posEventEmitter } from '../events/pos-event-emitter';
 import logger from '../logger';
 
 export interface ShiftReport {
@@ -51,6 +52,8 @@ export class ShiftController {
       [shiftId, staffId, staffName, openingCash],
     );
     database.markDirty();
+
+    posEventEmitter.emitShiftOpened({ shiftId, staffId, staffName, openingCashMinor: openingCash });
 
     // Async sync to backend (non-blocking)
     this.syncShiftOpen(shiftId, staffId, openingCash);
@@ -171,6 +174,8 @@ export class ShiftController {
       unsyncedOrders,
       fiscalOnlySales: fiscalOnly,
     };
+
+    posEventEmitter.emitShiftClosed(report);
 
     // Async sync to backend (non-blocking)
     this.syncShiftClose(shiftId, closingCash);

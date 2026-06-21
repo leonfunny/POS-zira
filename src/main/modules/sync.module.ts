@@ -28,6 +28,7 @@ import { getConfig, getSecureAuthToken } from '../config/store';
 import SocketClient from '../network/socket-client';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { ShiftController } from '../pos/shift-controller';
+import { PosEventUploader } from '../sync/pos-event-uploader';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
@@ -46,6 +47,7 @@ export class SyncModule extends BaseModule {
   private billiardSync: BilliardSync | null = null;
   private staffSync: StaffSync | null = null;
   private syncLogService: SyncLogService | null = null;
+  private posEventUploader: PosEventUploader | null = null;
   private _syncInProgress = false;
   private _didFullProductSync = false;
 
@@ -96,6 +98,12 @@ export class SyncModule extends BaseModule {
     // Path A outbound timers start as fallback — stopped once Path B push detected.
     this.orderSync.startPeriodicSync();
 
+    // ERP-AI POS event outbox uploader: drains pos_event_outbox to
+    // POST /api/v1/pos-events/batch. Independent of order/product sync; backoff
+    // handles offline. Always attempts (POST fails fast + backs off when offline).
+    this.posEventUploader = new PosEventUploader();
+    this.posEventUploader.startPeriodicSync();
+
     // Periodic ProductSync runs from module init, NOT bound to socket
     // lifecycle. ProductSync is HTTP-based; the socket is only a bonus
     // realtime channel and may be down for long stretches without
@@ -127,6 +135,20 @@ export class SyncModule extends BaseModule {
         }
         const summary = await this.orderSync?.syncPendingOrders();
         return { success: true, summary };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
+
+    // ERP-AI POS event outbox: lightweight status for the sync indicator and a
+    // manual drain (mirrors pos:sync:orders).
+    ipcMain.handle('pos:events:status', async () => {
+      try {
+        return { success: true, status: this.posEventUploader?.getStatus() ?? null };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
+    ipcMain.handle('pos:events:flush', async () => {
+      try {
+        const result = await this.posEventUploader?.flush();
+        return { success: true, result, status: this.posEventUploader?.getStatus() ?? null };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 

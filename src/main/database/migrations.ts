@@ -1461,4 +1461,43 @@ export const migrations: Migration[] = [
       ALTER TABLE kitchen_self_order_items ADD COLUMN line_total_grosze INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 47,
+    name: 'pos_event_outbox',
+    // Durable offline-first event outbox. Every business fact is written here
+    // BEFORE any network attempt, so the POS keeps selling offline; an uploader
+    // drains pending rows to POST /api/v1/pos-events/batch (idempotent by
+    // eventId). dedupe_key is the deterministic local idempotency guard: the
+    // same business fact never produces two outbox rows (so the backend never
+    // double-counts even if an emitter fires twice). status: pending | acked |
+    // dead_letter. Money in payload is integer minor units (grosze).
+    up: `
+      CREATE TABLE IF NOT EXISTS pos_event_outbox (
+        event_id TEXT PRIMARY KEY,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        event_type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        salon_id TEXT,
+        device_id TEXT,
+        local_order_id TEXT,
+        shift_id TEXT,
+        correlation_id TEXT,
+        causation_id TEXT,
+        occurred_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        reliability_class TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TEXT,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        server_event_id TEXT,
+        acknowledged_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_ready ON pos_event_outbox(status, next_attempt_at);
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_local_order ON pos_event_outbox(local_order_id);
+    `,
+  },
 ];

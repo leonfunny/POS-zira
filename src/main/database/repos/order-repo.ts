@@ -2,6 +2,7 @@ import { database } from '../database';
 import logger from '../../logger';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../../pos/order-line-contract';
 import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
+import { posEventEmitter } from '../../events/pos-event-emitter';
 
 export interface OrderRow {
   id: string;
@@ -252,6 +253,20 @@ export const orderRepo = {
 
     // Flush to disk immediately — financial data must not be lost on crash
     database.markDirty();
+
+    // ERP-AI outbox: emit SaleCompleted + PaymentCaptured for locally-originated
+    // PAID sales. This covers POS, SELF_CHECKOUT/kiosk, WEB_ORDER, etc. — every
+    // sale born on THIS device. Server-pulled orders are inserted via
+    // upsertFromServer (source 'SERVER'), NOT create(), so excluding 'SERVER'
+    // here is belt-and-braces. Not-yet-paid open orders (no payment method/
+    // tenders) are skipped — they are not finalized facts. Best-effort: the
+    // emitter never throws into this path.
+    const localPaidSale =
+      (order.source ?? 'POS') !== 'SERVER' &&
+      (!!order.payment_method || !!order.payment_tenders);
+    if (localPaidSale) {
+      posEventEmitter.emitOrderFinalized({ ...order, order_number: finalOrderNumber }, items);
+    }
 
     logger.info(`[OrderRepo] Created order ${finalOrderNumber} (${order.id}) with ${items.length} items, mode=${order.mode}`);
     return order.id;

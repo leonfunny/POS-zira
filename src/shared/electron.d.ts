@@ -836,6 +836,19 @@ interface ElectronAPI {
       products: () => Promise<{ success: boolean; productsCount?: number; error?: string }>;
       orders: () => Promise<void>;
       staff: () => Promise<{ success: boolean; count?: number; error?: string }>;
+      eventStatus: () => Promise<{
+        success: boolean;
+        status?: {
+          pending: number;
+          deadLetter: number;
+          oldestPendingAt: string | null;
+          lastUploadAt: string | null;
+          lastRunAt: string | null;
+          lastError: string | null;
+        } | null;
+        error?: string;
+      }>;
+      flushEvents: () => Promise<{ success: boolean; result?: { acked: number; failed: number }; status?: unknown; error?: string }>;
       onProductsSynced: (callback: () => void) => () => void;
       onStaffUpdated: (callback: (data?: any) => void) => () => void;
       onCatalogUpdated: (callback: (data: any) => void) => () => void;

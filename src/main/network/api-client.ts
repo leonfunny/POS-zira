@@ -513,6 +513,37 @@ export class ApiClient {
     return JSON.parse(text);
   }
 
+  /**
+   * Ingest a batch of POS events. Backend is idempotent by eventId and returns
+   * accepted / duplicates / rejected. Max 50 events per call (backend enforces).
+   */
+  async postPosEvents(
+    token: string,
+    body: { deviceId?: string | null; events: unknown[] },
+  ): Promise<{
+    accepted: Array<{ eventId: string; serverEventId: string }>;
+    duplicates: Array<{ eventId: string; serverEventId: string }>;
+    rejected: Array<{ eventId: string; errorCode: string; message: string }>;
+    serverTime: string;
+  }> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+    if (body.deviceId) headers['x-pos-device-id'] = body.deviceId;
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/pos-events/batch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ deviceId: body.deviceId ?? undefined, events: body.events }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : { accepted: [], duplicates: [], rejected: [], serverTime: '' };
+  }
+
   async getPosCustomerLoyalty(
     token: string,
     phone: string,

@@ -1,5 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AgentConfig, DeviceStatus, ConnectionStatus } from '../../shared/types';
+
+interface PosEventSyncStatus {
+  pending: number;
+  deadLetter: number;
+  oldestPendingAt: string | null;
+  lastUploadAt: string | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+}
+
+function formatAgo(iso: string | null): string {
+  if (!iso) return 'never';
+  const then = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z').getTime();
+  if (Number.isNaN(then)) return 'never';
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  return `${Math.round(secs / 3600)}h ago`;
+}
 
 interface StatusProps {
   config: AgentConfig | null;
@@ -21,6 +40,34 @@ export default function Status({
   const [apiKey, setApiKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eventSync, setEventSync] = useState<PosEventSyncStatus | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const res = await window.electronAPI.sync.eventStatus();
+        if (alive && res?.success && res.status) setEventSync(res.status);
+      } catch {
+        /* ignore — status is best-effort */
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 10000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const handleFlushEvents = async () => {
+    try {
+      const res = await window.electronAPI.sync.flushEvents();
+      if (res?.success && res.status) setEventSync(res.status as PosEventSyncStatus);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const handleTestPrint = async () => {
     const result = await window.electronAPI.testPrint();
@@ -165,6 +212,60 @@ export default function Status({
           </div>
         )}
       </div>
+
+      {eventSync && (
+        <div className="panel p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  eventSync.deadLetter > 0
+                    ? 'bg-red-100'
+                    : eventSync.pending > 0
+                      ? 'bg-amber-100'
+                      : 'bg-green-100'
+                }`}
+              >
+                <svg
+                  className={`w-5 h-5 ${
+                    eventSync.deadLetter > 0
+                      ? 'text-red-600'
+                      : eventSync.pending > 0
+                        ? 'text-amber-600'
+                        : 'text-green-600'
+                  }`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-800">
+                  Cashflow events
+                  {eventSync.pending > 0
+                    ? ` · ${eventSync.pending} pending`
+                    : ' · all synced'}
+                  {eventSync.deadLetter > 0 ? ` · ${eventSync.deadLetter} stuck` : ''}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Last upload {formatAgo(eventSync.lastUploadAt)}
+                  {eventSync.lastError ? ` · last error: ${eventSync.lastError}` : ''}
+                </p>
+              </div>
+            </div>
+            {eventSync.pending > 0 && (
+              <button
+                onClick={handleFlushEvents}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              >
+                Sync now
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">

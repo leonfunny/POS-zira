@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       products: () => ipcRenderer.invoke('pos:sync:products'),
       orders: () => ipcRenderer.invoke('pos:sync:orders'),
       staff: () => ipcRenderer.invoke('pos:sync:staff'),
+      eventStatus: () => ipcRenderer.invoke('pos:events:status'),
+      flushEvents: () => ipcRenderer.invoke('pos:events:flush'),
       onProductsSynced: (callback: () => void) => {
         const listener = () => callback();
         ipcRenderer.on('pos:products-synced', listener);
