@@ -67,7 +67,12 @@ const items = [
   { id: 'l1', order_id: 'order-1', variant_id: 'v1', name: 'Tea', sku: 'T1', price: 1000, quantity: 1, total: 1000, vat_rate: 23, staff_id: null, staff_name: null, notes: null, course: 1 },
 ] as any;
 
-beforeEach(() => enqueue.mockClear());
+// NB: block body — never `() => enqueue.mockClear()`. mockClear() returns the
+// mock fn, and vitest treats a function returned from beforeEach as a per-test
+// cleanup callback, invoking it with no args (enqueue(undefined)) after the test.
+beforeEach(() => {
+  enqueue.mockClear();
+});
 
 describe('posEventEmitter.emitOrderFinalized', () => {
   it('emits one SaleCompleted and one PaymentCaptured for a single-tender cash sale', () => {
