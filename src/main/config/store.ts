@@ -46,6 +46,22 @@ const defaultConfig: AgentConfig = {
       timeoutMs: 2000,
     },
   },
+  lanFirstReceiver: {
+    enabled: false,
+    port: 17892,
+    auth: {
+      sharedSecret: '',
+      allowUnauthenticated: false,
+    },
+  },
+  lanFirstKitchenSender: {
+    enabled: false,
+    timeoutMs: 2000,
+    targets: {},
+    auth: {
+      sharedSecret: '',
+    },
+  },
   serverUrl: process.env.NODE_ENV === 'development'
     ? 'http://localhost:3003'
     : 'https://api.enail.pro',
@@ -120,6 +136,59 @@ const scaleConfigSchema = {
         timeoutMs: { type: 'number', default: 2000 },
       },
       default: {},
+    },
+  },
+  default: {},
+};
+
+const lanFirstReceiverConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    port: { type: 'number', default: 17892 },
+    auth: {
+      type: 'object',
+      properties: {
+        sharedSecret: { type: 'string', default: '' },
+        allowUnauthenticated: { type: 'boolean', default: false },
+      },
+      default: {},
+    },
+  },
+  default: {},
+};
+
+const lanFirstKitchenSenderConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    timeoutMs: { type: 'number', default: 2000 },
+    targets: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          host: { type: 'string', default: '' },
+          port: { type: 'number', default: 17892 },
+          timeoutMs: { type: 'number' },
+        },
+        default: {},
+      },
+      default: {},
+    },
+    auth: {
+      type: 'object',
+      properties: {
+        sharedSecret: { type: 'string', default: '' },
+      },
+      default: {},
+    },
+    manualTarget: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        port: { type: 'number' },
+      },
     },
   },
   default: {},
@@ -233,6 +302,8 @@ const store = new Store<AgentConfig>({
     labelWidth: { type: 'number', default: 50 },
     labelHeight: { type: 'number', default: 30 },
     scale: scaleConfigSchema,
+    lanFirstReceiver: lanFirstReceiverConfigSchema,
+    lanFirstKitchenSender: lanFirstKitchenSenderConfigSchema,
     serverUrl: { type: 'string', default: 'https://api.enail.pro' },
     isPaired: { type: 'boolean', default: false },
     autoStart: { type: 'boolean', default: true },
@@ -321,7 +392,7 @@ const store = new Store<AgentConfig>({
     },
     kitchenSelfOrderSlipPrinterType: { type: 'string', enum: ['RECEIPT', 'LABEL'], default: 'RECEIPT' },
     kitchenSelfOrderSlipPrinterId: { type: 'string', default: '' },
-    kitchenSelfOrderSourceLabel: { type: 'string', default: 'PC-YURI' },
+    kitchenSelfOrderSourceLabel: { type: 'string', default: '' },
     kitchenSelfOrderBrandName: { type: 'string', default: '' },
     kitchenSelfOrderLogoUrl: { type: 'string', default: '' },
     kitchenSelfOrderAccentColor: { type: 'string', default: '#DA7756' },
@@ -335,6 +406,7 @@ const store = new Store<AgentConfig>({
       enum: ['ON_SUBMIT', 'ON_PAYMENT_CONFIRMED'],
       default: 'ON_SUBMIT',
     },
+    kitchenSelfOrderVoiceEnabled: { type: 'boolean', default: true },
     // Booksy Sync settings
     booksy: {
       type: 'object',

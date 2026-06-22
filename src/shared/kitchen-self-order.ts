@@ -133,6 +133,115 @@ export interface KitchenSelfOrderQrPayload {
 
 export type KitchenSelfOrderCheckoutPriceSource = 'CATALOG' | 'QR_SNAPSHOT' | 'NONE';
 
+function base64UrlToBinary(value: string): string {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+  if (typeof atob === 'function') return atob(padded);
+  return Buffer.from(padded, 'base64').toString('binary');
+}
+
+function binaryToBase64Url(value: string): string {
+  const base64 = typeof btoa === 'function'
+    ? btoa(value)
+    : Buffer.from(value, 'binary').toString('base64');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecodeUtf8(value: string): string {
+  const binary = base64UrlToBinary(value);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+export function encodeKitchenSelfOrderUuidToken(value: string | null | undefined): string | null {
+  const hex = String(value || '').replace(/-/g, '').trim().toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) return null;
+  let binary = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    binary += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  }
+  return binaryToBase64Url(binary);
+}
+
+export function decodeKitchenSelfOrderUuidToken(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const binary = base64UrlToBinary(value.trim());
+    if (binary.length !== 16) return null;
+    const hex = Array.from(binary, (ch) => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  } catch {
+    return null;
+  }
+}
+
+export function decodeKitchenSelfOrderQr(code: string): KitchenSelfOrderQrPayload | null {
+  const trimmed = String(code || '').trim();
+  if (!trimmed.startsWith(KITCHEN_SELF_ORDER_QR_PREFIX)) return null;
+
+  try {
+    const parsed = JSON.parse(base64UrlDecodeUtf8(trimmed.slice(KITCHEN_SELF_ORDER_QR_PREFIX.length)));
+    if (parsed?.type === 'KSO' && parsed?.version === 1 && Array.isArray(parsed?.items)) {
+      return {
+        ...(parsed as KitchenSelfOrderQrPayload),
+        kitchenAlreadyReleased: typeof parsed.kitchenAlreadyReleased === 'boolean'
+          ? parsed.kitchenAlreadyReleased
+          : true,
+      };
+    }
+    if (parsed?.t === 'K' && parsed?.v === 1 && Array.isArray(parsed?.i)) {
+      return {
+        type: 'KSO',
+        version: 1,
+        orderNumber: String(parsed.n || ''),
+        orderId: decodeKitchenSelfOrderUuidToken(parsed.id) || (typeof parsed.id === 'string' ? parsed.id : undefined),
+        fulfillmentType: parsed.f === 'T' ? 'TAKEAWAY' : parsed.f === 'D' ? 'DINE_IN' : undefined,
+        sourceLabel: typeof parsed.s === 'string' ? parsed.s : null,
+        kitchenAlreadyReleased: Object.prototype.hasOwnProperty.call(parsed, 'k')
+          ? parsed.k === 1 || parsed.k === true
+          : true,
+        items: parsed.i.map((item: unknown) => {
+          if (!Array.isArray(item)) return { variantId: null, quantity: 1 };
+          const rawVariant = item[0];
+          return {
+            variantId: decodeKitchenSelfOrderUuidToken(rawVariant) || (typeof rawVariant === 'string' ? rawVariant : null),
+            quantity: item[1],
+            unitPriceGrosze: Number(item[2]) > 0 ? Math.round(Number(item[2])) : null,
+          };
+        }),
+      };
+    }
+    if (parsed?.t !== 'KSO' || parsed?.v !== 1 || !Array.isArray(parsed?.i)) return null;
+    return {
+      type: 'KSO',
+      version: 1,
+      orderNumber: String(parsed.n || ''),
+      orderId: typeof parsed.id === 'string' ? parsed.id : undefined,
+      fulfillmentType: parsed.f === 'TAKEAWAY' ? 'TAKEAWAY' : parsed.f === 'DINE_IN' ? 'DINE_IN' : undefined,
+      sourceLabel: typeof parsed.s === 'string' ? parsed.s : null,
+      kitchenAlreadyReleased: Object.prototype.hasOwnProperty.call(parsed, 'kr')
+        ? parsed.kr === 1 || parsed.kr === true
+        : true,
+      items: parsed.i.map((item: unknown) => {
+        if (!Array.isArray(item)) return { variantId: null, quantity: 1 };
+        const options = Array.isArray(item[3])
+          ? item[3].map((option: unknown) => String(option || '').trim()).filter(Boolean)
+          : [];
+        return {
+          variantId: item[0],
+          quantity: item[1],
+          note: typeof item[2] === 'string' ? item[2] : null,
+          options,
+          unitPriceGrosze: Number(item[4]) > 0 ? Math.round(Number(item[4])) : null,
+          lineTotalGrosze: Number(item[5]) > 0 ? Math.round(Number(item[5])) : null,
+        };
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeKitchenSelfOrderLanguage(value: unknown): KitchenSelfOrderLanguage {
   return value === 'vi' || value === 'en' ? value : 'pl';
 }

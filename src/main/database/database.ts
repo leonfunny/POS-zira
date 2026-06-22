@@ -430,6 +430,8 @@ class Database {
       // salon would upload under the new salon's token (toEnvelope omits salonId,
       // backend trusts the JWT salon) and be attributed to the wrong tenant.
       'pos_event_outbox',
+      // LAN_FIRST receiver dedupe ledger
+      'lan_first_print_attempts',
     ];
 
     // SECURITY: Validate table names against known set (defense-in-depth — prevents injection if list ever becomes dynamic)

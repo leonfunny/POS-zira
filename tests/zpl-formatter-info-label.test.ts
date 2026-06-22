@@ -262,7 +262,7 @@ describe("ZplFormatter.formatKitchenPaymentLabel", () => {
       orderNumber: "K-042",
       pickupNumber: "K-042",
       createdAt: "2026-06-16T10:00:00.000Z",
-      source: "KIOSK PC-YURI",
+      source: "KIOSK",
       fulfillmentType: "DINE_IN",
       customerLanguage: "pl",
       totalGrosze: 2900,
@@ -274,12 +274,13 @@ describe("ZplFormatter.formatKitchenPaymentLabel", () => {
 
     expect(zpl).toContain("^PW400");
     expect(zpl).not.toContain("^LL");
-    expect(zpl).toContain("DO ZAPLATY");
+    expect(zpl).toContain("Zira POS  -  NA MIEJSCU");
+    expect(zpl).toContain("NR ZAMOWIENIA");
     expect(zpl).toContain("K-042");
-    expect(zpl).toContain("RAZEM 29,00 zl");
-    expect(zpl).toContain("SKANUJ PRZY KASIE");
-    expect(zpl).toContain("^BQN,2,2");
-    expect(zpl).toContain("^FDQA,KSO1:test^FS");
+    expect(zpl).toContain("2 poz.  -  29,00 zl");
+    expect(zpl).toContain("Zaplac przy kasie");
+    expect(zpl).toContain("^BQN,2,4");
+    expect(zpl).toContain("^FDMA,KSO1:test^FS");
     expect(zpl).not.toContain("Pho bo");
     expect(zpl).not.toContain("^BE,");
     expect(zpl).not.toContain("^BC,");
@@ -292,13 +293,13 @@ describe("ZplFormatter.formatKitchenPaymentLabel", () => {
       orderId: "kso-1",
       orderNumber: "K-042",
       createdAt: "2026-06-16T10:00:00.000Z",
-      source: "KIOSK PC-YURI",
+      source: "KIOSK",
       customerLanguage: "pl",
       totalGrosze: 2900,
       qrPayload: payload,
       items: [],
     });
 
-    expect(zpl).toContain(`^FDQA,${payload}^FS`);
+    expect(zpl).toContain(`^FDMA,${payload}^FS`);
   });
 });

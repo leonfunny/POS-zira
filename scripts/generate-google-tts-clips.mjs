@@ -40,6 +40,10 @@ const clips = [
   { filename: 'prefix_cash.mp3', text: 'Płatność gotówką.' },
   { filename: 'prefix_blik.mp3', text: 'Płatność BLIK-iem.' },
   { filename: 'do_zaplaty.mp3', text: 'Do zapłaty' },
+  // Kitchen self-order announcement framing clips
+  { filename: 'kso_dziekujemy.mp3', text: 'Dziękujemy.' },
+  { filename: 'kso_numer_zamowienia.mp3', text: 'Numer zamówienia' },
+  { filename: 'kso_zachowaj_numer.mp3', text: 'Prosimy zachować numer.' },
 ].filter((clip) => ONLY.size === 0 || ONLY.has(clip.filename));
 
 async function fileExists(filePath) {

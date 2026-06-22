@@ -10,7 +10,7 @@ import { resolveName } from '../../../shared/catalog-names';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import {
-  KITCHEN_SELF_ORDER_QR_PREFIX,
+  decodeKitchenSelfOrderQr,
   resolveKitchenSelfOrderCheckoutUnitPrice,
   type KitchenSelfOrderQrPayload,
 } from '../../../shared/kitchen-self-order';
@@ -106,59 +106,6 @@ function canSellImportedVariant(variant: any, allowOversell = false): string | n
   if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
   if (!allowOversell && variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
   return null;
-}
-
-function base64UrlDecodeUtf8(value: string): string {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
-  const binary = atob(padded);
-  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function decodeKitchenSelfOrderQr(code: string): KitchenSelfOrderQrPayload | null {
-  const trimmed = code.trim();
-  if (!trimmed.startsWith(KITCHEN_SELF_ORDER_QR_PREFIX)) return null;
-
-  try {
-    const parsed = JSON.parse(base64UrlDecodeUtf8(trimmed.slice(KITCHEN_SELF_ORDER_QR_PREFIX.length)));
-    if (parsed?.type === 'KSO' && parsed?.version === 1 && Array.isArray(parsed?.items)) {
-      return {
-        ...(parsed as KitchenSelfOrderQrPayload),
-        kitchenAlreadyReleased: typeof parsed.kitchenAlreadyReleased === 'boolean'
-          ? parsed.kitchenAlreadyReleased
-          : true,
-      };
-    }
-    if (parsed?.t !== 'KSO' || parsed?.v !== 1 || !Array.isArray(parsed?.i)) return null;
-    return {
-      type: 'KSO',
-      version: 1,
-      orderNumber: String(parsed.n || ''),
-      orderId: typeof parsed.id === 'string' ? parsed.id : undefined,
-      fulfillmentType: parsed.f === 'TAKEAWAY' ? 'TAKEAWAY' : parsed.f === 'DINE_IN' ? 'DINE_IN' : undefined,
-      sourceLabel: typeof parsed.s === 'string' ? parsed.s : null,
-      kitchenAlreadyReleased: Object.prototype.hasOwnProperty.call(parsed, 'kr')
-        ? parsed.kr === 1 || parsed.kr === true
-        : true,
-      items: parsed.i.map((item: any) => {
-        if (!Array.isArray(item)) return { variantId: null, quantity: 1 };
-        const options = Array.isArray(item[3])
-          ? item[3].map((option: unknown) => String(option || '').trim()).filter(Boolean)
-          : [];
-        return {
-          variantId: item[0],
-          quantity: item[1],
-          note: typeof item[2] === 'string' ? item[2] : null,
-          options,
-          unitPriceGrosze: Number(item[4]) > 0 ? Math.round(Number(item[4])) : null,
-          lineTotalGrosze: Number(item[5]) > 0 ? Math.round(Number(item[5])) : null,
-        };
-      }),
-    };
-  } catch {
-    return null;
-  }
 }
 
 function normalizeKioskQuantity(value: unknown): number {
@@ -924,16 +871,6 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     });
     return () => unsub?.();
   }, []);
-
-  // Kitchen ticket could not print for a just-created order (no kitchen
-  // printer reachable). The sale itself is fine — alert the cashier so the
-  // kitchen learns about the order; Order History has a reprint button.
-  useEffect(() => {
-    const unsub = (window.electronAPI.pos as any).onKitchenTicketFailed?.(() => {
-      showScanToast(tOr('pos.kitchenTicketFailed', 'Kitchen ticket NOT printed — check the kitchen printer'), 'err');
-    });
-    return () => unsub?.();
-  }, [showScanToast, tOr]);
 
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
   const hideNonFiscalOrders = config?.showNonFiscalOrders === false;

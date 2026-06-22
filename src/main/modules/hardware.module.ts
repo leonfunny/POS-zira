@@ -25,6 +25,12 @@ import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
 import { readScaleWeight } from '../hardware/scale/scale-reader-service';
 import { getScaleNetworkInfo, ScaleNetworkService } from '../hardware/scale/scale-network-service';
+import {
+  getLanFirstKitchenNetworkInfo,
+  LanFirstKitchenTicketReceiverService,
+  LanFirstSafeBeforePrintError,
+  type LanFirstKitchenTicketPrintRequest,
+} from '../printing/lan-first-kitchen-ticket-receiver';
 import { listSerialPorts, listWindowsPrintersDetailed, getVidForPort } from '../hardware/port-utils';
 import { validateProtocolAgainstVid, type ValidationResult as PortValidationResult } from '../hardware/detection/vid-protocol-registry';
 import {
@@ -53,6 +59,10 @@ import { database } from '../database/database';
 import { fiscalDailyReportRunRepo } from '../database/repos/fiscal-daily-report-run-repo';
 import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import {
+  lanFirstPrintAttemptRepo,
+  type BeginLanFirstPrintAttemptInput,
+} from '../database/repos/lan-first-print-attempt-repo';
 import { getPosnetDriverStatus, installPosnetDriver, triggerWindowsDriverScan, classifyPrinterCategory, DetectedDevice } from '../hardware/driver-installer';
 import { setConfig } from '../config/store';
 import SocketClient from '../network/socket-client';
@@ -116,6 +126,7 @@ export class HardwareModule extends BaseModule {
   // Barcode scanner
   private scanner: HidScanner | null = null;
   private scaleNetworkService: ScaleNetworkService | null = null;
+  private lanFirstKitchenTicketReceiver: LanFirstKitchenTicketReceiverService | null = null;
   // Posnet detection services
   private deviceRegistry: DeviceProfileRegistry | null = null;
   private detectionService: DeviceDetectionService | null = null;
@@ -201,6 +212,14 @@ export class HardwareModule extends BaseModule {
       logger.warn('[HardwareModule] Remote scale share did not start:', err?.message || err);
     });
 
+    this.lanFirstKitchenTicketReceiver = new LanFirstKitchenTicketReceiverService({
+      getConfig: () => getConfig(),
+      printKitchenTicket: (request) => this.printLanFirstKitchenTicket(request),
+    });
+    await this.lanFirstKitchenTicketReceiver.applyConfig().catch((err: any) => {
+      logger.warn('[HardwareModule] LAN_FIRST kitchen ticket receiver did not start:', err?.message || err);
+    });
+
     // Initialize Posnet detection services
     logger.info('[HardwareModule] Initializing Posnet detection services...');
     this.deviceRegistry = new DeviceProfileRegistry();
@@ -253,6 +272,14 @@ export class HardwareModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.SCALE_GET_NETWORK_INFO, () => {
       return this.scaleNetworkService?.getStatus() || {
         ...getScaleNetworkInfo(),
+        running: false,
+        port: null,
+      };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_NETWORK_INFO, () => {
+      return this.lanFirstKitchenTicketReceiver?.getNetworkInfo() || {
+        ...getLanFirstKitchenNetworkInfo(),
         running: false,
         port: null,
       };
@@ -614,6 +641,9 @@ export class HardwareModule extends BaseModule {
         if (payload.changedKeys.includes('scale')) {
           await this.scaleNetworkService?.applyConfig();
         }
+        if (payload.changedKeys.includes('lanFirstReceiver')) {
+          await this.lanFirstKitchenTicketReceiver?.applyConfig();
+        }
       } catch (err) {
         logger.error('[HardwareModule] Unhandled error in config:changed handler:', err);
       }
@@ -836,6 +866,95 @@ export class HardwareModule extends BaseModule {
     }
     const target = this.getPrinterConfigForJob(job);
     return this.getPrinterForType(target.printerType);
+  }
+
+  private async printKitchenTicketPayload(targetPrinter: PrinterDriver, ticket: KitchenTicketData): Promise<void> {
+    const lines = ticket?.kind === 'PICKUP_SLIP'
+      ? buildPickupSlipLines(ticket)
+      : buildKitchenTicketLines(ticket);
+    if (typeof (targetPrinter as any).printPlainLines !== 'function') {
+      throw new LanFirstSafeBeforePrintError('Kitchen ticket requires a thermal (ESC/POS) printer');
+    }
+    await (targetPrinter as any).printPlainLines(lines);
+  }
+
+  private getLanFirstKitchenPrintAttemptInput(job: any): BeginLanFirstPrintAttemptInput | null {
+    if (job?.dispatchMode !== 'LAN_FIRST') return null;
+    if (job?.jobType !== PrintJobType.KITCHEN_TICKET) return null;
+    if (job?.printerType !== PrinterType.KITCHEN) return null;
+    const idempotencyKey = typeof job.idempotencyKey === 'string' ? job.idempotencyKey.trim() : '';
+    const payloadHash = typeof job.payloadHash === 'string' ? job.payloadHash.trim() : '';
+    const printerId = typeof job.printerId === 'string' ? job.printerId.trim() : '';
+    const jobId = typeof job.jobId === 'string' ? job.jobId.trim() : '';
+    if (!idempotencyKey || !payloadHash || !printerId || !jobId) return null;
+    return { idempotencyKey, payloadHash, jobId, printerId };
+  }
+
+  private async applyLanFirstSocketDedupe(
+    job: any,
+    socket: SocketClient | null | undefined,
+  ): Promise<{ shouldPrint: boolean; input?: BeginLanFirstPrintAttemptInput }> {
+    const input = this.getLanFirstKitchenPrintAttemptInput(job);
+    if (!input) return { shouldPrint: true };
+
+    const decision = await lanFirstPrintAttemptRepo.beginPrintAttempt(input);
+    if (decision.action === 'PRINT') return { shouldPrint: true, input };
+
+    if (decision.action === 'REJECT') {
+      const message = `LAN_FIRST ${decision.reason}`;
+      socket?.sendJobStatus(job.jobId, 'FAILED', message);
+      return { shouldPrint: false };
+    }
+
+    if (decision.status === 'COMPLETED') {
+      socket?.sendJobStatus(job.jobId, 'COMPLETED');
+      return { shouldPrint: false };
+    }
+
+    if (decision.status === 'PRINTING') {
+      socket?.sendJobStatus(job.jobId, 'PRINTING');
+      return { shouldPrint: false };
+    }
+
+    socket?.sendJobStatus(
+      job.jobId,
+      'FAILED',
+      `LAN_FIRST duplicate not retryable${decision.failureClass ? ` (${decision.failureClass})` : ''}`,
+    );
+    return { shouldPrint: false };
+  }
+
+  async printLanFirstKitchenTicket(request: LanFirstKitchenTicketPrintRequest): Promise<void> {
+    const job = {
+      jobId: request.jobId,
+      jobType: PrintJobType.KITCHEN_TICKET,
+      printerType: PrinterType.KITCHEN,
+      printerId: request.printerId,
+      payload: request.payload,
+      referenceType: request.referenceType,
+      referenceId: request.referenceId,
+    };
+    const { printerType } = this.getPrinterConfigForJob(job);
+    if (printerType !== PrinterType.KITCHEN) {
+      throw new LanFirstSafeBeforePrintError('LAN_FIRST KITCHEN_TICKET requires a KITCHEN printer');
+    }
+
+    let targetPrinter = this.printersById[request.printerId];
+    if (!targetPrinter) {
+      throw new LanFirstSafeBeforePrintError(`Printer ${request.printerId} is not initialized`);
+    }
+
+    if (!targetPrinter.isConnected()) {
+      await this.runHealthCheck();
+      targetPrinter = this.printersById[request.printerId];
+    }
+
+    if (!targetPrinter?.isConnected()) {
+      throw new LanFirstSafeBeforePrintError(`Printer ${request.printerId} not connected`);
+    }
+
+    await this.printKitchenTicketPayload(targetPrinter, request.payload);
+    if (request.printerId) localPrinterRepo.markUsed(request.printerId);
   }
 
   getDeviceStatus(): DeviceStatus {
@@ -2290,9 +2409,14 @@ export class HardwareModule extends BaseModule {
     const { printerType, config: printerConfig } = this.getPrinterConfigForJob(job);
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     const fiscal = this.isFiscalJob(job);
+    const lanFirstDedupe = await this.applyLanFirstSocketDedupe(job, socket);
+    if (!lanFirstDedupe.shouldPrint) return;
+    const lanFirstInput = lanFirstDedupe.input;
 
     for (let attempt = 0; attempt <= PRINT_JOB_MAX_RETRIES; attempt++) {
-      const targetPrinter = this.getPrinterForJob(job);
+      const targetPrinter = lanFirstInput
+        ? this.printersById[lanFirstInput.printerId] || null
+        : this.getPrinterForJob(job);
 
       if (!targetPrinter?.isConnected()) {
         if (attempt < PRINT_JOB_MAX_RETRIES) {
@@ -2305,6 +2429,13 @@ export class HardwareModule extends BaseModule {
           ? `FISCAL PRINTER ${printerType} NOT CONNECTED — sale must be blocked`
           : `Printer ${printerType} not connected`;
         logger.error(`[HardwareModule] Job ${job.jobId}: ${failMsg}`);
+        if (lanFirstInput) {
+          await lanFirstPrintAttemptRepo.markFailed({
+            ...lanFirstInput,
+            failureClass: 'SAFE_BEFORE_PRINT',
+            errorMessage: failMsg,
+          });
+        }
         socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
         return;
       }
@@ -2321,14 +2452,7 @@ export class HardwareModule extends BaseModule {
           // thermal plain-line path so Vietnamese/Polish dish names raster
           // instead of printing mangled code-page text.
           const ticket = job.payload as KitchenTicketData;
-          const lines = ticket?.kind === 'PICKUP_SLIP'
-            ? buildPickupSlipLines(ticket)
-            : buildKitchenTicketLines(ticket);
-          if (typeof (targetPrinter as any).printPlainLines === 'function') {
-            await (targetPrinter as any).printPlainLines(lines);
-          } else {
-            throw new Error('Kitchen ticket requires a thermal (ESC/POS) printer');
-          }
+          await this.printKitchenTicketPayload(targetPrinter, ticket);
         } else if (isLabel) {
           if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
           if (job.jobType === PrintJobType.INFO_LABEL) {
@@ -2412,11 +2536,24 @@ export class HardwareModule extends BaseModule {
           }
         }
 
-        socket?.sendJobStatus(job.jobId, 'COMPLETED');
         if (job.printerId) localPrinterRepo.markUsed(job.printerId);
+        if (lanFirstInput) {
+          await lanFirstPrintAttemptRepo.markCompleted(lanFirstInput);
+        }
+        socket?.sendJobStatus(job.jobId, 'COMPLETED');
         return; // success — exit retry loop
       } catch (error: any) {
         logger.error(`[HardwareModule] Job ${job.jobId} attempt ${attempt + 1} failed:`, error);
+        if (lanFirstInput) {
+          const failMsg = error?.message || String(error);
+          await lanFirstPrintAttemptRepo.markFailed({
+            ...lanFirstInput,
+            failureClass: error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
+            errorMessage: failMsg,
+          });
+          socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+          return;
+        }
 
         if (attempt < PRINT_JOB_MAX_RETRIES) {
           logger.info(`[HardwareModule] Retrying in ${PRINT_JOB_RETRY_DELAY}ms...`);
@@ -2502,6 +2639,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.lanFirstKitchenTicketReceiver?.stop();
     await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on stop failed:', err?.message); } }
@@ -2513,6 +2651,7 @@ export class HardwareModule extends BaseModule {
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     socket?.off('agent:connected', this.handleAgentConnected);
     this.stopHealthCheck();
+    await this.lanFirstKitchenTicketReceiver?.stop();
     await this.scaleNetworkService?.stop();
     this.scanner?.stop();
     for (const d of Object.values(this.printers)) { try { d?.disconnect(); } catch (err: any) { logger.debug('[HardwareModule] disconnect printer on destroy failed:', err?.message); } }

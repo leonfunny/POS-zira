@@ -3,6 +3,7 @@ import {
   PrintJobType,
   PrinterType,
   type AgentConfig,
+  type KitchenTicketData,
   type PrinterConfig,
   type ReceiptData,
 } from '../src/shared/types';
@@ -14,6 +15,9 @@ const mock = vi.hoisted(() => ({
   getById: vi.fn(),
   markOnline: vi.fn(),
   markUsed: vi.fn(),
+  lanFirstBeginPrintAttempt: vi.fn(),
+  lanFirstMarkCompleted: vi.fn(),
+  lanFirstMarkFailed: vi.fn(),
   posnetConnects: false,
   posnetInstances: [] as any[],
   rowToPrinterConfig: vi.fn(),
@@ -47,6 +51,14 @@ vi.mock('../src/main/database/repos/local-printer-repo', () => ({
   rowToPrinterConfig: mock.rowToPrinterConfig,
 }));
 
+vi.mock('../src/main/database/repos/lan-first-print-attempt-repo', () => ({
+  lanFirstPrintAttemptRepo: {
+    beginPrintAttempt: mock.lanFirstBeginPrintAttempt,
+    markCompleted: mock.lanFirstMarkCompleted,
+    markFailed: mock.lanFirstMarkFailed,
+  },
+}));
+
 vi.mock('../src/main/hardware/elzab/elzab-driver', () => ({
   ElzabDriver: undefined,
 }));
@@ -64,6 +76,7 @@ vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
     printDailyReport = vi.fn();
     printXReport = vi.fn();
     printZReport = vi.fn();
+    printPlainLines = vi.fn();
   }
   return { ThermalDriver };
 });
@@ -106,6 +119,9 @@ describe('HardwareModule print job runtime guards', () => {
     mock.posnetInstances.length = 0;
     mock.posnetConnects = false;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
+    mock.lanFirstBeginPrintAttempt.mockResolvedValue({ action: 'PRINT', row: { status: 'PRINTING' } });
+    mock.lanFirstMarkCompleted.mockResolvedValue(null);
+    mock.lanFirstMarkFailed.mockResolvedValue(null);
 
     const row = {
       id: 'receipt-printer-1',
@@ -356,5 +372,229 @@ describe('HardwareModule print job runtime guards', () => {
 
     expect(mock.thermalInstances).toHaveLength(1);
     expect(firstDriver.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('LAN_FIRST kitchen printing requires the exact printerId driver and never falls back by KITCHEN type', async () => {
+    const fallbackKitchenRow = {
+      id: 'kitchen-fallback',
+      printer_type: PrinterType.KITCHEN,
+      display_name: 'kitchen fallback',
+      protocol: 'WINDOWS',
+      is_enabled: 1,
+      windows_printer_name: 'Kitchen Epson',
+      supports_cash_drawer: 0,
+    };
+    const missingKitchenRow = {
+      ...fallbackKitchenRow,
+      id: 'kitchen-missing',
+      display_name: 'kitchen missing',
+      windows_printer_name: 'Missing Epson',
+    };
+    const fallbackConfig: PrinterConfig = {
+      enabled: true,
+      protocol: 'WINDOWS',
+      serverPrinterId: 'kitchen-fallback',
+      windowsPrinter: 'Kitchen Epson',
+      paperWidth: 80,
+      charsPerLine: 48,
+    };
+    const missingConfig: PrinterConfig = {
+      ...fallbackConfig,
+      serverPrinterId: 'kitchen-missing',
+      windowsPrinter: 'Missing Epson',
+    };
+
+    mock.getEnabled.mockReturnValue([fallbackKitchenRow]);
+    mock.getAll.mockReturnValue([fallbackKitchenRow, missingKitchenRow]);
+    mock.getById.mockImplementation((id: string) => (
+      id === 'kitchen-missing'
+        ? missingKitchenRow
+        : id === 'kitchen-fallback'
+          ? fallbackKitchenRow
+          : null
+    ));
+    mock.rowToPrinterConfig.mockImplementation((row: { id: string }) => (
+      row.id === 'kitchen-missing' ? missingConfig : fallbackConfig
+    ));
+
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    const ticket: KitchenTicketData = {
+      orderId: 'order-1',
+      orderNumber: 'K-001',
+      createdAt: '2026-06-18T10:00:00.000Z',
+      source: 'SELF_CHECKOUT',
+      items: [{ name: 'Pho bo', quantity: 1 }],
+    };
+
+    await expect(module.printLanFirstKitchenTicket({
+      jobId: 'job-1',
+      idempotencyKey: 'idem-1',
+      payloadHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      dispatchMode: 'LAN_FIRST',
+      sourceMachineId: 'source-machine',
+      targetMachineId: 'target-machine',
+      printerId: 'kitchen-missing',
+      jobType: 'KITCHEN_TICKET',
+      printerType: 'KITCHEN',
+      referenceType: 'KITCHEN_TICKET',
+      referenceId: 'order-1',
+      payload: ticket,
+    })).rejects.toThrow(/not initialized|not connected/i);
+
+    expect(mock.thermalInstances[0].printPlainLines).not.toHaveBeenCalled();
+    expect(mock.markUsed).not.toHaveBeenCalledWith('kitchen-missing');
+  });
+
+  function configureKitchenPrinter(): void {
+    const kitchenRow = {
+      id: 'kitchen-printer-1',
+      printer_type: PrinterType.KITCHEN,
+      display_name: 'kitchen printer',
+      protocol: 'WINDOWS',
+      is_enabled: 1,
+      windows_printer_name: 'Kitchen Epson',
+      supports_cash_drawer: 0,
+    };
+    const kitchenConfig: PrinterConfig = {
+      enabled: true,
+      protocol: 'WINDOWS',
+      serverPrinterId: 'kitchen-printer-1',
+      windowsPrinter: 'Kitchen Epson',
+      paperWidth: 80,
+      charsPerLine: 48,
+    };
+    mock.getEnabled.mockReturnValue([kitchenRow]);
+    mock.getAll.mockReturnValue([kitchenRow]);
+    mock.getById.mockImplementation((id: string) => (id === 'kitchen-printer-1' ? kitchenRow : null));
+    mock.rowToPrinterConfig.mockReturnValue(kitchenConfig);
+  }
+
+  function kitchenTicket(): KitchenTicketData {
+    return {
+      orderId: 'order-1',
+      orderNumber: 'K-001',
+      createdAt: '2026-06-18T10:00:00.000Z',
+      source: 'SELF_CHECKOUT',
+      items: [{ name: 'Pho bo', quantity: 1 }],
+    };
+  }
+
+  function lanFirstKitchenSocketJob(overrides: Record<string, unknown> = {}) {
+    return {
+      jobId: 'job-lan-1',
+      dispatchMode: 'LAN_FIRST',
+      idempotencyKey: 'idem-1',
+      payloadHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      sourceMachineId: 'source-machine',
+      targetMachineId: 'target-machine',
+      jobType: PrintJobType.KITCHEN_TICKET,
+      printerType: PrinterType.KITCHEN,
+      printerId: 'kitchen-printer-1',
+      referenceType: 'KITCHEN_TICKET',
+      referenceId: 'order-1',
+      payload: kitchenTicket(),
+      ...overrides,
+    };
+  }
+
+  it('LAN_FIRST socket kitchen job with completed ledger no-ops and sends COMPLETED', async () => {
+    configureKitchenPrinter();
+    mock.lanFirstBeginPrintAttempt.mockResolvedValueOnce({
+      action: 'NOOP',
+      duplicate: true,
+      status: 'COMPLETED',
+      row: { status: 'COMPLETED' },
+    });
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => socket) };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    await (module as any).handlePrintJob(lanFirstKitchenSocketJob());
+
+    expect(mock.lanFirstBeginPrintAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'idem-1',
+      payloadHash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      jobId: 'job-lan-1',
+      printerId: 'kitchen-printer-1',
+    }));
+    expect(mock.thermalInstances[0].printPlainLines).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-lan-1', 'COMPLETED');
+  });
+
+  it('LAN_FIRST socket kitchen job with hash mismatch fails and does not print', async () => {
+    configureKitchenPrinter();
+    mock.lanFirstBeginPrintAttempt.mockResolvedValueOnce({
+      action: 'REJECT',
+      reason: 'PAYLOAD_HASH_MISMATCH',
+      row: { status: 'COMPLETED' },
+    });
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => socket) };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    await (module as any).handlePrintJob(lanFirstKitchenSocketJob({
+      payloadHash: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }));
+
+    expect(mock.thermalInstances[0].printPlainLines).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith(
+      'job-lan-1',
+      'FAILED',
+      expect.stringMatching(/PAYLOAD_HASH_MISMATCH/),
+    );
+  });
+
+  it('LAN_FIRST socket kitchen job first attempt marks ledger and prints once', async () => {
+    configureKitchenPrinter();
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => socket) };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    await (module as any).handlePrintJob(lanFirstKitchenSocketJob());
+
+    expect(mock.lanFirstBeginPrintAttempt).toHaveBeenCalledTimes(1);
+    expect(mock.thermalInstances[0].printPlainLines).toHaveBeenCalledTimes(1);
+    expect(mock.lanFirstMarkCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'idem-1',
+      jobId: 'job-lan-1',
+      printerId: 'kitchen-printer-1',
+    }));
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-lan-1', 'COMPLETED');
+  });
+
+  it('normal socket kitchen ticket still prints through the existing path', async () => {
+    configureKitchenPrinter();
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => socket) };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    await (module as any).handlePrintJob({
+      jobId: 'job-normal-kitchen',
+      jobType: PrintJobType.KITCHEN_TICKET,
+      printerType: PrinterType.KITCHEN,
+      printerId: 'kitchen-printer-1',
+      referenceType: 'KITCHEN_TICKET',
+      referenceId: 'order-1',
+      payload: kitchenTicket(),
+    });
+
+    expect(mock.lanFirstBeginPrintAttempt).not.toHaveBeenCalled();
+    expect(mock.thermalInstances[0].printPlainLines).toHaveBeenCalledTimes(1);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-normal-kitchen', 'COMPLETED');
   });
 });

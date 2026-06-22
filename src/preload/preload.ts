@@ -132,6 +132,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readWeight: (options?: { port?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SCALE_READ_WEIGHT, options),
     getNetworkInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SCALE_GET_NETWORK_INFO),
   },
+  lanFirstKitchen: {
+    getNetworkInfo: () => ipcRenderer.invoke(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_NETWORK_INFO),
+    getPairingStatus: () => ipcRenderer.invoke(IPC_CHANNELS.LAN_FIRST_KITCHEN_GET_PAIRING_STATUS),
+    setPairingCode: (scope: 'receiver' | 'sender', pairingCode: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LAN_FIRST_KITCHEN_SET_PAIRING_CODE, { scope, pairingCode }),
+    testRoute: (request: import('../shared/types').LanFirstKitchenTestRouteRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LAN_FIRST_KITCHEN_TEST_ROUTE, request),
+  },
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text, options),

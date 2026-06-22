@@ -6,6 +6,7 @@ import logger from '../logger';
 import { PosStore } from '../pos/pos-store';
 import { getConfigValue } from '../config/store';
 import { handleZoomShortcut, resetWindowZoom } from './zoom-controls';
+import { getRendererDevServerUrl, shouldUseRendererDevServer } from './renderer-dev-server';
 
 const execFileAsync = promisify(execFile);
 
@@ -379,24 +380,23 @@ export class WindowManager {
     }
 
     // Load HTML
-    const isDev = process.env.NODE_ENV === 'development';
+    const isDev = shouldUseRendererDevServer();
     if (isDev) {
+      const devServerUrl = getRendererDevServerUrl();
       const devUrls: Record<string, string> = {
-        pos: 'http://localhost:3100/windows/pos/',
-        customer: 'http://localhost:3100/windows/customer/',
-        selfCheckout: 'http://localhost:3100/windows/self-checkout/',
-        kitchenSelfOrder: 'http://localhost:3100/windows/kitchen-self-order/',
+        pos: `${devServerUrl}/windows/pos/`,
+        customer: `${devServerUrl}/windows/customer/`,
+        selfCheckout: `${devServerUrl}/windows/self-checkout/`,
+        kitchenSelfOrder: `${devServerUrl}/windows/kitchen-self-order/`,
       };
-      win.loadURL(devUrls[id] || `http://localhost:3100/windows/${id}/`);
+      win.loadURL(devUrls[id] || `${devServerUrl}/windows/${id}/`);
     } else {
       win.loadFile(join(__dirname, `../../renderer/${config.htmlFile}`));
     }
 
     // SECURITY: Navigation guards - prevent redirects to malicious pages
     win.webContents.on('will-navigate', (event, navigationUrl) => {
-      const allowed = isDev
-        ? ['http://localhost:3100']
-        : ['file://'];
+      const allowed = isDev ? [getRendererDevServerUrl()] : ['file://'];
       if (!allowed.some(prefix => navigationUrl.startsWith(prefix))) {
         logger.warn(`[WindowManager] Blocked navigation to: ${navigationUrl}`);
         event.preventDefault();

@@ -4,6 +4,8 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $repoRoot
 
 $env:NODE_ENV = 'development'
+$env:ZIRA_RENDERER_DEV_SERVER = '1'
+$env:ZIRA_RENDERER_DEV_SERVER_URL = 'http://localhost:3100'
 
 function Test-LocalPort {
   param([int]$Port)

@@ -262,7 +262,7 @@ export async function getPresentPrinterVids(): Promise<Set<string>> {
   }
 }
 
-async function isUsbPrintPortPresent(portName: string): Promise<boolean> {
+export async function isUsbPrintPortPresent(portName: string): Promise<boolean> {
   const portUpper = portName.trim().toUpperCase();
   if (!/^(USB\d+|DOT4_\d+)$/i.test(portUpper)) return false;
 

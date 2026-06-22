@@ -140,7 +140,7 @@ describe("ZebraDriver.printInfoLabel", () => {
         orderNumber: "K-042",
         pickupNumber: "K-042",
         createdAt: "2026-06-16T10:00:00.000Z",
-        source: "KIOSK PC-YURI",
+        source: "KIOSK",
         fulfillmentType: "DINE_IN",
         customerLanguage: "pl",
         totalGrosze: 2900,
@@ -149,9 +149,9 @@ describe("ZebraDriver.printInfoLabel", () => {
       });
 
       const zpl: string = labelSpy.mock.calls[0][0];
-      expect(zpl).toContain("DO ZAPLATY");
+      expect(zpl).toContain("NR ZAMOWIENIA");
       expect(zpl).toContain("K-042");
-      expect(zpl).toContain("^BQN,2,2");
+      expect(zpl).toContain("^FDMA,KSO1:test^FS");
       expect(zpl).not.toContain("^BE,");
     } finally {
       labelSpy.mockRestore();

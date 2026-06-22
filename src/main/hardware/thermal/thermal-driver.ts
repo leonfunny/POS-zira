@@ -469,10 +469,10 @@ export class ThermalDriver {
           '$di = New-Object RawPrint+DOCINFO\n' +
           '$di.pDocName = "Zira AI Receipt"\n$di.pDatatype = "RAW"\n' +
           'try {\n' +
-          '  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw "StartDocPrinter failed" }\n' +
+          '  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw "StartDocPrinter failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }\n' +
           '  [RawPrint]::StartPagePrinter($h) | Out-Null\n' +
           '  $w = 0\n' +
-          '  if (-not [RawPrint]::WritePrinter($h, $data, $data.Length, [ref]$w)) { throw "WritePrinter failed" }\n' +
+          '  if (-not [RawPrint]::WritePrinter($h, $data, $data.Length, [ref]$w)) { throw "WritePrinter failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }\n' +
           '  [RawPrint]::EndPagePrinter($h) | Out-Null\n' +
           '  [RawPrint]::EndDocPrinter($h) | Out-Null\n' +
           '  Write-Output "OK:$w"\n' +
@@ -489,11 +489,20 @@ export class ThermalDriver {
           '} catch {}\n';
 
         const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
-        const { stdout, stderr } = await execFileAsync(
-          'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
-          { encoding: 'utf8', timeout: 15000 },
-        );
+        let stdout = '';
+        let stderr = '';
+        try {
+          const result = await execFileAsync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+            { encoding: 'utf8', timeout: 15000 },
+          );
+          stdout = result.stdout || '';
+          stderr = result.stderr || '';
+        } catch (err: any) {
+          stdout = err?.stdout || '';
+          stderr = err?.stderr || err?.message || String(err);
+        }
 
         // Check for errors
         const cleanedErr = (stderr || '').replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
@@ -509,13 +518,25 @@ export class ThermalDriver {
             );
           }
           logger.warn(`[ThermalDriver] WritePrinter stderr: ${cleanedErr}`);
-          throw new Error(`Print failed: ${cleanedErr}`);
+          if (/StartDocPrinter failed:\s*2001/i.test(cleanedErr)) {
+            try {
+              await this.printRawViaUsbDeviceInterface(tempFile, safeName);
+            } catch (usbErr: any) {
+              logger.error('[ThermalDriver] Direct USB fallback failed after spooler driver 2001:', usbErr);
+              throw new Error(`Print failed (spooler driver 2001 + USB fallback failed): ${usbErr?.message || usbErr}`);
+            }
+          } else {
+            throw new Error(`Print failed: ${cleanedErr}`);
+          }
         }
         const result = (stdout || '').trim();
-        if (!result.startsWith('OK:')) {
+        if (cleanedErr && /StartDocPrinter failed:\s*2001/i.test(cleanedErr)) {
+          logger.info('[ThermalDriver] Raw data sent via direct USB fallback');
+        } else if (!result.startsWith('OK:')) {
           throw new Error(`WritePrinter returned unexpected result: ${result}`);
+        } else {
+          logger.info(`[ThermalDriver] Raw data sent via WritePrinter (${result})`);
         }
-        logger.info(`[ThermalDriver] Raw data sent via WritePrinter (${result})`);
       } else {
         // Serial port: Configure and send via cmd.exe
         const locked = await withPortLock(this.printerNameOrPort, `thermal.printRaw(${this.printerNameOrPort})`, async () => {
@@ -545,6 +566,71 @@ export class ThermalDriver {
       if (fs.existsSync(tempFile)) {
         fs.unlinkSync(tempFile);
       }
+    }
+  }
+
+  /**
+   * Some Windows installs enumerate a USB receipt printer correctly but fail
+   * StartDocPrinter with ERROR_INVALID_PRINTER_DRIVER before any bytes are sent.
+   * In that case, write ESC/POS bytes to the USB printing interface directly.
+   */
+  private async printRawViaUsbDeviceInterface(tempFile: string, safePrinterName: string): Promise<void> {
+    const escapedFile = tempFile.replace(/'/g, "''");
+    const psScript =
+      '$ProgressPreference = "SilentlyContinue"\n' +
+      `$printer = Get-Printer -Name '${safePrinterName}' -ErrorAction Stop\n` +
+      '$port = [string]$printer.PortName\n' +
+      'if ($port -notmatch "^USB\\d+$") { throw "Direct USB fallback requires a USB00x printer port, got: $port" }\n' +
+      '$usbPrint = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |\n' +
+      '  Where-Object { $_.InstanceId -like "USBPRINT\\*$port" } |\n' +
+      '  Select-Object -First 1\n' +
+      'if (-not $usbPrint) { throw "No present USBPRINT device found for port $port" }\n' +
+      '$parent = (Get-PnpDeviceProperty -InstanceId $usbPrint.InstanceId -KeyName DEVPKEY_Device_Parent -ErrorAction Stop).Data\n' +
+      '$needle = ($parent -replace "\\\\", "#").ToLowerInvariant()\n' +
+      '$ifaceRoot = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceClasses\\{28d78fad-5a12-11d1-ae5b-0000f803a8c2}"\n' +
+      '$iface = Get-ChildItem $ifaceRoot -ErrorAction SilentlyContinue |\n' +
+      '  Where-Object { $_.PSChildName.ToLowerInvariant().Contains($needle) } |\n' +
+      '  Select-Object -First 1\n' +
+      'if (-not $iface) { throw "No USB printer interface found for $parent" }\n' +
+      '$devicePath = "\\\\?\\" + $iface.PSChildName.Substring(4)\n' +
+      'Add-Type @"\n' +
+      'using System;\nusing System.IO;\nusing System.Runtime.InteropServices;\nusing Microsoft.Win32.SafeHandles;\n' +
+      'public class UsbDirectPrint {\n' +
+      '  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]\n' +
+      '  public static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);\n' +
+      '  public static string Write(string path, byte[] bytes) {\n' +
+      '    const uint GENERIC_WRITE = 0x40000000;\n' +
+      '    const uint FILE_SHARE_READ = 0x00000001;\n' +
+      '    const uint FILE_SHARE_WRITE = 0x00000002;\n' +
+      '    const uint OPEN_EXISTING = 3;\n' +
+      '    var handle = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);\n' +
+      '    if (handle.IsInvalid) return "CreateFile failed: " + Marshal.GetLastWin32Error();\n' +
+      '    using (var fs = new FileStream(handle, FileAccess.Write)) {\n' +
+      '      fs.Write(bytes, 0, bytes.Length);\n' +
+      '      fs.Flush();\n' +
+      '    }\n' +
+      '    return "USB_DIRECT_OK:" + bytes.Length;\n' +
+      '  }\n' +
+      '}\n' +
+      '"@\n' +
+      `$data = [System.IO.File]::ReadAllBytes('${escapedFile}')\n` +
+      '$result = [UsbDirectPrint]::Write($devicePath, $data)\n' +
+      'if (-not $result.StartsWith("USB_DIRECT_OK:")) { throw $result }\n' +
+      'Write-Output $result\n';
+
+    const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+    const { stdout, stderr } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+      { encoding: 'utf8', timeout: 15000 },
+    );
+
+    const cleanedErr = (stderr || '').replace(/#< CLIXML[\s\S]*?Preparing modules[\s\S]*?<\/Objs>/gi, '').trim();
+    if (cleanedErr) throw new Error(`Direct USB print failed: ${cleanedErr}`);
+
+    const result = (stdout || '').trim();
+    if (!result.startsWith('USB_DIRECT_OK:')) {
+      throw new Error(`Direct USB print returned unexpected result: ${result}`);
     }
   }
 

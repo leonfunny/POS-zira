@@ -1,9 +1,8 @@
-// Kitchen ticket: what the cooks see when a paid order contains items from a
-// kitchen-flagged category (categories.kitchen_print = 1). Deliberately NO
-// prices — the kitchen needs order number, time, source, items, quantities,
-// and notes, in a large readable font. Rendering goes through the thermal
-// driver's plain-line path so Vietnamese/Polish names fall back to raster
-// instead of printing mangled code-page text.
+// Kitchen ticket: what the cooks see when a customer kitchen self-order is
+// submitted. Deliberately NO prices — the kitchen needs order number, time,
+// source, items, quantities, and notes in a large readable font. Rendering
+// goes through the thermal driver's plain-line path so Vietnamese/Polish names
+// fall back to raster instead of printing mangled code-page text.
 import type { EscPosPlainLine } from '../hardware/thermal/escpos-formatter';
 import type { KitchenTicketData, KitchenTicketItem } from '../../shared/types';
 
@@ -65,6 +64,14 @@ function formatQuantity(item: KitchenTicketItem): string {
   return `${Math.max(1, Math.round(Number(item.quantity) || 1))}x`;
 }
 
+export function kitchenItemCount(items: KitchenTicketItem[]): number {
+  return items.reduce((sum, item) => {
+    const unit = (item.unit || '').trim().toLowerCase();
+    const weighted = unit !== '' && unit !== 'szt' && unit !== 'pcs';
+    return sum + (weighted ? 1 : Math.max(1, Math.round(Number(item.quantity) || 1)));
+  }, 0);
+}
+
 function formatMoney(grosze: unknown): string {
   const amount = Math.max(0, Math.round(Number(grosze) || 0));
   return `${(amount / 100).toFixed(2).replace('.', ',')} zl`;
@@ -94,8 +101,10 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
   if (fulfillment) {
     lines.push({ text: fulfillment, bold: true, center: true, textSize: 'double-height' });
   }
+  const count = kitchenItemCount(data.items);
+  const itemWord = lang === 'vi' ? 'món' : lang === 'en' ? 'items' : 'poz.';
   lines.push({
-    text: `${formatTimeHHMM(data.createdAt)}  ·  ${sourceLabel(data.source)}`,
+    text: `${formatTimeHHMM(data.createdAt)}  ·  ${sourceLabel(data.source)}  · ${count} ${itemWord}`,
     center: true,
   });
   lines.push({ text: '', separator: true });
@@ -106,9 +115,13 @@ export function buildKitchenTicketLines(data: KitchenTicketData): EscPosPlainLin
       bold: true,
       textSize: 'double-height',
     });
+    for (const modifier of item.modifiers || []) {
+      const text = String(modifier || '').trim();
+      if (text) lines.push({ text: `   » ${text}`, bold: true });
+    }
     const notes = (item.notes || '').trim();
     if (notes) {
-      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
+      lines.push({ text: `   !! ${notes}`, bold: true });
     }
   }
 
@@ -202,6 +215,8 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
     0,
     Math.round(Number(data.totalGrosze) || data.items.reduce((sum, item) => sum + lineTotal(item), 0)),
   );
+  const slipCount = kitchenItemCount(data.items);
+  const slipItemWord = lang === 'vi' ? 'món' : lang === 'en' ? 'items' : 'poz.';
 
   lines.push({ text: pickupSlipBrandName(data), bold: true, center: true });
   lines.push({ text: copy.title, bold: true, center: true });
@@ -210,7 +225,7 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
   if (fulfillment) {
     lines.push({ text: fulfillment, bold: true, center: true });
   }
-  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}`, center: true });
+  lines.push({ text: `${orderNumberLabel(data.orderNumber)}  ·  ${formatTimeHHMM(data.createdAt)}  · ${slipCount} ${slipItemWord}`, center: true });
   lines.push({ text: '', separator: true });
 
   for (const item of data.items) {
@@ -220,9 +235,13 @@ export function buildKitchenPaymentSlipLines(data: KitchenTicketData): EscPosPla
     if (unitPrice > 0 && quantity > 1) {
       lines.push({ text: `   ${formatMoney(unitPrice)} / szt` });
     }
+    for (const modifier of item.modifiers || []) {
+      const modifierText = String(modifier || '').trim();
+      if (modifierText) lines.push({ text: `   » ${modifierText}` });
+    }
     const notes = (item.notes || '').trim();
     if (notes) {
-      lines.push({ text: lang === 'vi' ? `   Ghi chu: ${notes}` : `   >> ${notes}` });
+      lines.push({ text: `   !! ${notes}` });
     }
   }
 

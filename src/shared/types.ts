@@ -262,6 +262,67 @@ export interface ScaleConfig {
   remote?: ScaleRemoteConfig;
 }
 
+export interface LanFirstReceiverConfig {
+  enabled?: boolean;
+  port?: number;
+  auth?: {
+    sharedSecret?: string;
+    allowUnauthenticated?: boolean;
+  };
+}
+
+export interface LanFirstKitchenSenderTargetConfig {
+  host?: string;
+  port?: number;
+  timeoutMs?: number;
+}
+
+export interface LanFirstKitchenSenderConfig {
+  enabled?: boolean;
+  timeoutMs?: number;
+  targets?: Record<string, LanFirstKitchenSenderTargetConfig>;
+  manualTarget?: LanFirstKitchenSenderTargetConfig;
+  auth?: {
+    sharedSecret?: string;
+  };
+}
+
+export type LanFirstKitchenPairingScope = 'receiver' | 'sender';
+
+export interface LanFirstKitchenPairingCodeRequest {
+  scope: LanFirstKitchenPairingScope;
+  pairingCode: string;
+}
+
+export interface LanFirstKitchenPairingStatus {
+  receiverHasPairingCode: boolean;
+  senderHasPairingCode: boolean;
+}
+
+export interface LanFirstKitchenNetworkInfo {
+  ips: string[];
+  suggestedHost: string;
+  defaultPort: number;
+  running?: boolean;
+  port?: number | null;
+  error?: string;
+}
+
+export interface LanFirstKitchenTestRouteRequest {
+  host: string;
+  port: number;
+  pairingCode?: string;
+  timeoutMs?: number;
+}
+
+export interface LanFirstKitchenTestRouteResponse {
+  success: boolean;
+  status?: string;
+  httpStatus?: number;
+  message?: string;
+  error?: string;
+}
+
 export type ScaleReadResult =
   | {
       success: true;
@@ -478,6 +539,8 @@ export interface AgentConfig {
   labelWidth?: number;
   labelHeight?: number;
   scale?: ScaleConfig;
+  lanFirstReceiver?: LanFirstReceiverConfig;
+  lanFirstKitchenSender?: LanFirstKitchenSenderConfig;
 
   // Server settings
   serverUrl: string;
@@ -576,6 +639,7 @@ export interface AgentConfig {
   kitchenSelfOrderAccentColor?: string;
   kitchenSelfOrderCheckoutMode?: 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
   kitchenSelfOrderReleasePolicy?: 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
+  kitchenSelfOrderVoiceEnabled?: boolean;   // Speak the pickup number (Polish) on the done screen.
 
   // Salon slug (for warehouse public API) + 4-digit support code (display / UX only)
   salonSlug?: string;
@@ -710,6 +774,9 @@ export interface KitchenTicketItem {
   quantity: number;
   /** kg for weighted items; null/'szt' renders as a plain count. */
   unit?: string | null;
+  /** Readable modifier labels (e.g. "Duong: 50%"). Rendered one per line. */
+  modifiers?: string[];
+  /** Free-text customer note only (modifiers live in `modifiers`). */
   notes?: string | null;
   /** Customer payment slip only. Kitchen tickets must not render prices. */
   unitPriceGrosze?: number | null;
@@ -726,7 +793,7 @@ export interface KitchenTicketData {
   source: string;
   /** Optional first-class kitchen/self-order fulfillment choice. */
   fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
-  /** Kitchen ticket language. Existing POS kitchen tickets default to PL. */
+  /** Kitchen ticket language. Customer kitchen self-orders default to VI. */
   kitchenLanguage?: 'pl' | 'vi' | 'en' | string | null;
   /** Customer slip language. Existing pickup slips default to PL. */
   customerLanguage?: 'pl' | 'vi' | 'en' | string | null;
@@ -742,6 +809,9 @@ export interface KitchenTicketData {
   paymentStatus?: 'UNPAID' | 'PAID' | string | null;
   /** Optional customer-slip QR payload used by cashier POS to recall the cart. */
   qrPayload?: string | null;
+  /** Compact (no-notes) QR for the LABEL printer only; smaller so it always
+   *  fits/scan on a 50x30 label. Local-only - never sent over the shared route. */
+  labelQrPayload?: string | null;
   /** Customer-facing brand shown on pickup slips. */
   brandName?: string | null;
   /** Customer payment slip only. Existing kitchen tickets can omit it. */
@@ -781,6 +851,81 @@ export interface CreatePrintJobResponse {
   message?: string;
   errorMessage?: string;
   printerId?: string | null;
+  [key: string]: unknown;
+}
+
+export type LanFirstPayloadHash = `sha256:${string}`;
+export type LanFirstDispatchMode = 'LAN_FIRST';
+export type LanFirstPrintTransport = 'LAN_DIRECT';
+export type LanFirstPrintResultStatus = 'COMPLETED' | 'FAILED' | 'PRINTING';
+export type LanFirstPrintFailureClass = 'SAFE_BEFORE_PRINT' | 'UNCERTAIN_AFTER_PRINT' | 'FINAL';
+
+export interface LanFirstPrintPayloadHashInput {
+  jobType: 'KITCHEN_TICKET';
+  printerType: 'KITCHEN';
+  printerId: string;
+  referenceType: 'KITCHEN_TICKET';
+  referenceId: string;
+  payload: unknown;
+}
+
+export interface ReserveLanFirstPrintJobRequest extends LanFirstPrintPayloadHashInput {
+  jobId: string;
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  dispatchMode: LanFirstDispatchMode;
+  sourceMachineId: string;
+  targetMachineId: string;
+}
+
+export interface DispatchLanFirstPrintJobRequest {
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  dispatchMode: LanFirstDispatchMode;
+  sourceMachineId: string;
+  targetMachineId: string;
+  printerId: string;
+  reason: string;
+}
+
+export interface ReportLanFirstPrintResultRequest {
+  status: LanFirstPrintResultStatus;
+  failureClass: LanFirstPrintFailureClass | null;
+  errorMessage: string | null;
+  idempotencyKey: string;
+  payloadHash: LanFirstPayloadHash;
+  transport: LanFirstPrintTransport;
+}
+
+export interface LanFirstPrintJobResponse {
+  jobId?: string;
+  id?: string;
+  state?: string;
+  status?: string;
+  idempotencyKey?: string | null;
+  payloadHash?: LanFirstPayloadHash | null;
+  dispatchMode?: 'LAN_FIRST' | 'BACKEND' | string | null;
+  sourceMachineId?: string | null;
+  targetMachineId?: string | null;
+  printerId?: string | null;
+  targetAgentId?: string | null;
+  duplicate?: boolean;
+  backendDispatched?: boolean;
+  dispatchReason?: string | null;
+  lanToken?: string | null;
+  lanTokenExpiresAt?: string | null;
+  sent?: boolean;
+  message?: string;
+  errorMessage?: string;
+  [key: string]: unknown;
+}
+
+export interface LanFirstPrintResultResponse {
+  jobId?: string;
+  id?: string;
+  status?: string;
+  message?: string;
+  errorMessage?: string;
   [key: string]: unknown;
 }
 
@@ -1025,6 +1170,10 @@ export const IPC_CHANNELS = {
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   SCALE_READ_WEIGHT: 'scale:read-weight',
   SCALE_GET_NETWORK_INFO: 'scale:get-network-info',
+  LAN_FIRST_KITCHEN_GET_NETWORK_INFO: 'lan-first-kitchen:get-network-info',
+  LAN_FIRST_KITCHEN_GET_PAIRING_STATUS: 'lan-first-kitchen:get-pairing-status',
+  LAN_FIRST_KITCHEN_SET_PAIRING_CODE: 'lan-first-kitchen:set-pairing-code',
+  LAN_FIRST_KITCHEN_TEST_ROUTE: 'lan-first-kitchen:test-route',
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',

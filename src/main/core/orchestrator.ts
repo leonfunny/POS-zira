@@ -42,6 +42,7 @@ import { IPC_CHANNELS } from '../../shared/types';
 import TrayManager, { TrayManagerHost } from '../tray';
 import logger from '../logger';
 import { handleZoomShortcut, resetWindowZoom } from '../windows/zoom-controls';
+import { getRendererDevServerUrl, shouldUseRendererDevServer } from '../windows/renderer-dev-server';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -393,7 +394,7 @@ export class AgentOrchestrator implements TrayManagerHost {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
-        devTools: process.env.NODE_ENV === 'development' || isDebugMode, // SECURITY: Gate DevTools behind debug mode
+        devTools: shouldUseRendererDevServer() || isDebugMode, // SECURITY: Gate DevTools behind debug mode
       },
       icon: getIconPath('icon.png'),
       title: isDebugMode ? 'Zira AI [DEBUG]' : 'Zira AI',
@@ -403,11 +404,11 @@ export class AgentOrchestrator implements TrayManagerHost {
 
     this.container.set(SERVICE_TOKENS.MAIN_WINDOW, this.mainWindow);
 
-    const isDev = process.env.NODE_ENV === 'development';
+    const isDev = shouldUseRendererDevServer();
     logger.info(`[Window] Loading renderer (dev=${isDev})...`);
 
     if (isDev) {
-      this.mainWindow.loadURL('http://localhost:3100');
+      this.mainWindow.loadURL(getRendererDevServerUrl());
       this.mainWindow.webContents.openDevTools();
     } else {
       const htmlPath = join(__dirname, '../../renderer/index.html');
@@ -420,7 +421,7 @@ export class AgentOrchestrator implements TrayManagerHost {
 
     // SECURITY: Navigation guards — prevent redirects to malicious pages
     this.mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
-      const allowed = isDev ? ['http://localhost:3100'] : ['file://'];
+      const allowed = isDev ? [getRendererDevServerUrl()] : ['file://'];
       if (!allowed.some(prefix => navigationUrl.startsWith(prefix))) {
         logger.warn(`[Window] Blocked navigation to: ${navigationUrl}`);
         event.preventDefault();

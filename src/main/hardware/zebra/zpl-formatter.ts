@@ -1,4 +1,6 @@
 import { ReceiptData, LabelData, BarcodeType, CheckinConfirmationData, InfoLabelData, ManufacturerRole, type KitchenTicketData } from '../../../shared/types';
+import QRCode from 'qrcode';
+import { kitchenItemCount } from '../../printing/kitchen-ticket';
 
 /**
  * ZPL command mappings for barcode types
@@ -18,6 +20,34 @@ const ASCII_TRANSLITERATION: Record<string, string> = {
   '\u0111': 'd',
   '\u0110': 'D',
 };
+
+type KitchenLabelLang = 'pl' | 'vi' | 'en';
+
+const KITCHEN_LABEL_COPY: Record<KitchenLabelLang, {
+  order: string; count: string; pay: string; takeaway: string; dineIn: string;
+}> = {
+  pl: { order: 'NR ZAMOWIENIA', count: 'poz.', pay: 'Zaplac przy kasie', takeaway: 'NA WYNOS', dineIn: 'NA MIEJSCU' },
+  vi: { order: 'SO DON', count: 'mon', pay: 'Ra quay tra tien', takeaway: 'MANG DI', dineIn: 'AN TAI QUAN' },
+  en: { order: 'ORDER NO', count: 'items', pay: 'Pay at counter', takeaway: 'TAKEAWAY', dineIn: 'DINE IN' },
+};
+
+function kitchenLabelLang(value: unknown): KitchenLabelLang {
+  const lang = String(value || '').toLowerCase();
+  return lang === 'vi' || lang === 'en' ? lang : 'pl';
+}
+
+function kitchenLabelFulfillment(value: unknown, lang: KitchenLabelLang): string | null {
+  const normalized = String(value || '').toUpperCase();
+  if (normalized === 'TAKEAWAY') return KITCHEN_LABEL_COPY[lang].takeaway;
+  if (normalized === 'DINE_IN') return KITCHEN_LABEL_COPY[lang].dineIn;
+  return null;
+}
+
+function kitchenLabelTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 /**
  * ZPL Formatter for Zebra printers
@@ -51,6 +81,39 @@ export class ZplFormatter {
       .replace(/[\^~]/g, '')            // ZPL special chars
       .trim()
       .substring(0, maxLength);
+  }
+
+  private sanitizeAscii(text: string, maxLength: number = 50): string {
+    return this.transliterateLatinToAscii(text)
+      .replace(/[\^~]/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+      .trim()
+      .substring(0, maxLength);
+  }
+
+  private kitchenLabelQrLayout(payload: string): { magnification: number; x: number } {
+    const marginMm = 2;
+    const leftColMm = 22;
+    const maxQrMm = Math.max(10, this.labelWidth - leftColMm - marginMm);
+    let modules = 25;
+    try {
+      modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;
+    } catch {
+      modules = 25;
+    }
+    let magnification = 2;
+    for (const value of [4, 3, 2]) {
+      if ((modules * value) / this.dotsPerMm <= maxQrMm) {
+        magnification = value;
+        break;
+      }
+    }
+    const widthDots = modules * magnification;
+    const x = Math.max(
+      this.mmToDots(leftColMm),
+      this.mmToDots(this.labelWidth) - widthDots - this.mmToDots(marginMm),
+    );
+    return { magnification, x };
   }
 
   private transliterateLatinToAscii(text: string): string {
@@ -287,11 +350,11 @@ export class ZplFormatter {
   }
 
   /**
-   * Dedicated 50x30-ish payment slip for kitchen self-order kiosks.
-   * This intentionally does not reuse the product label layout: no product
-   * barcode, no item list, just the counter payment QR and human order number.
+   * Dedicated 50x30 payment label for kitchen self-order kiosks.
    */
   formatKitchenPaymentLabel(data: KitchenTicketData): string {
+    const lang = kitchenLabelLang(data.customerLanguage);
+    const copy = KITCHEN_LABEL_COPY[lang];
     const total = Math.max(
       0,
       Math.round(Number(data.totalGrosze) || data.items.reduce((sum, item) => {
@@ -301,27 +364,35 @@ export class ZplFormatter {
         return sum + Math.max(0, Math.round(Number(item.unitPriceGrosze) || 0)) * quantity;
       }, 0)),
     );
-    const orderNumber = this.sanitizeText(data.pickupNumber || data.orderNumber || '----', 24);
-    const qrPayload = this.sanitizeText(data.qrPayload || '', 1200);
-    const totalText = `RAZEM ${(total / 100).toFixed(2).replace('.', ',')} zl`;
+    const orderNumber = this.sanitizeAscii(data.pickupNumber || data.orderNumber || '----', 24);
+    const brand = this.sanitizeAscii(data.brandName || 'Zira POS', 28);
+    const fulfillment = kitchenLabelFulfillment(data.fulfillmentType, lang);
+    const headerText = fulfillment ? `${brand}  -  ${fulfillment}` : brand;
+    const totalText = this.sanitizeAscii(
+      `${kitchenItemCount(data.items)} ${copy.count}  -  ${(total / 100).toFixed(2).replace('.', ',')} zl`,
+      40,
+    );
+    const time = kitchenLabelTime(data.createdAt);
+    const payload = this.sanitizeText(data.labelQrPayload || data.qrPayload || '', 1200);
     const left = this.mmToDots(3);
-    const qrX = this.mmToDots(31);
-    const qrY = this.mmToDots(4);
+
     const lines: string[] = [
       '^XA',
       '^CI28',
       `^PW${this.mmToDots(this.labelWidth)}`,
-      `^FO${left},${this.mmToDots(2)}^A0,${this.mmToDots(3)},${this.mmToDots(3)}^FDDO ZAPLATY^FS`,
-      `^FO${left},${this.mmToDots(6)}^A0,${this.mmToDots(7)},${this.mmToDots(7)}^FD${orderNumber}^FS`,
-      `^FO${left},${this.mmToDots(14)}^A0,${this.mmToDots(3)},${this.mmToDots(3)}^FD${totalText}^FS`,
-      `^FO${left},${this.mmToDots(19)}^A0,${this.mmToDots(2.3)},${this.mmToDots(2.3)}^FDSKANUJ PRZY KASIE^FS`,
-      `^FO${left},${this.mmToDots(23)}^A0,${this.mmToDots(2.1)},${this.mmToDots(2.1)}^FDPOKAZ W KASIE^FS`,
+      `^FO${left},${this.mmToDots(2)}^A0,${this.mmToDots(2.6)},${this.mmToDots(2.6)}^FD${this.sanitizeAscii(headerText, 40)}^FS`,
+      `^FO${left},${this.mmToDots(6)}^A0,${this.mmToDots(2.6)},${this.mmToDots(2.6)}^FD${this.sanitizeAscii(copy.order, 24)}^FS`,
+      `^FO${left},${this.mmToDots(9)}^A0,${this.mmToDots(7)},${this.mmToDots(7)}^FD${orderNumber}^FS`,
+      `^FO${left},${this.mmToDots(18)}^A0,${this.mmToDots(2.8)},${this.mmToDots(2.8)}^FD${totalText}^FS`,
+      `^FO${left},${this.mmToDots(22)}^A0,${this.mmToDots(2.3)},${this.mmToDots(2.3)}^FD${this.sanitizeAscii(copy.pay, 40)}^FS`,
+      `^FO${left},${this.mmToDots(26)}^A0,${this.mmToDots(2.1)},${this.mmToDots(2.1)}^FD${this.sanitizeAscii(time, 8)}^FS`,
     ];
 
-    if (qrPayload) {
-      lines.push(`^FO${qrX},${qrY}`);
-      lines.push('^BQN,2,2');
-      lines.push(`^FDQA,${qrPayload}^FS`);
+    if (payload) {
+      const qr = this.kitchenLabelQrLayout(payload);
+      lines.push(`^FO${qr.x},${this.mmToDots(4)}`);
+      lines.push(`^BQN,2,${qr.magnification}`);
+      lines.push(`^FDMA,${payload}^FS`);
     }
 
     lines.push('^XZ');

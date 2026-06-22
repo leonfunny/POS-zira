@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -31,6 +31,13 @@ import {
   type KitchenSelfOrderModifierSnapshot,
 } from '../../../shared/kitchen-self-order';
 import { normalizeCatalogText } from '../self-checkout/catalog-model';
+import {
+  cancelOrderNumberAnnouncement,
+  playOrderNumberAnnouncement,
+  primeOrderNumberAudio,
+  shouldAnnounceOrderNumber,
+  warmUpOrderNumberClips,
+} from './order-number-tts';
 
 declare global {
   interface Window {
@@ -241,6 +248,8 @@ export default function KitchenSelfOrderApp() {
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
   const [customerError, setCustomerError] = useState<string | null>(null);
   const [resetCountdown, setResetCountdown] = useState(20);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const announcedRef = useRef<string | null>(null);
   const t = COPY[language];
 
   const refreshMenu = useCallback(async () => {
@@ -280,6 +289,7 @@ export default function KitchenSelfOrderApp() {
         setFulfillment(normalizeKitchenSelfOrderFulfillment(
           config.kitchenSelfOrderDefaultFulfillment,
         ));
+        setVoiceEnabled(config.kitchenSelfOrderVoiceEnabled !== false);
       } catch {
         /* keep safe defaults */
       }
@@ -289,7 +299,13 @@ export default function KitchenSelfOrderApp() {
     };
   }, []);
 
+  useEffect(() => {
+    warmUpOrderNumberClips();
+  }, []);
+
   const resetSession = useCallback(() => {
+    cancelOrderNumberAnnouncement();
+    announcedRef.current = null;
     setCart([]);
     setQuery('');
     setActiveCategoryId(null);
@@ -316,6 +332,17 @@ export default function KitchenSelfOrderApp() {
     }, 1000);
     return () => window.clearInterval(interval);
   }, [resetSession, step]);
+
+  useEffect(() => {
+    const n = shouldAnnounceOrderNumber(step, voiceEnabled, submitResult?.orderNumber);
+    if (n == null) return;
+    const key = submitResult?.orderNumber ?? String(n);
+    if (announcedRef.current === key) return;   // guard StrictMode / re-renders
+    announcedRef.current = key;
+    void playOrderNumberAnnouncement(n);
+  }, [step, voiceEnabled, submitResult?.orderNumber]);
+
+  useEffect(() => () => cancelOrderNumberAnnouncement(), []);
 
   useEffect(() => {
     if (!menu || menu.policies.fulfillmentOptions.includes(fulfillment)) return;
@@ -407,6 +434,7 @@ export default function KitchenSelfOrderApp() {
   };
 
   const retryCustomerSlip = async (orderId: string | undefined) => {
+    primeOrderNumberAudio();
     if (!orderId || submitting) return;
     setSubmitting(true);
     setCustomerError(null);
@@ -427,6 +455,7 @@ export default function KitchenSelfOrderApp() {
   };
 
   const submitOrder = async () => {
+    primeOrderNumberAudio();
     if (!menu || cart.length === 0 || submitting) return;
     if (submitResult?.canRetrySlip && submitResult.orderId) {
       await retryCustomerSlip(submitResult.orderId);

@@ -26,6 +26,7 @@ export interface RefundReceiptOverride {
 }
 
 type PrinterDriver = {
+  connect?(): Promise<boolean>;
   isConnected(): boolean;
   printReceipt(data: ReceiptData): Promise<void>;
   printReceiptWithDrawer?(data: ReceiptData): Promise<void>;
@@ -46,6 +47,8 @@ type SharedFiscalStatusProvider = () => Promise<{ configured: boolean; connected
 type PrintReceiptOptions = {
   throwOnFailure?: boolean;
 };
+
+const PAYMENT_PRINTER_CONNECT_TIMEOUT_MS = 5_000;
 
 /**
  * Raw outcome of a non-fiscal receipt print, reported to the host so it can
@@ -270,6 +273,31 @@ export class PaymentController {
     }
   }
 
+  private async ensurePrinterReady(printer: PrinterDriver | null, printerType: PrinterType): Promise<PrinterDriver | null> {
+    if (!printer) return null;
+    if (printer.isConnected()) return printer;
+    if (typeof printer.connect !== 'function') return null;
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      logger.warn(`[Payment] ${printerType} printer is disconnected; attempting reconnect before print`);
+      const timedOut = new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), PAYMENT_PRINTER_CONNECT_TIMEOUT_MS);
+      });
+      const connected = await Promise.race([printer.connect(), timedOut]);
+      if (connected && printer.isConnected()) {
+        logger.info(`[Payment] ${printerType} printer reconnected before print`);
+        return printer;
+      }
+    } catch (err: any) {
+      logger.warn(`[Payment] ${printerType} printer reconnect failed: ${err?.message || err}`);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+
+    return null;
+  }
+
   private async printReceiptData(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string },
@@ -284,7 +312,7 @@ export class PaymentController {
     // and the elzabdr/POSNET drivers live on the POS that owns the device.
     const orderId = meta.referenceId || '';
     const documentType = this.docTypeFromMeta(meta.referenceType);
-    const printer = this.getPrinter(printerType);
+    const printer = await this.ensurePrinterReady(this.getPrinter(printerType), printerType);
 
     if (printer && printer.isConnected()) {
       try {
@@ -431,7 +459,7 @@ export class PaymentController {
     const orderNumberLabel = receiptData.orderNumber;
     const successMessage = `[Payment] Receipt printed for order ${orderNumberLabel}`;
     const failureMessage = '[Payment] Receipt print failed';
-    const printer = this.getPrinter(PrinterType.RECEIPT);
+    const printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.RECEIPT), PrinterType.RECEIPT);
 
     if (printer && printer.isConnected()) {
       if (printer.printReceiptWithDrawer) {
@@ -625,7 +653,7 @@ export class PaymentController {
    * Open cash drawer
    */
   async openCashDrawer(): Promise<boolean> {
-    const printer = this.getPrinter(PrinterType.RECEIPT);
+    const printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.RECEIPT), PrinterType.RECEIPT);
     if (!printer || !printer.isConnected()) {
       logger.warn('[Payment] No receipt printer connected, cannot open drawer');
       return false;

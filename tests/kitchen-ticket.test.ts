@@ -4,6 +4,7 @@ import {
   buildKitchenPaymentSlipLines,
   buildKitchenTicketLines,
   buildPickupSlipLines,
+  kitchenItemCount,
 } from '../src/main/printing/kitchen-ticket';
 import type { KitchenTicketData } from '../src/shared/types';
 
@@ -32,7 +33,7 @@ describe('kitchen ticket builder', () => {
     expect(text).toContain('KIOSK'); // SELF_CHECKOUT → KIOSK label
     expect(text).toContain('2x Phở bò');
     expect(text).toContain('1x Chả giò');
-    expect(text).toContain('>> không hành');
+    expect(text).toContain('!! không hành');
     expect(text).not.toMatch(/zł|PLN|\d+,\d{2}/); // no money anywhere
   });
 
@@ -81,7 +82,7 @@ describe('kitchen ticket builder', () => {
       ...baseTicket,
       orderNumber: 'K-042',
       pickupNumber: 'K-042',
-      source: 'KIOSK PC-YURI',
+      source: 'KIOSK',
       fulfillmentType: 'TAKEAWAY',
       kitchenLanguage: 'vi',
       items: [{ name: 'Pho bo', quantity: 2, notes: 'it cay' }],
@@ -92,16 +93,34 @@ describe('kitchen ticket builder', () => {
     expect(text).toContain('K-042');
     expect(text).not.toContain('CHUA TRA TIEN');
     expect(text).toContain('MANG DI');
-    expect(text).toContain('KIOSK PC-YURI');
-    expect(text).toContain('Ghi chu: it cay');
+    expect(text).toContain('KIOSK');
+    expect(text).toContain('!! it cay');
     expect(text).not.toContain('#K-042');
+  });
+
+  it('renders each modifier on its own » line, the note on a !! line, and a header count', () => {
+    const lines = buildKitchenTicketLines({
+      ...baseTicket,
+      kitchenLanguage: 'vi',
+      items: [
+        { name: 'Trà sữa', quantity: 2, modifiers: ['Đường: 50%', 'Đá: ít'], notes: 'ít đá giùm em' },
+        { name: 'Chè thái', quantity: 1, modifiers: ['+ trân châu'] },
+      ],
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('» Đường: 50%');
+    expect(text).toContain('» Đá: ít');
+    expect(text).toContain('» + trân châu');
+    expect(text).toContain('!! ít đá giùm em');
+    expect(text).toContain('· 3 món'); // 2 + 1
   });
 
   it('marks kitchen self-order tickets as unpaid when sent before cashier payment', () => {
     const lines = buildKitchenTicketLines({
       ...baseTicket,
       orderNumber: 'K-043',
-      source: 'KIOSK PC-YURI',
+      source: 'KIOSK',
       kitchenLanguage: 'vi',
       paymentStatus: 'UNPAID',
     });
@@ -183,11 +202,28 @@ describe('pickup number (so nhan do)', () => {
     expect(lines.some((line) => line.qrData === 'KSO1:test' && line.qrSize === 5)).toBe(true);
   });
 
-  it('assigns a daily 4-digit number at order create when kitchen items exist', () => {
+  it('payment slip renders modifiers and note and shows an item count', () => {
+    const lines = buildKitchenPaymentSlipLines({
+      ...baseTicket,
+      customerLanguage: 'vi',
+      totalGrosze: 3400,
+      items: [
+        { name: 'Trà sữa', quantity: 2, unitPriceGrosze: 1200, modifiers: ['Đường: 50%'], notes: 'ít đá' },
+      ],
+    });
+    const text = lines.map((l) => l.text).join('\n');
+
+    expect(text).toContain('» Đường: 50%');
+    expect(text).toContain('!! ít đá');
+    expect(text).toContain('· 2 món');
+  });
+
+  it('does not assign a new kitchen number to normal POS order creates', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/order-repo.ts');
 
-    expect(posModuleSource).toContain('normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber()');
+    expect(posModuleSource).not.toContain('normalizedOrder.kitchen_number = orderRepo.nextKitchenNumber()');
+    expect(posModuleSource).not.toContain('const hasKitchenItems = (normalizedItems || []).some');
     expect(repoSource).toContain("date(created_at) = date('now')");
     expect(repoSource).toContain("String(next).padStart(4, '0')");
   });
@@ -207,21 +243,15 @@ describe('pickup number (so nhan do)', () => {
 });
 
 describe('kitchen ticket pipeline wiring', () => {
-  it('fires after order create, never blocking the sale, and skips duplicates', () => {
+  it('does not auto-print kitchen tickets from normal POS order creation', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
 
-    expect(posModuleSource).toContain('void this.printKitchenTicketForOrder(id)');
-    expect(posModuleSource).toContain("'pos:kitchen-ticket-failed'");
-    expect(posModuleSource).toContain("ipcMain.handle('pos:orders:printKitchenTicket'");
-    expect(posModuleSource).toContain("String(order.source || '').toUpperCase() === 'KITCHEN_SELF_ORDER'");
-    // The idempotent duplicate-create return happens in the catch BEFORE the
-    // kitchen hook, so a retried sale can't print a second ticket.
-    const dupIndex = posModuleSource.indexOf('duplicate: true');
-    const hookIndex = posModuleSource.indexOf('void this.printKitchenTicketForOrder(id)');
-    expect(dupIndex).toBeGreaterThan(hookIndex);
+    expect(posModuleSource).not.toContain('void this.printKitchenTicketForOrder(id)');
+    expect(posModuleSource).not.toContain("'pos:kitchen-ticket-failed'");
+    expect(posModuleSource).not.toContain("ipcMain.handle('pos:orders:printKitchenTicket'");
   });
 
-  it('prefers the dedicated local kitchen printer and never the receipt fallback', () => {
+  it('self-order kitchen release prefers the dedicated local kitchen printer and never the receipt fallback', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     expect(posModuleSource).toContain('printers[PrinterType.KITCHEN]');
     expect(posModuleSource).toContain('submitSharedKitchenPrint(ticket)');
@@ -233,7 +263,7 @@ describe('kitchen ticket pipeline wiring', () => {
 
     expect(sharedSource).toContain("SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN'");
     expect(sharedSource).toContain('jobType: PrintJobType.KITCHEN_TICKET');
-    expect(sharedSource).toContain('waitForCompletion: true');
+    expect(sharedSource).toContain('submitSharedPlainPrint(ticket, SHARED_KITCHEN_ROLE, PrinterType.KITCHEN, false)');
     expect(hardwareSource).toContain('job.jobType === PrintJobType.KITCHEN_TICKET');
     expect(hardwareSource).toContain('buildKitchenTicketLines(ticket)');
   });
@@ -253,7 +283,7 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(applicatorSource).toContain("firstOwnValue(p, ['kitchenPrint', 'kitchen_print'])");
   });
 
-  it('exposes the Settings toggle and the Order History reprint button', () => {
+  it('exposes the Settings toggle without exposing a POS Order History kitchen-print action', () => {
     const settingsSource = readSource('src/renderer/components/Settings.tsx');
     const kitchenSettingsSource = readSource('src/renderer/components/pos/KitchenPrintSettings.tsx');
     const modalSource = readSource('src/renderer/components/pos/OrderHistoryModal.tsx');
@@ -261,7 +291,18 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(settingsSource).toContain('<KitchenPrintSettings');
     expect(kitchenSettingsSource).toContain('updateCategory(category.id');
     expect(kitchenSettingsSource).toContain('kitchenPrint: next');
-    expect(modalSource).toContain('handlePrintKitchenTicket(order.id)');
-    expect(modalSource).toContain('pos.history.printKitchenTicket');
+    expect(modalSource).not.toContain('handlePrintKitchenTicket(order.id)');
+    expect(modalSource).not.toContain('pos.history.printKitchenTicket');
+  });
+});
+
+describe('kitchenItemCount', () => {
+  it('sums piece quantities and counts weighted items as one', () => {
+    expect(kitchenItemCount([{ name: 'a', quantity: 2 }, { name: 'b', quantity: 1 }])).toBe(3);
+    expect(kitchenItemCount([{ name: 'a', quantity: 0.5, unit: 'kg' }])).toBe(1);
+    expect(kitchenItemCount([
+      { name: 'a', quantity: 2, unit: 'szt' },
+      { name: 'b', quantity: 0.75, unit: 'kg' },
+    ])).toBe(3);
   });
 });

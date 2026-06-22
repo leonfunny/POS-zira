@@ -221,8 +221,8 @@ change surgical to the label/ticket render path.
   `modifiers: parseKitchenSelfOrderOptions(item.options_json)` and `notes: item.note || null`
   (currently joined with `' | '`). Confirmed `parseKitchenSelfOrderOptions` → `formatKitchenSelfOrderModifierLabels`
   returns readable labels for both the structured and legacy option shapes.
-- **`printKitchenTicketForOrder`** (POS orders, same file): pass `modifiers: []`, keep `notes: item.notes`
-  → renders note only → no regression.
+- **Normal POS orders**: do **not** auto-print kitchen tickets. Kitchen tickets are released by
+  `kitchen-self-order:submit`; cashier POS checkout of a scanned KSO QR only prints the customer receipt.
 - **`KitchenTicketData`** (`src/shared/types.ts`): add `labelQrPayload?: string` (compact, label-only).
 - **`buildKitchenSelfOrderQrPayload`** (`pos.module.ts`): add `includeNotes?: boolean` option (default `true`,
   preserving current with-notes→fallback behaviour); `false` builds the compact payload directly.
@@ -253,7 +253,7 @@ receiver.)*
 |------|--------|
 | `src/shared/types.ts` | `KitchenTicketItem`: add `modifiers?: string[]`; `KitchenTicketData`: add `labelQrPayload?: string` |
 | `src/main/printing/kitchen-ticket.ts` | `buildKitchenTicketLines`: header count + per-line modifiers + `!!` note; add `kitchenItemCount` helper |
-| `src/main/modules/pos.module.ts` | adapter split modifiers/notes; `printKitchenTicketForOrder` `modifiers: []`; `buildKitchenSelfOrderQrPayload` `includeNotes` option; attach `labelQrPayload` at `submit` + `reprintSlip` |
+| `src/main/modules/pos.module.ts` | adapter split modifiers/notes for kitchen self-order tickets; `buildKitchenSelfOrderQrPayload` `includeNotes` option; attach `labelQrPayload` at `submit` + `reprintSlip`; normal POS orders do not auto-print kitchen tickets |
 | `src/main/hardware/zebra/zpl-formatter.ts` | `formatKitchenPaymentLabel`: i18n copy + brand/fulfillment/count/time, deterministic ASCII fold, payload-aware adaptive QR (`qrcode` module count, right-aligned, uses `data.labelQrPayload ?? data.qrPayload`); reusable `latinToAscii` helper |
 | `src/main/printing/kitchen-ticket.ts` (optional) | `buildKitchenPaymentSlipLines`: add count line for parity |
 

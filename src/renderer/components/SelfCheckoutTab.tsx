@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldAlert,
   Utensils,
+  Volume2,
   XCircle,
 } from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
@@ -53,7 +54,7 @@ function getKitchenSelfOrderCopy(language: Language) {
     return {
       badge: 'Kiosk đơn bếp',
       title: 'Kitchen Self-Order',
-      desc: 'Flow riêng cho PC-YURI: khách chọn món, POS1 in phiếu bếp, PC-YURI hiện số đơn.',
+      desc: 'Flow riêng cho kiosk bếp: khách chọn món, POS1 in phiếu bếp, kiosk hiện số đơn.',
       launch: 'Mở kiosk đặt món',
       opening: 'Đang mở...',
       settings: 'Cài đặt kitchen kiosk',
@@ -62,17 +63,18 @@ function getKitchenSelfOrderCopy(language: Language) {
       fulfillment: 'Mặc định ăn tại quán/mang đi',
       dineIn: 'Na miejscu',
       takeaway: 'Na wynos',
-      slipPrinter: 'Máy in slip PC-YURI',
+      slipPrinter: 'Máy in slip kiosk',
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Tách khỏi self-checkout store',
+      voiceLabel: 'Đọc số đơn bằng giọng nói',
     };
   }
   if (language === 'pl') {
     return {
       badge: 'Kiosk kuchenny',
       title: 'Kitchen Self-Order',
-      desc: 'Oddzielny flow dla PC-YURI: klient wybiera dania, POS1 drukuje bon kuchenny, PC-YURI pokazuje numer.',
+      desc: 'Oddzielny flow dla kiosku kuchennego: klient wybiera dania, POS1 drukuje bon kuchenny, kiosk pokazuje numer.',
       launch: 'Otworz kiosk zamowien',
       opening: 'Otwieranie...',
       settings: 'Ustawienia kiosku kuchni',
@@ -81,16 +83,17 @@ function getKitchenSelfOrderCopy(language: Language) {
       fulfillment: 'Domyslnie na miejscu/na wynos',
       dineIn: 'Na miejscu',
       takeaway: 'Na wynos',
-      slipPrinter: 'Drukarka slip PC-YURI',
+      slipPrinter: 'Drukarka slip kiosku',
       receipt: 'Receipt',
       label: 'Label',
       isolated: 'Oddzielone od self-checkout sklepu',
+      voiceLabel: 'Odczytaj numer zamówienia głosowo',
     };
   }
   return {
     badge: 'Kitchen kiosk',
     title: 'Kitchen Self-Order',
-    desc: 'Separate PC-YURI flow: customer picks food, POS1 prints the kitchen ticket, PC-YURI shows the order number.',
+    desc: 'Separate kitchen-kiosk flow: customer picks food, POS1 prints the kitchen ticket, the kiosk shows the order number.',
     launch: 'Open food-order kiosk',
     opening: 'Opening...',
     settings: 'Kitchen kiosk settings',
@@ -99,10 +102,11 @@ function getKitchenSelfOrderCopy(language: Language) {
     fulfillment: 'Default dine-in/takeaway',
     dineIn: 'Dine in',
     takeaway: 'Takeaway',
-    slipPrinter: 'PC-YURI slip printer',
+    slipPrinter: 'Kiosk slip printer',
     receipt: 'Receipt',
     label: 'Label',
     isolated: 'Separate from store self-checkout',
+    voiceLabel: 'Speak the order number',
   };
 }
 
@@ -120,6 +124,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
   const [kitchenMonitor, setKitchenMonitor] = useState<number>(0);
   const [kitchenFulfillment, setKitchenFulfillment] = useState<KitchenFulfillment>('DINE_IN');
   const [kitchenSlipPrinterType, setKitchenSlipPrinterType] = useState<KitchenSlipPrinterType>('RECEIPT');
+  const [kitchenVoiceEnabled, setKitchenVoiceEnabled] = useState<boolean>(true);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [opening, setOpening] = useState(false);
   const [kitchenOpening, setKitchenOpening] = useState(false);
@@ -137,6 +142,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
     setKitchenMonitor(typeof c.kitchenSelfOrderMonitor === 'number' ? c.kitchenSelfOrderMonitor : 0);
     setKitchenFulfillment(c.kitchenSelfOrderDefaultFulfillment === 'TAKEAWAY' ? 'TAKEAWAY' : 'DINE_IN');
     setKitchenSlipPrinterType(c.kitchenSelfOrderSlipPrinterType === 'LABEL' ? 'LABEL' : 'RECEIPT');
+    setKitchenVoiceEnabled(c.kitchenSelfOrderVoiceEnabled !== false);
   }, [config]);
 
   useEffect(() => {
@@ -214,7 +220,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
         kitchenSelfOrderMonitor: kitchenMonitor,
         kitchenSelfOrderDefaultFulfillment: kitchenFulfillment,
         kitchenSelfOrderSlipPrinterType: kitchenSlipPrinterType,
-        kitchenSelfOrderSourceLabel: 'PC-YURI',
+        kitchenSelfOrderVoiceEnabled: kitchenVoiceEnabled,
       });
       const result = await window.electronAPI.window.open('kitchenSelfOrder');
       if (!result?.success) {
@@ -466,7 +472,7 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
             <SettingField
               icon={<Printer size={17} />}
               label={kitchenCopy.slipPrinter}
-              help="Best-effort local print on PC-YURI."
+              help="Best-effort local print on the kiosk."
             >
               <select
                 value={kitchenSlipPrinterType}
@@ -479,6 +485,25 @@ export default function SelfCheckoutTab({ language: uiLanguage }: SelfCheckoutTa
               >
                 <option value="RECEIPT">{kitchenCopy.receipt}</option>
                 <option value="LABEL">{kitchenCopy.label}</option>
+              </select>
+            </SettingField>
+
+            <SettingField
+              icon={<Volume2 size={17} />}
+              label={kitchenCopy.voiceLabel}
+              help="Polish voice reads the pickup number once on the done screen."
+            >
+              <select
+                value={kitchenVoiceEnabled ? 'on' : 'off'}
+                onChange={(e) => {
+                  const v = e.target.value === 'on';
+                  setKitchenVoiceEnabled(v);
+                  persist({ kitchenSelfOrderVoiceEnabled: v });
+                }}
+                className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
               </select>
             </SettingField>
           </div>
