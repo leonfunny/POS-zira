@@ -735,6 +735,15 @@ interface ElectronAPI {
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
+    onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => () => void;
+    pickupOrders: {
+      listOpen: () => Promise<any[]>;
+      claim: (id: string, machineId?: string) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
+      claimByRef: (ref: { sourceOrderId?: string; orderNumber?: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
+      release: (id: string, machineId?: string) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
+      settle: (id: string, body: { posOrderId: string; posOrderNumber?: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
+      cancel: (id: string, body: { reason: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
+    };
 
     products: {
       getAll: () => Promise<PosProduct[]>;

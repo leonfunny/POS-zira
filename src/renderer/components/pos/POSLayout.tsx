@@ -15,6 +15,12 @@ import {
   type KitchenSelfOrderQrPayload,
 } from '../../../shared/kitchen-self-order';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../shared/pos-price-guard';
+import {
+  mergePickupEvent,
+  seedPickupOrders,
+  removePickupOrder,
+  type PickupOrderRow,
+} from './pickup-queue-merge';
 import rlog from '../../utils/logger';
 import { formatProductLabelPriceText } from '../../utils/product-label';
 import ShiftModal from './ShiftModal';
@@ -257,6 +263,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
   // must reconcile it in order history before that order can print again.
   const [fiscalAlert, setFiscalAlert] = useState<{ orderNumber?: string } | null>(null);
+  // Cashier pickup queue: kitchen self-orders waiting to be paid at the counter.
+  const [pickupOrders, setPickupOrders] = useState<PickupOrderRow[]>([]);
+  const [pickupPanelOpen, setPickupPanelOpen] = useState(false);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -666,16 +675,19 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     }
   }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr, validateCartLinePrice]);
 
-  const loadKitchenSelfOrderQr = useCallback(async (payload: KitchenSelfOrderQrPayload) => {
-    if (!dispatch) return;
+  const loadKitchenSelfOrderQr = useCallback(async (
+    payload: KitchenSelfOrderQrPayload,
+    opts?: { pickupOrderId?: string | null },
+  ): Promise<boolean> => {
+    if (!dispatch) return false;
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
     if ((currentState?.cart.items.length ?? state?.cart.items.length ?? 0) > 0) {
       showScanToast('Clear cart before scanning a kiosk order', 'err');
-      return;
+      return false;
     }
     if (!payload.items.length) {
       showScanToast('Kiosk order is empty', 'err');
-      return;
+      return false;
     }
 
     try {
@@ -737,18 +749,71 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             sourceLabel: payload.sourceLabel ?? null,
             fulfillmentType: payload.fulfillmentType ?? null,
             kitchenAlreadyReleased: payload.kitchenAlreadyReleased !== false,
+            pickupOrderId: opts?.pickupOrderId ?? null,
           },
         },
       });
 
       document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
       showScanToast(`Loaded kiosk order ${payload.orderNumber}`, 'ok');
+      return true;
     } catch (err: any) {
       rlog.error('[POSLayout] Kiosk order QR load failed:', err?.message ?? err);
       await window.electronAPI.pos.dispatch({ type: 'cart/clear' });
       showScanToast(err?.message || 'Kiosk order scan failed', 'err');
+      return false;
     }
   }, [dispatch, language, rememberLastLabelVariant, showScanToast, state?.cart.items.length]);
+
+  // Load a waiting pickup order chosen from the cashier list: claim it on the
+  // backend first (so it locks to this station), then build the cart from the
+  // same QR payload a scan would. If the claim is lost (409/410) we block; if
+  // the cart build fails after claiming we release so another station can take it.
+  const openPickupOrder = useCallback(async (rowOrder: PickupOrderRow): Promise<void> => {
+    const code = rowOrder.payload?.qr;
+    const decoded = typeof code === 'string' ? decodeKitchenSelfOrderQr(code) : null;
+    if (!decoded) {
+      showScanToast('Kiosk order payload invalid', 'err');
+      return;
+    }
+    const currentState = await window.electronAPI.pos.getState().catch(() => state);
+    if ((currentState?.cart.items.length ?? 0) > 0) {
+      showScanToast('Clear cart before loading a kiosk order', 'err');
+      return;
+    }
+    const claim = await window.electronAPI.pos.pickupOrders.claim(rowOrder.id);
+    if (!claim?.ok) {
+      if (claim?.status === 409) showScanToast('Đơn đang được xử lý ở máy khác', 'err');
+      else if (claim?.status === 410) showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err');
+      else showScanToast(claim?.error || 'Không nhận được đơn', 'err');
+      setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
+      return;
+    }
+    const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: rowOrder.id });
+    if (!loaded) {
+      await window.electronAPI.pos.pickupOrders.release(rowOrder.id).catch(() => {});
+      return;
+    }
+    setPickupPanelOpen(false);
+    setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
+  }, [state, loadKitchenSelfOrderQr, showScanToast]);
+
+  // Live cashier pickup-order waiting list (backend-coordinated queue): seed
+  // from GET /open, then merge pickup-order:* socket events as they arrive.
+  useEffect(() => {
+    let active = true;
+    const seed = async () => {
+      try {
+        const rows = await window.electronAPI.pos.pickupOrders?.listOpen?.();
+        if (active) setPickupOrders(seedPickupOrders(rows as PickupOrderRow[]));
+      } catch { /* best-effort; the QR scan path still works */ }
+    };
+    void seed();
+    const unsub = window.electronAPI.pos.onPickupOrderEvent?.((msg: { event: string; data: any }) => {
+      setPickupOrders((prev) => mergePickupEvent(prev, msg));
+    });
+    return () => { active = false; if (typeof unsub === 'function') unsub(); };
+  }, []);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -1070,6 +1135,61 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             </svg>
             <span>So no</span>
           </button>
+
+          {/* Kitchen self-order pickup queue */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setPickupPanelOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors touch-manipulation"
+              title="Đơn bếp"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <span>Đơn bếp</span>
+              {pickupOrders.length > 0 && (
+                <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold tabular-nums">
+                  {pickupOrders.length}
+                </span>
+              )}
+            </button>
+            {pickupPanelOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-30 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg py-2">
+                  {pickupOrders.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-slate-400">Chưa có đơn bếp chờ thu</div>
+                  ) : (
+                    pickupOrders.map((o) => {
+                      const claimedElsewhere = o.status === 'CLAIMED';
+                      return (
+                        <button
+                          key={o.id}
+                          type="button"
+                          disabled={claimedElsewhere}
+                          onClick={() => openPickupOrder(o)}
+                          className={`w-full px-4 py-3 flex items-center justify-between gap-3 text-left transition-colors ${
+                            claimedElsewhere ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-lg font-black text-slate-900 tabular-nums">{o.orderNumber}</div>
+                            {claimedElsewhere && (
+                              <div className="text-[11px] font-semibold text-amber-600">Đang xử lý ở máy khác</div>
+                            )}
+                          </div>
+                          <div className="text-sm font-bold text-slate-700 tabular-nums shrink-0">
+                            {((o.totalGrosze ?? 0) / 100).toFixed(2)}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Fullscreen icon button */}
           {onFullscreen && (
