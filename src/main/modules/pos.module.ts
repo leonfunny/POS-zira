@@ -46,6 +46,7 @@ import { localVariantImportsRepo } from '../database/repos/local-variant-imports
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
+import { pushPickupOrderBestEffort } from '../kitchen-self-order/pickup-queue-client';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import {
@@ -3010,6 +3011,21 @@ export class PosModule extends BaseModule {
           error,
         }) || created;
         const success = kitchenReleased && slipPrint.printed;
+
+        // Best-effort: register this pay-at-counter order in the backend
+        // cashier pickup queue so counter POS stations can claim/charge it
+        // without scanning the slip. Fire-and-forget — never blocks or fails
+        // the print/QR path (the QR slip stays the offline fallback).
+        if (menu.policies.checkoutMode === 'PAY_AT_COUNTER') {
+          void pushPickupOrderBestEffort({
+            terminalId: sourceLabel,
+            sourceOrderId: finalOrder.id,
+            orderNumber: finalOrder.order_number,
+            sequence: finalOrder.sequence_number,
+            totalGrosze: finalOrder.total_grosze,
+            qr: qrPayload,
+          });
+        }
 
         return {
           success,
