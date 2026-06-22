@@ -3001,7 +3001,7 @@ export class PosModule extends BaseModule {
           : { printed: false, error: 'kitchen_not_printed' };
         const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
         const finalOrder = kitchenSelfOrderRepo.markPrintResult(created.id, {
-          kitchenPrinted: kitchenPrint.printed,
+          kitchenPrinted: kitchenReleased,
           customerSlipPrinted: slipPrint.printed,
           kitchenRoute: kitchenPrint.route || null,
           kitchenPrinterId: kitchenPrint.printerId || null,
@@ -3009,16 +3009,16 @@ export class PosModule extends BaseModule {
           customerSlipRoute: slipPrint.route || null,
           error,
         }) || created;
-        const success = kitchenPrint.printed && slipPrint.printed;
+        const success = kitchenReleased && slipPrint.printed;
 
         return {
           success,
           order: finalOrder,
           orderId: finalOrder.id,
           orderNumber: finalOrder.order_number,
-          kitchenPrinted: kitchenPrint.printed,
+          kitchenPrinted: kitchenReleased,
           customerSlipPrinted: slipPrint.printed,
-          canRetrySlip: kitchenPrint.printed && !slipPrint.printed,
+          canRetrySlip: kitchenReleased && !slipPrint.printed,
           kitchenRoute: kitchenPrint.route,
           kitchenPrinterId: kitchenPrint.printerId,
           kitchenJobId: kitchenPrint.jobId,

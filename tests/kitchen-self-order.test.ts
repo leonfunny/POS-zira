@@ -121,8 +121,9 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).toContain('const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true');
     expect(posModuleSource).toContain('kitchenAlreadyReleased: kitchenReleased');
     expect(posModuleSource).toContain('const slipPrint = kitchenReleased');
-    expect(posModuleSource).toContain('success = kitchenPrint.printed && slipPrint.printed');
-    expect(posModuleSource).toContain('canRetrySlip: kitchenPrint.printed && !slipPrint.printed');
+    expect(posModuleSource).toContain('kitchenPrinted: kitchenReleased');
+    expect(posModuleSource).toContain('success = kitchenReleased && slipPrint.printed');
+    expect(posModuleSource).toContain('canRetrySlip: kitchenReleased && !slipPrint.printed');
     expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');
     expect(posModuleSource).toContain('buildKitchenSelfOrderLabelQrPayload(order, kitchenAlreadyReleased)');
     expect(posModuleSource).toContain('kr: kitchenAlreadyReleased ? 1 : 0');
