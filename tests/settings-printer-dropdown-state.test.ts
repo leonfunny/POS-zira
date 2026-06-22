@@ -169,7 +169,7 @@ describe('Settings printer dropdown state', () => {
 
   it('wires Kitchen Wi-Fi Direct setup through explicit LAN_FIRST IPC', () => {
     expect(settingsSource).toContain('Kitchen Wi-Fi Direct');
-    expect(settingsSource).toContain('buildLanFirstKitchenSenderConfig');
+    expect(settingsSource).toContain('planLanKitchenSave');
     expect(settingsSource).toContain('getReadyKitchenWifiPrinters(salonInventoryPrinters)');
     expect(settingsSource).toContain("window.electronAPI.lanFirstKitchen.setPairingCode('receiver'");
     expect(settingsSource).toContain("window.electronAPI.lanFirstKitchen.setPairingCode('sender'");
