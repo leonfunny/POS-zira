@@ -115,7 +115,12 @@ describe('kitchen self-order MVP wiring', () => {
     const formatterSource = readSource('src/main/hardware/thermal/escpos-formatter.ts');
 
     expect(posModuleSource).toContain('buildKitchenSelfOrderQrPayload(created, {');
-    expect(posModuleSource).toContain('kitchenAlreadyReleased: kitchenPrint.printed');
+    // The customer slip prints when the kitchen is released — confirmed-printed
+    // OR uncertain (LAN timed out, ticket most likely printed) — so the customer
+    // always gets a pickup number without dispatching a duplicate kitchen ticket.
+    expect(posModuleSource).toContain('const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true');
+    expect(posModuleSource).toContain('kitchenAlreadyReleased: kitchenReleased');
+    expect(posModuleSource).toContain('const slipPrint = kitchenReleased');
     expect(posModuleSource).toContain('success = kitchenPrint.printed && slipPrint.printed');
     expect(posModuleSource).toContain('canRetrySlip: kitchenPrint.printed && !slipPrint.printed');
     expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');

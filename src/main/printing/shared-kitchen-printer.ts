@@ -19,6 +19,12 @@ import logger from '../logger';
 import type { KitchenTicketData } from './kitchen-ticket';
 import { buildLanFirstAuthHeaders } from './lan-first-auth';
 import { hashLanFirstPrintPayload } from './lan-first-payload-hash';
+import {
+  LAN_FIRST_DEFAULT_TIMEOUT_MS,
+  classifyLanPrintError,
+  classifyLanPrintResponse,
+  type LanPrintDecision,
+} from './lan-first-print-classifier';
 
 const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
 // The customer pickup slip prints where the customer's paragon comes out —
@@ -26,13 +32,16 @@ const SHARED_KITCHEN_ROLE: SalonPrinterRole = 'KITCHEN';
 const SHARED_SLIP_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
 const SHARED_PLAIN_JOB_TIMEOUT_MS = 30_000;
-const LAN_FIRST_DEFAULT_TIMEOUT_MS = 2000;
 
 let kitchenEndpointUnavailableUntil = 0;
 
 export interface SharedKitchenPrintResult {
   handled: boolean;
   printed: boolean;
+  // True when the LAN print outcome is uncertain (timed out / lost response —
+  // the receiver may have printed). Used to print the customer slip anyway
+  // without dispatching a duplicate through the backend.
+  uncertain?: boolean;
   printerId?: string;
   jobId?: string;
   status?: string;
@@ -237,11 +246,7 @@ async function postLanFirstKitchenTicket(
   timeoutMs: number,
   body: ReserveLanFirstPrintJobRequest,
   sharedSecret: string,
-): Promise<
-  | { action: 'ACCEPTED'; status: string }
-  | { action: 'FALLBACK'; reason: string }
-  | { action: 'FAILED_NO_FALLBACK'; status: string; error?: string }
-> {
+): Promise<LanPrintDecision> {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller
     ? setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
@@ -263,32 +268,16 @@ async function postLanFirstKitchenTicket(
       signal: controller?.signal,
     });
     const json = await readLanJson(response);
-    const status = String(json.status || '').toUpperCase();
-    const failureClass = String(json.failureClass || '').toUpperCase();
-
-    if (status === 'COMPLETED' || status === 'PRINTING') {
-      return { action: 'ACCEPTED', status };
-    }
-    if (failureClass === 'SAFE_BEFORE_PRINT') {
-      return { action: 'FALLBACK', reason: 'LAN_SAFE_BEFORE_PRINT' };
-    }
-    if (String(json.error || '').toUpperCase() === 'LEDGER_NOT_DURABLE') {
-      return { action: 'FALLBACK', reason: 'LAN_LEDGER_NOT_DURABLE' };
-    }
-    if (failureClass === 'UNCERTAIN_AFTER_PRINT' || failureClass === 'FINAL') {
-      return {
-        action: 'FAILED_NO_FALLBACK',
-        status: status || 'FAILED',
-        error: String(json.error || json.message || 'LAN print failed after print may have started'),
-      };
-    }
-    if (!response.ok) {
-      return { action: 'FALLBACK', reason: `LAN_HTTP_${response.status}` };
-    }
-
-    return { action: 'FALLBACK', reason: 'LAN_UNEXPECTED_RESPONSE' };
-  } catch {
-    return { action: 'FALLBACK', reason: 'LAN_NETWORK_ERROR' };
+    return classifyLanPrintResponse({
+      status: String(json.status || '').toUpperCase(),
+      failureClass: String(json.failureClass || '').toUpperCase(),
+      error: String(json.error || '').toUpperCase(),
+      message: String(json.error || json.message || ''),
+      responseOk: response.ok,
+      httpStatus: response.status,
+    });
+  } catch (err) {
+    return classifyLanPrintError(err);
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -387,6 +376,7 @@ async function submitLanFirstKitchenPrint(
   return {
     handled: true,
     printed: false,
+    uncertain: lanResult.uncertain,
     printerId: route.printerId,
     jobId: activeBody.jobId,
     status: lanResult.status,

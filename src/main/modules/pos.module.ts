@@ -2930,15 +2930,19 @@ export class PosModule extends BaseModule {
         });
         const kitchenTicket = buildKitchenSelfOrderTicket(created, brandName, null, sourceLabel);
         const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
+        // Treat an uncertain LAN print (timed out — the ticket most likely
+        // printed) as released so the customer still gets a pickup slip, while
+        // never dispatching a duplicate kitchen ticket through the backend.
+        const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
         const qrPayload = buildKitchenSelfOrderQrPayload(created, {
-          kitchenAlreadyReleased: kitchenPrint.printed,
+          kitchenAlreadyReleased: kitchenReleased,
         });
         const ticket = buildKitchenSelfOrderTicket(created, brandName, qrPayload, sourceLabel);
         ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(created, {
-          kitchenAlreadyReleased: kitchenPrint.printed,
+          kitchenAlreadyReleased: kitchenReleased,
           includeNotes: false,
         });
-        const slipPrint = kitchenPrint.printed
+        const slipPrint = kitchenReleased
           ? await this.printKitchenSelfOrderCustomerSlip(ticket)
           : { printed: false, error: 'kitchen_not_printed' };
         const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
@@ -3246,7 +3250,7 @@ export class PosModule extends BaseModule {
    */
   private async printKitchenSelfOrderTicket(
     ticket: KitchenTicketData,
-  ): Promise<{ printed: boolean; route?: 'LOCAL' | 'SHARED_NETWORK'; printerId?: string; jobId?: string; status?: string; error?: string }> {
+  ): Promise<{ printed: boolean; uncertain?: boolean; route?: 'LOCAL' | 'SHARED_NETWORK'; printerId?: string; jobId?: string; status?: string; error?: string }> {
     const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
     const localKitchen = printers[PrinterType.KITCHEN];
     if (localKitchen?.isConnected?.() && typeof localKitchen.printPlainLines === 'function') {
@@ -3275,6 +3279,7 @@ export class PosModule extends BaseModule {
     logger.warn(`[PosModule] Kitchen self-order ticket was not printed for ${ticket.orderNumber}: ${shared.error || 'no_kitchen_printer'}`);
     return {
       printed: false,
+      uncertain: shared.uncertain === true,
       route: shared.handled ? 'SHARED_NETWORK' : undefined,
       printerId: shared.printerId,
       jobId: shared.jobId,
