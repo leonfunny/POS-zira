@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { SalonPrinterMapping } from '../src/shared/types';
 import {
   buildLanFirstKitchenSenderConfig,
+  DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
   getReadyKitchenWifiPrinters,
   planLanKitchenSave,
+  resolveLanFirstKitchenTimeoutMs,
 } from '../src/shared/lan-first-kitchen-settings';
 
 const readyKitchenPrinter = {
@@ -18,6 +20,13 @@ const readyKitchenPrinter = {
 } as SalonPrinterMapping;
 
 describe('LAN_FIRST kitchen Settings helpers', () => {
+  it('uses the production-safe LAN-first timeout floor for slow thermal prints', () => {
+    expect(DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS).toBe(6000);
+    expect(resolveLanFirstKitchenTimeoutMs(2000)).toBe(6000);
+    expect(resolveLanFirstKitchenTimeoutMs(6000)).toBe(6000);
+    expect(resolveLanFirstKitchenTimeoutMs(10000)).toBe(10000);
+  });
+
   it('lists only ready KITCHEN printers as Wi-Fi direct sender targets', () => {
     const rows = getReadyKitchenWifiPrinters([
       readyKitchenPrinter,
@@ -53,10 +62,10 @@ describe('LAN_FIRST kitchen Settings helpers', () => {
       targetKey: 'machine-pos-2:kitchen-printer-1',
       config: {
         enabled: true,
-        timeoutMs: 2500,
+        timeoutMs: 6000,
         targets: {
           'old-machine:old-printer': { host: '192.168.1.10', port: 17892 },
-          'machine-pos-2:kitchen-printer-1': { host: '192.168.1.50', port: 17892, timeoutMs: 2500 },
+          'machine-pos-2:kitchen-printer-1': { host: '192.168.1.50', port: 17892, timeoutMs: 6000 },
         },
       },
     });
@@ -94,7 +103,7 @@ describe('LAN_FIRST kitchen manual host + save plan', () => {
       targetKey: 'manual',
       config: {
         enabled: true,
-        timeoutMs: 2000,
+        timeoutMs: 6000,
         targets: {},
         manualTarget: { host: '192.168.1.77', port: 17892 },
       },

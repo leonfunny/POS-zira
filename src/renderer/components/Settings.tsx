@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
-import { DEFAULT_LAN_FIRST_KITCHEN_PORT, DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS, getReadyKitchenWifiPrinters, planLanKitchenSave } from '../../shared/lan-first-kitchen-settings';
+import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKitchenSave, resolveLanFirstKitchenTimeoutMs } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
@@ -2282,7 +2282,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         host: lanKitchenTargetHost.trim(),
         port: parseScalePortNumber(lanKitchenTargetPort, DEFAULT_LAN_FIRST_KITCHEN_PORT),
         pairingCode: senderCode || undefined,
-        timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
+        timeoutMs: resolveLanFirstKitchenTimeoutMs(config?.lanFirstKitchenSender?.timeoutMs),
         testPrint: true,
         printerId: lanKitchenSelectedPrinterId,
         targetMachineId: selectedLanKitchenPrinter?.machineId || undefined,

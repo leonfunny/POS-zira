@@ -1,7 +1,7 @@
 import type { LanFirstKitchenSenderConfig, SalonPrinterMapping } from './types';
 
 export const DEFAULT_LAN_FIRST_KITCHEN_PORT = 17892;
-export const DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS = 2000;
+export const DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS = 6000;
 export const MANUAL_TARGET_KEY = 'manual';
 
 function hasPrinterTarget(printer: Pick<SalonPrinterMapping, 'windowsPrinterName' | 'address'>): boolean {
@@ -25,9 +25,9 @@ function parsePort(value: string | number | undefined, fallback = DEFAULT_LAN_FI
   return fallback;
 }
 
-function parseTimeout(value: unknown, fallback = DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS): number {
+export function resolveLanFirstKitchenTimeoutMs(value: unknown, fallback = DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS): number {
   const parsed = Number(value);
-  if (Number.isInteger(parsed) && parsed >= 500 && parsed <= 30000) return parsed;
+  if (Number.isInteger(parsed) && parsed >= fallback && parsed <= 30000) return parsed;
   return fallback;
 }
 
@@ -52,7 +52,7 @@ export function buildLanFirstKitchenSenderConfig(input: {
   printers: SalonPrinterMapping[];
 }): BuildLanFirstKitchenSenderConfigResult {
   const host = String(input.host || '').trim();
-  const timeoutMs = parseTimeout(input.timeoutMs ?? input.current?.timeoutMs);
+  const timeoutMs = resolveLanFirstKitchenTimeoutMs(input.timeoutMs ?? input.current?.timeoutMs);
   const port = parsePort(input.port);
   const printer = input.printers.find((item) => item.id === input.selectedPrinterId);
 
@@ -125,7 +125,7 @@ export function planLanKitchenSave(input: LanKitchenSavePlanInput): LanKitchenSa
   let senderPatch: LanFirstKitchenSenderConfig = {
     ...(input.currentSender || {}),
     enabled: input.senderEnabled,
-    timeoutMs: parseTimeout(input.timeoutMs ?? input.currentSender?.timeoutMs),
+    timeoutMs: resolveLanFirstKitchenTimeoutMs(input.timeoutMs ?? input.currentSender?.timeoutMs),
   };
 
   if (input.senderEnabled) {

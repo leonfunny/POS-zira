@@ -180,6 +180,7 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).not.toContain("setLanKitchenSenderPairingCode('');");
     expect(settingsSource).toContain('testPrint: true');
     expect(settingsSource).toContain('printerId: lanKitchenSelectedPrinterId');
+    expect(settingsSource).toContain('resolveLanFirstKitchenTimeoutMs(config?.lanFirstKitchenSender?.timeoutMs)');
     expect(authModuleSource).toContain('/print/kitchen-ticket');
     expect(authModuleSource).toContain('TEST WIFI ROUTE');
 
