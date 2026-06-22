@@ -519,6 +519,88 @@ export class ApiClient {
   }
 
   /**
+   * Like `request`, but returns the status + parsed body instead of throwing
+   * on non-2xx. The pickup-queue cashier flow MUST distinguish 404 (fall back
+   * to the QR payload) from 409/410 (block — claimed elsewhere / already
+   * settled), so the caller needs the status code, not just a thrown message.
+   */
+  private async requestRaw(
+    method: string,
+    path: string,
+    token: string,
+    body?: any,
+  ): Promise<{ ok: boolean; status: number; data: any }> {
+    const normalizedPath = path.startsWith('/api/v1/') ? path : `/api/v1${path}`;
+    const url = `${this.baseUrl}${normalizedPath}`;
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await response.text();
+    let data: any = null;
+    if (text) {
+      try { data = JSON.parse(text); } catch { data = text; }
+    }
+    return { ok: response.ok, status: response.status, data };
+  }
+
+  // ===== Kitchen self-order pickup queue (cashier side, JWT) =====
+
+  listOpenPickupOrders(token: string): Promise<any[]> {
+    return this.request('GET', '/print-agent/pickup-orders/open', token) as Promise<any[]>;
+  }
+
+  private async pickupMutation(
+    method: string,
+    path: string,
+    token: string,
+    body?: any,
+  ): Promise<{ ok: boolean; status: number; data?: any; error?: string }> {
+    const r = await this.requestRaw(method, path, token, body);
+    if (r.ok) return { ok: true, status: r.status, data: r.data };
+    return {
+      ok: false,
+      status: r.status,
+      error: r.data?.error || r.data?.message || `HTTP ${r.status}`,
+    };
+  }
+
+  claimPickupOrder(token: string, id: string, machineId?: string) {
+    return this.pickupMutation('POST', `/print-agent/pickup-orders/${id}/claim`, token, { machineId });
+  }
+
+  claimPickupOrderByRef(
+    token: string,
+    ref: { sourceOrderId?: string; orderNumber?: string; machineId?: string },
+  ) {
+    return this.pickupMutation('POST', '/print-agent/pickup-orders/claim-by-ref', token, ref);
+  }
+
+  releasePickupOrder(token: string, id: string, machineId?: string) {
+    return this.pickupMutation('POST', `/print-agent/pickup-orders/${id}/release`, token, { machineId });
+  }
+
+  settlePickupOrder(
+    token: string,
+    id: string,
+    body: { posOrderId: string; posOrderNumber?: string; machineId?: string },
+  ) {
+    return this.pickupMutation('POST', `/print-agent/pickup-orders/${id}/settle`, token, body);
+  }
+
+  cancelPickupOrder(
+    token: string,
+    id: string,
+    body: { reason: string; machineId?: string },
+  ) {
+    return this.pickupMutation('POST', `/print-agent/pickup-orders/${id}/cancel`, token, body);
+  }
+
+  /**
    * Ingest a batch of POS events. Backend is idempotent by eventId and returns
    * accepted / duplicates / rejected. Max 50 events per call (backend enforces).
    */

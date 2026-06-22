@@ -518,6 +518,20 @@ export default class SocketClient extends EventEmitter {
       this.emit('sync:entry', data);
     });
 
+    // ==========================================
+    // Kitchen self-order pickup queue (cashier side)
+    // ==========================================
+
+    for (const evt of [
+      'pickup-order:new',
+      'pickup-order:claimed',
+      'pickup-order:released',
+      'pickup-order:settled',
+      'pickup-order:cancelled',
+    ] as const) {
+      this.socket.on(evt, (data: any) => this.emit(evt, data));
+    }
+
     // Error handling
     this.socket.on('error', (error) => {
       logger.error(`Socket error: ${error.message || error}`);

@@ -3049,6 +3049,71 @@ export class PosModule extends BaseModule {
       }
     });
 
+    // === Kitchen self-order pickup queue (cashier side) ===
+    const resolvePickupMachineId = (machineId?: string) =>
+      (machineId && machineId.trim()) || getConfig().machineId || undefined;
+
+    ipcMain.handle('pos:pickupOrders:listOpen', async () => {
+      const token = getSecureAuthToken();
+      if (!token) return [];
+      try {
+        return await apiClient.listOpenPickupOrders(token);
+      } catch (err: any) {
+        logger.warn(`[PickupQueue] listOpen failed: ${err?.message ?? err}`);
+        return [];
+      }
+    });
+
+    ipcMain.handle('pos:pickupOrders:claim', async (_e, { id, machineId }: { id: string; machineId?: string }) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, status: 401, error: 'not_authenticated' };
+      try {
+        return await apiClient.claimPickupOrder(token, id, resolvePickupMachineId(machineId));
+      } catch (err: any) {
+        return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
+    ipcMain.handle('pos:pickupOrders:claimByRef', async (_e, ref: { sourceOrderId?: string; orderNumber?: string; machineId?: string }) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, status: 401, error: 'not_authenticated' };
+      try {
+        return await apiClient.claimPickupOrderByRef(token, { ...ref, machineId: resolvePickupMachineId(ref?.machineId) });
+      } catch (err: any) {
+        return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
+    ipcMain.handle('pos:pickupOrders:release', async (_e, { id, machineId }: { id: string; machineId?: string }) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, status: 401, error: 'not_authenticated' };
+      try {
+        return await apiClient.releasePickupOrder(token, id, resolvePickupMachineId(machineId));
+      } catch (err: any) {
+        return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
+    ipcMain.handle('pos:pickupOrders:settle', async (_e, { id, posOrderId, posOrderNumber, machineId }: { id: string; posOrderId: string; posOrderNumber?: string; machineId?: string }) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, status: 401, error: 'not_authenticated' };
+      try {
+        return await apiClient.settlePickupOrder(token, id, { posOrderId, posOrderNumber, machineId: resolvePickupMachineId(machineId) });
+      } catch (err: any) {
+        return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
+    ipcMain.handle('pos:pickupOrders:cancel', async (_e, { id, reason, machineId }: { id: string; reason: string; machineId?: string }) => {
+      const token = getSecureAuthToken();
+      if (!token) return { ok: false, status: 401, error: 'not_authenticated' };
+      try {
+        return await apiClient.cancelPickupOrder(token, id, { reason, machineId: resolvePickupMachineId(machineId) });
+      } catch (err: any) {
+        return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
     ipcMain.handle('kitchen-self-order:reprintSlip', async (_e, orderId: string) => {
       const id = String(orderId || '').trim();
       if (!id) return { success: false, error: 'missing_order_id', canRetrySlip: false };
@@ -3421,6 +3486,20 @@ export class PosModule extends BaseModule {
         logger.warn(`[PosModule] Failed to apply draft delete: ${err?.message ?? err}`);
       }
     });
+
+    // Kitchen self-order pickup queue: relay backend queue events to the POS
+    // renderer so cashier stations see the waiting list update live.
+    const forwardPickupOrder = (event: string) => (data: any) => {
+      const posWindow = this.windowManager?.getWindow('pos');
+      if (posWindow && !posWindow.isDestroyed()) {
+        posWindow.webContents.send('pos:pickup-order', { event, data });
+      }
+    };
+    socket.on('pickup-order:new', forwardPickupOrder('new'));
+    socket.on('pickup-order:claimed', forwardPickupOrder('claimed'));
+    socket.on('pickup-order:released', forwardPickupOrder('released'));
+    socket.on('pickup-order:settled', forwardPickupOrder('settled'));
+    socket.on('pickup-order:cancelled', forwardPickupOrder('cancelled'));
   }
 
   getToolDefinitions(): ToolDefinition[] {
