@@ -519,7 +519,12 @@ export class ThermalDriver {
           }
           logger.warn(`[ThermalDriver] WritePrinter stderr: ${cleanedErr}`);
           if (/StartDocPrinter failed:\s*2001/i.test(cleanedErr)) {
-            await this.printRawViaUsbDeviceInterface(tempFile, safeName);
+            try {
+              await this.printRawViaUsbDeviceInterface(tempFile, safeName);
+            } catch (usbErr: any) {
+              logger.error('[ThermalDriver] Direct USB fallback failed after spooler driver 2001:', usbErr);
+              throw new Error(`Print failed (spooler driver 2001 + USB fallback failed): ${usbErr?.message || usbErr}`);
+            }
           } else {
             throw new Error(`Print failed: ${cleanedErr}`);
           }
