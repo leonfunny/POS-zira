@@ -49,29 +49,31 @@ export function classifyLanPrintResponse(input: {
   if (failureClass === 'FINAL') {
     return { action: 'FAILED_NO_FALLBACK', status: status || 'FAILED', error: message || 'LAN print failed', uncertain: false };
   }
-  // Response received but neither success nor a recognized safe-failure: the
-  // receiver may have printed. Do NOT dispatch; mark uncertain so the slip prints.
+  // Response received but neither success nor a recognized safe-failure (an HTTP
+  // error or an unrecognized body). In practice the receiver rejected or never
+  // reached the print handler (auth, routing, wrong endpoint) rather than
+  // printed-then-failed — a printed-then-failed receiver sets
+  // failureClass=UNCERTAIN_AFTER_PRINT. So fall back to the backend dispatch,
+  // matching the established contract. Only a true *timeout* (no response at all,
+  // see classifyLanPrintError) is treated as uncertain.
   if (!responseOk) {
-    return { action: 'FAILED_NO_FALLBACK', status: status || `HTTP_${httpStatus}`, error: message || `LAN print HTTP ${httpStatus}`, uncertain: true };
+    return { action: 'FALLBACK', reason: `LAN_HTTP_${httpStatus}` };
   }
-  return { action: 'FAILED_NO_FALLBACK', status: status || 'UNKNOWN', error: message || 'LAN print returned an unexpected response', uncertain: true };
+  return { action: 'FALLBACK', reason: 'LAN_UNEXPECTED_RESPONSE' };
 }
 
 export function classifyLanPrintError(err: unknown): LanPrintDecision {
-  const e = err as { name?: string; code?: string; cause?: { code?: string } } | undefined;
-  const code = String(e?.code || e?.cause?.code || '').toUpperCase();
-  // Connection never established → the receiver never received the request →
-  // safe to fall back to the backend dispatch.
-  if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH') {
-    return { action: 'FALLBACK', reason: `LAN_CONN_${code}` };
+  const name = (err as { name?: string } | undefined)?.name;
+  // A timeout (AbortController.abort()) is the one case where the request was
+  // SENT but we got no answer — the receiver may have already printed (a slow
+  // thermal print). Dispatching the backend fallback here double-prints (the
+  // K-002 bug), so treat it as uncertain: NO dispatch, but the customer slip
+  // still prints because the kitchen ticket most likely came out.
+  if (name === 'AbortError') {
+    return { action: 'FAILED_NO_FALLBACK', status: 'TIMEOUT', error: 'LAN print timed out', uncertain: true };
   }
-  // Timeout (AbortError) or any other error after the request was sent → the
-  // receiver may have printed. Uncertain → no dispatch; slip still prints.
-  const timedOut = e?.name === 'AbortError';
-  return {
-    action: 'FAILED_NO_FALLBACK',
-    status: timedOut ? 'TIMEOUT' : 'NETWORK_ERROR',
-    error: timedOut ? 'LAN print timed out' : 'LAN print network error',
-    uncertain: true,
-  };
+  // Any other fetch rejection (connection refused/reset, DNS failure, etc.) means
+  // the request did not complete a round-trip to a printing receiver → safe to
+  // fall back to the backend dispatch (established behavior).
+  return { action: 'FALLBACK', reason: 'LAN_NETWORK_ERROR' };
 }

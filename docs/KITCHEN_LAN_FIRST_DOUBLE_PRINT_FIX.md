@@ -41,14 +41,19 @@ Reclassify `postLanFirstKitchenTicket` so ambiguous outcomes are
 | error LEDGER_NOT_DURABLE | FALLBACK | yes | — |
 | failureClass UNCERTAIN_AFTER_PRINT | FAILED_NO_FALLBACK | no | **yes** |
 | failureClass FINAL | FAILED_NO_FALLBACK | no | no |
-| `!response.ok` (no failureClass) | FAILED_NO_FALLBACK | no | **yes** |
-| unexpected response shape | FAILED_NO_FALLBACK | no | **yes** |
-| catch: AbortError (timeout) | FAILED_NO_FALLBACK | no | **yes** |
-| catch: ECONNREFUSED/ENOTFOUND/EHOSTUNREACH | FALLBACK | yes | — |
-| catch: other | FAILED_NO_FALLBACK | no | **yes** |
+| `!response.ok` (HTTP error, no failureClass) | FALLBACK | yes | — |
+| unexpected response shape | FALLBACK | yes | — |
+| **catch: AbortError (true timeout)** | FAILED_NO_FALLBACK | no | **yes** |
+| catch: any other rejection (conn refused/reset, DNS) | FALLBACK | yes | — |
 
-Only `SAFE_BEFORE_PRINT`, `LEDGER_NOT_DURABLE`, and a true connection-refused
-(receiver never reached) are safe to dispatch. Everything else → no dispatch.
+**Narrow scope (important):** the ONLY case changed from the established behavior
+is a true **timeout** (`AbortController.abort()` → `AbortError`) — the one case
+where the request was sent but no answer came back, so the receiver may have
+printed (the K-002 double). Everything else keeps the existing fallback: a
+receiver that printed-then-failed reports `failureClass=UNCERTAIN_AFTER_PRINT`
+(already no-dispatch); a bare HTTP error / unrecognized body / connection error
+means it rejected or never reached the print handler → safe to dispatch (no
+missed kitchen ticket).
 
 **B — Raise the LAN timeout 2000 → 6000ms.** Covers a normal thermal LAN print
 (~2–4s) so it returns a clean `ACCEPTED` instead of timing out. 6000 (not 8000) so

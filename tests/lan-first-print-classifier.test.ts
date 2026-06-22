@@ -34,13 +34,13 @@ describe('classifyLanPrintResponse', () => {
     expect(classifyLanPrintResponse({ ...base, responseOk: false, httpStatus: 500, failureClass: 'FINAL' }))
       .toMatchObject({ action: 'FAILED_NO_FALLBACK', uncertain: false });
   });
-  it('HTTP error without failureClass → FAILED_NO_FALLBACK + uncertain (may have printed; no dispatch)', () => {
-    expect(classifyLanPrintResponse({ ...base, responseOk: false, httpStatus: 502 }))
-      .toMatchObject({ action: 'FAILED_NO_FALLBACK', uncertain: true });
+  it('HTTP error without failureClass → FALLBACK (receiver rejected before print: auth/routing; safe to dispatch)', () => {
+    expect(classifyLanPrintResponse({ ...base, responseOk: false, httpStatus: 403 }))
+      .toMatchObject({ action: 'FALLBACK', reason: 'LAN_HTTP_403' });
   });
-  it('unexpected ok response (no status) → FAILED_NO_FALLBACK + uncertain', () => {
+  it('unexpected ok response (no status) → FALLBACK (established contract; only a true timeout is uncertain)', () => {
     expect(classifyLanPrintResponse({ ...base, responseOk: true, status: '' }))
-      .toMatchObject({ action: 'FAILED_NO_FALLBACK', uncertain: true });
+      .toMatchObject({ action: 'FALLBACK', reason: 'LAN_UNEXPECTED_RESPONSE' });
   });
 });
 
@@ -60,7 +60,7 @@ describe('classifyLanPrintError', () => {
     e.cause = { code: 'ECONNREFUSED' };
     expect(classifyLanPrintError(e).action).toBe('FALLBACK');
   });
-  it('generic error → FAILED_NO_FALLBACK + uncertain (conservative; avoid double)', () => {
-    expect(classifyLanPrintError(new Error('boom'))).toMatchObject({ action: 'FAILED_NO_FALLBACK', uncertain: true });
+  it('generic network error (not AbortError) → FALLBACK (established behavior; did not reach a printing receiver)', () => {
+    expect(classifyLanPrintError(new Error('boom')).action).toBe('FALLBACK');
   });
 });

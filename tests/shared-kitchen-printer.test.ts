@@ -413,6 +413,32 @@ describe('submitSharedKitchenPrint', () => {
     expect(createPrintJob).not.toHaveBeenCalled();
   });
 
+  it('when the LAN request ABORTS (real timeout), it does NOT dispatch (no double print) and flags uncertain', async () => {
+    getConfig.mockReturnValue({
+      serverUrl: 'https://api.example.test',
+      machineId: 'machine-2',
+      lanFirstKitchenSender: {
+        enabled: true,
+        timeoutMs: 10,
+        auth: { sharedSecret: LAN_SHARED_SECRET },
+        targets: {
+          'target-machine-1:kitchen-printer-1': { host: '127.0.0.1', port: 17892 },
+        },
+      },
+    });
+    getSecureAuthToken.mockReturnValue(null);
+    getSecureApiKey.mockReturnValue('api-key-1');
+    // AbortController.abort() rejects fetch with an AbortError — the receiver may
+    // have already printed (slow thermal). Dispatching here would double-print.
+    fetchMock.mockRejectedValueOnce(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+
+    const result = await submitSharedKitchenPrint(ticket);
+
+    expect(dispatchLanFirstPrintJobWithApiKey).not.toHaveBeenCalled();
+    expect(createPrintJob).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ handled: true, printed: false, uncertain: true });
+  });
+
   it('when LAN is attempted and backend dispatch throws, it does not call the old create-job path', async () => {
     getConfig.mockReturnValue({
       serverUrl: 'https://api.example.test',
