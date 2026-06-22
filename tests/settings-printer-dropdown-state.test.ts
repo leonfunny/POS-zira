@@ -176,6 +176,12 @@ describe('Settings printer dropdown state', () => {
     expect(settingsSource).toContain('window.electronAPI.lanFirstKitchen.testRoute');
     expect(settingsSource).toContain("window.electronAPI.printAgentPrinters.upsertAssignment('KITCHEN'");
     expect(settingsSource).toContain('Test Wi-Fi route');
+    expect(settingsSource).not.toContain("setLanKitchenReceiverPairingCode('');");
+    expect(settingsSource).not.toContain("setLanKitchenSenderPairingCode('');");
+    expect(settingsSource).toContain('testPrint: true');
+    expect(settingsSource).toContain('printerId: lanKitchenSelectedPrinterId');
+    expect(authModuleSource).toContain('/print/kitchen-ticket');
+    expect(authModuleSource).toContain('TEST WIFI ROUTE');
 
     expect(sharedTypesSource).toContain("LAN_FIRST_KITCHEN_SET_PAIRING_CODE: 'lan-first-kitchen:set-pairing-code'");
     expect(sharedTypesSource).toContain("LAN_FIRST_KITCHEN_TEST_ROUTE: 'lan-first-kitchen:test-route'");

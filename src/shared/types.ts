@@ -313,6 +313,9 @@ export interface LanFirstKitchenTestRouteRequest {
   port: number;
   pairingCode?: string;
   timeoutMs?: number;
+  testPrint?: boolean;
+  printerId?: string;
+  targetMachineId?: string;
 }
 
 export interface LanFirstKitchenTestRouteResponse {

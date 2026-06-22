@@ -2228,7 +2228,6 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           setLanKitchenResult({ success: false, message: result.error || 'Failed to save receiver pairing code' });
           return false;
         }
-        setLanKitchenReceiverPairingCode('');
       }
 
       if (plan.senderCode) {
@@ -2237,7 +2236,6 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           setLanKitchenResult({ success: false, message: result.error || 'Failed to save sender pairing code' });
           return false;
         }
-        setLanKitchenSenderPairingCode('');
       }
 
       await Promise.resolve(onConfigChange({
@@ -2285,6 +2283,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         port: parseScalePortNumber(lanKitchenTargetPort, DEFAULT_LAN_FIRST_KITCHEN_PORT),
         pairingCode: senderCode || undefined,
         timeoutMs: config?.lanFirstKitchenSender?.timeoutMs || DEFAULT_LAN_FIRST_KITCHEN_TIMEOUT_MS,
+        testPrint: true,
+        printerId: lanKitchenSelectedPrinterId,
+        targetMachineId: selectedLanKitchenPrinter?.machineId || undefined,
       });
       setLanKitchenResult({
         success: response.success,
@@ -3794,7 +3795,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     <button
                       type="button"
                       onClick={handleTestLanKitchenWifiRoute}
-                      disabled={lanKitchenTesting || lanKitchenSaving || !lanKitchenTargetHost.trim()}
+                      disabled={lanKitchenTesting || lanKitchenSaving || !lanKitchenTargetHost.trim() || !lanKitchenSelectedPrinterId}
                       className="min-h-10 w-full rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     >
                       {lanKitchenTesting ? 'Testing Wi-Fi route...' : 'Test Wi-Fi route'}

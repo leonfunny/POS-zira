@@ -8,6 +8,7 @@
 import { ipcMain, dialog, shell, safeStorage, BrowserWindow } from 'electron';
 import { join } from 'path';
 import { app } from 'electron';
+import { randomUUID } from 'crypto';
 import { BaseModule, ModuleState } from '../core/module';
 import type { ServiceContainer } from '../core/container';
 import type { EventBus } from '../core/event-bus';
@@ -19,9 +20,12 @@ import {
   AuthUser,
   ConnectResponse,
   AgentPrintersResponse,
+  KitchenTicketData,
   LanFirstKitchenPairingCodeRequest,
   LanFirstKitchenTestRouteRequest,
   LanFirstKitchenTestRouteResponse,
+  LanFirstPrintPayloadHashInput,
+  ReserveLanFirstPrintJobRequest,
   SalonPrinterRole,
   SalonPrintersListOptions,
   ServerPrinterMapping,
@@ -45,6 +49,7 @@ import { localPrinterRepo } from '../database/repos/local-printer-repo';
 import { listWindowsPrintersDetailed } from '../hardware/port-utils';
 import logger from '../logger';
 import { buildLanFirstAuthHeaders } from '../printing/lan-first-auth';
+import { hashLanFirstPrintPayload } from '../printing/lan-first-payload-hash';
 
 /** Simple in-memory rate limiter */
 class RateLimiter {
@@ -479,14 +484,71 @@ export class AuthModule extends BaseModule {
         return { success: false, error: 'Sender pairing code is required' };
       }
 
-      const sourceMachineId = String(config.machineId || 'settings-test').trim();
-      const bodyJson = JSON.stringify({ probe: 'LAN_FIRST_KITCHEN_AUTH_TEST' });
+      const sourceMachineId = String(config.machineId || '').trim() || 'settings-test';
       const timeoutMs = Number.isInteger(Number(request?.timeoutMs)) ? Math.max(500, Number(request.timeoutMs)) : 2000;
+      const testPrint = request?.testPrint === true;
+      let endpointPath = '/auth-test';
+      let bodyJson = JSON.stringify({ probe: 'LAN_FIRST_KITCHEN_AUTH_TEST' });
+      let successStatus = 'AUTH_OK';
+      let successMessage = 'Wi-Fi route authenticated';
+
+      if (testPrint) {
+        const printerId = String(request?.printerId || '').trim();
+        const targetMachineId = String(request?.targetMachineId || '').trim();
+        if (!printerId) {
+          return { success: false, error: 'Kitchen printer is required for Wi-Fi test print' };
+        }
+        if (!targetMachineId) {
+          return { success: false, error: 'Target kitchen POS machine ID is required for Wi-Fi test print' };
+        }
+
+        const referenceId = `settings-test-${randomUUID()}`;
+        const ticket: KitchenTicketData = {
+          orderId: referenceId,
+          orderNumber: 'TEST-WIFI',
+          createdAt: new Date().toISOString(),
+          source: 'SETTINGS',
+          kitchenLanguage: 'en',
+          kind: 'TICKET',
+          paymentStatus: 'UNPAID',
+          items: [
+            {
+              name: 'TEST WIFI ROUTE',
+              quantity: 1,
+              unit: null,
+              modifiers: [],
+              notes: null,
+            },
+          ],
+        };
+        const hashInput: LanFirstPrintPayloadHashInput = {
+          jobType: 'KITCHEN_TICKET',
+          printerType: 'KITCHEN',
+          printerId,
+          referenceType: 'KITCHEN_TICKET',
+          referenceId,
+          payload: ticket,
+        };
+        const printRequest: ReserveLanFirstPrintJobRequest = {
+          ...hashInput,
+          jobId: randomUUID(),
+          idempotencyKey: `settings-test-print:${sourceMachineId}:${printerId}:${randomUUID()}`,
+          payloadHash: hashLanFirstPrintPayload(hashInput),
+          dispatchMode: 'LAN_FIRST',
+          sourceMachineId,
+          targetMachineId,
+        };
+        endpointPath = '/print/kitchen-ticket';
+        bodyJson = JSON.stringify(printRequest);
+        successStatus = 'COMPLETED';
+        successMessage = 'Wi-Fi test print sent';
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const response = await fetch(`http://${hostForUrl(host)}:${port}/auth-test`, {
+        const response = await fetch(`http://${hostForUrl(host)}:${port}${endpointPath}`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -503,9 +565,9 @@ export class AuthModule extends BaseModule {
         if (response.ok && json.success === true) {
           return {
             success: true,
-            status: String(json.status || 'AUTH_OK'),
+            status: String(json.status || successStatus),
             httpStatus: response.status,
-            message: 'Wi-Fi route authenticated',
+            message: successMessage,
           };
         }
         return {
@@ -518,8 +580,8 @@ export class AuthModule extends BaseModule {
         return {
           success: false,
           error: err?.name === 'AbortError'
-            ? `Wi-Fi route test timed out after ${timeoutMs} ms`
-            : err?.message || 'Wi-Fi route test failed',
+            ? `Wi-Fi ${testPrint ? 'test print' : 'route test'} timed out after ${timeoutMs} ms`
+            : err?.message || `Wi-Fi ${testPrint ? 'test print' : 'route test'} failed`,
         };
       } finally {
         clearTimeout(timer);
