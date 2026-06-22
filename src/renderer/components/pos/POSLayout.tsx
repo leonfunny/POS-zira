@@ -815,6 +815,43 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => { active = false; if (typeof unsub === 'function') unsub(); };
   }, []);
 
+  // A scanned KSO QR is just another door to the same waiting order: claim it
+  // (so it locks here + leaves the other stations' lists), then load. Falls
+  // back to a pure offline load only when the backend has no such row (404) or
+  // is unreachable; 409/410 from a reachable backend block to avoid double-charge.
+  const handleScannedKioskOrder = useCallback(async (kioskOrder: KitchenSelfOrderQrPayload): Promise<void> => {
+    const known = pickupOrders.find(
+      (r) => (kioskOrder.orderId && r.sourceOrderId === kioskOrder.orderId) || r.orderNumber === kioskOrder.orderNumber,
+    );
+    if (known) {
+      await openPickupOrder(known);
+      return;
+    }
+    const currentState = await window.electronAPI.pos.getState().catch(() => state);
+    if ((currentState?.cart.items.length ?? 0) > 0) {
+      showScanToast('Clear cart before scanning a kiosk order', 'err');
+      return;
+    }
+    const res = await window.electronAPI.pos.pickupOrders.claimByRef({
+      sourceOrderId: kioskOrder.orderId,
+      orderNumber: kioskOrder.orderNumber,
+    });
+    if (res?.ok) {
+      const pickupOrderId: string | undefined = res.data?.id;
+      const loaded = await loadKitchenSelfOrderQr(kioskOrder, { pickupOrderId: pickupOrderId ?? null });
+      if (!loaded && pickupOrderId) {
+        await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
+      }
+      if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
+      return;
+    }
+    if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
+    if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
+    // 404 (never registered) or network/unreachable → offline fallback: load
+    // straight from the self-contained QR payload, no claim.
+    await loadKitchenSelfOrderQr(kioskOrder);
+  }, [pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast]);
+
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -823,7 +860,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       const kioskOrder = decodeKitchenSelfOrderQr(code);
       if (kioskOrder) {
         document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
-        await loadKitchenSelfOrderQr(kioskOrder);
+        await handleScannedKioskOrder(kioskOrder);
         return;
       }
       if (code === PRINT_LAST_CART_LABEL_COMMAND) {
