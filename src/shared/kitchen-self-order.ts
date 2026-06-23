@@ -3,6 +3,7 @@ export type KitchenSelfOrderFulfillment = 'DINE_IN' | 'TAKEAWAY';
 export type KitchenSelfOrderCheckoutMode = 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
 export type KitchenSelfOrderReleasePolicy = 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
 export type KitchenSelfOrderMenuSource = 'all' | 'selected';
+export type KitchenSelfOrderRetryAction = 'none' | 'reprint_slip' | 'reprint_all';
 export type KitchenSelfOrderModifierSelectionMode = 'SINGLE' | 'MULTIPLE';
 export type KitchenSelfOrderCheckoutAction = 'SUBMIT_ORDER' | 'REQUIRE_TERMINAL';
 export type KitchenSelfOrderStatus =
@@ -141,6 +142,16 @@ export function resolveKitchenSelfOrderMenuSource(
   const explicit = config?.kitchenSelfOrderMenuSource;
   if (explicit === 'all' || explicit === 'selected') return explicit;
   return categories.some((category) => category.kitchen_print === 1) ? 'selected' : 'all';
+}
+
+export function resolveKitchenSelfOrderRetryAction(
+  state: { kitchenPrinted?: boolean | number | null; customerSlipPrinted?: boolean | number | null },
+): KitchenSelfOrderRetryAction {
+  const kitchen = state.kitchenPrinted === true || Number(state.kitchenPrinted) === 1;
+  const slip = state.customerSlipPrinted === true || Number(state.customerSlipPrinted) === 1;
+  if (kitchen && slip) return 'none';
+  if (kitchen && !slip) return 'reprint_slip';
+  return 'reprint_all';
 }
 
 function base64UrlToBinary(value: string): string {
