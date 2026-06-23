@@ -798,22 +798,27 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
   }, [state, loadKitchenSelfOrderQr, showScanToast]);
 
-  // Live cashier pickup-order waiting list (backend-coordinated queue): seed
-  // from GET /open, then merge pickup-order:* socket events as they arrive.
+  // Live cashier pickup-order waiting list: merge pickup-order:* socket events
+  // as they arrive.
   useEffect(() => {
-    let active = true;
-    const seed = async () => {
-      try {
-        const rows = await window.electronAPI.pos.pickupOrders?.listOpen?.();
-        if (active) setPickupOrders(seedPickupOrders(rows as PickupOrderRow[]));
-      } catch { /* best-effort; the QR scan path still works */ }
-    };
-    void seed();
     const unsub = window.electronAPI.pos.onPickupOrderEvent?.((msg: { event: string; data: any }) => {
       setPickupOrders((prev) => mergePickupEvent(prev, msg));
     });
-    return () => { active = false; if (typeof unsub === 'function') unsub(); };
+    return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
+
+  // Seed / re-seed from GET /open whenever we (re)connect. Socket.IO does NOT
+  // buffer events for a client that wasn't in the salon room yet, so an order
+  // created while we were offline / mid-handshake would otherwise be missed
+  // until the next full remount. Re-seeding on every reconnect self-heals that.
+  useEffect(() => {
+    if (!isOnline) return;
+    let active = true;
+    window.electronAPI.pos.pickupOrders?.listOpen?.()
+      .then((rows: PickupOrderRow[]) => { if (active) setPickupOrders(seedPickupOrders(rows)); })
+      .catch(() => { /* best-effort; the QR scan path still works */ });
+    return () => { active = false; };
+  }, [isOnline]);
 
   // A scanned KSO QR is just another door to the same waiting order: claim it
   // (so it locks here + leaves the other stations' lists), then load. Falls
