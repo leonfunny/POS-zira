@@ -283,12 +283,14 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(applicatorSource).toContain("firstOwnValue(p, ['kitchenPrint', 'kitchen_print'])");
   });
 
-  it('exposes the Settings toggle without exposing a POS Order History kitchen-print action', () => {
+  it('exposes the kitchen self-order toggle without exposing a POS Order History kitchen-print action', () => {
     const settingsSource = readSource('src/renderer/components/Settings.tsx');
+    const kitchenPanelSource = readSource('src/renderer/components/pos/KitchenSelfOrderPanel.tsx');
     const kitchenSettingsSource = readSource('src/renderer/components/pos/KitchenPrintSettings.tsx');
     const modalSource = readSource('src/renderer/components/pos/OrderHistoryModal.tsx');
 
-    expect(settingsSource).toContain('<KitchenPrintSettings');
+    expect(settingsSource).not.toContain('<KitchenPrintSettings');
+    expect(kitchenPanelSource).toContain('<KitchenPrintSettings');
     expect(kitchenSettingsSource).toContain('updateCategory(category.id');
     expect(kitchenSettingsSource).toContain('kitchenPrint: next');
     expect(modalSource).not.toContain('handlePrintKitchenTicket(order.id)');

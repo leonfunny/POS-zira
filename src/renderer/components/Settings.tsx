@@ -5,7 +5,6 @@ import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKit
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
-import KitchenPrintSettings from './pos/KitchenPrintSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
@@ -5832,9 +5831,6 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           })()}
         </label>
       </div>
-
-      {/* Kitchen ticket printing — which categories print a kitchen ticket */}
-      <KitchenPrintSettings lang={config?.posLanguage || config?.language || undefined} />
 
       {/* Check-in Display */}
       <div className="panel p-4">

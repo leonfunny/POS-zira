@@ -185,13 +185,21 @@ describe('kitchen self-order MVP wiring', () => {
   });
 
   it('operator launch settings are separate from store self-checkout settings', () => {
-    const tabSource = readSource('src/renderer/components/SelfCheckoutTab.tsx');
+    const kitchenPanel = readSource('src/renderer/components/pos/KitchenSelfOrderPanel.tsx');
+    const groceryPanel = readSource('src/renderer/components/pos/GrocerySelfCheckoutPanel.tsx');
+    const settings = readSource('src/renderer/components/Settings.tsx');
 
-    expect(tabSource).toContain("window.open('kitchenSelfOrder')");
-    expect(tabSource).toContain('kitchenSelfOrderLanguage');
-    expect(tabSource).toContain('kitchenSelfOrderDefaultFulfillment');
-    expect(tabSource).toContain('kitchenSelfOrderSlipPrinterType');
-    expect(tabSource).toContain('selfCheckoutProfile');
+    expect(kitchenPanel).toContain("window.open('kitchenSelfOrder')");
+    expect(kitchenPanel).toContain('kitchenSelfOrderLanguage');
+    expect(kitchenPanel).toContain('kitchenSelfOrderDefaultFulfillment');
+    expect(kitchenPanel).toContain('kitchenSelfOrderSlipPrinterType');
+    expect(kitchenPanel).toContain('kitchenSelfOrderMenuSource');
+    expect(kitchenPanel).toContain('resolveKitchenSelfOrderMenuSource');
+    expect(kitchenPanel).toContain('KitchenPrintSettings');
+    expect(groceryPanel).toContain("window.open('selfCheckout')");
+    expect(groceryPanel).toContain("selfCheckoutProfile: 'retail_scan'");
+    expect(groceryPanel).not.toContain('menu_kitchen');
+    expect(settings).not.toContain('<KitchenPrintSettings');
   });
 
   it('opens directly on the menu while keeping language and fulfillment editable inline', () => {
