@@ -774,18 +774,19 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // backend first (so it locks to this station), then build the cart from the
   // same QR payload a scan would. If the claim is lost (409/410) we block; if
   // the cart build fails after claiming we release so another station can take it.
-  const openPickupOrder = useCallback(async (rowOrder: PickupOrderRow): Promise<void> => {
-    const code = rowOrder.payload?.qr;
-    const decoded = typeof code === 'string' ? decodeKitchenSelfOrderQr(code) : null;
-    if (!decoded) {
-      showScanToast('Kiosk order payload invalid', 'err');
-      return;
-    }
+  const openPickupOrder = useCallback(async (
+    rowOrder: PickupOrderRow,
+    scannedPayload?: KitchenSelfOrderQrPayload | null,
+  ): Promise<void> => {
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
     if ((currentState?.cart.items.length ?? 0) > 0) {
       showScanToast('Clear cart before loading a kiosk order', 'err');
       return;
     }
+    // Claim FIRST: the claim response carries the authoritative payload, so we
+    // never depend on the in-memory list row's payload — which is absent on
+    // rows that arrived via a payload-less claimed/released socket event (and
+    // only repaired by a GET /open re-seed, i.e. a tab switch).
     const claim = await window.electronAPI.pos.pickupOrders.claim(rowOrder.id);
     if (!claim?.ok) {
       if (claim?.status === 409) showScanToast('Đơn đang được xử lý ở máy khác', 'err');
@@ -794,14 +795,25 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
       return;
     }
-    const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: rowOrder.id });
-    if (!loaded) {
-      await window.electronAPI.pos.pickupOrders.release(rowOrder.id).catch(() => {});
+    const pickupId: string = claim.data?.id ?? rowOrder.id;
+    // Prefer a freshly-scanned payload (we hold it in hand), then the
+    // authoritative claim payload, then the possibly-stale list row payload.
+    const authoritativeQr: unknown = claim.data?.payload?.qr ?? rowOrder.payload?.qr;
+    const decoded = scannedPayload
+      ?? (typeof authoritativeQr === 'string' ? decodeKitchenSelfOrderQr(authoritativeQr) : null);
+    if (!decoded) {
+      showScanToast('Kiosk order payload invalid', 'err');
+      await window.electronAPI.pos.pickupOrders.release(pickupId).catch(() => {});
       return;
     }
-    setActivePickup({ id: rowOrder.id, orderNumber: rowOrder.orderNumber });
+    const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupId });
+    if (!loaded) {
+      await window.electronAPI.pos.pickupOrders.release(pickupId).catch(() => {});
+      return;
+    }
+    setActivePickup({ id: pickupId, orderNumber: rowOrder.orderNumber });
     setPickupPanelOpen(false);
-    setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
+    setPickupOrders((prev) => removePickupOrder(prev, pickupId));
   }, [state, loadKitchenSelfOrderQr, showScanToast]);
 
   // Put a loaded-but-unpaid pickup order back on the queue (release the claim).
@@ -862,7 +874,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       (r) => (kioskOrder.orderId && r.sourceOrderId === kioskOrder.orderId) || r.orderNumber === kioskOrder.orderNumber,
     );
     if (known) {
-      await openPickupOrder(known);
+      // We already hold the freshly-scanned payload — load the cart from THAT
+      // (the list row's payload may be absent) while claiming by the known id,
+      // so the order is claimed → settles → leaves the queue on payment.
+      await openPickupOrder(known, kioskOrder);
       return;
     }
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
