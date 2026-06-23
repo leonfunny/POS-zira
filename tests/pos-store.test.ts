@@ -390,10 +390,11 @@ describe('Display state transitions', () => {
   });
 
   it('classifies customer-display catalog categories into retail vs food sections', () => {
-    expect(resolveCustomerDisplayCatalogSection({ name: 'Napoje' })).toBe('food');
-    expect(resolveCustomerDisplayCatalogSection({ name: 'Đồ uống' })).toBe('food');
-    expect(resolveCustomerDisplayCatalogSection({ name: 'Grocery' })).toBe('retail');
-    expect(resolveCustomerDisplayCatalogSection({ name: 'Unknown shelf' })).toBe('retail');
+    expect(resolveCustomerDisplayCatalogSection({ kitchen_print: 1 })).toBe('food');
+    expect(resolveCustomerDisplayCatalogSection({ kitchen_print: 0 })).toBe('retail');
+    expect(resolveCustomerDisplayCatalogSection({ kitchen_print: 1, name: 'Grocery' })).toBe('food');
+    expect(resolveCustomerDisplayCatalogSection({ name: 'Napoje' })).toBe('retail');
+    expect(resolveCustomerDisplayCatalogSection({})).toBe('retail');
   });
 
   it('uses independent customer-display toggles for retail goods and food menus', () => {

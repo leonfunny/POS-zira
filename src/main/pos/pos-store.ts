@@ -197,95 +197,9 @@ export interface CustomerDisplayCatalogConfig {
   foodEnabled: boolean;
 }
 
-const FOOD_MENU_KEYWORDS = [
-  'bar',
-  'beer',
-  'beverage',
-  'breakfast',
-  'burger',
-  'cafe',
-  'coffee',
-  'com',
-  'dania',
-  'danie',
-  'deser',
-  'desery',
-  'dessert',
-  'dinner',
-  'dish',
-  'drink',
-  'fnb',
-  'food',
-  'herbata',
-  'jedzenie',
-  'juice',
-  'kawa',
-  'kebab',
-  'kolacja',
-  'lunch',
-  'meal',
-  'menu',
-  'napoj',
-  'napoje',
-  'obiad',
-  'pho',
-  'piwo',
-  'pizza',
-  'przekaski',
-  'restaurant',
-  'snack',
-  'sniadanie',
-  'sok',
-  'tea',
-  'tra',
-  'water',
-  'wino',
-  'woda',
-  'do an',
-  'do uong',
-];
-
-const RETAIL_CATALOG_KEYWORDS = [
-  'grocery',
-  'goods',
-  'hang hoa',
-  'product',
-  'products',
-  'retail',
-  'shop',
-  'sklep',
-  'spozywcze',
-  'tap hoa',
-  'towar',
-  'towary',
-];
-
-function normalizeCatalogText(value: unknown): string {
-  return typeof value === 'string'
-    ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase()
-    : '';
-}
-
-function matchesAnyKeyword(value: string, keywords: string[]): boolean {
-  return keywords.some((keyword) => value.includes(keyword));
-}
-
 export function resolveCustomerDisplayCatalogSection(category: unknown): CustomerDisplayCatalogSection {
   const raw = category as Record<string, unknown> | null | undefined;
-  const explicit = normalizeCatalogText(
-    raw?.customer_display_section
-      ?? raw?.display_section
-      ?? raw?.displaySection
-      ?? raw?.section
-      ?? raw?.kind
-      ?? raw?.type,
-  );
-  if (matchesAnyKeyword(explicit, FOOD_MENU_KEYWORDS)) return 'food';
-  if (matchesAnyKeyword(explicit, RETAIL_CATALOG_KEYWORDS)) return 'retail';
-
-  const name = normalizeCatalogText(raw?.name);
-  if (matchesAnyKeyword(name, FOOD_MENU_KEYWORDS)) return 'food';
-  return 'retail';
+  return Number(raw?.kitchen_print) === 1 ? 'food' : 'retail';
 }
 
 export function isCustomerDisplayCatalogSectionEnabled(
