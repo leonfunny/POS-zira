@@ -1001,6 +1001,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   };
 
   const handleHomeReset = useCallback(() => {
+    // If a kitchen pickup order was loaded but not paid, release the claim so
+    // another station can take it. After payment the cart (and this draft) is
+    // already cleared, so this only fires on a deliberate abandon — no race
+    // with the async settle in the main process.
+    const abandonedPickupId = state?.checkoutDraft?.kitchenSelfOrder?.pickupOrderId;
+    if (abandonedPickupId) {
+      void window.electronAPI.pos.pickupOrders.release(abandonedPickupId).catch(() => {});
+    }
     setLangOpen(false);
     setScanToast(null);
     setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
@@ -1016,7 +1024,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
     setHomeResetKey((key) => key + 1);
     setTimeout(() => document.dispatchEvent(new CustomEvent('pos:focus-search')), 0);
-  }, [dispatch]);
+  }, [dispatch, state]);
 
   if (!state) {
     return (

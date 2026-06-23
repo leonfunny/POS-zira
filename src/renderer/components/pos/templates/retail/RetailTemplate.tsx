@@ -867,6 +867,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
 
   const handleHoldCart = useCallback(() => {
     if (cart.items.length === 0) return;
+    // A loaded kitchen pickup order is locked to this station and must settle
+    // on payment; parking it would lose the pickupOrderId and strand the claim.
+    // Block Hold while a pickup order is active (the button is also disabled).
+    if (state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId) return;
     const held = {
       id: crypto.randomUUID(),
       items: cart.items,
@@ -876,7 +880,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     setHeldCarts((prev) => [held, ...prev].slice(0, 6));
     dispatch({ type: 'cart/clear' });
     dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
-  }, [cart.items, cart.total, dispatch]);
+  }, [cart.items, cart.total, dispatch, state.checkoutDraft]);
 
   const handleRecallCart = useCallback((heldId: string) => {
     const held = heldCarts.find((c) => c.id === heldId);
@@ -1349,6 +1353,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               t={t}
               heldCarts={heldCarts}
               onHold={handleHoldCart}
+              holdDisabled={!!state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId}
               onRecall={handleRecallCart}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}

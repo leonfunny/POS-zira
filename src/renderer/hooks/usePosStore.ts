@@ -54,6 +54,8 @@ export interface CheckoutDraftState {
     sourceLabel?: string | null;
     fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
     kitchenAlreadyReleased?: boolean;
+    /** Backend pickup_orders.id — settle on payment / release on abandon. */
+    pickupOrderId?: string | null;
   };
 }
 

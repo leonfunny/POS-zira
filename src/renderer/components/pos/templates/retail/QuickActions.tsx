@@ -18,6 +18,7 @@ interface QuickActionsProps {
   t: (key: string) => string;
   heldCarts?: HeldCart[];
   onHold?: () => void;
+  holdDisabled?: boolean;
   onRecall?: (id: string) => void;
   onDiscardHeld?: (id: string) => void;
   onHistory?: () => void;
@@ -77,7 +78,7 @@ const icons = {
 export default function QuickActions({
   dispatch, hasItems, onOpenCustomerDisplay, onCloseCustomerDisplay,
   isCustomerDisplayOpen, displayMode, t,
-  heldCarts = [], onHold, onRecall, onDiscardHeld, onHistory, onQuickAddCamera, onCreateProduct,
+  heldCarts = [], onHold, holdDisabled, onRecall, onDiscardHeld, onHistory, onQuickAddCamera, onCreateProduct,
 }: QuickActionsProps) {
   const [showHeld, setShowHeld] = useState(false);
 
@@ -127,7 +128,7 @@ export default function QuickActions({
             icon={icons.hold}
             label={tOr('pos.holdCart', 'Hold')}
             onClick={onHold}
-            disabled={!hasItems}
+            disabled={!hasItems || holdDisabled}
           />
         )}
         {onRecall && (
