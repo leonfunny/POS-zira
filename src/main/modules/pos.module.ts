@@ -47,6 +47,7 @@ import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
 import { pushPickupOrderBestEffort } from '../kitchen-self-order/pickup-queue-client';
+import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
 import {
@@ -1835,6 +1836,16 @@ export class PosModule extends BaseModule {
         });
 
         const id = orderRepo.create(normalizedOrder, normalizedItems);
+
+        // Settle the cashier pickup queue if this paid sale came from a kitchen
+        // self-order (loaded via the list or a QR scan). Fire-and-forget with a
+        // durable outbox — must never block or fail the sale.
+        const pickupOrderId = this.posStore?.getState()?.checkoutDraft?.kitchenSelfOrder?.pickupOrderId;
+        if (pickupOrderId) {
+          const posOrderNumber = String(normalizedOrder.order_number || normalizedOrder.orderNumber || '') || undefined;
+          void settlePickupOrderForSale(pickupOrderId, id, posOrderNumber);
+        }
+
         let stockChanged = false;
         const allowNegativeStock = getConfig().allowOversell === true;
         for (const item of normalizedItems) {
@@ -3500,6 +3511,10 @@ export class PosModule extends BaseModule {
     socket.on('pickup-order:released', forwardPickupOrder('released'));
     socket.on('pickup-order:settled', forwardPickupOrder('settled'));
     socket.on('pickup-order:cancelled', forwardPickupOrder('cancelled'));
+
+    // Retry any pickup-order settles that didn't land while offline whenever
+    // the socket (re)connects — closes the loop after a transient outage.
+    socket.on('connected', () => { void drainPickupSettleOutbox(); });
   }
 
   getToolDefinitions(): ToolDefinition[] {

@@ -56,6 +56,8 @@ export interface CheckoutDraftState {
     sourceLabel?: string | null;
     fulfillmentType?: 'DINE_IN' | 'TAKEAWAY' | string | null;
     kitchenAlreadyReleased?: boolean;
+    /** Backend pickup_orders.id — used to settle the queue row on payment. */
+    pickupOrderId?: string | null;
   };
 }
 
