@@ -21,10 +21,10 @@ describe('self-checkout runtime model', () => {
     expect(resolveSelfCheckoutMode('bogus')).toBe('demo');
   });
 
-  it('defaults unknown kiosk profiles to retail scan mode', () => {
+  it('coerces every profile including legacy menu_kitchen to retail scan', () => {
     expect(resolveSelfCheckoutProfile(undefined)).toBe('retail_scan');
     expect(resolveSelfCheckoutProfile('retail_scan')).toBe('retail_scan');
-    expect(resolveSelfCheckoutProfile('menu_kitchen')).toBe('menu_kitchen');
+    expect(resolveSelfCheckoutProfile('menu_kitchen')).toBe('retail_scan');
     expect(resolveSelfCheckoutProfile('grocery_kitchen_mix')).toBe('retail_scan');
   });
 

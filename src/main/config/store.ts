@@ -377,6 +377,7 @@ const store = new Store<AgentConfig>({
      */
     selfCheckoutKioskUserId: { type: 'string', default: '' },
     selfCheckoutMode: { type: 'string', enum: ['demo', 'production'], default: 'demo' },
+    // Keep menu_kitchen for legacy config acceptance; runtime coerces it to retail_scan.
     selfCheckoutProfile: { type: 'string', enum: ['retail_scan', 'menu_kitchen'], default: 'retail_scan' },
     selfCheckoutFakePaymentEnabled: { type: 'boolean', default: false },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },

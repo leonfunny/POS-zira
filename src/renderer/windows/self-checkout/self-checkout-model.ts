@@ -33,7 +33,7 @@ export function resolveSelfCheckoutMode(value: unknown): SelfCheckoutMode {
 }
 
 export function resolveSelfCheckoutProfile(value: unknown): SelfCheckoutProfile {
-  return value === 'menu_kitchen' ? 'menu_kitchen' : 'retail_scan';
+  return 'retail_scan';
 }
 
 export function resolveSelfCheckoutPaymentProfile(
