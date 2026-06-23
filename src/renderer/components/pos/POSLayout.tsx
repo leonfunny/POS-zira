@@ -266,6 +266,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // Cashier pickup queue: kitchen self-orders waiting to be paid at the counter.
   const [pickupOrders, setPickupOrders] = useState<PickupOrderRow[]>([]);
   const [pickupPanelOpen, setPickupPanelOpen] = useState(false);
+  const [ownMachineId, setOwnMachineId] = useState<string | null>(null);
+  // The pickup order currently loaded into the cart (claimed by this station).
+  // Kept in state so the "Trả lại" banner survives the cart being emptied
+  // (which resets checkoutDraft.kitchenSelfOrder).
+  const [activePickup, setActivePickup] = useState<{ id: string; orderNumber: string } | null>(null);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -794,15 +799,45 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       await window.electronAPI.pos.pickupOrders.release(rowOrder.id).catch(() => {});
       return;
     }
+    setActivePickup({ id: rowOrder.id, orderNumber: rowOrder.orderNumber });
     setPickupPanelOpen(false);
     setPickupOrders((prev) => removePickupOrder(prev, rowOrder.id));
   }, [state, loadKitchenSelfOrderQr, showScanToast]);
 
+  // Put a loaded-but-unpaid pickup order back on the queue (release the claim).
+  const releaseActivePickup = useCallback(async () => {
+    const target = activePickup;
+    if (!target) return;
+    setActivePickup(null);
+    await window.electronAPI.pos.pickupOrders.release(target.id).catch(() => {});
+    await window.electronAPI.pos.dispatch({ type: 'cart/clear' }).catch(() => {});
+    showScanToast(`Đã trả lại đơn ${target.orderNumber}`, 'ok');
+  }, [activePickup, showScanToast]);
+
+  // Release a stale claim THIS station holds but isn't actively working (e.g.
+  // after an app restart) straight from the list.
+  const releasePickupFromList = useCallback(async (row: PickupOrderRow) => {
+    await window.electronAPI.pos.pickupOrders.release(row.id).catch(() => {});
+    setPickupOrders((prev) => removePickupOrder(prev, row.id));
+  }, []);
+
+  // This station's machineId — lets the list tell our own claims apart from
+  // "claimed at another station".
+  useEffect(() => {
+    window.electronAPI.pos.pickupOrders?.machineId?.()
+      .then((id: string | null) => setOwnMachineId(id))
+      .catch(() => {});
+  }, []);
+
   // Live cashier pickup-order waiting list: merge pickup-order:* socket events
-  // as they arrive.
+  // as they arrive. A settled/cancelled event for the order we're holding also
+  // clears the active-order banner.
   useEffect(() => {
     const unsub = window.electronAPI.pos.onPickupOrderEvent?.((msg: { event: string; data: any }) => {
       setPickupOrders((prev) => mergePickupEvent(prev, msg));
+      if ((msg.event === 'settled' || msg.event === 'cancelled') && msg.data?.id) {
+        setActivePickup((cur) => (cur && cur.id === msg.data.id ? null : cur));
+      }
     });
     return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
@@ -812,13 +847,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // so the initial load happens even if the connection-status indicator lags.
   useEffect(() => {
     let active = true;
-    rlog.info(`[PickupQueue][diag] seed run isOnline=${isOnline} hasApi=${!!window.electronAPI?.pos?.pickupOrders?.listOpen}`);
     window.electronAPI.pos.pickupOrders?.listOpen?.()
-      .then((rows: PickupOrderRow[]) => {
-        rlog.info(`[PickupQueue][diag] seed rows=${Array.isArray(rows) ? rows.length : 'n/a'}`);
-        if (active) setPickupOrders(seedPickupOrders(rows));
-      })
-      .catch((e: any) => rlog.warn(`[PickupQueue][diag] seed failed: ${e?.message || e}`));
+      .then((rows: PickupOrderRow[]) => { if (active) setPickupOrders(seedPickupOrders(rows)); })
+      .catch(() => { /* best-effort; the QR scan path still works */ });
     return () => { active = false; };
   }, [isOnline]);
 
@@ -848,6 +879,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       const loaded = await loadKitchenSelfOrderQr(kioskOrder, { pickupOrderId: pickupOrderId ?? null });
       if (!loaded && pickupOrderId) {
         await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
+      }
+      if (loaded && pickupOrderId) {
+        setActivePickup({ id: pickupOrderId, orderNumber: kioskOrder.orderNumber });
       }
       if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
       return;
@@ -1009,12 +1043,12 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   const handleHomeReset = useCallback(() => {
     // If a kitchen pickup order was loaded but not paid, release the claim so
-    // another station can take it. After payment the cart (and this draft) is
-    // already cleared, so this only fires on a deliberate abandon — no race
-    // with the async settle in the main process.
-    const abandonedPickupId = state?.checkoutDraft?.kitchenSelfOrder?.pickupOrderId;
-    if (abandonedPickupId) {
-      void window.electronAPI.pos.pickupOrders.release(abandonedPickupId).catch(() => {});
+    // another station can take it. Tracked in activePickup (survives the cart
+    // being emptied); only fires on a deliberate Home reset — no race with the
+    // async settle (which clears activePickup via the settled event).
+    if (activePickup) {
+      void window.electronAPI.pos.pickupOrders.release(activePickup.id).catch(() => {});
+      setActivePickup(null);
     }
     setLangOpen(false);
     setScanToast(null);
@@ -1031,7 +1065,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
     setHomeResetKey((key) => key + 1);
     setTimeout(() => document.dispatchEvent(new CustomEvent('pos:focus-search')), 0);
-  }, [dispatch, state]);
+  }, [dispatch, activePickup]);
 
   if (!state) {
     return (
@@ -1052,6 +1086,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       </div>
     );
   }
+
+  // The order loaded in the cart is shown in the "đang xử lý" banner, not the
+  // waiting list — exclude it so it isn't double-shown / mislabeled.
+  const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
     <div className="h-screen bg-slate-50 text-gray-900 flex flex-col overflow-hidden">
@@ -1200,9 +1238,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               <span>Đơn bếp</span>
-              {pickupOrders.length > 0 && (
+              {visiblePickups.length > 0 && (
                 <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold tabular-nums">
-                  {pickupOrders.length}
+                  {visiblePickups.length}
                 </span>
               )}
             </button>
@@ -1210,31 +1248,45 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg py-2">
-                  {pickupOrders.length === 0 ? (
+                  {visiblePickups.length === 0 ? (
                     <div className="px-4 py-6 text-center text-sm text-slate-400">Chưa có đơn bếp chờ thu</div>
                   ) : (
-                    pickupOrders.map((o) => {
-                      const claimedElsewhere = o.status === 'CLAIMED';
+                    visiblePickups.map((o) => {
+                      const mine = o.status === 'CLAIMED' && !!ownMachineId && o.claimedByMachineId === ownMachineId;
+                      const claimedElsewhere = o.status === 'CLAIMED' && !mine;
                       return (
-                        <button
-                          key={o.id}
-                          type="button"
-                          disabled={claimedElsewhere}
-                          onClick={() => openPickupOrder(o)}
-                          className={`w-full px-4 py-3 flex items-center justify-between gap-3 text-left transition-colors ${
-                            claimedElsewhere ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-lg font-black text-slate-900 tabular-nums">{o.orderNumber}</div>
-                            {claimedElsewhere && (
-                              <div className="text-[11px] font-semibold text-amber-600">Đang xử lý ở máy khác</div>
-                            )}
-                          </div>
-                          <div className="text-sm font-bold text-slate-700 tabular-nums shrink-0">
-                            {((o.totalGrosze ?? 0) / 100).toFixed(2)}
-                          </div>
-                        </button>
+                        <div key={o.id} className="flex items-center gap-1 px-2">
+                          <button
+                            type="button"
+                            disabled={claimedElsewhere}
+                            onClick={() => openPickupOrder(o)}
+                            className={`flex-1 px-2 py-3 flex items-center justify-between gap-3 text-left rounded-lg transition-colors ${
+                              claimedElsewhere ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="text-lg font-black text-slate-900 tabular-nums">{o.orderNumber}</div>
+                              {claimedElsewhere && (
+                                <div className="text-[11px] font-semibold text-amber-600">Đang xử lý ở máy khác</div>
+                              )}
+                              {mine && (
+                                <div className="text-[11px] font-semibold text-orange-600">Đơn của bạn — bấm để mở lại</div>
+                              )}
+                            </div>
+                            <div className="text-sm font-bold text-slate-700 tabular-nums shrink-0">
+                              {((o.totalGrosze ?? 0) / 100).toFixed(2)}
+                            </div>
+                          </button>
+                          {mine && (
+                            <button
+                              type="button"
+                              onClick={() => releasePickupFromList(o)}
+                              className="shrink-0 px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200"
+                            >
+                              Trả lại
+                            </button>
+                          )}
+                        </div>
                       );
                     })
                   )}
@@ -1242,6 +1294,21 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               </>
             )}
           </div>
+
+          {/* Active pickup banner — đơn bếp đang xử lý ở máy này */}
+          {activePickup && (
+            <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
+              <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
+              <button
+                type="button"
+                onClick={releaseActivePickup}
+                className="px-2 py-0.5 text-[11px] font-bold text-orange-700 bg-white/70 rounded-md hover:bg-white"
+                title="Trả đơn về danh sách"
+              >
+                Trả lại
+              </button>
+            </div>
+          )}
 
           {/* Fullscreen icon button */}
           {onFullscreen && (

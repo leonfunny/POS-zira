@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('pos:pickup-order', listener);
     },
     pickupOrders: {
+      machineId: () => ipcRenderer.invoke('pos:pickupOrders:machineId'),
       listOpen: () => ipcRenderer.invoke('pos:pickupOrders:listOpen'),
       claim: (id: string, machineId?: string) =>
         ipcRenderer.invoke('pos:pickupOrders:claim', { id, machineId }),

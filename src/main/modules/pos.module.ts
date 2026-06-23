@@ -3064,14 +3064,15 @@ export class PosModule extends BaseModule {
     const resolvePickupMachineId = (machineId?: string) =>
       (machineId && machineId.trim()) || getConfig().machineId || undefined;
 
+    // The renderer needs its own machineId to tell "claimed by THIS station"
+    // from "claimed elsewhere" in the waiting list.
+    ipcMain.handle('pos:pickupOrders:machineId', () => getConfig().machineId || null);
+
     ipcMain.handle('pos:pickupOrders:listOpen', async () => {
       const token = getSecureAuthToken();
-      logger.info(`[PickupQueue][diag] listOpen called hasToken=${!!token}`);
       if (!token) return [];
       try {
-        const rows = await apiClient.listOpenPickupOrders(token);
-        logger.info(`[PickupQueue][diag] listOpen ok rows=${Array.isArray(rows) ? rows.length : 'n/a'}`);
-        return rows;
+        return await apiClient.listOpenPickupOrders(token);
       } catch (err: any) {
         logger.warn(`[PickupQueue] listOpen failed: ${err?.message ?? err}`);
         return [];
@@ -3504,10 +3505,10 @@ export class PosModule extends BaseModule {
     // Kitchen self-order pickup queue: relay backend queue events to the POS
     // renderer so cashier stations see the waiting list update live.
     const forwardPickupOrder = (event: string) => (data: any) => {
-      const posWindow = this.windowManager?.getWindow('pos');
-      if (posWindow && !posWindow.isDestroyed()) {
-        posWindow.webContents.send('pos:pickup-order', { event, data });
-      }
+      // notifyPosRenderers reaches BOTH the dedicated 'pos' window AND the main
+      // app window (where the POS tab lives) — getWindow('pos') alone misses
+      // the main-window POS tab, so live updates never arrived there.
+      notifyPosRenderers(this.container, 'pos:pickup-order', { event, data });
     };
     socket.on('pickup-order:new', forwardPickupOrder('new'));
     socket.on('pickup-order:claimed', forwardPickupOrder('claimed'));

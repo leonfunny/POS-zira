@@ -737,6 +737,7 @@ interface ElectronAPI {
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
     onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => () => void;
     pickupOrders: {
+      machineId: () => Promise<string | null>;
       listOpen: () => Promise<any[]>;
       claim: (id: string, machineId?: string) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
       claimByRef: (ref: { sourceOrderId?: string; orderNumber?: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
