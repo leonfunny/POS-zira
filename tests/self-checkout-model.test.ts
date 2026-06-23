@@ -283,4 +283,12 @@ describe('self-checkout runtime model', () => {
     expect(welcomeSource).toContain('{t.kioskName}');
     expect(scanSource).toContain('{t.kioskName}');
   });
+
+  it('drops the dead self-checkout food-menu components after the menu_kitchen removal', () => {
+    const scanSource = readSource('src/renderer/windows/self-checkout/screens/ScanScreen.tsx');
+
+    expect(scanSource).not.toContain("from './components/KioskMenuPanel'");
+    expect(scanSource).not.toContain("from '../components/KioskMenuPanel'");
+    expect(scanSource).not.toContain('DepartmentTabs');
+  });
 });
