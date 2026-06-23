@@ -3066,9 +3066,12 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle('pos:pickupOrders:listOpen', async () => {
       const token = getSecureAuthToken();
+      logger.info(`[PickupQueue][diag] listOpen called hasToken=${!!token}`);
       if (!token) return [];
       try {
-        return await apiClient.listOpenPickupOrders(token);
+        const rows = await apiClient.listOpenPickupOrders(token);
+        logger.info(`[PickupQueue][diag] listOpen ok rows=${Array.isArray(rows) ? rows.length : 'n/a'}`);
+        return rows;
       } catch (err: any) {
         logger.warn(`[PickupQueue] listOpen failed: ${err?.message ?? err}`);
         return [];

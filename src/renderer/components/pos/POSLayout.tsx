@@ -807,16 +807,18 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
 
-  // Seed / re-seed from GET /open whenever we (re)connect. Socket.IO does NOT
-  // buffer events for a client that wasn't in the salon room yet, so an order
-  // created while we were offline / mid-handshake would otherwise be missed
-  // until the next full remount. Re-seeding on every reconnect self-heals that.
+  // Seed from GET /open on mount, and re-seed whenever isOnline changes (so a
+  // reconnect re-syncs missed orders). Unconditional — NOT gated on isOnline —
+  // so the initial load happens even if the connection-status indicator lags.
   useEffect(() => {
-    if (!isOnline) return;
     let active = true;
+    rlog.info(`[PickupQueue][diag] seed run isOnline=${isOnline} hasApi=${!!window.electronAPI?.pos?.pickupOrders?.listOpen}`);
     window.electronAPI.pos.pickupOrders?.listOpen?.()
-      .then((rows: PickupOrderRow[]) => { if (active) setPickupOrders(seedPickupOrders(rows)); })
-      .catch(() => { /* best-effort; the QR scan path still works */ });
+      .then((rows: PickupOrderRow[]) => {
+        rlog.info(`[PickupQueue][diag] seed rows=${Array.isArray(rows) ? rows.length : 'n/a'}`);
+        if (active) setPickupOrders(seedPickupOrders(rows));
+      })
+      .catch((e: any) => rlog.warn(`[PickupQueue][diag] seed failed: ${e?.message || e}`));
     return () => { active = false; };
   }, [isOnline]);
 
