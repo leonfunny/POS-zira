@@ -1,7 +1,7 @@
 import type { AgentConfig } from '../../../shared/types';
 
 export type SelfCheckoutMode = 'demo' | 'production';
-export type SelfCheckoutProfile = 'retail_scan' | 'menu_kitchen';
+export type SelfCheckoutProfile = 'retail_scan';
 export type SelfCheckoutPaymentProfile =
   | 'assistedDemo'
   | 'assistedProduction'

@@ -12,9 +12,7 @@ import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../shared
 import {
   SelfCheckoutPaymentProfile,
   SelfCheckoutMode,
-  SelfCheckoutProfile,
   resolveIdleTimeoutMs,
-  resolveSelfCheckoutProfile,
   resolveSelfCheckoutRuntime,
 } from './self-checkout-model';
 import { isWeightedProduct } from './catalog-model';
@@ -29,8 +27,6 @@ import HelpLockedOverlay from './screens/HelpLockedOverlay';
 import ReceiptScreen from './screens/ReceiptScreen';
 import UnavailableScreen from './screens/UnavailableScreen';
 import type {
-  CatalogCategory as CategoryLookupResult,
-  CatalogDepartment,
   SearchProduct as ProductLookupResult,
 } from './types';
 
@@ -71,7 +67,6 @@ export default function SelfCheckoutApp() {
   const { screen, goTo, reset } = useScreenState('welcome');
   const [lang, setLang] = useState<ScLanguage>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
-  const [profile, setProfile] = useState<SelfCheckoutProfile>('retail_scan');
   const [paymentProfile, setPaymentProfile] = useState<SelfCheckoutPaymentProfile>('assistedDemo');
   const [allowOversell, setAllowOversell] = useState(false);
   const [unavailableReasons, setUnavailableReasons] = useState<string[]>([]);
@@ -89,10 +84,7 @@ export default function SelfCheckoutApp() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [kioskUserId, setKioskUserId] = useState<string | null>(null);
   const [scanQuantity, setScanQuantity] = useState(1);
-  const [initialDepartment, setInitialDepartment] = useState<CatalogDepartment>('grocery');
-  const [catalogCategories, setCatalogCategories] = useState<CategoryLookupResult[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<ProductLookupResult[]>([]);
-  const [catalogLoading, setCatalogLoading] = useState(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [staffExitOpen, setStaffExitOpen] = useState(false);
@@ -135,16 +127,11 @@ export default function SelfCheckoutApp() {
   }, []);
 
   const refreshCatalog = useCallback(async () => {
-    setCatalogLoading(true);
     try {
-      const [categories, products] = await Promise.all([
-        window.electronAPI?.pos?.categories?.getAll?.().catch(() => []),
-        window.electronAPI?.pos?.products?.getAll?.().catch(() => []),
-      ]);
-      setCatalogCategories((categories || []) as CategoryLookupResult[]);
+      const products = await window.electronAPI?.pos?.products?.getAll?.().catch(() => []);
       setCatalogProducts((products || []) as ProductLookupResult[]);
-    } finally {
-      setCatalogLoading(false);
+    } catch {
+      setCatalogProducts([]);
     }
   }, []);
 
@@ -186,7 +173,6 @@ export default function SelfCheckoutApp() {
 
         const runtime = resolveSelfCheckoutRuntime(config);
         setMode(runtime.mode);
-        setProfile(resolveSelfCheckoutProfile(config?.selfCheckoutProfile));
         setPaymentProfile(runtime.paymentProfile);
         setAllowOversell(config?.allowOversell === true);
         setUnavailableReasons(runtime.unavailableReasons);
@@ -483,11 +469,10 @@ export default function SelfCheckoutApp() {
 
   const handleWelcomeScan = useCallback(
     async (ean: string) => {
-      setInitialDepartment(profile === 'menu_kitchen' ? 'kitchen' : 'grocery');
       goTo('shopping');
       await handleScan(ean);
     },
-    [goTo, handleScan, profile],
+    [goTo, handleScan],
   );
 
   const handleAbandonConfirm = useCallback(() => {
@@ -676,10 +661,8 @@ export default function SelfCheckoutApp() {
     return (
       <WelcomeScreen
         lang={lang}
-        profile={profile}
         onLangChange={handleLangChange}
-        onStart={(department = 'grocery') => {
-          setInitialDepartment(profile === 'menu_kitchen' ? 'kitchen' : department);
+        onStart={() => {
           goTo('shopping');
         }}
         onScanStart={handleWelcomeScan}
@@ -693,18 +676,12 @@ export default function SelfCheckoutApp() {
       <>
         <ScanScreen
           lang={lang}
-          profile={profile}
           cartItems={cart.cart.items}
           totalGrosze={cart.cart.totalGrosze}
           onScan={handleScan}
           onSearchProducts={handleSearchProducts}
           onAddSearchProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
-          categories={catalogCategories}
-          products={catalogProducts}
-          catalogLoading={catalogLoading}
           allowOversell={allowOversell}
-          onAddCatalogProduct={(product) => addProductToCart(product, product.barcode || product.sku || '')}
-          initialDepartment={initialDepartment}
           scanQuantity={scanQuantity}
           onScanQuantityChange={(quantity) => setScanQuantity(normalizeScanQuantity(quantity))}
           onIncrement={(id) => {

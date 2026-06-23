@@ -1,33 +1,27 @@
 // Idle / welcome screen. It must be scan-first: a barcode starts the
 // session just like the visible start button.
 import React from 'react';
-import { ChefHat, CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
+import { CreditCard, Hand, ScanBarcode, ShoppingBasket } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
-import type { SelfCheckoutProfile } from '../self-checkout-model';
 import { useScannerCapture } from '../useScannerCapture';
-
-type CatalogDepartment = 'grocery' | 'kitchen';
 
 interface WelcomeScreenProps {
   lang: ScLanguage;
-  profile: SelfCheckoutProfile;
   onLangChange: (lang: ScLanguage) => void;
-  onStart: (department?: CatalogDepartment) => void;
+  onStart: () => void;
   onScanStart: (ean: string) => Promise<void> | void;
   onCallStaff?: () => void;
 }
 
 export default function WelcomeScreen({
   lang,
-  profile,
   onLangChange,
   onStart,
   onScanStart,
   onCallStaff,
 }: WelcomeScreenProps) {
   const t = getScStrings(lang);
-  const menuProfile = profile === 'menu_kitchen';
   const { scannerInputRef, handleScannerInputKeyDown } = useScannerCapture({
     onScan: onScanStart,
   });
@@ -69,19 +63,19 @@ export default function WelcomeScreen({
               {t.welcomeTitle}
             </div>
             <h1 className="max-w-4xl text-6xl font-black leading-[1.03] text-[var(--sc-ink)]">
-              {menuProfile ? t.kitchenStartButton : t.startButton}
+              {t.startButton}
             </h1>
             <p className="mt-6 max-w-2xl text-3xl font-semibold leading-snug text-[var(--sc-muted)]">
-              {menuProfile ? t.kitchenWelcomeSubtitle : t.welcomeSubtitle}
+              {t.welcomeSubtitle}
             </p>
             <div className="mt-12 max-w-3xl">
               <button
                 type="button"
-                onClick={() => onStart(menuProfile ? 'kitchen' : 'grocery')}
+                onClick={onStart}
                 className="sc-action sc-focusable flex min-h-[150px] w-full flex-col items-center justify-center gap-4 px-10 text-4xl shadow-[0_22px_58px_rgba(169,83,58,0.22)]"
               >
-                {menuProfile ? <ChefHat size={52} /> : <ShoppingBasket size={52} />}
-                {menuProfile ? t.kitchenStartButton : t.startButton}
+                <ShoppingBasket size={52} />
+                {t.startButton}
               </button>
             </div>
           </div>

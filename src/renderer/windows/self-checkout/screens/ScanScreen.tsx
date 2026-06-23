@@ -1,22 +1,11 @@
-// Scan + cart screen for the customer kiosk. Retail is scan-first and hides
-// product photo browsing; the menu/kitchen profile keeps category browsing.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// Scan + cart screen for the customer kiosk. Retail is scan-first.
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Hand, Keyboard, Search } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
-import type { SelfCheckoutProfile } from '../self-checkout-model';
 import { ScCartItem } from '../useScCart';
-import type {
-  CatalogCategory,
-  CatalogDepartment,
-  SearchProduct,
-} from '../types';
-import {
-  buildVisibleCategories,
-  buildVisibleProducts,
-} from '../catalog-model';
+import type { SearchProduct } from '../types';
 import CartPanel from '../components/CartPanel';
-import KioskMenuPanel from '../components/KioskMenuPanel';
 import ScanPrompt from '../components/ScanPrompt';
 import SearchDialog from '../components/SearchDialog';
 import { useScannerCapture } from '../useScannerCapture';
@@ -49,18 +38,12 @@ function playScanBeep(kind: 'ok' | 'fail'): void {
 
 interface ScanScreenProps {
   lang: ScLanguage;
-  profile: SelfCheckoutProfile;
   cartItems: ScCartItem[];
   totalGrosze: number;
   onScan: (ean: string) => Promise<unknown> | unknown;
   onSearchProducts: (query: string) => Promise<SearchProduct[]>;
   onAddSearchProduct: (product: SearchProduct) => Promise<unknown> | unknown;
-  categories: CatalogCategory[];
-  products: SearchProduct[];
-  catalogLoading?: boolean;
   allowOversell?: boolean;
-  onAddCatalogProduct: (product: SearchProduct) => Promise<unknown> | unknown;
-  initialDepartment?: CatalogDepartment;
   scanQuantity: number;
   onScanQuantityChange: (quantity: number) => void;
   onIncrement: (variantId: string) => void;
@@ -75,18 +58,12 @@ interface ScanScreenProps {
 
 export default function ScanScreen({
   lang,
-  profile,
   cartItems,
   totalGrosze,
   onScan,
   onSearchProducts,
   onAddSearchProduct,
-  categories,
-  products,
-  catalogLoading = false,
   allowOversell = false,
-  onAddCatalogProduct,
-  initialDepartment = 'grocery',
   scanQuantity,
   onScanQuantityChange,
   onIncrement,
@@ -99,7 +76,6 @@ export default function ScanScreen({
   toast,
 }: ScanScreenProps) {
   const t = getScStrings(lang);
-  const menuProfile = profile === 'menu_kitchen';
   const searchOpenRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchRequestSeq = useRef(0);
@@ -109,8 +85,6 @@ export default function ScanScreen({
   const [searching, setSearching] = useState(false);
   const [searchTouched, setSearchTouched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [activeDepartment, setActiveDepartment] = useState<CatalogDepartment>(initialDepartment);
-  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
 
   // ── visual feedback state ─────────────────────────────────────────────
   // Drives the full-screen green flash + last-item highlight after the
@@ -237,38 +211,6 @@ export default function ScanScreen({
     [closeSearch, onAddSearchProduct],
   );
 
-  const visibleCategories = useMemo(() => {
-    return buildVisibleCategories(categories, products, activeDepartment);
-  }, [activeDepartment, categories, products]);
-
-  const visibleProducts = useMemo(() => {
-    return buildVisibleProducts(categories, products, activeDepartment, activeCategoryId);
-  }, [activeCategoryId, activeDepartment, categories, products]);
-
-  useEffect(() => {
-    if (!activeCategoryId) return;
-    if (!visibleCategories.some((category) => category.id === activeCategoryId)) {
-      setActiveCategoryId(null);
-    }
-  }, [activeCategoryId, visibleCategories]);
-
-  const handleDepartmentChange = useCallback((department: CatalogDepartment) => {
-    setActiveDepartment(department);
-    setActiveCategoryId(null);
-  }, []);
-
-  useEffect(() => {
-    setActiveDepartment(initialDepartment);
-    setActiveCategoryId(null);
-  }, [initialDepartment]);
-
-  const handleAddCatalogProduct = useCallback(
-    async (product: SearchProduct) => {
-      await onAddCatalogProduct(product);
-    },
-    [onAddCatalogProduct],
-  );
-
   return (
     <div className="sc-shell flex h-screen w-screen flex-col overflow-hidden select-none">
       {scanFlashKey > 0 && (
@@ -326,31 +268,13 @@ export default function ScanScreen({
             onScanQuantityChange={onScanQuantityChange}
             onOpenSearch={openSearch}
             toast={toast}
-            compact={menuProfile && cartItems.length > 0}
+            compact={false}
           />
 
-          {menuProfile ? (
-            <KioskMenuPanel
-              lang={lang}
-              activeDepartment={activeDepartment}
-              activeCategoryId={activeCategoryId}
-              categories={visibleCategories}
-              products={visibleProducts}
-              catalogLoading={catalogLoading}
-              allowOversell={allowOversell}
-              showDepartmentTabs={false}
-              onDepartmentChange={handleDepartmentChange}
-              onCategorySelect={setActiveCategoryId}
-              onAddProduct={(product) => void handleAddCatalogProduct(product)}
-              onOpenSearch={openSearch}
-              onCallStaff={onCallStaff}
-            />
-          ) : (
-            <RetailScanOnlyPanel
-              lang={lang}
-              onOpenSearch={openSearch}
-            />
-          )}
+          <RetailScanOnlyPanel
+            lang={lang}
+            onOpenSearch={openSearch}
+          />
         </section>
 
         <CartPanel
