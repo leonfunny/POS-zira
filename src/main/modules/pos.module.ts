@@ -111,9 +111,11 @@ import {
   normalizeKitchenSelfOrderFulfillment,
   normalizeKitchenSelfOrderLanguage,
   normalizeKitchenSelfOrderPriceGrosze,
+  normalizeKitchenSelfOrderCheckoutMode,
   parseKitchenSelfOrderOptionsJson,
   resolveKitchenSelfOrderBrandName,
   resolveKitchenSelfOrderCheckoutAction,
+  resolveKitchenSelfOrderRetryAction,
   validateKitchenSelfOrderModifierSelections,
   type KitchenSelfOrderSubmitInput,
 } from '../../shared/kitchen-self-order';
@@ -2943,6 +2945,7 @@ export class PosModule extends BaseModule {
     }));
 
     ipcMain.handle('kitchen-self-order:submit', async (_e, payload: KitchenSelfOrderSubmitInput) => {
+      let created: KitchenSelfOrderWithItems | null = null;
       try {
         const cfg = getConfig();
         const menu = buildKitchenSelfOrderMenu({
@@ -2986,7 +2989,7 @@ export class PosModule extends BaseModule {
             options: groups.length === 0 ? item.options : [],
           };
         });
-        const created = kitchenSelfOrderRepo.create({
+        created = kitchenSelfOrderRepo.create({
           ...payload,
           customerLanguage,
           fulfillmentType,
@@ -3045,6 +3048,7 @@ export class PosModule extends BaseModule {
           orderNumber: finalOrder.order_number,
           kitchenPrinted: kitchenReleased,
           customerSlipPrinted: slipPrint.printed,
+          canRetry: !success,
           canRetrySlip: kitchenReleased && !slipPrint.printed,
           kitchenRoute: kitchenPrint.route,
           kitchenPrinterId: kitchenPrint.printerId,
@@ -3056,7 +3060,13 @@ export class PosModule extends BaseModule {
         };
       } catch (e: any) {
         logger.error(`[PosModule] Kitchen self-order submit failed: ${e?.message || e}`);
-        return { success: false, error: e?.message || String(e) };
+        return {
+          success: false,
+          orderId: created?.id,
+          orderNumber: created?.order_number,
+          canRetry: !!created?.id,
+          error: e?.message || String(e),
+        };
       }
     });
 
@@ -3126,6 +3136,141 @@ export class PosModule extends BaseModule {
         return await apiClient.cancelPickupOrder(token, id, { reason, machineId: resolvePickupMachineId(machineId) });
       } catch (err: any) {
         return { ok: false, status: 0, error: 'network', message: err?.message };
+      }
+    });
+
+    ipcMain.handle('kitchen-self-order:retryPrint', async (_e, orderId: string) => {
+      const id = String(orderId || '').trim();
+      if (!id) {
+        return { success: false, error: 'missing_order_id', canRetry: false, canRetrySlip: false };
+      }
+
+      let order: KitchenSelfOrderWithItems | null = null;
+      try {
+        order = kitchenSelfOrderRepo.getById(id);
+        if (!order) {
+          return { success: false, error: 'order_not_found', canRetry: false, canRetrySlip: false };
+        }
+
+        const action = resolveKitchenSelfOrderRetryAction({
+          kitchenPrinted: order.kitchen_printed,
+          customerSlipPrinted: order.customer_slip_printed,
+        });
+
+        if (action === 'none') {
+          return {
+            success: true,
+            orderId: order.id,
+            orderNumber: order.order_number,
+            kitchenPrinted: true,
+            customerSlipPrinted: true,
+            canRetry: false,
+            canRetrySlip: false,
+          };
+        }
+
+        const cfg = getConfig();
+        const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || '').trim();
+        const brandName = resolveKitchenSelfOrderBrandName(cfg);
+
+        if (action === 'reprint_slip') {
+          const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
+          const ticket = buildKitchenSelfOrderTicket(order, brandName, qrPayload, sourceLabel);
+          ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
+            kitchenAlreadyReleased: true,
+            includeNotes: false,
+          });
+          const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
+          const updated = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
+            customerSlipPrinted: slipPrint.printed,
+            customerSlipRoute: slipPrint.route || null,
+            error: slipPrint.error || null,
+          }) || order;
+
+          return {
+            success: slipPrint.printed,
+            orderId: updated.id,
+            orderNumber: updated.order_number,
+            kitchenPrinted: !!updated.kitchen_printed,
+            customerSlipPrinted: slipPrint.printed,
+            canRetry: !slipPrint.printed,
+            canRetrySlip: !slipPrint.printed,
+            slipRoute: slipPrint.route,
+            qrPayload,
+            error: slipPrint.error || null,
+          };
+        }
+
+        const wasKitchenReleased = !!order.kitchen_printed;
+        const kitchenTicket = buildKitchenSelfOrderTicket(order, brandName, null, sourceLabel);
+        const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
+        const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
+        const qrPayload = buildKitchenSelfOrderQrPayload(order, {
+          kitchenAlreadyReleased: kitchenReleased,
+        });
+        const ticket = buildKitchenSelfOrderTicket(order, brandName, qrPayload, sourceLabel);
+        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
+          kitchenAlreadyReleased: kitchenReleased,
+          includeNotes: false,
+        });
+        const slipPrint = kitchenReleased
+          ? await this.printKitchenSelfOrderCustomerSlip(ticket)
+          : { printed: false, error: 'kitchen_not_printed' };
+        const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
+        const finalOrder = kitchenSelfOrderRepo.markPrintResult(order.id, {
+          kitchenPrinted: kitchenReleased,
+          customerSlipPrinted: slipPrint.printed,
+          kitchenRoute: kitchenPrint.route || null,
+          kitchenPrinterId: kitchenPrint.printerId || null,
+          kitchenJobId: kitchenPrint.jobId || null,
+          customerSlipRoute: slipPrint.route || null,
+          error,
+        }) || order;
+        const success = kitchenReleased && slipPrint.printed;
+
+        // Re-push only after the kitchen becomes released. Backend idempotency
+        // by sourceOrderId refreshes still-PENDING rows without duplicating.
+        if (
+          normalizeKitchenSelfOrderCheckoutMode(cfg.kitchenSelfOrderCheckoutMode) === 'PAY_AT_COUNTER'
+          && kitchenReleased
+          && !wasKitchenReleased
+        ) {
+          void pushPickupOrderBestEffort({
+            terminalId: sourceLabel,
+            sourceOrderId: finalOrder.id,
+            orderNumber: finalOrder.order_number,
+            sequence: finalOrder.sequence_number,
+            totalGrosze: finalOrder.total_grosze,
+            qr: qrPayload,
+          });
+        }
+
+        return {
+          success,
+          orderId: finalOrder.id,
+          orderNumber: finalOrder.order_number,
+          kitchenPrinted: kitchenReleased,
+          customerSlipPrinted: slipPrint.printed,
+          canRetry: !success,
+          canRetrySlip: kitchenReleased && !slipPrint.printed,
+          kitchenRoute: kitchenPrint.route,
+          kitchenPrinterId: kitchenPrint.printerId,
+          kitchenJobId: kitchenPrint.jobId,
+          kitchenStatus: kitchenPrint.status,
+          slipRoute: slipPrint.route,
+          qrPayload,
+          error,
+        };
+      } catch (e: any) {
+        logger.error(`[PosModule] Kitchen self-order retry print failed: ${e?.message || e}`);
+        return {
+          success: false,
+          orderId: order?.id || id,
+          orderNumber: order?.order_number,
+          canRetry: true,
+          canRetrySlip: false,
+          error: e?.message || String(e),
+        };
       }
     });
 

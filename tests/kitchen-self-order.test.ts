@@ -174,6 +174,23 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).not.toContain('await this.printKitchenSelfOrderTicket(ticket);');
   });
 
+  it('offers a no-duplicate retry that re-prints the existing order', () => {
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const preloadSource = readSource('src/preload/preload-kitchen-self-order.ts');
+    const retryStart = posModuleSource.indexOf("ipcMain.handle('kitchen-self-order:retryPrint'");
+    const retryEnd = posModuleSource.indexOf("ipcMain.handle('", retryStart + 1);
+    const retryBlock = retryStart >= 0 ? posModuleSource.slice(retryStart, retryEnd === -1 ? undefined : retryEnd) : '';
+
+    expect(retryStart).toBeGreaterThan(-1);
+    expect(retryBlock).toContain('kitchenSelfOrderRepo.getById');
+    expect(retryBlock).toContain('resolveKitchenSelfOrderRetryAction');
+    expect(retryBlock).not.toContain('kitchenSelfOrderRepo.create');
+    expect(retryBlock).toContain('markPrintResult(order.id');
+    expect(retryBlock).toContain('pushPickupOrderBestEffort');
+    expect(posModuleSource).toContain('orderId: created?.id');
+    expect(preloadSource).toContain("ipcRenderer.invoke('kitchen-self-order:retryPrint'");
+  });
+
   it('marks QR-paid kiosk orders so checkout does not print a second kitchen ticket', () => {
     const paymentSource = readSource('src/renderer/components/pos/PaymentModal.tsx');
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
