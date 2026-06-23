@@ -1,46 +1,24 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  buildVisibleCategories,
-  buildVisibleProducts,
-  getCategoryDepartment,
   getProductAvailability,
   getProductPriceGrosze,
   getProductStock,
   normalizeCatalogText,
 } from '../src/renderer/windows/self-checkout/catalog-model';
-import type {
-  CatalogCategory,
-  SearchProduct,
-} from '../src/renderer/windows/self-checkout/types';
-
-const categories: CatalogCategory[] = [
-  { id: 'grocery', name: 'Sklep' },
-  { id: 'kitchen', name: 'Kuchnia' },
-  { id: 'vi-food', name: 'Do an nhanh' },
-];
-
-const products: SearchProduct[] = [
-  { id: 'cola', name: 'Cola', category_id: 'grocery', retail_price: 599, in_stock: 4 },
-  { id: 'pho', name: 'Pho', category_id: 'kitchen', retail_price: 2500, available_qty: 10 },
-  { id: 'banh-mi', name: 'Banh mi', category_id: 'vi-food', price_gross: 1800 },
-];
 
 describe('self-checkout catalog model', () => {
-  it('normalizes accented catalog text for heuristic matching', () => {
-    expect(normalizeCatalogText('Kuchnia Żółta Cà phê')).toBe('kuchnia zołta ca phe');
+  it('normalizes accented catalog text for search matching', () => {
+    expect(normalizeCatalogText('Kuchnia Zolta Ca phe')).toBe('kuchnia zolta ca phe');
   });
 
-  it('classifies kitchen/menu categories without UI code knowing the regex', () => {
-    expect(getCategoryDepartment(categories[0])).toBe('grocery');
-    expect(getCategoryDepartment(categories[1])).toBe('kitchen');
-    expect(getCategoryDepartment(categories[2])).toBe('kitchen');
-  });
-
-  it('builds visible categories and products by department', () => {
-    expect(buildVisibleCategories(categories, products, 'grocery').map((c) => c.id)).toEqual(['grocery']);
-    expect(buildVisibleCategories(categories, products, 'kitchen').map((c) => c.id)).toEqual(['kitchen', 'vi-food']);
-    expect(buildVisibleProducts(categories, products, 'kitchen', null).map((p) => p.id)).toEqual(['pho', 'banh-mi']);
-    expect(buildVisibleProducts(categories, products, 'kitchen', 'vi-food').map((p) => p.id)).toEqual(['banh-mi']);
+  it('no longer ships the department keyword classifier', () => {
+    const src = readFileSync(
+      new URL('../src/renderer/windows/self-checkout/catalog-model.ts', import.meta.url),
+      'utf8',
+    );
+    expect(src).not.toContain('getCategoryDepartment');
+    expect(src).not.toContain("'kitchen'");
   });
 
   it('keeps price and stock normalization consistent across menu and search', () => {
@@ -68,8 +46,6 @@ describe('self-checkout catalog model', () => {
   });
 
   it('blocks weighted products at the kiosk even with stock, price, and oversell', () => {
-    // The kiosk has no scale: a WEIGHT product would be charged as exactly
-    // 1 kg regardless of the actual weight. It must be weighed at the counter.
     expect(getProductAvailability(
       { id: 'meat', name: 'Thit ba chi', retail_price: 3500, in_stock: 8, sell_by: 'WEIGHT' },
       { allowOversell: true },

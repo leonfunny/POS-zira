@@ -1,8 +1,4 @@
-import type {
-  CatalogCategory,
-  CatalogDepartment,
-  SearchProduct,
-} from './types';
+import type { SearchProduct } from './types';
 
 export function getProductPriceGrosze(product: SearchProduct): number {
   const value = product.retail_price ?? product.price ?? product.price_gross;
@@ -16,10 +12,7 @@ export function getProductStock(product: SearchProduct): number | undefined {
 
 export type ProductAvailabilityReason = 'no_price' | 'out_of_stock' | 'weighted' | null;
 
-/** Weighted products (sell_by = WEIGHT, price per kg) cannot be sold at the
- *  kiosk: it has no scale and the order path would silently charge exactly
- *  1 kg regardless of the actual weight. They must go through the staffed
- *  counter. */
+/** Weighted products cannot be sold at the kiosk because it has no scale. */
 export function isWeightedProduct(product: Pick<SearchProduct, 'sell_by'>): boolean {
   return String(product.sell_by || '').toUpperCase() === 'WEIGHT';
 }
@@ -54,100 +47,4 @@ export function normalizeCatalogText(value: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
-}
-
-function getCategorySearchText(category: CatalogCategory | undefined): string {
-  if (!category) return '';
-  return normalizeCatalogText(`${category.id || ''} ${category.name || ''} ${category.name_translations || ''}`);
-}
-
-export function getCategoryDepartment(category: CatalogCategory | undefined): CatalogDepartment {
-  const text = getCategorySearchText(category);
-  const kitchenKeywords = [
-    'kitchen',
-    'kuchnia',
-    'restaurant',
-    'restauracja',
-    'menu',
-    'food',
-    'foods',
-    'meal',
-    'meals',
-    'dish',
-    'dishes',
-    'drink',
-    'drinks',
-    'beverage',
-    'bar',
-    'cafe',
-    'coffee',
-    'tea',
-    'dessert',
-    'combo',
-    'dania',
-    'zupy',
-    'zupa',
-    'makaron',
-    'ryz',
-    'rice',
-    'pho',
-    'burger',
-    'pizza',
-    'napoje',
-    'napoj',
-    'kawa',
-    'herbata',
-    'ciasto',
-    'deser',
-    'bep',
-    'nha bep',
-    'do an',
-    'mon an',
-    'nuoc',
-    'tra',
-    'ca phe',
-  ];
-  return kitchenKeywords.some((keyword) => text.includes(keyword)) ? 'kitchen' : 'grocery';
-}
-
-function buildCategoryMap(categories: CatalogCategory[]): Map<string, CatalogCategory> {
-  const map = new Map<string, CatalogCategory>();
-  for (const category of categories) map.set(category.id, category);
-  return map;
-}
-
-export function buildVisibleCategories(
-  categories: CatalogCategory[],
-  products: SearchProduct[],
-  activeDepartment: CatalogDepartment,
-): CatalogCategory[] {
-  const categoryById = buildCategoryMap(categories);
-  const ids = new Set(
-    products
-      .filter((product) => {
-        const category = product.category_id ? categoryById.get(product.category_id) : undefined;
-        return getCategoryDepartment(category) === activeDepartment;
-      })
-      .map((product) => product.category_id)
-      .filter((id): id is string => !!id),
-  );
-  return categories.filter((category) => ids.has(category.id));
-}
-
-export function buildVisibleProducts(
-  categories: CatalogCategory[],
-  products: SearchProduct[],
-  activeDepartment: CatalogDepartment,
-  activeCategoryId: string | null,
-  limit = 48,
-): SearchProduct[] {
-  const categoryById = buildCategoryMap(categories);
-  return products
-    .filter((product) => {
-      const category = product.category_id ? categoryById.get(product.category_id) : undefined;
-      if (getCategoryDepartment(category) !== activeDepartment) return false;
-      if (activeCategoryId && product.category_id !== activeCategoryId) return false;
-      return true;
-    })
-    .slice(0, limit);
 }
