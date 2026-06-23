@@ -159,15 +159,16 @@ describe('kitchen self-order MVP wiring', () => {
     expect(layoutSource).toContain("type: 'cart/addItem'");
   });
 
-  it('blocks the done screen on customer slip failure and retries only the slip', () => {
+  it('routes slip-only failures through retryPrint without a second kitchen ticket', () => {
     const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
     const repoSource = readSource('src/main/database/repos/kitchen-self-order-repo.ts');
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
 
     expect(appSource).toContain('result?.canRetrySlip');
-    expect(appSource).toContain('kitchenSelfOrder?.reprintSlip?.(orderId)');
-    expect(appSource).toContain('orderLockedForSlipRetry');
+    expect(appSource).toContain('kitchenSelfOrder?.retryPrint?.(orderId)');
+    expect(appSource).toContain('orderLockedForRetry');
     expect(appSource).toContain('setCart([]);');
+    expect(posModuleSource).toContain("if (action === 'reprint_slip')");
     expect(repoSource).toContain('markCustomerSlipResult');
     expect(posModuleSource).toContain('const order = kitchenSelfOrderRepo.getById(id)');
     expect(posModuleSource).toContain('const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket)');
@@ -189,6 +190,19 @@ describe('kitchen self-order MVP wiring', () => {
     expect(retryBlock).toContain('pushPickupOrderBestEffort');
     expect(posModuleSource).toContain('orderId: created?.id');
     expect(preloadSource).toContain("ipcRenderer.invoke('kitchen-self-order:retryPrint'");
+  });
+
+  it('locks a failed-created order to retry instead of submitting a duplicate', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const submitStart = appSource.indexOf('const submitOrder');
+    const submitEnd = appSource.indexOf('const orderLockedForRetry', submitStart);
+    const submitBlock = submitStart >= 0 ? appSource.slice(submitStart, submitEnd === -1 ? undefined : submitEnd) : '';
+
+    expect(appSource).toContain('orderLockedForRetry');
+    expect(appSource).toContain('kitchenSelfOrder?.retryPrint?.(');
+    expect(submitBlock).toContain('orderLockedForRetry');
+    expect(submitBlock).toContain('retryPrint(');
+    expect(appSource).toContain('onStartOver');
   });
 
   it('marks QR-paid kiosk orders so checkout does not print a second kitchen ticket', () => {

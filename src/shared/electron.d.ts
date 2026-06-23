@@ -481,6 +481,18 @@ interface ElectronAPI {
       orderNumber?: string;
       kitchenPrinted?: boolean;
       customerSlipPrinted?: boolean;
+      canRetry?: boolean;
+      canRetrySlip?: boolean;
+      qrPayload?: string;
+      error?: string | null;
+    }>;
+    retryPrint: (orderId: string) => Promise<{
+      success: boolean;
+      orderId?: string;
+      orderNumber?: string;
+      kitchenPrinted?: boolean;
+      customerSlipPrinted?: boolean;
+      canRetry?: boolean;
       canRetrySlip?: boolean;
       qrPayload?: string;
       error?: string | null;
@@ -491,6 +503,7 @@ interface ElectronAPI {
       orderNumber?: string;
       kitchenPrinted?: boolean;
       customerSlipPrinted?: boolean;
+      canRetry?: boolean;
       canRetrySlip?: boolean;
       qrPayload?: string;
       error?: string | null;

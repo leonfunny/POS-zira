@@ -66,6 +66,7 @@ interface SubmitResult {
   orderNumber?: string;
   kitchenPrinted?: boolean;
   customerSlipPrinted?: boolean;
+  canRetry?: boolean;
   canRetrySlip?: boolean;
   error?: string | null;
 }
@@ -97,7 +98,9 @@ const COPY = {
     loading: 'Ładowanie menu...',
     submitError: 'Nie udało się złożyć zamówienia. Spróbuj ponownie lub poproś obsługę.',
     slipPrintError: 'Zamowienie jest w kuchni, ale slip nie wydrukowal sie. Sprobuj ponownie albo popros obsluge.',
+    retry: 'Ponow druk',
     retrySlip: 'Ponow druk slipu',
+    startOver: 'Zacznij od nowa',
     terminalTitle: 'Płatność przy tym kiosku jest chwilowo niedostępna',
     terminalBody: 'Wróć do zamówienia lub poproś obsługę o pomoc.',
     returnReview: 'Wróć do zamówienia',
@@ -134,7 +137,9 @@ const COPY = {
     loading: 'Đang tải thực đơn...',
     submitError: 'Không thể gửi đơn. Vui lòng thử lại hoặc nhờ nhân viên hỗ trợ.',
     slipPrintError: 'Don da gui bep, phieu thanh toan chua in. Thu in lai hoac nho nhan vien.',
+    retry: 'In lai',
     retrySlip: 'In lai phieu',
+    startOver: 'Bat dau lai',
     terminalTitle: 'Thanh toán tại kiosk hiện chưa khả dụng',
     terminalBody: 'Quay lại đơn hàng hoặc nhờ nhân viên hỗ trợ.',
     returnReview: 'Quay lại đơn',
@@ -171,7 +176,9 @@ const COPY = {
     loading: 'Loading menu...',
     submitError: 'We could not place the order. Try again or ask a staff member for help.',
     slipPrintError: 'The kitchen has the order, but the payment slip did not print. Retry the slip or ask staff.',
+    retry: 'Retry',
     retrySlip: 'Retry slip',
+    startOver: 'Start over',
     terminalTitle: 'Kiosk payment is temporarily unavailable',
     terminalBody: 'Return to your order or ask a staff member for help.',
     returnReview: 'Return to order',
@@ -433,22 +440,22 @@ export default function KitchenSelfOrderApp() {
     if (item) setConfigurator({ product: item.product, lineId });
   };
 
-  const retryCustomerSlip = async (orderId: string | undefined) => {
+  const retryPrint = async (orderId: string | undefined) => {
     primeOrderNumberAudio();
     if (!orderId || submitting) return;
     setSubmitting(true);
     setCustomerError(null);
     try {
-      const result = await window.electronAPI?.kitchenSelfOrder?.reprintSlip?.(orderId);
-      setSubmitResult(result || { success: false, orderId, canRetrySlip: true, error: 'no_response' });
+      const result = await window.electronAPI?.kitchenSelfOrder?.retryPrint?.(orderId);
+      setSubmitResult(result || { success: false, orderId, canRetry: true, error: 'no_response' });
       if (result?.success) {
         setCart([]);
         setStep('done');
       } else {
-        setCustomerError(t.slipPrintError);
+        setCustomerError(result?.canRetrySlip ? t.slipPrintError : t.submitError);
       }
     } catch {
-      setCustomerError(t.slipPrintError);
+      setCustomerError(t.submitError);
     } finally {
       setSubmitting(false);
     }
@@ -456,11 +463,12 @@ export default function KitchenSelfOrderApp() {
 
   const submitOrder = async () => {
     primeOrderNumberAudio();
-    if (!menu || cart.length === 0 || submitting) return;
-    if (submitResult?.canRetrySlip && submitResult.orderId) {
-      await retryCustomerSlip(submitResult.orderId);
+    if (submitting) return;
+    if (orderLockedForRetry && submitResult?.orderId) {
+      await retryPrint(submitResult.orderId);
       return;
     }
+    if (!menu || cart.length === 0) return;
     const checkoutAction = resolveKitchenSelfOrderCheckoutAction(
       menu.policies.checkoutMode,
       menu.policies.kitchenReleasePolicy,
@@ -505,7 +513,7 @@ export default function KitchenSelfOrderApp() {
   const themeStyle = {
     '--kso-accent': menu?.brand.accentColor || '#DA7756',
   } as React.CSSProperties;
-  const orderLockedForSlipRetry = !!(submitResult?.canRetrySlip && submitResult.orderId);
+  const orderLockedForRetry = !!(submitResult && !submitResult.success && submitResult.orderId);
 
   if (step === 'review') {
     return (
@@ -519,11 +527,12 @@ export default function KitchenSelfOrderApp() {
           total={cartTotal(cart)}
           submitting={submitting}
           error={customerError}
-          orderLocked={orderLockedForSlipRetry}
-          submitLabel={orderLockedForSlipRetry ? t.retrySlip : t.placeOrder}
+          orderLocked={orderLockedForRetry}
+          submitLabel={orderLockedForRetry ? t.retry : t.placeOrder}
           onBack={() => {
-            if (!orderLockedForSlipRetry) setStep('menu');
+            if (!orderLockedForRetry) setStep('menu');
           }}
+          onStartOver={resetSession}
           onEdit={editLine}
           onQuantity={updateQuantity}
           onSubmit={submitOrder}
@@ -1294,6 +1303,7 @@ function ReviewScreen({
   orderLocked,
   submitLabel,
   onBack,
+  onStartOver,
   onEdit,
   onQuantity,
   onSubmit,
@@ -1311,6 +1321,7 @@ function ReviewScreen({
   orderLocked: boolean;
   submitLabel: string;
   onBack: () => void;
+  onStartOver: () => void;
   onEdit: (lineId: string) => void;
   onQuantity: (lineId: string, quantity: number) => void;
   onSubmit: () => void;
@@ -1417,6 +1428,17 @@ function ReviewScreen({
               {submitting ? t.submitting : submitLabel}
               {!submitting && <ChevronRight size={24} />}
             </button>
+            {orderLocked && (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={onStartOver}
+                className="kso-secondary-button mt-3 w-full"
+              >
+                <Home size={20} />
+                {t.startOver}
+              </button>
+            )}
           </div>
         </aside>
       </div>
