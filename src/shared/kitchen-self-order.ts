@@ -2,6 +2,7 @@ export type KitchenSelfOrderLanguage = 'pl' | 'vi' | 'en';
 export type KitchenSelfOrderFulfillment = 'DINE_IN' | 'TAKEAWAY';
 export type KitchenSelfOrderCheckoutMode = 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
 export type KitchenSelfOrderReleasePolicy = 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
+export type KitchenSelfOrderMenuSource = 'all' | 'selected';
 export type KitchenSelfOrderModifierSelectionMode = 'SINGLE' | 'MULTIPLE';
 export type KitchenSelfOrderCheckoutAction = 'SUBMIT_ORDER' | 'REQUIRE_TERMINAL';
 export type KitchenSelfOrderStatus =
@@ -132,6 +133,15 @@ export interface KitchenSelfOrderQrPayload {
 }
 
 export type KitchenSelfOrderCheckoutPriceSource = 'CATALOG' | 'QR_SNAPSHOT' | 'NONE';
+
+export function resolveKitchenSelfOrderMenuSource(
+  config: { kitchenSelfOrderMenuSource?: string | null } | null | undefined,
+  categories: Array<{ kitchen_print?: number | null }>,
+): KitchenSelfOrderMenuSource {
+  const explicit = config?.kitchenSelfOrderMenuSource;
+  if (explicit === 'all' || explicit === 'selected') return explicit;
+  return categories.some((category) => category.kitchen_print === 1) ? 'selected' : 'all';
+}
 
 function base64UrlToBinary(value: string): string {
   const base64 = value.replace(/-/g, '+').replace(/_/g, '/');

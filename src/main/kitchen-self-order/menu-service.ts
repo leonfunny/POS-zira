@@ -2,6 +2,7 @@ import {
   normalizeKitchenSelfOrderAccentColor,
   normalizeKitchenSelfOrderCheckoutMode,
   normalizeKitchenSelfOrderReleasePolicy,
+  resolveKitchenSelfOrderMenuSource,
   resolveKitchenSelfOrderBrandName,
   type KitchenSelfOrderMenu,
   type KitchenSelfOrderModifierGroup,
@@ -18,6 +19,7 @@ interface KitchenSelfOrderMenuConfig {
   kitchenSelfOrderAccentColor?: string | null;
   kitchenSelfOrderCheckoutMode?: string | null;
   kitchenSelfOrderReleasePolicy?: string | null;
+  kitchenSelfOrderMenuSource?: string | null;
   kitchenSelfOrderFulfillmentOptions?: unknown;
   salonName?: string | null;
   authUser?: { salonName?: string | null } | null;
@@ -143,13 +145,16 @@ function parseModifierGroups(value: string | null | undefined): KitchenSelfOrder
 }
 
 function getKitchenCatalog(
+  config: KitchenSelfOrderMenuConfig,
   categories: CategoryRow[],
   products: ProductVariantRow[],
 ): { categories: CategoryRow[]; products: ProductVariantRow[] } {
+  if (resolveKitchenSelfOrderMenuSource(config, categories) === 'all') {
+    return { categories, products };
+  }
   const kitchenCategoryIds = new Set(
     categories.filter((category) => category.kitchen_print === 1).map((category) => category.id),
   );
-  if (kitchenCategoryIds.size === 0) return { categories, products };
   return {
     categories: categories.filter((category) => kitchenCategoryIds.has(category.id)),
     products: products.filter((product) =>
@@ -162,7 +167,7 @@ export function buildKitchenSelfOrderMenu({
   categories,
   products,
 }: BuildKitchenSelfOrderMenuInput): KitchenSelfOrderMenu {
-  const catalog = getKitchenCatalog(categories, products);
+  const catalog = getKitchenCatalog(config, categories, products);
   const categoryById = new Map(catalog.categories.map((category) => [category.id, category]));
   const modifierGroups: KitchenSelfOrderModifierGroup[] = [];
   const categoryGroups = new Map<string, KitchenSelfOrderModifierGroup[]>();

@@ -396,6 +396,7 @@ const store = new Store<AgentConfig>({
     kitchenSelfOrderBrandName: { type: 'string', default: '' },
     kitchenSelfOrderLogoUrl: { type: 'string', default: '' },
     kitchenSelfOrderAccentColor: { type: 'string', default: '#DA7756' },
+    kitchenSelfOrderMenuSource: { type: 'string', enum: ['all', 'selected'] },
     kitchenSelfOrderCheckoutMode: {
       type: 'string',
       enum: ['PAY_AT_COUNTER', 'KIOSK_TERMINAL', 'ORDER_ONLY'],
