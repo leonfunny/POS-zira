@@ -620,6 +620,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:fiscal-unknown', listener);
       return () => ipcRenderer.removeListener('pos:fiscal-unknown', listener);
     },
+    // === Kitchen self-order pickup queue (cashier side) ===
+    onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => {
+      const listener = (_e: any, msg: any) => callback(msg);
+      ipcRenderer.on('pos:pickup-order', listener);
+      return () => ipcRenderer.removeListener('pos:pickup-order', listener);
+    },
+    pickupOrders: {
+      listOpen: () => ipcRenderer.invoke('pos:pickupOrders:listOpen'),
+      claim: (id: string, machineId?: string) =>
+        ipcRenderer.invoke('pos:pickupOrders:claim', { id, machineId }),
+      claimByRef: (ref: { sourceOrderId?: string; orderNumber?: string; machineId?: string }) =>
+        ipcRenderer.invoke('pos:pickupOrders:claimByRef', ref),
+      release: (id: string, machineId?: string) =>
+        ipcRenderer.invoke('pos:pickupOrders:release', { id, machineId }),
+      settle: (id: string, body: { posOrderId: string; posOrderNumber?: string; machineId?: string }) =>
+        ipcRenderer.invoke('pos:pickupOrders:settle', { id, ...body }),
+      cancel: (id: string, body: { reason: string; machineId?: string }) =>
+        ipcRenderer.invoke('pos:pickupOrders:cancel', { id, ...body }),
+    },
     products: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_ALL),
       getByCategory: (catId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_CATEGORY, catId),
