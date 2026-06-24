@@ -400,6 +400,23 @@ body.self-checkout-root {
 
 .kso-shell {
   --kso-accent: #da7756;
+  --kso-accent-deep: color-mix(in srgb, var(--kso-accent), black 22%);
+  --kso-accent-soft: color-mix(in srgb, var(--kso-accent), white 84%);
+  --kso-canvas: #f6efe6;
+  --kso-surface: #fffdfa;
+  --kso-ink: #2a231e;
+  --kso-muted: #8a7e72;
+  --kso-line: #e7ddcd;
+  --kso-shadow: 0 10px 30px -12px rgba(120, 80, 50, 0.28);
+  --kso-serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --kso-sans: 'Plus Jakarta Sans', 'Bahnschrift', system-ui, sans-serif;
+  background: var(--kso-canvas);
+  color: var(--kso-ink);
+  font-family: var(--kso-sans);
+}
+
+.kso-serif {
+  font-family: var(--kso-serif);
 }
 
 .kso-product-grid {
