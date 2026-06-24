@@ -275,7 +275,10 @@ describe('kitchen ticket pipeline wiring', () => {
     const applicatorSource = readSource('src/main/sync/entity-applicators.ts');
 
     expect(posModuleSource).toContain('setCategoryKitchenPrint(categoryId, payload.kitchenPrint)');
+    expect(posModuleSource).toContain('setCategorySortOrder(categoryId, payload.sortOrder)');
+    expect(posModuleSource).toContain("notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED)");
     expect(repoSource).toContain('isKitchenPrintCategory(categoryId: string)');
+    expect(repoSource).toContain('setCategorySortOrder(categoryId: string, sortOrder: number)');
     // Sync must PRESERVE the locally-known flag when an older backend payload
     // omits it instead of silently resetting it to 0.
     expect(repoSource).toContain('COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0)');
@@ -293,6 +296,13 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(kitchenPanelSource).toContain('<KitchenPrintSettings');
     expect(kitchenSettingsSource).toContain('updateCategory(category.id');
     expect(kitchenSettingsSource).toContain('kitchenPrint: next');
+    expect(kitchenSettingsSource).toContain('GripVertical');
+    expect(kitchenSettingsSource).toContain('visibleCategories');
+    expect(kitchenSettingsSource).toContain('hiddenCategories');
+    expect(kitchenSettingsSource).toContain('moveCategoryToEdge');
+    expect(kitchenSettingsSource).toContain('startAutoScroll');
+    expect(kitchenSettingsSource).toContain('onDrop={(event) => handleDrop(event, category.id)}');
+    expect(kitchenSettingsSource).toContain('sortOrder: index');
     expect(modalSource).not.toContain('handlePrintKitchenTicket(order.id)');
     expect(modalSource).not.toContain('pos.history.printKitchenTicket');
   });

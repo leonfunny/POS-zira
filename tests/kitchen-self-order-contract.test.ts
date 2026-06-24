@@ -240,6 +240,81 @@ describe('kitchen self-order menu contract', () => {
     expect(inheritedGroup?.name).toBe('Sweetness');
   });
 
+  it('orders customer menu categories by persisted category rank', () => {
+    const menu = buildKitchenSelfOrderMenu({
+      config: { kitchenSelfOrderMenuSource: 'selected' },
+      categories: [
+        {
+          id: 'late',
+          name: 'Late',
+          icon: null,
+          color: null,
+          sort_order: 20,
+          updated_at: null,
+          kitchen_print: 1,
+        },
+        {
+          id: 'first',
+          name: 'First',
+          icon: null,
+          color: null,
+          sort_order: 0,
+          updated_at: null,
+          kitchen_print: 1,
+        },
+      ],
+      products: [
+        {
+          id: 'late-item',
+          template_id: null,
+          name: 'Late item',
+          sku: null,
+          barcode: null,
+          retail_price: 1000,
+          category_id: 'late',
+          image_url: null,
+          in_stock: 1,
+          vat_rate: 23,
+          is_active: 1,
+          updated_at: null,
+          available_qty: 1,
+          price_gross: 1000,
+          price_net: 0,
+          vat_amount: 0,
+          is_on_sale: 0,
+          thumbnail_url: null,
+          sale_unit: null,
+          sell_by: 'PIECE',
+        },
+        {
+          id: 'first-item',
+          template_id: null,
+          name: 'First item',
+          sku: null,
+          barcode: null,
+          retail_price: 1000,
+          category_id: 'first',
+          image_url: null,
+          in_stock: 1,
+          vat_rate: 23,
+          is_active: 1,
+          updated_at: null,
+          available_qty: 1,
+          price_gross: 1000,
+          price_net: 0,
+          vat_amount: 0,
+          is_on_sale: 0,
+          thumbnail_url: null,
+          sale_unit: null,
+          sell_by: 'PIECE',
+        },
+      ],
+    });
+
+    expect(menu.categories.map((category) => category.id)).toEqual(['first', 'late']);
+    expect(menu.products.map((product) => product.id)).toEqual(['first-item', 'late-item']);
+  });
+
   it('falls back to legacy contain media and empty modifier groups', () => {
     const menu = buildKitchenSelfOrderMenu({
       config: {},

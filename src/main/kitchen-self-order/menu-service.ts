@@ -144,19 +144,25 @@ function parseModifierGroups(value: string | null | undefined): KitchenSelfOrder
   return groups.sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
 }
 
+function sortCategoriesByRank(categories: CategoryRow[]): CategoryRow[] {
+  return [...categories].sort((a, b) =>
+    (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+}
+
 function getKitchenCatalog(
   config: KitchenSelfOrderMenuConfig,
   categories: CategoryRow[],
   products: ProductVariantRow[],
 ): { categories: CategoryRow[]; products: ProductVariantRow[] } {
+  const rankedCategories = sortCategoriesByRank(categories);
   if (resolveKitchenSelfOrderMenuSource(config, categories) === 'all') {
-    return { categories, products };
+    return { categories: rankedCategories, products };
   }
   const kitchenCategoryIds = new Set(
-    categories.filter((category) => category.kitchen_print === 1).map((category) => category.id),
+    rankedCategories.filter((category) => category.kitchen_print === 1).map((category) => category.id),
   );
   return {
-    categories: categories.filter((category) => kitchenCategoryIds.has(category.id)),
+    categories: rankedCategories.filter((category) => kitchenCategoryIds.has(category.id)),
     products: products.filter((product) =>
       !!product.category_id && kitchenCategoryIds.has(product.category_id)),
   };

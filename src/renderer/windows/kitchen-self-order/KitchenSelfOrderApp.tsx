@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
+import TouchKeyboard from '../../components/shared/TouchKeyboard';
 import {
   formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
@@ -86,6 +87,9 @@ const COPY = {
     dineIn: 'Na miejscu',
     takeaway: 'Na wynos',
     note: 'Uwagi do przygotowania',
+    notePlaceholder: 'np. mniej lodu, bez cukru',
+    keyboardDone: 'Gotowe',
+    keyboardSpace: 'Spacja',
     edit: 'Zmień',
     add: 'Dodaj do koszyka',
     save: 'Zapisz zmiany',
@@ -127,6 +131,9 @@ const COPY = {
     dineIn: 'Ăn tại quán',
     takeaway: 'Mang đi',
     note: 'Ghi chú chuẩn bị',
+    notePlaceholder: 'VD: ít đá, không đường',
+    keyboardDone: 'Xong',
+    keyboardSpace: 'Khoảng trắng',
     edit: 'Sửa',
     add: 'Thêm vào giỏ',
     save: 'Lưu thay đổi',
@@ -168,6 +175,9 @@ const COPY = {
     dineIn: 'Dine in',
     takeaway: 'Takeaway',
     note: 'Preparation note',
+    notePlaceholder: 'e.g. less ice, no sugar',
+    keyboardDone: 'Done',
+    keyboardSpace: 'Space',
     edit: 'Edit',
     add: 'Add to cart',
     save: 'Save changes',
@@ -435,10 +445,11 @@ export default function KitchenSelfOrderApp() {
     note: string,
     lineId: string | null,
   ) => {
+    const cleanNote = sanitizeKitchenSelfOrderNote(note) || '';
     setCart((current) => {
       if (lineId) {
         return current.map((item) => item.lineId === lineId
-          ? { ...item, modifiers, note }
+          ? { ...item, modifiers, note: cleanNote }
           : item);
       }
       return [
@@ -447,7 +458,7 @@ export default function KitchenSelfOrderApp() {
           lineId: makeLineId(product.id),
           product,
           quantity: 1,
-          note,
+          note: cleanNote,
           modifiers,
         },
       ];
@@ -1112,11 +1123,11 @@ function CartPanel({
         )}
       </div>
       <div className="border-t border-[var(--kso-line)] p-3">
-        <div className="mb-3 flex items-end justify-between">
+        <div className="kso-total-row">
           <span className="text-sm font-black uppercase tracking-wide text-[var(--kso-muted)]">
             {t.subtotal}
           </span>
-          <span className="kso-serif kso-price text-2xl">
+          <span className="kso-total-amount">
             {formatPLN(cartTotal(cart))}
           </span>
         </div>
@@ -1148,7 +1159,6 @@ function CartLine({
   onQuantity: (lineId: string, quantity: number) => void;
 }) {
   const labels = formatKitchenSelfOrderModifierLabels(item.modifiers);
-  const editable = item.product.noteEnabled || item.product.modifierGroupAttachmentIds.length > 0;
   return (
     <div className="rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-3">
       <div className="flex items-start justify-between gap-2">
@@ -1161,17 +1171,20 @@ function CartLine({
               {labels.join(' · ')}
             </div>
           )}
+          {item.note && (
+            <div className="kso-cart-note">
+              {item.note}
+            </div>
+          )}
         </div>
-        {editable && (
-          <button
-            type="button"
-            onClick={() => onEdit(item.lineId)}
-            aria-label={t.edit}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--kso-muted)] hover:bg-[var(--kso-accent-soft)]"
-          >
-            <Pencil size={18} />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => onEdit(item.lineId)}
+          aria-label={t.edit}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--kso-muted)] hover:bg-[var(--kso-accent-soft)]"
+        >
+          <Pencil size={18} />
+        </button>
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">
         <QuantityControl
@@ -1239,7 +1252,61 @@ function ProductConfigurator({
     initialItem?.modifiers || defaultModifiers(groups),
   );
   const [note, setNote] = useState(initialItem?.note || '');
+  const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const noteCursorFrameRef = useRef<number | null>(null);
+  const [noteKeyboardVisible, setNoteKeyboardVisible] = useState(false);
+  const [noteKeyboardHeight, setNoteKeyboardHeight] = useState(0);
   const validation = validateKitchenSelfOrderModifierSelections(groups, modifiers);
+
+  const cancelNoteCursorFrame = () => {
+    if (noteCursorFrameRef.current == null) return;
+    window.cancelAnimationFrame(noteCursorFrameRef.current);
+    noteCursorFrameRef.current = null;
+  };
+
+  const setNoteCursor = (position: number) => {
+    cancelNoteCursorFrame();
+    noteCursorFrameRef.current = window.requestAnimationFrame(() => {
+      noteCursorFrameRef.current = null;
+      const input = noteTextareaRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(position, position);
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  };
+
+  const replaceNoteSelection = (insert: string, deleteBackward = false) => {
+    const input = noteTextareaRef.current;
+    const start = input?.selectionStart ?? note.length;
+    const end = input?.selectionEnd ?? note.length;
+    const from = deleteBackward && start === end ? Math.max(0, start - 1) : start;
+    const next = `${note.slice(0, from)}${insert}${note.slice(end)}`.slice(0, 180);
+    const nextCursor = Math.min(from + insert.length, next.length);
+    setNote(next);
+    setNoteCursor(nextCursor);
+  };
+
+  useEffect(() => {
+    if (!noteKeyboardVisible) return;
+    window.requestAnimationFrame(() => {
+      noteTextareaRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }, [noteKeyboardHeight, noteKeyboardVisible]);
+
+  useEffect(() => () => {
+    cancelNoteCursorFrame();
+  }, []);
+
+  useEffect(() => {
+    if (!initialItem) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      setNoteKeyboardVisible(true);
+      noteTextareaRef.current?.focus();
+      noteTextareaRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialItem?.lineId]);
 
   const toggleOption = (
     group: KitchenSelfOrderModifierGroup,
@@ -1293,7 +1360,10 @@ function ProductConfigurator({
       <div
         role="dialog"
         aria-modal="true"
-        className="grid max-h-[94vh] w-full max-w-6xl grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-xl bg-[var(--kso-surface)] shadow-2xl"
+        style={{
+          '--kso-note-keyboard-height': `${noteKeyboardHeight}px`,
+        } as React.CSSProperties}
+        className="kso-configurator-dialog grid max-h-[94vh] w-full max-w-6xl grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-xl bg-[var(--kso-surface)] shadow-2xl"
       >
         <div className="border-r border-[var(--kso-line)] bg-[var(--kso-accent-soft)] p-5">
           <ProductImage
@@ -1309,7 +1379,7 @@ function ProductConfigurator({
           </div>
         </div>
 
-        <div className="grid min-h-0 grid-rows-[64px_1fr_auto]">
+        <div className="grid min-h-0 grid-rows-[64px_minmax(0,1fr)_auto_auto]">
           <div className="flex items-center justify-between border-b border-[var(--kso-line)] px-5">
             <div className="kso-serif text-lg font-black text-[var(--kso-ink)]">
               {initialItem ? t.edit : t.add}
@@ -1324,7 +1394,7 @@ function ProductConfigurator({
             </button>
           </div>
 
-          <div className="min-h-0 overflow-y-auto p-5">
+          <div className="kso-configurator-scroll min-h-0 overflow-y-auto p-5">
             <div className="space-y-6">
               {groups.map((group) => {
                 const selected = modifiers.filter((modifier) => modifier.groupId === group.id);
@@ -1385,17 +1455,19 @@ function ProductConfigurator({
                 );
               })}
 
-              {product.noteEnabled && (
-                <label className="block">
-                  <span className="kso-serif text-lg font-black text-[var(--kso-ink)]">{t.note}</span>
-                  <textarea
-                    value={note}
-                    maxLength={180}
-                    onChange={(event) => setNote(event.target.value)}
-                    className="mt-3 min-h-[96px] w-full resize-none rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] p-4 text-base font-semibold text-[var(--kso-ink)] outline-none focus:border-[var(--kso-accent)]"
-                  />
-                </label>
-              )}
+              <label className="block">
+                <span className="kso-serif text-lg font-black text-[var(--kso-ink)]">{t.note}</span>
+                <textarea
+                  ref={noteTextareaRef}
+                  value={note}
+                  maxLength={180}
+                  inputMode="none"
+                  placeholder={t.notePlaceholder}
+                  onFocus={() => setNoteKeyboardVisible(true)}
+                  onChange={(event) => setNote(event.target.value)}
+                  className="mt-3 min-h-[112px] w-full resize-none rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] p-4 text-base font-semibold text-[var(--kso-ink)] outline-none focus:border-[var(--kso-accent)]"
+                />
+              </label>
             </div>
           </div>
 
@@ -1412,6 +1484,22 @@ function ProductConfigurator({
               <Check size={22} />
               {initialItem ? t.save : t.add}
             </button>
+          </div>
+          <div data-kso-note-keyboard="true" className="kso-note-keyboard">
+            <TouchKeyboard
+              visible={noteKeyboardVisible}
+              mode="full"
+              doneLabel={t.keyboardDone}
+              spaceLabel={t.keyboardSpace}
+              onKey={(key) => replaceNoteSelection(key)}
+              onBackspace={() => replaceNoteSelection('', true)}
+              onDone={() => {
+                cancelNoteCursorFrame();
+                setNoteKeyboardVisible(false);
+                noteTextareaRef.current?.blur();
+              }}
+              onHeightChange={setNoteKeyboardHeight}
+            />
           </div>
         </div>
       </div>
@@ -1502,7 +1590,7 @@ function ReviewScreen({
                       </div>
                     )}
                     {item.note && (
-                      <div className="mt-1 text-sm font-semibold text-[var(--kso-muted)]">
+                      <div className="kso-cart-note">
                         {item.note}
                       </div>
                     )}
@@ -1537,9 +1625,11 @@ function ReviewScreen({
           <div className="text-sm font-black uppercase tracking-wide text-[var(--kso-muted)]">
             {fulfillment === 'TAKEAWAY' ? t.takeaway : t.dineIn}
           </div>
-          <div className="mt-5 flex items-end justify-between border-t border-[var(--kso-line)] pt-5">
-            <span className="text-lg font-black text-[var(--kso-muted)]">{t.subtotal}</span>
-            <span className="kso-serif kso-price text-4xl">{formatPLN(total)}</span>
+          <div className="mt-5 border-t border-[var(--kso-line)] pt-5">
+            <div className="kso-total-row">
+              <span className="text-lg font-black text-[var(--kso-muted)]">{t.subtotal}</span>
+              <span className="kso-total-amount">{formatPLN(total)}</span>
+            </div>
           </div>
           {error && (
             <div role="alert" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-base font-bold text-[var(--sc-danger)]">

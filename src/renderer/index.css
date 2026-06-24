@@ -683,6 +683,41 @@ body.self-checkout-root {
   font-weight: 800;
 }
 
+.kso-total-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.kso-total-amount {
+  color: var(--kso-ink);
+  font-family: var(--kso-sans);
+  font-size: clamp(28px, 2.2vw, 36px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.kso-cart-note {
+  margin-top: 6px;
+  color: var(--kso-muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.kso-configurator-scroll {
+  scroll-padding-bottom: calc(var(--kso-note-keyboard-height, 0px) + 16px);
+}
+
+.kso-note-keyboard {
+  min-height: 0;
+}
+
 .kso-chip {
   border: 1px solid var(--kso-line);
   border-radius: 999px;

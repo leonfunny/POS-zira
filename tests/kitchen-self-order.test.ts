@@ -321,6 +321,41 @@ describe('kitchen self-order MVP wiring', () => {
     expect(cssSource).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
   });
 
+  it('keeps item notes editable and submitted for every self-order product', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+
+    expect(appSource).toContain("import TouchKeyboard from '../../components/shared/TouchKeyboard'");
+    expect(appSource).toContain('notePlaceholder:');
+    expect(appSource).toContain('placeholder={t.notePlaceholder}');
+    expect(appSource).toContain('className="kso-cart-note"');
+    expect(appSource).toContain('const [noteKeyboardVisible, setNoteKeyboardVisible] = useState(false)');
+    expect(appSource).toContain('const noteCursorFrameRef = useRef<number | null>(null);');
+    expect(appSource).toContain('cancelNoteCursorFrame();');
+    expect(appSource).toContain('if (!initialItem) return undefined;');
+    expect(appSource).toContain('noteTextareaRef.current?.focus();');
+    expect(appSource).toContain('inputMode="none"');
+    expect(appSource).toContain('onHeightChange={setNoteKeyboardHeight}');
+    expect(appSource).toContain('data-kso-note-keyboard="true"');
+    expect(appSource).toContain('style={{');
+    expect(appSource).toContain("'--kso-note-keyboard-height': `${noteKeyboardHeight}px`");
+    expect(appSource).not.toContain('product.noteEnabled &&');
+    expect(posModuleSource).toContain('note: item.note || null,');
+    expect(posModuleSource).not.toContain('note: product.noteEnabled ? item.note : null');
+  });
+
+  it('uses readable tabular total typography instead of headline serif totals', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const cssSource = readSource('src/renderer/index.css');
+
+    expect(appSource).toContain('className="kso-total-row"');
+    expect(appSource).toContain('className="kso-total-amount"');
+    expect(cssSource).toContain('.kso-total-amount');
+    expect(cssSource).toContain('font-variant-numeric: tabular-nums');
+    expect(appSource).not.toContain('kso-serif kso-price text-2xl');
+    expect(appSource).not.toContain('kso-serif kso-price text-4xl');
+  });
+
   it('applies the warm-editorial skin with stable image, fallback, and add affordance layout', () => {
     const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
     const cssSource = readSource('src/renderer/index.css');

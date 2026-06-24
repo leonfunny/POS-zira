@@ -412,6 +412,14 @@ export const productRepo = {
     );
   },
 
+  /** Local mirror of the backend category display_order used by POS and KSO menus. */
+  setCategorySortOrder(categoryId: string, sortOrder: number): void {
+    database.run(
+      'UPDATE categories SET sort_order = ? WHERE id = ?',
+      [sortOrder, categoryId],
+    );
+  },
+
   decrementStock(variantId: string, quantity: number, options?: { allowNegative?: boolean }): void {
     database.run(
       options?.allowNegative

@@ -1308,15 +1308,26 @@ export class PosModule extends BaseModule {
           (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
           () => refreshProductsAfterProductAdminMutation('product_admin_category_update'),
         );
-        // Mirror the kitchen flag locally right away: the order-time kitchen
-        // filter reads the LOCAL categories table, and the post-mutation
-        // product refresh is async — without this a sale rung up seconds
-        // after the toggle would miss the kitchen ticket.
+        // Mirror local category fields right away: kitchen self-order and
+        // order-time kitchen filtering read the LOCAL categories table, and
+        // product refresh can lag or be skipped.
+        let mirroredLocalCategory = false;
         if (payload && typeof payload.kitchenPrint === 'boolean' && !(result as any)?.error) {
           try {
             productRepo.setCategoryKitchenPrint(categoryId, payload.kitchenPrint);
-            database.markDirty();
+            mirroredLocalCategory = true;
           } catch { /* refresh will reconcile */ }
+        }
+        if (payload && typeof payload.sortOrder === 'number' && Number.isFinite(payload.sortOrder) && !(result as any)?.error) {
+          try {
+            productRepo.setCategorySortOrder(categoryId, payload.sortOrder);
+            mirroredLocalCategory = true;
+          } catch { /* refresh will reconcile */ }
+        }
+        if (mirroredLocalCategory) {
+          database.markDirty();
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: 'product_admin_category_local_mirror' });
         }
         return result;
       },
@@ -2985,7 +2996,7 @@ export class PosModule extends BaseModule {
             name: product.name,
             quantity: item.quantity,
             unitPriceGrosze: normalizeKitchenSelfOrderPriceGrosze(product.priceGrosze + modifierTotalGrosze),
-            note: product.noteEnabled ? item.note : null,
+            note: item.note || null,
             modifiers: validation.modifiers,
             options: groups.length === 0 ? item.options : [],
           };
