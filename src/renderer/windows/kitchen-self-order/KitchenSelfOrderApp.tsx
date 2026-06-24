@@ -570,8 +570,8 @@ export default function KitchenSelfOrderApp() {
             <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-amber-50 text-amber-800">
               <CircleAlert size={50} />
             </div>
-            <h1 className="mt-7 text-4xl font-black text-[var(--sc-ink)]">{t.terminalTitle}</h1>
-            <p className="mx-auto mt-4 max-w-xl text-xl font-semibold leading-8 text-[var(--sc-muted)]">
+            <h1 className="kso-serif mt-7 text-4xl font-black text-[var(--kso-ink)]">{t.terminalTitle}</h1>
+            <p className="mx-auto mt-4 max-w-xl text-xl font-semibold leading-8 text-[var(--kso-muted)]">
               {t.terminalBody}
             </p>
             <button
@@ -596,15 +596,15 @@ export default function KitchenSelfOrderApp() {
     return (
       <KioskShell style={themeStyle}>
         <div className="mx-auto flex h-full max-w-4xl flex-col items-center justify-center gap-6 px-8 text-center">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-50 text-[var(--sc-success)]">
+          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--kso-accent-soft)] text-[var(--kso-accent-deep)]">
             <Check size={46} strokeWidth={3} />
           </div>
           <div>
-            <div className="text-2xl font-black text-[var(--sc-muted)]">{t.doneTitle}</div>
-            <div className="mt-3 rounded-3xl bg-[var(--sc-ink)] px-14 py-7 text-7xl font-black text-white">
+            <div className="text-2xl font-black text-[var(--kso-muted)]">{t.doneTitle}</div>
+            <div className="kso-serif mt-3 rounded-3xl bg-[var(--kso-ink)] px-14 py-7 text-7xl font-black text-white">
               {orderNumber}
             </div>
-            <p className="mx-auto mt-5 max-w-2xl text-2xl font-bold text-[var(--sc-ink)]">
+            <p className="mx-auto mt-5 max-w-2xl text-2xl font-bold text-[var(--kso-ink)]">
               {completionText}
             </p>
           </div>
@@ -612,7 +612,7 @@ export default function KitchenSelfOrderApp() {
             <Home size={24} />
             {t.newOrder}
           </button>
-          <div className="text-base font-bold text-[var(--sc-muted)]">
+          <div className="text-base font-bold text-[var(--kso-muted)]">
             {t.autoReset} {resetCountdown} {t.seconds}
           </div>
         </div>
@@ -653,13 +653,13 @@ export default function KitchenSelfOrderApp() {
                 />
               ))}
             </div>
-            <label className="flex h-[52px] w-[270px] shrink-0 items-center gap-3 rounded-lg border border-[var(--sc-border)] bg-white px-4">
-              <Search size={21} className="text-[var(--sc-muted)]" />
+            <label className="flex h-[52px] w-[270px] shrink-0 items-center gap-3 rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] px-4">
+              <Search size={21} className="text-[var(--kso-muted)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t.search}
-                className="h-full min-w-0 flex-1 bg-transparent text-base font-bold text-[var(--sc-ink)] outline-none placeholder:text-[var(--sc-muted)]"
+                className="h-full min-w-0 flex-1 bg-transparent text-base font-bold text-[var(--kso-ink)] outline-none placeholder:text-[var(--kso-muted)]"
               />
             </label>
           </div>
@@ -748,16 +748,16 @@ function BrandHeader({
           onError={(event) => { event.currentTarget.style.display = 'none'; }}
         />
       ) : (
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent)] text-lg font-black text-white">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent-deep)] text-lg font-black text-white">
           {(menu?.brand.name || 'Z').slice(0, 1).toUpperCase()}
         </div>
       )}
       <div className="min-w-0">
-        <div className="truncate text-xs font-black uppercase tracking-[0.14em] text-[var(--sc-muted)]">
-          {menu?.brand.name || 'Zira POS'}
-        </div>
-        <h1 className="truncate text-3xl font-black leading-tight text-[var(--sc-ink)]">
+        <div className="truncate text-xs font-black uppercase tracking-[0.14em] text-[var(--kso-muted)]">
           {menuLabel}
+        </div>
+        <h1 className="kso-serif truncate text-3xl font-black leading-tight text-[var(--kso-ink)]">
+          {menu?.brand.name || 'Zira POS'}
         </h1>
       </div>
     </div>
@@ -766,7 +766,7 @@ function BrandHeader({
 
 function EmptyState({ label }: { label: string }) {
   return (
-    <div className="flex h-full min-h-[240px] items-center justify-center rounded-lg border border-[var(--sc-border)] bg-white text-xl font-bold text-[var(--sc-muted)]">
+    <div className="flex h-full min-h-[240px] items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] text-xl font-bold text-[var(--kso-muted)]">
       {label}
     </div>
   );
@@ -788,7 +788,7 @@ function FulfillmentToggle({
     TAKEAWAY: t.takeaway,
   };
   return (
-    <div className="flex rounded-lg border border-[var(--sc-border)] bg-white p-1">
+    <div className="flex rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-1">
       {options.map((value) => (
         <button
           key={value}
@@ -796,8 +796,8 @@ function FulfillmentToggle({
           onClick={() => onChange(value)}
           className={`min-h-[48px] rounded-md px-4 text-sm font-black ${
             fulfillment === value
-              ? 'bg-[var(--sc-ink)] text-white'
-              : 'text-[var(--sc-muted)]'
+              ? 'bg-[var(--kso-ink)] text-white'
+              : 'text-[var(--kso-muted)]'
           }`}
         >
           {labels[value]}
@@ -815,7 +815,7 @@ function LanguageToggle({
   onChange: (value: KitchenSelfOrderLanguage) => void;
 }) {
   return (
-    <div className="flex rounded-lg border border-[var(--sc-border)] bg-white p-1">
+    <div className="flex rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-1">
       {([
         ['pl', 'PL'],
         ['vi', 'VI'],
@@ -827,8 +827,8 @@ function LanguageToggle({
           onClick={() => onChange(value)}
           className={`min-h-[48px] min-w-[48px] rounded-md px-2 text-sm font-black ${
             language === value
-              ? 'bg-[var(--kso-accent)] text-white'
-              : 'text-[var(--sc-muted)]'
+              ? 'bg-[var(--kso-accent-soft)] text-[var(--kso-ink)]'
+              : 'text-[var(--kso-muted)]'
           }`}
         >
           {label}
@@ -851,11 +851,8 @@ function CategoryButton({
     <button
       type="button"
       onClick={onClick}
-      className={`h-[52px] shrink-0 rounded-lg border px-5 text-base font-black ${
-        active
-          ? 'border-[var(--sc-ink)] bg-[var(--sc-ink)] text-white'
-          : 'border-[var(--sc-border)] bg-white text-[var(--sc-ink)]'
-      }`}
+      data-active={active ? 'true' : undefined}
+      className="kso-chip h-[52px] shrink-0 px-5 text-base font-black"
     >
       {label}
     </button>
@@ -880,16 +877,16 @@ function ProductCard({
     >
       <ProductImage product={product} name={name} className="kso-product-media" />
       <div className="grid min-h-0 flex-1 grid-rows-[44px_48px] px-4 pb-3 pt-3">
-        <div className="line-clamp-2 text-base font-black leading-[1.35] text-[var(--sc-ink)]">
+        <div className="kso-serif line-clamp-2 text-base font-black leading-[1.35] text-[var(--kso-ink)]">
           {name}
         </div>
         <div className="flex items-end justify-between gap-3">
-          <div className="text-lg font-black text-[var(--sc-ink)]">
+          <div className="kso-price text-lg">
             {formatPLN(product.priceGrosze)}
           </div>
           <span
             aria-hidden="true"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent)] text-white transition-transform group-active:scale-95"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent-deep)] text-white transition-transform group-active:scale-95"
           >
             <Plus size={23} strokeWidth={3} />
           </span>
@@ -911,14 +908,14 @@ function ProductImage({
   const [failed, setFailed] = useState(false);
   if (!product.media.url || failed) {
     return (
-      <div className={`${className} flex items-center justify-center bg-[var(--sc-surface-muted)] text-[var(--sc-muted)]`}>
+      <div className={`${className} flex items-center justify-center bg-[var(--kso-accent-soft)] text-[var(--kso-muted)]`}>
         <ImageIcon size={42} />
       </div>
     );
   }
   const focal = product.media.focalPoint || { x: 0.5, y: 0.5 };
   return (
-    <div className={`${className} overflow-hidden bg-[var(--sc-surface-muted)]`}>
+    <div className={`${className} overflow-hidden bg-[var(--kso-accent-soft)]`}>
       <img
         src={product.media.url}
         alt={name}
@@ -953,19 +950,19 @@ function CartPanel({
 }) {
   const count = cart.reduce((sum, item) => sum + item.quantity, 0);
   return (
-    <aside className="grid min-h-0 grid-rows-[64px_1fr_auto] rounded-lg border border-[var(--sc-border)] bg-white">
-      <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-4">
-        <h2 className="flex items-center gap-2 text-xl font-black text-[var(--sc-ink)]">
+    <aside className="grid min-h-0 grid-rows-[64px_1fr_auto] rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)]">
+      <div className="flex items-center justify-between border-b border-[var(--kso-line)] px-4">
+        <h2 className="kso-serif flex items-center gap-2 text-xl font-black text-[var(--kso-ink)]">
           <ShoppingCart size={23} />
           {t.cart}
         </h2>
-        <span className="flex h-8 min-w-8 items-center justify-center rounded-full bg-[var(--sc-primary-soft)] px-2 text-sm font-black text-[var(--sc-primary-deep)]">
+        <span className="flex h-8 min-w-8 items-center justify-center rounded-full bg-[var(--kso-accent-soft)] px-2 text-sm font-black text-[var(--kso-accent-deep)]">
           {count}
         </span>
       </div>
       <div className="min-h-0 overflow-y-auto p-3">
         {cart.length === 0 ? (
-          <div className="flex min-h-[180px] items-center justify-center rounded-lg bg-[var(--sc-surface-muted)] px-4 text-center text-base font-bold text-[var(--sc-muted)]">
+          <div className="flex min-h-[180px] items-center justify-center rounded-lg bg-[var(--kso-accent-soft)] px-4 text-center text-base font-bold text-[var(--kso-muted)]">
             {t.emptyCart}
           </div>
         ) : (
@@ -983,12 +980,12 @@ function CartPanel({
           </div>
         )}
       </div>
-      <div className="border-t border-[var(--sc-border)] p-3">
+      <div className="border-t border-[var(--kso-line)] p-3">
         <div className="mb-3 flex items-end justify-between">
-          <span className="text-sm font-black uppercase tracking-wide text-[var(--sc-muted)]">
+          <span className="text-sm font-black uppercase tracking-wide text-[var(--kso-muted)]">
             {t.subtotal}
           </span>
-          <span className="text-2xl font-black text-[var(--sc-ink)]">
+          <span className="kso-serif kso-price text-2xl">
             {formatPLN(cartTotal(cart))}
           </span>
         </div>
@@ -1022,14 +1019,14 @@ function CartLine({
   const labels = formatKitchenSelfOrderModifierLabels(item.modifiers);
   const editable = item.product.noteEnabled || item.product.modifierGroupAttachmentIds.length > 0;
   return (
-    <div className="rounded-lg border border-[var(--sc-border)] p-3">
+    <div className="rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-base font-black leading-snug text-[var(--sc-ink)]">
+          <div className="kso-serif text-base font-black leading-snug text-[var(--kso-ink)]">
             {localizedName(item.product, language)}
           </div>
           {labels.length > 0 && (
-            <div className="mt-1 text-sm font-semibold leading-5 text-[var(--sc-muted)]">
+            <div className="mt-1 text-sm font-semibold leading-5 text-[var(--kso-muted)]">
               {labels.join(' · ')}
             </div>
           )}
@@ -1039,7 +1036,7 @@ function CartLine({
             type="button"
             onClick={() => onEdit(item.lineId)}
             aria-label={t.edit}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--sc-muted)] hover:bg-[var(--sc-surface-muted)]"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--kso-muted)] hover:bg-[var(--kso-accent-soft)]"
           >
             <Pencil size={18} />
           </button>
@@ -1050,7 +1047,7 @@ function CartLine({
           quantity={item.quantity}
           onChange={(quantity) => onQuantity(item.lineId, quantity)}
         />
-        <div className="text-base font-black text-[var(--sc-ink)]">
+        <div className="kso-price text-base">
           {formatPLN(lineTotal(item))}
         </div>
       </div>
@@ -1073,7 +1070,7 @@ function QuantityControl({
         type="button"
         disabled={disabled}
         onClick={() => onChange(quantity - 1)}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] disabled:opacity-40"
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
       >
         <Minus size={18} />
       </button>
@@ -1082,7 +1079,7 @@ function QuantityControl({
         type="button"
         disabled={disabled}
         onClick={() => onChange(normalizeKitchenSelfOrderQuantity(quantity + 1))}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] disabled:opacity-40"
+        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
       >
         <Plus size={18} />
       </button>
@@ -1165,32 +1162,32 @@ function ProductConfigurator({
       <div
         role="dialog"
         aria-modal="true"
-        className="grid max-h-[94vh] w-full max-w-6xl grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-xl bg-white shadow-2xl"
+        className="grid max-h-[94vh] w-full max-w-6xl grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-xl bg-[var(--kso-surface)] shadow-2xl"
       >
-        <div className="border-r border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-5">
+        <div className="border-r border-[var(--kso-line)] bg-[var(--kso-accent-soft)] p-5">
           <ProductImage
             product={product}
             name={localizedName(product, language)}
             className="aspect-[4/3] w-full rounded-lg"
           />
-          <h2 className="mt-5 text-2xl font-black leading-tight text-[var(--sc-ink)]">
+          <h2 className="kso-serif mt-5 text-2xl font-black leading-tight text-[var(--kso-ink)]">
             {localizedName(product, language)}
           </h2>
-          <div className="mt-2 text-2xl font-black text-[var(--sc-primary-deep)]">
+          <div className="kso-price mt-2 text-2xl">
             {formatPLN(product.priceGrosze + validation.modifierTotalGrosze)}
           </div>
         </div>
 
         <div className="grid min-h-0 grid-rows-[64px_1fr_auto]">
-          <div className="flex items-center justify-between border-b border-[var(--sc-border)] px-5">
-            <div className="text-lg font-black text-[var(--sc-ink)]">
+          <div className="flex items-center justify-between border-b border-[var(--kso-line)] px-5">
+            <div className="kso-serif text-lg font-black text-[var(--kso-ink)]">
               {initialItem ? t.edit : t.add}
             </div>
             <button
               type="button"
               onClick={onCancel}
               aria-label={t.cancel}
-              className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--sc-border)]"
+              className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)]"
             >
               <X size={22} />
             </button>
@@ -1205,10 +1202,10 @@ function ProductConfigurator({
                   <section key={group.id}>
                     <div className="mb-3 flex items-end justify-between gap-4">
                       <div>
-                        <h3 className="text-xl font-black text-[var(--sc-ink)]">
+                        <h3 className="kso-serif text-xl font-black text-[var(--kso-ink)]">
                           {localizedName(group, language)}
                         </h3>
-                        <div className={`mt-1 text-sm font-bold ${hasError ? 'text-[var(--sc-danger)]' : 'text-[var(--sc-muted)]'}`}>
+                        <div className={`mt-1 text-sm font-bold ${hasError ? 'text-[var(--sc-danger)]' : 'text-[var(--kso-muted)]'}`}>
                           {group.minSelections > 0 ? t.required : t.optional}
                           {group.maxSelections > 1 ? ` · ${t.chooseUpTo} ${group.maxSelections}` : ''}
                         </div>
@@ -1222,8 +1219,8 @@ function ProductConfigurator({
                             key={option.id}
                             className={`min-h-[64px] rounded-lg border-2 p-3 ${
                               selection
-                                ? 'border-[var(--kso-accent)] bg-[var(--sc-primary-soft)]'
-                                : 'border-[var(--sc-border)] bg-white'
+                                ? 'border-[var(--kso-accent)] bg-[var(--kso-accent-soft)]'
+                                : 'border-[var(--kso-line)] bg-[var(--kso-surface)]'
                             }`}
                           >
                             <button
@@ -1231,10 +1228,10 @@ function ProductConfigurator({
                               onClick={() => toggleOption(group, option.id)}
                               className="flex w-full items-center justify-between gap-3 text-left"
                             >
-                              <span className="font-black text-[var(--sc-ink)]">
+                              <span className="font-black text-[var(--kso-ink)]">
                                 {localizedName(option, language)}
                               </span>
-                              <span className="shrink-0 font-black text-[var(--sc-primary-deep)]">
+                              <span className="kso-price shrink-0">
                                 {option.priceDeltaGrosze > 0
                                   ? `+${formatPLN(option.priceDeltaGrosze)}`
                                   : ''}
@@ -1259,19 +1256,19 @@ function ProductConfigurator({
 
               {product.noteEnabled && (
                 <label className="block">
-                  <span className="text-lg font-black text-[var(--sc-ink)]">{t.note}</span>
+                  <span className="kso-serif text-lg font-black text-[var(--kso-ink)]">{t.note}</span>
                   <textarea
                     value={note}
                     maxLength={180}
                     onChange={(event) => setNote(event.target.value)}
-                    className="mt-3 min-h-[96px] w-full resize-none rounded-lg border border-[var(--sc-border)] bg-[var(--sc-surface-muted)] p-4 text-base font-semibold outline-none focus:border-[var(--kso-accent)]"
+                    className="mt-3 min-h-[96px] w-full resize-none rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] p-4 text-base font-semibold text-[var(--kso-ink)] outline-none focus:border-[var(--kso-accent)]"
                   />
                 </label>
               )}
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-[var(--sc-border)] p-4">
+          <div className="flex items-center justify-end gap-3 border-t border-[var(--kso-line)] p-4">
             <button type="button" onClick={onCancel} className="kso-secondary-button">
               {t.cancel}
             </button>
@@ -1335,7 +1332,7 @@ function ReviewScreen({
           <ArrowLeft size={22} />
           {t.back}
         </button>
-        <h1 className="text-3xl font-black text-[var(--sc-ink)]">{t.reviewTitle}</h1>
+        <h1 className="kso-serif text-3xl font-black text-[var(--kso-ink)]">{t.reviewTitle}</h1>
         <div className="flex items-center gap-2">
           <FulfillmentToggle
             t={t}
@@ -1350,14 +1347,14 @@ function ReviewScreen({
       </header>
 
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_360px] gap-4">
-        <div className="min-h-0 overflow-y-auto rounded-lg border border-[var(--sc-border)] bg-white p-4">
+        <div className="min-h-0 overflow-y-auto rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-4">
           <div className="space-y-3">
             {cart.map((item) => {
               const labels = formatKitchenSelfOrderModifierLabels(item.modifiers);
               return (
                 <div
                   key={item.lineId}
-                  className="grid grid-cols-[112px_minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-[var(--sc-border)] p-3"
+                  className="grid grid-cols-[112px_minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-[var(--kso-line)] p-3"
                 >
                   <ProductImage
                     product={item.product}
@@ -1365,16 +1362,16 @@ function ReviewScreen({
                     className="h-24 w-28 rounded-lg"
                   />
                   <div className="min-w-0">
-                    <div className="text-xl font-black leading-snug text-[var(--sc-ink)]">
+                    <div className="kso-serif text-xl font-black leading-snug text-[var(--kso-ink)]">
                       {localizedName(item.product, language)}
                     </div>
                     {labels.length > 0 && (
-                      <div className="mt-1 text-base font-semibold text-[var(--sc-muted)]">
+                      <div className="mt-1 text-base font-semibold text-[var(--kso-muted)]">
                         {labels.join(' · ')}
                       </div>
                     )}
                     {item.note && (
-                      <div className="mt-1 text-sm font-semibold text-[var(--sc-muted)]">
+                      <div className="mt-1 text-sm font-semibold text-[var(--kso-muted)]">
                         {item.note}
                       </div>
                     )}
@@ -1382,7 +1379,7 @@ function ReviewScreen({
                       <button
                         type="button"
                         onClick={() => onEdit(item.lineId)}
-                        className="mt-2 inline-flex min-h-[48px] items-center gap-2 font-black text-[var(--sc-primary-deep)]"
+                        className="mt-2 inline-flex min-h-[48px] items-center gap-2 font-black text-[var(--kso-accent-deep)]"
                       >
                         <Pencil size={17} />
                         {t.edit}
@@ -1390,7 +1387,7 @@ function ReviewScreen({
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-3">
-                    <div className="text-xl font-black text-[var(--sc-ink)]">
+                    <div className="kso-price text-xl">
                       {formatPLN(lineTotal(item))}
                     </div>
                     <QuantityControl
@@ -1405,13 +1402,13 @@ function ReviewScreen({
           </div>
         </div>
 
-        <aside className="flex flex-col rounded-lg border border-[var(--sc-border)] bg-white p-5">
-          <div className="text-sm font-black uppercase tracking-wide text-[var(--sc-muted)]">
+        <aside className="flex flex-col rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] p-5">
+          <div className="text-sm font-black uppercase tracking-wide text-[var(--kso-muted)]">
             {fulfillment === 'TAKEAWAY' ? t.takeaway : t.dineIn}
           </div>
-          <div className="mt-5 flex items-end justify-between border-t border-[var(--sc-border)] pt-5">
-            <span className="text-lg font-black text-[var(--sc-muted)]">{t.subtotal}</span>
-            <span className="text-4xl font-black text-[var(--sc-ink)]">{formatPLN(total)}</span>
+          <div className="mt-5 flex items-end justify-between border-t border-[var(--kso-line)] pt-5">
+            <span className="text-lg font-black text-[var(--kso-muted)]">{t.subtotal}</span>
+            <span className="kso-serif kso-price text-4xl">{formatPLN(total)}</span>
           </div>
           {error && (
             <div role="alert" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-base font-bold text-[var(--sc-danger)]">

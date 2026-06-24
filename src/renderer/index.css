@@ -431,12 +431,19 @@ body.self-checkout-root {
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--sc-border);
+  border: 1px solid var(--kso-line);
   border-radius: 8px;
-  background: var(--sc-surface);
+  background: var(--kso-surface);
   text-align: left;
-  box-shadow: 0 5px 16px rgba(32, 36, 33, 0.08);
+  box-shadow: var(--kso-shadow);
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+}
+
+.kso-product-card:hover,
+.kso-product-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--kso-accent);
+  outline: none;
 }
 
 .kso-product-card:active {
@@ -447,6 +454,7 @@ body.self-checkout-root {
 .kso-product-media {
   height: 216px;
   flex: 0 0 216px;
+  background: var(--kso-accent-soft);
 }
 
 .kso-primary-button,
@@ -460,18 +468,20 @@ body.self-checkout-root {
   padding: 0 18px;
   font-size: 18px;
   font-weight: 800;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
   touch-action: manipulation;
 }
 
 .kso-primary-button {
-  background: var(--kso-accent);
+  border: 1px solid transparent;
+  background: var(--kso-accent-deep);
   color: white;
 }
 
 .kso-secondary-button {
-  border: 1px solid var(--sc-border);
-  background: white;
-  color: var(--sc-ink);
+  border: 1px solid var(--kso-line);
+  background: var(--kso-surface);
+  color: var(--kso-ink);
 }
 
 .kso-primary-button:active,
@@ -479,10 +489,34 @@ body.self-checkout-root {
   transform: scale(0.985);
 }
 
+.kso-primary-button:focus-visible,
+.kso-secondary-button:focus-visible {
+  outline: 3px solid var(--kso-accent-soft);
+  outline-offset: 2px;
+}
+
 .kso-primary-button:disabled {
   background: #c8cec8;
   color: rgba(32, 36, 33, 0.55);
   cursor: not-allowed;
+}
+
+.kso-price {
+  color: var(--kso-ink);
+  font-weight: 800;
+}
+
+.kso-chip {
+  border: 1px solid var(--kso-line);
+  border-radius: 999px;
+  background: var(--kso-surface);
+  color: var(--kso-ink);
+}
+
+.kso-chip[data-active="true"] {
+  border-color: var(--kso-accent);
+  background: var(--kso-accent-soft);
+  color: var(--kso-ink);
 }
 
 @media (min-width: 1280px) {

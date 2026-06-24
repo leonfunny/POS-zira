@@ -285,4 +285,24 @@ describe('kitchen self-order MVP wiring', () => {
     expect(appSource).not.toContain('grid-cols-[minmax(0,1fr)_390px]');
     expect(appSource).not.toContain('h-36 w-full');
   });
+
+  it('applies the warm-editorial skin without touching layout or Phase 2a behavior', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const cssSource = readSource('src/renderer/index.css');
+
+    expect(appSource).toContain('kso-serif');
+    expect(appSource).toContain('grid-cols-[minmax(0,1fr)_320px]');
+    expect(appSource).toContain('className="kso-product-grid"');
+    expect(cssSource).toContain('.kso-product-media');
+
+    const productCardBlock = cssSource.match(/\.kso-product-card\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(productCardBlock).toContain('height: 324px');
+    expect(productCardBlock).toContain('border-radius: 8px');
+    expect(cssSource).toContain('.kso-product-card:focus-visible');
+    expect(cssSource).toContain('.kso-primary-button:focus-visible');
+
+    expect(appSource).toContain('orderLockedForRetry');
+    expect(appSource).toContain('kitchenSelfOrder?.retryPrint?.(');
+    expect(appSource).toContain('onStartOver');
+  });
 });
