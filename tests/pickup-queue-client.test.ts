@@ -1,9 +1,10 @@
 /**
  * pushPickupOrderBestEffort — the kiosk → backend pickup-queue push.
  *
- * Contract: it is best-effort and fire-and-forget. It must build the right
- * request, and — most importantly — it must NEVER throw, so a queue/backend
- * problem can never break the kiosk submit/print/QR path.
+ * Contract: best-effort and fire-and-forget — it must NEVER throw, so a
+ * queue/backend problem can never break the kiosk submit/print/QR path. A
+ * transient failure is persisted to a durable outbox and retried on reconnect
+ * via drainPickupPushOutbox.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,16 +12,19 @@ vi.mock('../src/main/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-const { getConfigMock, getSecureApiKeyMock } = vi.hoisted(() => ({
+const { getConfigMock, getSecureApiKeyMock, storeGetMock, storeSetMock } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
   getSecureApiKeyMock: vi.fn(),
+  storeGetMock: vi.fn(),
+  storeSetMock: vi.fn(),
 }));
 vi.mock('../src/main/config/store', () => ({
+  default: { get: storeGetMock, set: storeSetMock },
   getConfig: getConfigMock,
   getSecureApiKey: getSecureApiKeyMock,
 }));
 
-import { pushPickupOrderBestEffort } from '../src/main/kitchen-self-order/pickup-queue-client';
+import { pushPickupOrderBestEffort, drainPickupPushOutbox } from '../src/main/kitchen-self-order/pickup-queue-client';
 
 const baseInput = {
   terminalId: 'KIOSK-1',
@@ -37,6 +41,7 @@ describe('pushPickupOrderBestEffort', () => {
   beforeEach(() => {
     getConfigMock.mockReturnValue({ serverUrl: 'https://api.example.com', machineId: 'm1' });
     getSecureApiKeyMock.mockReturnValue('pa_test');
+    storeGetMock.mockReturnValue([]);
     fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -74,5 +79,42 @@ describe('pushPickupOrderBestEffort', () => {
   it('never throws when fetch rejects (offline / aborted)', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(pushPickupOrderBestEffort(baseInput)).resolves.toBeUndefined();
+  });
+
+  it('queues a failed push to the outbox and never throws', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(pushPickupOrderBestEffort(baseInput)).resolves.toBeUndefined();
+    expect(storeSetMock).toHaveBeenCalledTimes(1);
+    expect(storeSetMock).toHaveBeenCalledWith('pendingPickupPushes', [baseInput]);
+  });
+
+  it('does not queue when the terminal is unpaired', async () => {
+    getSecureApiKeyMock.mockReturnValue(null);
+    await pushPickupOrderBestEffort(baseInput);
+    expect(storeSetMock).not.toHaveBeenCalled();
+  });
+
+  it('does not queue on a 2xx response', async () => {
+    await pushPickupOrderBestEffort(baseInput);
+    expect(storeSetMock).not.toHaveBeenCalled();
+  });
+
+  it('drains queued pushes on reconnect, keeping ones that still fail', async () => {
+    const a = { ...baseInput, sourceOrderId: 'kso-a' };
+    const b = { ...baseInput, sourceOrderId: 'kso-b' };
+    storeGetMock.mockReturnValue([a, b]);
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200 })
+      .mockRejectedValueOnce(new Error('still offline'));
+    await drainPickupPushOutbox();
+    expect(storeSetMock).toHaveBeenCalledTimes(1);
+    expect(storeSetMock).toHaveBeenCalledWith('pendingPickupPushes', [b]);
+  });
+
+  it('drain is a no-op when the outbox is empty', async () => {
+    storeGetMock.mockReturnValue([]);
+    await drainPickupPushOutbox();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(storeSetMock).not.toHaveBeenCalled();
   });
 });

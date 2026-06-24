@@ -196,6 +196,48 @@ export function decodeKitchenSelfOrderUuidToken(value: unknown): string | null {
   }
 }
 
+export const KITCHEN_SELF_ORDER_REF_QR_PREFIX = 'KSOREF:';
+
+/**
+ * Compact customer-slip QR that only REFERENCES the backend pickup row. The
+ * cashier resolves it via claim-by-ref and loads the cart from the backend's
+ * stored payload, so the printed QR stays tiny regardless of item count.
+ * Format: `KSOREF:<token>.<orderNumber>`.
+ */
+export function buildKitchenSelfOrderRefQr(
+  sourceOrderId: string | null | undefined,
+  orderNumber: string | null | undefined,
+): string {
+  const token =
+    encodeKitchenSelfOrderUuidToken(sourceOrderId) ??
+    encodeURIComponent(String(sourceOrderId ?? '').trim());
+  const num = encodeURIComponent(String(orderNumber ?? '').trim());
+  return `${KITCHEN_SELF_ORDER_REF_QR_PREFIX}${token}.${num}`;
+}
+
+export function decodeKitchenSelfOrderRefQr(
+  code: string,
+): { sourceOrderId: string | null; orderNumber: string | null } | null {
+  const trimmed = String(code || '').trim();
+  if (!trimmed.startsWith(KITCHEN_SELF_ORDER_REF_QR_PREFIX)) return null;
+  const body = trimmed.slice(KITCHEN_SELF_ORDER_REF_QR_PREFIX.length);
+  const dot = body.indexOf('.');
+  const tokenPart = dot >= 0 ? body.slice(0, dot) : body;
+  const numPart = dot >= 0 ? body.slice(dot + 1) : '';
+  let sourceOrderId: string | null = null;
+  let orderNumber: string | null = null;
+  try {
+    sourceOrderId =
+      decodeKitchenSelfOrderUuidToken(tokenPart) ||
+      (tokenPart ? decodeURIComponent(tokenPart) : null);
+    orderNumber = numPart ? decodeURIComponent(numPart) : null;
+  } catch {
+    return null;
+  }
+  if (!sourceOrderId && !orderNumber) return null;
+  return { sourceOrderId: sourceOrderId || null, orderNumber: orderNumber || null };
+}
+
 export function decodeKitchenSelfOrderQr(code: string): KitchenSelfOrderQrPayload | null {
   const trimmed = String(code || '').trim();
   if (!trimmed.startsWith(KITCHEN_SELF_ORDER_QR_PREFIX)) return null;

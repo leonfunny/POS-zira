@@ -370,8 +370,9 @@ describe('kitchen self-order label/ticket wiring (pos.module source)', () => {
     expect(src).toMatch(/includeNotes\?: boolean/);
   });
 
-  it('attaches a no-notes labelQrPayload at submit and reprint', () => {
-    const matches = src.match(/ticket\.labelQrPayload = buildKitchenSelfOrderQrPayload\([^)]*includeNotes: false/gs);
+  it('attaches the reference QR as labelQrPayload at customer print sites', () => {
+    const matches = src.match(/ticket\.labelQrPayload = refQr;/g);
     expect(matches && matches.length).toBeGreaterThanOrEqual(2);
+    expect(src).not.toMatch(/ticket\.labelQrPayload = buildKitchenSelfOrderQrPayload/);
   });
 });

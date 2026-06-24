@@ -145,7 +145,18 @@ describe('kitchen self-order MVP wiring', () => {
     const layoutSource = readSource('src/renderer/components/pos/POSLayout.tsx');
 
     expect(layoutSource).toContain('decodeKitchenSelfOrderQr(code)');
-    expect(layoutSource).toContain('loadKitchenSelfOrderQr(kioskOrder)');
+    expect(layoutSource).toContain('window.electronAPI.pos.pickupOrders.claimByRef');
+    expect(layoutSource).toContain('res.data?.payload?.qr');
+    expect(layoutSource).not.toContain('await loadKitchenSelfOrderQr(kioskOrder);');
+    expect(layoutSource).not.toContain('openPickupOrder(known, kioskOrder)');
+    expect(layoutSource).not.toContain('scannedPayload?: KitchenSelfOrderQrPayload');
+    expect(layoutSource).not.toContain('const decoded = scannedPayload');
+    const barcodeHandlerStart = layoutSource.indexOf('const handleBarcodeKeyDown = useCallback');
+    const barcodeDepsStart = layoutSource.indexOf('}, [', barcodeHandlerStart);
+    const barcodeDepsEnd = layoutSource.indexOf(']);', barcodeDepsStart);
+    const barcodeDeps = layoutSource.slice(barcodeDepsStart, barcodeDepsEnd);
+    expect(barcodeDeps).toContain('handleScannedPickupRef');
+    expect(barcodeDeps).toContain('handleScannedKioskOrder');
     expect(layoutSource).toContain('handleUnknownBarcodeScanned');
     expect(layoutSource).toContain('onUnknownBarcodeScanned={handleUnknownBarcodeScanned}');
     expect(layoutSource).toContain('window.electronAPI.pos.products.getById(variantId)');

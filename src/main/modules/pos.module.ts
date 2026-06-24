@@ -46,7 +46,7 @@ import { localVariantImportsRepo } from '../database/repos/local-variant-imports
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
-import { pushPickupOrderBestEffort } from '../kitchen-self-order/pickup-queue-client';
+import { pushPickupOrderBestEffort, drainPickupPushOutbox } from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
@@ -106,6 +106,7 @@ import type {
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import {
   KITCHEN_SELF_ORDER_QR_PREFIX,
+  buildKitchenSelfOrderRefQr,
   encodeKitchenSelfOrderUuidToken,
   formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
@@ -3006,11 +3007,9 @@ export class PosModule extends BaseModule {
         const qrPayload = buildKitchenSelfOrderQrPayload(created, {
           kitchenAlreadyReleased: kitchenReleased,
         });
-        const ticket = buildKitchenSelfOrderTicket(created, brandName, qrPayload, sourceLabel);
-        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(created, {
-          kitchenAlreadyReleased: kitchenReleased,
-          includeNotes: false,
-        });
+        const refQr = buildKitchenSelfOrderRefQr(created.id, created.order_number);
+        const ticket = buildKitchenSelfOrderTicket(created, brandName, refQr, sourceLabel);
+        ticket.labelQrPayload = refQr;
         const slipPrint = kitchenReleased
           ? await this.printKitchenSelfOrderCustomerSlip(ticket)
           : { printed: false, error: 'kitchen_not_printed' };
@@ -3175,11 +3174,9 @@ export class PosModule extends BaseModule {
 
         if (action === 'reprint_slip') {
           const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
-          const ticket = buildKitchenSelfOrderTicket(order, brandName, qrPayload, sourceLabel);
-          ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
-            kitchenAlreadyReleased: true,
-            includeNotes: false,
-          });
+          const refQr = buildKitchenSelfOrderRefQr(order.id, order.order_number);
+          const ticket = buildKitchenSelfOrderTicket(order, brandName, refQr, sourceLabel);
+          ticket.labelQrPayload = refQr;
           const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
           const updated = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
             customerSlipPrinted: slipPrint.printed,
@@ -3208,11 +3205,9 @@ export class PosModule extends BaseModule {
         const qrPayload = buildKitchenSelfOrderQrPayload(order, {
           kitchenAlreadyReleased: kitchenReleased,
         });
-        const ticket = buildKitchenSelfOrderTicket(order, brandName, qrPayload, sourceLabel);
-        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
-          kitchenAlreadyReleased: kitchenReleased,
-          includeNotes: false,
-        });
+        const refQr = buildKitchenSelfOrderRefQr(order.id, order.order_number);
+        const ticket = buildKitchenSelfOrderTicket(order, brandName, refQr, sourceLabel);
+        ticket.labelQrPayload = refQr;
         const slipPrint = kitchenReleased
           ? await this.printKitchenSelfOrderCustomerSlip(ticket)
           : { printed: false, error: 'kitchen_not_printed' };
@@ -3296,11 +3291,9 @@ export class PosModule extends BaseModule {
         const cfg = getConfig();
         const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || '').trim();
         const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
-        const ticket = buildKitchenSelfOrderTicket(order, resolveKitchenSelfOrderBrandName(cfg), qrPayload, sourceLabel);
-        ticket.labelQrPayload = buildKitchenSelfOrderQrPayload(order, {
-          kitchenAlreadyReleased: true,
-          includeNotes: false,
-        });
+        const refQr = buildKitchenSelfOrderRefQr(order.id, order.order_number);
+        const ticket = buildKitchenSelfOrderTicket(order, resolveKitchenSelfOrderBrandName(cfg), refQr, sourceLabel);
+        ticket.labelQrPayload = refQr;
         const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
         const updated = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
           customerSlipPrinted: slipPrint.printed,
@@ -3663,7 +3656,7 @@ export class PosModule extends BaseModule {
 
     // Retry any pickup-order settles that didn't land while offline whenever
     // the socket (re)connects — closes the loop after a transient outage.
-    socket.on('connected', () => { void drainPickupSettleOutbox(); });
+    socket.on('connected', () => { void drainPickupSettleOutbox(); void drainPickupPushOutbox(); });
   }
 
   getToolDefinitions(): ToolDefinition[] {

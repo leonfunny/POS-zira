@@ -11,6 +11,7 @@ import { normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import {
   decodeKitchenSelfOrderQr,
+  decodeKitchenSelfOrderRefQr,
   resolveKitchenSelfOrderCheckoutUnitPrice,
   type KitchenSelfOrderQrPayload,
 } from '../../../shared/kitchen-self-order';
@@ -774,10 +775,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // backend first (so it locks to this station), then build the cart from the
   // same QR payload a scan would. If the claim is lost (409/410) we block; if
   // the cart build fails after claiming we release so another station can take it.
-  const openPickupOrder = useCallback(async (
-    rowOrder: PickupOrderRow,
-    scannedPayload?: KitchenSelfOrderQrPayload | null,
-  ): Promise<void> => {
+  const openPickupOrder = useCallback(async (rowOrder: PickupOrderRow): Promise<void> => {
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
     if ((currentState?.cart.items.length ?? 0) > 0) {
       showScanToast('Clear cart before loading a kiosk order', 'err');
@@ -796,11 +794,8 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       return;
     }
     const pickupId: string = claim.data?.id ?? rowOrder.id;
-    // Prefer a freshly-scanned payload (we hold it in hand), then the
-    // authoritative claim payload, then the possibly-stale list row payload.
     const authoritativeQr: unknown = claim.data?.payload?.qr ?? rowOrder.payload?.qr;
-    const decoded = scannedPayload
-      ?? (typeof authoritativeQr === 'string' ? decodeKitchenSelfOrderQr(authoritativeQr) : null);
+    const decoded = typeof authoritativeQr === 'string' ? decodeKitchenSelfOrderQr(authoritativeQr) : null;
     if (!decoded) {
       showScanToast('Kiosk order payload invalid', 'err');
       await window.electronAPI.pos.pickupOrders.release(pickupId).catch(() => {});
@@ -865,19 +860,15 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     return () => { active = false; };
   }, [isOnline]);
 
-  // A scanned KSO QR is just another door to the same waiting order: claim it
-  // (so it locks here + leaves the other stations' lists), then load. Falls
-  // back to a pure offline load only when the backend has no such row (404) or
-  // is unreachable; 409/410 from a reachable backend block to avoid double-charge.
+  // A legacy KSO1 scan is still just a reference to the waiting backend row:
+  // claim it first, then load the cart from the authoritative backend payload.
+  // No fallback load from the scanned payload, because that cannot settle.
   const handleScannedKioskOrder = useCallback(async (kioskOrder: KitchenSelfOrderQrPayload): Promise<void> => {
     const known = pickupOrders.find(
       (r) => (kioskOrder.orderId && r.sourceOrderId === kioskOrder.orderId) || r.orderNumber === kioskOrder.orderNumber,
     );
     if (known) {
-      // We already hold the freshly-scanned payload — load the cart from THAT
-      // (the list row's payload may be absent) while claiming by the known id,
-      // so the order is claimed → settles → leaves the queue on payment.
-      await openPickupOrder(known, kioskOrder);
+      await openPickupOrder(known);
       return;
     }
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
@@ -891,28 +882,82 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     });
     if (res?.ok) {
       const pickupOrderId: string | undefined = res.data?.id;
-      const loaded = await loadKitchenSelfOrderQr(kioskOrder, { pickupOrderId: pickupOrderId ?? null });
+      const authoritativeQr: unknown = res.data?.payload?.qr;
+      const decoded = typeof authoritativeQr === 'string'
+        ? decodeKitchenSelfOrderQr(authoritativeQr)
+        : null;
+      if (!decoded) {
+        showScanToast('Đơn không hợp lệ', 'err');
+        if (pickupOrderId) await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
+        return;
+      }
+      const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupOrderId ?? null });
       if (!loaded && pickupOrderId) {
         await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
       }
       if (loaded && pickupOrderId) {
-        setActivePickup({ id: pickupOrderId, orderNumber: kioskOrder.orderNumber });
+        setActivePickup({ id: pickupOrderId, orderNumber: decoded.orderNumber });
       }
       if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
       return;
     }
     if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
     if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
-    // 404 (never registered) or network/unreachable → offline fallback: load
-    // straight from the self-contained QR payload, no claim.
-    await loadKitchenSelfOrderQr(kioskOrder);
+    showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
   }, [pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast]);
+
+  // A scanned KSOREF reference: claim the backend row, then build the cart from
+  // the AUTHORITATIVE backend payload (the reference carries no items). Always
+  // claims → settles on pay → leaves the queue. No silent unclaimed load.
+  const handleScannedPickupRef = useCallback(async (
+    ref: { sourceOrderId: string | null; orderNumber: string | null },
+  ): Promise<void> => {
+    const currentState = await window.electronAPI.pos.getState().catch(() => state);
+    if ((currentState?.cart.items.length ?? 0) > 0) {
+      showScanToast('Clear cart before scanning a kiosk order', 'err');
+      return;
+    }
+    const res = await window.electronAPI.pos.pickupOrders.claimByRef({
+      sourceOrderId: ref.sourceOrderId ?? undefined,
+      orderNumber: ref.orderNumber ?? undefined,
+    });
+    if (res?.ok) {
+      const pickupOrderId: string | undefined = res.data?.id;
+      const authoritativeQr: unknown = res.data?.payload?.qr;
+      const decoded = typeof authoritativeQr === 'string'
+        ? decodeKitchenSelfOrderQr(authoritativeQr)
+        : null;
+      if (!decoded) {
+        showScanToast('Đơn không hợp lệ', 'err');
+        if (pickupOrderId) await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
+        return;
+      }
+      const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupOrderId ?? null });
+      if (!loaded && pickupOrderId) {
+        await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
+      }
+      if (loaded && pickupOrderId) {
+        setActivePickup({ id: pickupOrderId, orderNumber: decoded.orderNumber });
+      }
+      if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
+      return;
+    }
+    if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
+    if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
+    showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
+  }, [state, loadKitchenSelfOrderQr, showScanToast]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const code = barcodeBuffer.trim();
       setBarcodeBuffer('');
+      const pickupRef = decodeKitchenSelfOrderRefQr(code);
+      if (pickupRef) {
+        document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
+        await handleScannedPickupRef(pickupRef);
+        return;
+      }
       const kioskOrder = decodeKitchenSelfOrderQr(code);
       if (kioskOrder) {
         document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
@@ -972,17 +1017,23 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         }
       }
     }
-  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, loadKitchenSelfOrderQr, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, handleScannedPickupRef, handleScannedKioskOrder, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
 
   const handleUnknownBarcodeScanned = useCallback(async (code: string) => {
+    const pickupRef = decodeKitchenSelfOrderRefQr(code);
+    if (pickupRef) {
+      document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
+      await handleScannedPickupRef(pickupRef);
+      return;
+    }
     const kioskOrder = decodeKitchenSelfOrderQr(code);
     if (kioskOrder) {
       document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
-      await loadKitchenSelfOrderQr(kioskOrder);
+      await handleScannedKioskOrder(kioskOrder);
       return;
     }
     await openScanImport(code);
-  }, [loadKitchenSelfOrderQr, openScanImport]);
+  }, [handleScannedPickupRef, handleScannedKioskOrder, openScanImport]);
 
   // Sync language/mode from config
   useEffect(() => {
