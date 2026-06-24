@@ -1,0 +1,11 @@
+Kitchen self-order kiosk fonts are copied from npm packages during implementation:
+
+- @fontsource/fraunces@5.2.9
+- @fontsource/plus-jakarta-sans@5.2.8
+
+Copied files:
+- Fraunces normal weights 500, 600, 700 for latin, latin-ext, vietnamese subsets.
+- Plus Jakarta Sans normal weights 500, 600, 700, 800 for latin, latin-ext, vietnamese subsets.
+
+Both families are distributed under the SIL Open Font License 1.1; see LICENSE-OFL.txt.
+These files are committed as local woff2 assets so the kiosk renders offline without runtime CDN or npm font imports.
