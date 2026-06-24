@@ -281,33 +281,63 @@ describe('kitchen self-order MVP wiring', () => {
     expect(appSource).not.toContain('less spicy');
   });
 
-  it('prioritizes a four-column visual catalog over an oversized cart rail', () => {
+  it('prioritizes a responsive visual catalog with five columns on wide kiosks', () => {
     const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
     const cssSource = readSource('src/renderer/index.css');
 
-    expect(appSource).toContain('grid-cols-[minmax(0,1fr)_320px]');
+    expect(appSource).toContain('className="kso-menu-layout grid h-full gap-3 p-3"');
     expect(appSource).toContain('className="kso-product-grid"');
     expect(appSource).toContain('className="kso-product-media"');
-    expect(cssSource).toContain('@media (min-width: 1280px)');
+    expect(cssSource).toContain('grid-template-columns: minmax(0, 1fr) minmax(300px, 320px)');
+    expect(cssSource).toContain('@media (min-width: 1180px)');
     expect(cssSource).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
-    expect(cssSource).toContain('@media (min-width: 1600px)');
+    expect(cssSource).toContain('@media (min-width: 1320px)');
     expect(cssSource).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
-    expect(cssSource).toContain('height: 230px');
+    expect(cssSource).toContain('@media (min-width: 1840px)');
+    expect(cssSource).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
+    expect(cssSource).toContain('@media (max-width: 860px)');
     expect(appSource).not.toContain('grid-cols-[minmax(0,1fr)_390px]');
     expect(appSource).not.toContain('h-36 w-full');
   });
 
-  it('applies the warm-editorial skin without touching layout or Phase 2a behavior', () => {
+  it('opens multi-category menus on a category gallery before showing products', () => {
+    const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
+    const cssSource = readSource('src/renderer/index.css');
+
+    expect(appSource).toContain('categories:');
+    expect(appSource).toContain('function CategoryGallery');
+    expect(appSource).toContain('function CategoryTile');
+    expect(appSource).toContain('const showCategoryGallery =');
+    expect(appSource).toContain('!query && !activeCategoryId && visibleCategories.length > 1');
+    expect(appSource).toContain('.filter((product) => normalized || !activeCategoryId || product.categoryId === activeCategoryId)');
+    expect(appSource).toContain('<CategoryGallery');
+    expect(appSource).toContain('label={t.categories}');
+    expect(appSource).toContain('onSelectCategory={setActiveCategoryId}');
+    expect(appSource).toContain('const categoryProducts = productsByCategory.get(category.id) || []');
+    expect(appSource).toContain('product.media.url && !failed');
+    expect(cssSource).toContain('.kso-category-grid');
+    expect(cssSource).toContain('.kso-category-tile');
+    expect(cssSource).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(cssSource).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+  });
+
+  it('applies the warm-editorial skin with stable image, fallback, and add affordance layout', () => {
     const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
     const cssSource = readSource('src/renderer/index.css');
 
     expect(appSource).toContain('kso-serif');
-    expect(appSource).toContain('grid-cols-[minmax(0,1fr)_320px]');
+    expect(appSource).toContain('className="kso-menu-layout grid h-full gap-3 p-3"');
     expect(appSource).toContain('className="kso-product-grid"');
+    expect(appSource).toContain('className="kso-product-add"');
+    expect(appSource).toContain('kso-product-media-fallback');
     expect(cssSource).toContain('.kso-product-media');
+    expect(cssSource).toContain('aspect-ratio: 1 / 1');
+    expect(cssSource).toContain('.kso-product-add');
+    expect(cssSource).toContain('position: absolute');
+    expect(cssSource).toContain('.kso-category-strip::-webkit-scrollbar');
 
     const productCardBlock = cssSource.match(/\.kso-product-card\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
-    expect(productCardBlock).toContain('height: 324px');
+    expect(productCardBlock).toContain('position: relative');
     expect(productCardBlock).toContain('border-radius: 8px');
     expect(cssSource).toContain('.kso-product-card:focus-visible');
     expect(cssSource).toContain('.kso-primary-button:focus-visible');

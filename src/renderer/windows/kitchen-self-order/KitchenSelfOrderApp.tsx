@@ -74,6 +74,7 @@ interface SubmitResult {
 const COPY = {
   pl: {
     menu: 'Menu',
+    categories: 'Kategorie',
     all: 'Wszystko',
     search: 'Szukaj w menu',
     cart: 'Koszyk',
@@ -93,6 +94,7 @@ const COPY = {
     required: 'Wymagane',
     optional: 'Opcjonalne',
     chooseUpTo: 'Wybierz maksymalnie',
+    itemCount: 'pozycji',
     subtotal: 'Razem',
     noProducts: 'Brak pozycji w tej kategorii.',
     loading: 'Ładowanie menu...',
@@ -113,6 +115,7 @@ const COPY = {
   },
   vi: {
     menu: 'Thực đơn',
+    categories: 'Danh mục',
     all: 'Tất cả',
     search: 'Tìm trong thực đơn',
     cart: 'Giỏ món',
@@ -132,6 +135,7 @@ const COPY = {
     required: 'Bắt buộc',
     optional: 'Không bắt buộc',
     chooseUpTo: 'Chọn tối đa',
+    itemCount: 'món',
     subtotal: 'Tổng cộng',
     noProducts: 'Không có món trong danh mục này.',
     loading: 'Đang tải thực đơn...',
@@ -152,6 +156,7 @@ const COPY = {
   },
   en: {
     menu: 'Menu',
+    categories: 'Categories',
     all: 'All',
     search: 'Search menu',
     cart: 'Cart',
@@ -171,6 +176,7 @@ const COPY = {
     required: 'Required',
     optional: 'Optional',
     chooseUpTo: 'Choose up to',
+    itemCount: 'items',
     subtotal: 'Total',
     noProducts: 'No items in this category.',
     loading: 'Loading menu...',
@@ -360,13 +366,33 @@ export default function KitchenSelfOrderApp() {
     if (!menu) return [];
     const normalized = normalizeCatalogText(query);
     return menu.products
-      .filter((product) => !activeCategoryId || product.categoryId === activeCategoryId)
+      .filter((product) => normalized || !activeCategoryId || product.categoryId === activeCategoryId)
       .filter((product) =>
         !normalized || normalizeCatalogText(
           `${product.name} ${product.nameTranslations || ''}`,
         ).includes(normalized))
       .slice(0, 120);
   }, [activeCategoryId, menu, query]);
+
+  const productsByCategory = useMemo(() => {
+    const byCategory = new Map<string, KitchenSelfOrderMenuProduct[]>();
+    if (!menu) return byCategory;
+    for (const product of menu.products) {
+      if (!product.categoryId) continue;
+      const categoryProducts = byCategory.get(product.categoryId) || [];
+      categoryProducts.push(product);
+      byCategory.set(product.categoryId, categoryProducts);
+    }
+    return byCategory;
+  }, [menu]);
+
+  const visibleCategories = useMemo(() => {
+    if (!menu) return [];
+    return menu.categories.filter((category) =>
+      (productsByCategory.get(category.id) || []).length > 0);
+  }, [menu, productsByCategory]);
+
+  const showCategoryGallery = !query && !activeCategoryId && visibleCategories.length > 1;
 
   const groupsForProduct = useCallback((product: KitchenSelfOrderMenuProduct) => {
     if (!menu) return [];
@@ -622,8 +648,8 @@ export default function KitchenSelfOrderApp() {
 
   return (
     <KioskShell style={themeStyle}>
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-3 p-3">
-        <main className="grid min-h-0 grid-rows-[64px_52px_1fr] gap-3">
+      <div className="kso-menu-layout grid h-full gap-3 p-3">
+        <main className="grid min-h-0 grid-rows-[64px_auto_1fr] gap-3">
           <header className="flex min-w-0 items-center justify-between gap-4">
             <BrandHeader menu={menu} menuLabel={t.menu} />
             <div className="flex shrink-0 items-center gap-2">
@@ -637,23 +663,29 @@ export default function KitchenSelfOrderApp() {
             </div>
           </header>
 
-          <div className="flex min-w-0 gap-3">
-            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+          <div className="kso-menu-toolbar">
+            <div className="kso-category-strip">
               <CategoryButton
-                label={t.all}
-                active={!activeCategoryId}
-                onClick={() => setActiveCategoryId(null)}
+                label={t.categories}
+                active={showCategoryGallery || (!query && !activeCategoryId && visibleCategories.length <= 1)}
+                onClick={() => {
+                  setQuery('');
+                  setActiveCategoryId(null);
+                }}
               />
               {(menu?.categories || []).map((category) => (
                 <CategoryButton
                   key={category.id}
                   label={localizedName(category, language)}
                   active={activeCategoryId === category.id}
-                  onClick={() => setActiveCategoryId(category.id)}
+                  onClick={() => {
+                    setQuery('');
+                    setActiveCategoryId(category.id);
+                  }}
                 />
               ))}
             </div>
-            <label className="flex h-[52px] w-[270px] shrink-0 items-center gap-3 rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)] px-4">
+            <label className="kso-search-box">
               <Search size={21} className="text-[var(--kso-muted)]" />
               <input
                 value={query}
@@ -667,6 +699,14 @@ export default function KitchenSelfOrderApp() {
           <div className="min-h-0 overflow-y-auto pr-1">
             {loadingMenu ? (
               <EmptyState label={t.loading} />
+            ) : showCategoryGallery ? (
+              <CategoryGallery
+                categories={visibleCategories}
+                productsByCategory={productsByCategory}
+                language={language}
+                t={t}
+                onSelectCategory={setActiveCategoryId}
+              />
             ) : visibleProducts.length === 0 ? (
               <EmptyState label={t.noProducts} />
             ) : (
@@ -852,9 +892,102 @@ function CategoryButton({
       type="button"
       onClick={onClick}
       data-active={active ? 'true' : undefined}
-      className="kso-chip h-[52px] shrink-0 px-5 text-base font-black"
+      className="kso-chip kso-category-chip"
     >
       {label}
+    </button>
+  );
+}
+
+function CategoryGallery({
+  categories,
+  productsByCategory,
+  language,
+  t,
+  onSelectCategory,
+}: {
+  categories: KitchenSelfOrderMenuCategory[];
+  productsByCategory: Map<string, KitchenSelfOrderMenuProduct[]>;
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  onSelectCategory: (categoryId: string) => void;
+}) {
+  return (
+    <div className="kso-category-grid">
+      {categories.map((category) => {
+        const categoryProducts = productsByCategory.get(category.id) || [];
+        const heroProduct = categoryProducts.find((product) => product.media.url) || categoryProducts[0] || null;
+        return (
+          <CategoryTile
+            key={category.id}
+            category={category}
+            product={heroProduct}
+            count={categoryProducts.length}
+            language={language}
+            t={t}
+            onClick={() => onSelectCategory(category.id)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function CategoryTile({
+  category,
+  product,
+  count,
+  language,
+  t,
+  onClick,
+}: {
+  category: KitchenSelfOrderMenuCategory;
+  product: KitchenSelfOrderMenuProduct | null;
+  count: number;
+  language: KitchenSelfOrderLanguage;
+  t: CopyText;
+  onClick: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const name = localizedName(category, language);
+  const showImage = !!(product && product.media.url && !failed);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="kso-category-tile sc-focusable group"
+    >
+      <div className="kso-category-tile-media">
+        {showImage ? (
+          <img
+            src={product.media.url!}
+            alt={name}
+            loading="lazy"
+            decoding="async"
+            onError={() => setFailed(true)}
+            className="h-full w-full"
+            style={{
+              objectFit: product.media.fit === 'COVER' ? 'cover' : 'contain',
+              objectPosition: product.media.focalPoint
+                ? `${product.media.focalPoint.x * 100}% ${product.media.focalPoint.y * 100}%`
+                : '50% 50%',
+              transform: `scale(${product.media.zoom})`,
+            }}
+          />
+        ) : (
+          <div className="kso-category-tile-fallback" aria-hidden="true">
+            {name.slice(0, 1).toUpperCase()}
+          </div>
+        )}
+      </div>
+      <div className="kso-category-tile-body">
+        <div className="kso-serif line-clamp-2 text-xl font-black leading-tight text-[var(--kso-ink)]">
+          {name}
+        </div>
+        <div className="text-sm font-black uppercase tracking-wide text-[var(--kso-muted)]">
+          {count} {t.itemCount}
+        </div>
+      </div>
     </button>
   );
 }
@@ -876,22 +1009,20 @@ function ProductCard({
       className="kso-product-card sc-focusable group"
     >
       <ProductImage product={product} name={name} className="kso-product-media" />
-      <div className="grid min-h-0 flex-1 grid-rows-[44px_48px] px-4 pb-3 pt-3">
+      <div className="kso-product-body">
         <div className="kso-serif line-clamp-2 text-base font-black leading-[1.35] text-[var(--kso-ink)]">
           {name}
         </div>
-        <div className="flex items-end justify-between gap-3">
-          <div className="kso-price text-lg">
-            {formatPLN(product.priceGrosze)}
-          </div>
-          <span
-            aria-hidden="true"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--kso-accent-deep)] text-white transition-transform group-active:scale-95"
-          >
-            <Plus size={23} strokeWidth={3} />
-          </span>
+        <div className="kso-price kso-product-price text-lg">
+          {formatPLN(product.priceGrosze)}
         </div>
       </div>
+      <span
+        aria-hidden="true"
+        className="kso-product-add"
+      >
+        <Plus size={23} strokeWidth={3} />
+      </span>
     </button>
   );
 }
@@ -908,7 +1039,7 @@ function ProductImage({
   const [failed, setFailed] = useState(false);
   if (!product.media.url || failed) {
     return (
-      <div className={`${className} flex items-center justify-center bg-[var(--kso-accent-soft)] text-[var(--kso-muted)]`}>
+      <div className={`${className} kso-product-media-fallback`}>
         <ImageIcon size={42} />
       </div>
     );
