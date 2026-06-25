@@ -27,4 +27,10 @@ describe('CategoryRankingSettings interactions', () => {
     expect(source).toContain('aria-grabbed={draggingId === cat.id}');
     expect(source).toContain('Giữ và kéo để đổi thứ tự');
   });
+
+  it('persists ranking through one batch IPC call without stale category names', () => {
+    expect(source).toContain('updateCategoryOrder');
+    expect(source).not.toContain('productAdmin.updateCategory(cat.id');
+    expect(source).not.toContain('name: cat.name');
+  });
 });

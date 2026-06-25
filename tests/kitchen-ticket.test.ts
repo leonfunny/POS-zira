@@ -268,22 +268,20 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(hardwareSource).toContain('buildKitchenTicketLines(ticket)');
   });
 
-  it('keeps the kitchen flag synced and locally mirrored on toggle', () => {
+  it('keeps kitchen visibility local-only and persists order through the product-admin order batch', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/product-repo.ts');
-    const apiClientSource = readSource('src/main/network/api-client.ts');
-    const applicatorSource = readSource('src/main/sync/entity-applicators.ts');
+    const kitchenSettingsSource = readSource('src/renderer/components/pos/KitchenPrintSettings.tsx');
 
-    expect(posModuleSource).toContain('setCategoryKitchenPrint(categoryId, payload.kitchenPrint)');
-    expect(posModuleSource).toContain('setCategorySortOrder(categoryId, payload.sortOrder)');
-    expect(posModuleSource).toContain("notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED)");
+    expect(posModuleSource).toContain('POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED');
+    expect(posModuleSource).toContain('POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER');
     expect(repoSource).toContain('isKitchenPrintCategory(categoryId: string)');
-    expect(repoSource).toContain('setCategorySortOrder(categoryId: string, sortOrder: number)');
-    // Sync must PRESERVE the locally-known flag when an older backend payload
-    // omits it instead of silently resetting it to 0.
+    expect(repoSource).toContain('setCategoryKitchenPrint(categoryId: string, enabled: boolean)');
+    expect(repoSource).toContain('setCategorySortOrders');
     expect(repoSource).toContain('COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0)');
-    expect(apiClientSource).toContain('cat.kitchenPrint');
-    expect(applicatorSource).toContain("firstOwnValue(p, ['kitchenPrint', 'kitchen_print'])");
+    expect(kitchenSettingsSource).toContain('kitchenCategories.setPrintEnabled');
+    expect(kitchenSettingsSource).toContain('productAdmin.updateCategoryOrder');
+    expect(kitchenSettingsSource).not.toContain('kitchenPrint: next');
   });
 
   it('exposes the kitchen self-order toggle without exposing a POS Order History kitchen-print action', () => {
@@ -294,8 +292,8 @@ describe('kitchen ticket pipeline wiring', () => {
 
     expect(settingsSource).not.toContain('<KitchenPrintSettings');
     expect(kitchenPanelSource).toContain('<KitchenPrintSettings');
-    expect(kitchenSettingsSource).toContain('updateCategory(category.id');
-    expect(kitchenSettingsSource).toContain('kitchenPrint: next');
+    expect(kitchenSettingsSource).toContain('kitchenCategories.setPrintEnabled');
+    expect(kitchenSettingsSource).not.toContain('kitchenPrint: next');
     expect(kitchenSettingsSource).toContain('GripVertical');
     expect(kitchenSettingsSource).toContain('visibleCategories');
     expect(kitchenSettingsSource).toContain('hiddenCategories');

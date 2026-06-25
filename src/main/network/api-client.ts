@@ -1591,7 +1591,7 @@ export class ApiClient {
   async updateProductAdminCategory(
     token: string,
     categoryId: string,
-    payload: ProductAdminCategoryMutationInput,
+    payload: Partial<ProductAdminCategoryMutationInput>,
   ): Promise<ProductAdminCategoryMutationResponse> {
     return this.productAdminRequest<ProductAdminCategoryMutationResponse>(
       token,

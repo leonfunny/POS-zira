@@ -404,7 +404,7 @@ export const productRepo = {
     return (row?.kitchen_print ?? 0) === 1;
   },
 
-  /** Local mirror of the backend categories.kitchen_print toggle. */
+  /** Local-only kitchen menu visibility flag until backend owns this field. */
   setCategoryKitchenPrint(categoryId: string, enabled: boolean): void {
     database.run(
       'UPDATE categories SET kitchen_print = ? WHERE id = ?',
@@ -418,6 +418,19 @@ export const productRepo = {
       'UPDATE categories SET sort_order = ? WHERE id = ?',
       [sortOrder, categoryId],
     );
+  },
+
+  /** Batch local mirror update for backend category display_order. */
+  setCategorySortOrders(updates: Array<{ id: string; sortOrder: number }>): void {
+    if (updates.length === 0) return;
+    database.transaction(() => {
+      for (const update of updates) {
+        database.run(
+          'UPDATE categories SET sort_order = ? WHERE id = ?',
+          [update.sortOrder, update.id],
+        );
+      }
+    });
   },
 
   decrementStock(variantId: string, quantity: number, options?: { allowNegative?: boolean }): void {

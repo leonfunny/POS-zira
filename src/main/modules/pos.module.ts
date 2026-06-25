@@ -91,6 +91,9 @@ import type {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
+  ProductAdminCategoryOrderUpdate,
+  ProductAdminCategoryOrderUpdateResponse,
+  ProductAdminCategory,
   ProductAdminCapabilities,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
@@ -1206,6 +1209,22 @@ export class PosModule extends BaseModule {
       }
     };
 
+    const normalizeCategoryOrderUpdates = (
+      input: unknown,
+    ): ProductAdminCategoryOrderUpdate[] => {
+      if (!Array.isArray(input)) return [];
+      const seen = new Set<string>();
+      const updates: ProductAdminCategoryOrderUpdate[] = [];
+      for (const raw of input) {
+        const id = String((raw as any)?.id || '').trim();
+        const sortOrder = Math.floor(Number((raw as any)?.sortOrder));
+        if (!id || !Number.isFinite(sortOrder) || sortOrder < 0 || seen.has(id)) continue;
+        seen.add(id);
+        updates.push({ id, sortOrder });
+      }
+      return updates;
+    };
+
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_CREATE_PRODUCT,
       async (_e, payload: ProductAdminCreateProductInput) => {
@@ -1317,12 +1336,6 @@ export class PosModule extends BaseModule {
         // order-time kitchen filtering read the LOCAL categories table, and
         // product refresh can lag or be skipped.
         let mirroredLocalCategory = false;
-        if (payload && typeof payload.kitchenPrint === 'boolean' && !(result as any)?.error) {
-          try {
-            productRepo.setCategoryKitchenPrint(categoryId, payload.kitchenPrint);
-            mirroredLocalCategory = true;
-          } catch { /* refresh will reconcile */ }
-        }
         if (payload && typeof payload.sortOrder === 'number' && Number.isFinite(payload.sortOrder) && !(result as any)?.error) {
           try {
             productRepo.setCategorySortOrder(categoryId, payload.sortOrder);
@@ -1335,6 +1348,86 @@ export class PosModule extends BaseModule {
           notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: 'product_admin_category_local_mirror' });
         }
         return result;
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER,
+      async (_e, input: ProductAdminCategoryOrderUpdate[]) => {
+        const updates = normalizeCategoryOrderUpdates(input);
+        if (updates.length === 0) {
+          return {
+            ok: true,
+            data: { categories: [], updated: 0 },
+          } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
+        }
+
+        const token = getSecureAuthToken();
+        if (!token) {
+          return { ok: false, error: 'no-auth', code: 'UNAUTHORIZED_PRODUCT_ADMIN' } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
+        }
+
+        try {
+          const capabilities = await apiClient.getProductAdminCapabilities(token);
+          if (capabilities.canUpdateCategory !== true) {
+            return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
+          }
+
+          const categories: ProductAdminCategory[] = [];
+          let serverTime: string | undefined;
+          for (const update of updates) {
+            const response = await apiClient.updateProductAdminCategory(token, update.id, {
+              sortOrder: update.sortOrder,
+            });
+            if (response?.category) categories.push(response.category);
+            if (response?.serverTime) serverTime = response.serverTime;
+          }
+
+          productRepo.setCategorySortOrders(updates);
+          database.markDirty();
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+            source: 'product_admin_category_order_local_mirror',
+          });
+
+          return {
+            ok: true,
+            data: {
+              categories,
+              updated: updates.length,
+              serverTime,
+            },
+          } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
+        } catch (err: any) {
+          logger.warn(`[PosModule] product-admin update category order failed: ${err?.message ?? err}`);
+          return toProductAdminError<ProductAdminCategoryOrderUpdateResponse>(
+            err,
+            'update category order failed',
+          );
+        }
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED,
+      async (_e, categoryId: string, enabled: boolean) => {
+        const id = String(categoryId || '').trim();
+        if (!id) return { ok: false, error: 'missing-category-id' };
+        try {
+          productRepo.setCategoryKitchenPrint(id, enabled === true);
+          database.markDirty();
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+            source: 'kitchen_category_local_mirror',
+          });
+          return {
+            ok: true,
+            data: { categoryId: id, kitchenPrint: enabled === true },
+          };
+        } catch (err: any) {
+          logger.warn(`[PosModule] local kitchen category update failed: ${err?.message ?? err}`);
+          return { ok: false, error: err?.message ?? 'local-kitchen-category-update-failed' };
+        }
       },
     );
 

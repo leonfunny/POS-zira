@@ -57,6 +57,7 @@ import {
   WarehouseDocumentUpdateInput,
   WarehouseInventoryCountCreateInput,
   WarehouseInventoryCountLineInput,
+  ProductAdminCategoryOrderUpdate,
   ProductAdminCategoryMutationInput,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
@@ -651,6 +652,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     categories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
     },
+    kitchenCategories: {
+      setPrintEnabled: (categoryId: string, enabled: boolean) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED, categoryId, enabled),
+    },
     productAdmin: {
       getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES),
       createProduct: (payload: ProductAdminCreateProductInput) =>
@@ -666,6 +671,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_CREATE, payload),
       updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) =>
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE, categoryId, payload),
+      updateCategoryOrder: (updates: ProductAdminCategoryOrderUpdate[]) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER, updates),
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),

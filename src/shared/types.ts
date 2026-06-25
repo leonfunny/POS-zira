@@ -1289,6 +1289,8 @@ export const IPC_CHANNELS = {
   POS_PRODUCT_ADMIN_CATEGORIES_LIST: 'pos:product-admin:categories:list',
   POS_PRODUCT_ADMIN_CATEGORIES_CREATE: 'pos:product-admin:categories:create',
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE: 'pos:product-admin:categories:update',
+  POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER: 'pos:product-admin:categories:update-order',
+  POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED: 'pos:kitchen-category:set-print-enabled',
 
   // POS - Categories
   POS_CATEGORIES_GET_ALL: 'pos:categories:getAll',
@@ -3048,8 +3050,7 @@ export interface ProductAdminCategoryMutationInput {
   color?: string | null;
   icon?: string | null;
   sortOrder?: number | null;
-  /** Items in this category print a kitchen ticket when sold. */
-  kitchenPrint?: boolean | null;
+  isActive?: boolean | null;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
   idempotencyKey?: string;
@@ -3058,6 +3059,22 @@ export interface ProductAdminCategoryMutationInput {
 export interface ProductAdminCategoryMutationResponse {
   category: ProductAdminCategory;
   serverTime: string;
+}
+
+export interface ProductAdminCategoryOrderUpdate {
+  id: string;
+  sortOrder: number;
+}
+
+export interface ProductAdminCategoryOrderUpdateResponse {
+  categories: ProductAdminCategory[];
+  updated: number;
+  serverTime?: string;
+}
+
+export interface KitchenCategoryPrintUpdateResponse {
+  categoryId: string;
+  kitchenPrint: boolean;
 }
 
 // ==========================================

@@ -108,14 +108,18 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
 
     let failed = false;
     try {
-      let written = 0;
-      for (let i = 0; i < targetOrder.length; i++) {
-        const cat = targetOrder[i];
-        if ((cat.sort_order ?? 0) === i) continue; // unchanged -> skip
-        const res: any = await window.electronAPI.pos.productAdmin.updateCategory(cat.id, {
-          name: cat.name,
+      const updates = targetOrder
+        .map((cat, i) => ({
+          id: cat.id,
           sortOrder: i,
-        });
+          previousSortOrder: cat.sort_order ?? 0,
+        }))
+        .filter((update) => update.previousSortOrder !== update.sortOrder)
+        .map(({ id, sortOrder }) => ({ id, sortOrder }));
+      let written = updates.length;
+
+      if (updates.length > 0) {
+        const res: any = await window.electronAPI.pos.productAdmin.updateCategoryOrder(updates);
         if (res && res.ok === false) {
           const code = res.code || res.error;
           throw new Error(
@@ -126,7 +130,6 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
               : `Lưu thất bại: ${code}`,
           );
         }
-        written += 1;
       }
 
       if (!pendingSaveRef.current && mountedRef.current) {

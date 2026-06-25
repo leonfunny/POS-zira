@@ -95,6 +95,8 @@ import type {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
+  ProductAdminCategoryOrderUpdate,
+  ProductAdminCategoryOrderUpdateResponse,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
   ProductAdminIpcResult,
@@ -103,6 +105,7 @@ import type {
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariantMutationResponse,
+  KitchenCategoryPrintUpdateResponse,
   NailTurnBoardIpcResult,
   PosScheduleAssignNextPayload,
   PosScheduleDayIpcResult,
@@ -773,6 +776,12 @@ interface ElectronAPI {
     categories: {
       getAll: () => Promise<PosCategory[]>;
     };
+    kitchenCategories: {
+      setPrintEnabled: (
+        categoryId: string,
+        enabled: boolean,
+      ) => Promise<{ ok: boolean; data?: KitchenCategoryPrintUpdateResponse; error?: string }>;
+    };
     productAdmin: {
       getCapabilities: () => Promise<{ ok: boolean; capabilities: ProductAdminCapabilities; error?: string }>;
       createProduct: (payload: ProductAdminCreateProductInput) => Promise<ProductAdminIpcResult<ProductAdminProductMutationResponse>>;
@@ -782,6 +791,7 @@ interface ElectronAPI {
       listCategories: () => Promise<ProductAdminIpcResult<ProductAdminCategoryListResponse>>;
       createCategory: (payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
       updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
+      updateCategoryOrder: (updates: ProductAdminCategoryOrderUpdate[]) => Promise<ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>>;
     };
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;

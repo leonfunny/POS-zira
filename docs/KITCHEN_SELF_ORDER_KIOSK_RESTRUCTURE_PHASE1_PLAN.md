@@ -14,7 +14,7 @@
 
 - **Do NOT build into or release onto chesaigon. chesaigon = POS tab only.** (verbatim from spec §10)
 - Develop + test on `winpc` against the test salon `owner+salon-test-kuchnia@test.local`.
-- **No backend production deploy.** Backend `enail` needs **no schema change** — `categories.kitchen_print` + product-admin `updateCategory` already exist.
+- **Superseded contract note (2026-06-25):** backend `enail` does not currently own `categories.kitchen_print`; POS-zira keeps the flag local-only until backend category support is added.
 - **No visual/UX redesign in this phase** — that is Phase 2, a separate spec.
 - **Do NOT narrow persisted config schemas** in a way that can crash machines holding old config. Keep accepting legacy values; coerce/derive at runtime.
 - **Baseline-diff test discipline:** the suite carries known pre-existing failures. A task is green if it introduces **no new** failures vs the pre-change baseline — capture the baseline before Task 1 as a local scratch log, not a committed repo artifact.

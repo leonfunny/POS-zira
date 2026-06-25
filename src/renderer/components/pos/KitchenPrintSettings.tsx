@@ -140,14 +140,18 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
     setSavingOrder(true);
     setError(null);
     try {
-      for (let index = 0; index < nextCategories.length; index++) {
-        const category = nextCategories[index];
-        if ((category.sort_order ?? 0) === index) continue;
-        const result = await window.electronAPI.pos.productAdmin.updateCategory(category.id, {
-          name: category.name,
+      const updates = nextCategories
+        .map((category, index) => ({
+          id: category.id,
           sortOrder: index,
-        });
-        if (!result || (result as any).error) {
+          previousSortOrder: category.sort_order ?? 0,
+        }))
+        .filter((update) => update.previousSortOrder !== update.sortOrder)
+        .map(({ id, sortOrder }) => ({ id, sortOrder }));
+
+      if (updates.length > 0) {
+        const result = await window.electronAPI.pos.productAdmin.updateCategoryOrder(updates);
+        if (!result || (result as any).error || (result as any).ok === false) {
           throw new Error((result as any)?.error || 'Update failed');
         }
       }
@@ -193,11 +197,8 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
         prev.map((c) => (c.id === category.id ? { ...c, kitchen_print: next ? 1 : 0 } : c)),
       );
       try {
-        const result = await window.electronAPI.pos.productAdmin.updateCategory(category.id, {
-          name: category.name,
-          kitchenPrint: next,
-        } as any);
-        if (!result || (result as any).error) {
+        const result = await window.electronAPI.pos.kitchenCategories.setPrintEnabled(category.id, next);
+        if (!result || (result as any).error || (result as any).ok === false) {
           throw new Error((result as any)?.error || 'Update failed');
         }
       } catch (e: any) {
@@ -276,6 +277,9 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
           'settings.kitchenPrintDesc',
           'Marked categories appear in the customer kitchen self-order menu and print a kitchen ticket when the customer submits that order.',
         )}
+      </p>
+      <p className="mb-3 text-[11px] font-semibold text-amber-700">
+        Kitchen visibility is saved on this POS only until backend category support is added.
       </p>
 
       {loading ? (
