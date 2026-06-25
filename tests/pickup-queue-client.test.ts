@@ -24,7 +24,13 @@ vi.mock('../src/main/config/store', () => ({
   getSecureApiKey: getSecureApiKeyMock,
 }));
 
-import { pushPickupOrderBestEffort, drainPickupPushOutbox } from '../src/main/kitchen-self-order/pickup-queue-client';
+import {
+  pushPickupOrderBestEffort,
+  updatePickupKitchenPrintStatusBestEffort,
+  drainPickupPushOutbox,
+  drainPickupKitchenPrintStatusOutbox,
+  drainPickupOutboxesInOrder,
+} from '../src/main/kitchen-self-order/pickup-queue-client';
 
 const baseInput = {
   terminalId: 'KIOSK-1',
@@ -63,6 +69,7 @@ describe('pushPickupOrderBestEffort', () => {
     expect(body.orderNumber).toBe('K-001');
     expect(body.totalGrosze).toBe(1500);
     expect(body.payload).toEqual({ qr: 'KSO1:abc' });
+    expect(body.kitchenPrintStatus).toBe('PENDING');
   });
 
   it('does nothing when the terminal is not paired (no apiKey)', async () => {
@@ -116,5 +123,91 @@ describe('pushPickupOrderBestEffort', () => {
     await drainPickupPushOutbox();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(storeSetMock).not.toHaveBeenCalled();
+  });
+
+  it('POSTs async kitchen print status updates to the backend', async () => {
+    await updatePickupKitchenPrintStatusBestEffort({
+      sourceOrderId: 'kso-1',
+      orderNumber: 'K-001',
+      status: 'PRINTED',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://api.example.com/api/v1/print-agent/pickup-orders/kitchen-print-status');
+    expect(opts.method).toBe('POST');
+    const body = JSON.parse(opts.body);
+    expect(body.apiKey).toBe('pa_test');
+    expect(body.sourceOrderId).toBe('kso-1');
+    expect(body.orderNumber).toBe('K-001');
+    expect(body.status).toBe('PRINTED');
+  });
+
+  it('queues kitchen print status when the pickup row is not visible yet', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404 });
+    await updatePickupKitchenPrintStatusBestEffort({
+      sourceOrderId: 'kso-1',
+      orderNumber: 'K-001',
+      status: 'FAILED',
+      error: 'no_kitchen_printer',
+    });
+
+    expect(storeSetMock).toHaveBeenCalledWith('pendingPickupKitchenPrintStatuses', [{
+      sourceOrderId: 'kso-1',
+      orderNumber: 'K-001',
+      status: 'FAILED',
+      error: 'no_kitchen_printer',
+    }]);
+  });
+
+  it('drains queued kitchen print statuses on reconnect', async () => {
+    const a = { sourceOrderId: 'kso-a', orderNumber: 'K-001', status: 'PRINTED' as const };
+    const b = { sourceOrderId: 'kso-b', orderNumber: 'K-002', status: 'FAILED' as const, error: 'offline' };
+    storeGetMock.mockReturnValue([a, b]);
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200 })
+      .mockRejectedValueOnce(new Error('still offline'));
+
+    await drainPickupKitchenPrintStatusOutbox();
+
+    expect(storeSetMock).toHaveBeenCalledWith('pendingPickupKitchenPrintStatuses', [b]);
+  });
+
+  it('drains queued pickup pushes before queued kitchen print statuses', async () => {
+    const push = { ...baseInput, sourceOrderId: 'kso-a' };
+    const status = { sourceOrderId: 'kso-a', orderNumber: 'K-001', status: 'PRINTED' as const };
+    storeGetMock.mockImplementation((key: string) => {
+      if (key === 'pendingPickupPushes') return [push];
+      if (key === 'pendingPickupKitchenPrintStatuses') return [status];
+      return [];
+    });
+
+    await drainPickupOutboxesInOrder();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/api/v1/print-agent/pickup-orders');
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.example.com/api/v1/print-agent/pickup-orders/kitchen-print-status');
+  });
+
+  it('updates a pending pickup push with the terminal kitchen status before retrying', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404 });
+    const pendingPush = { ...baseInput, kitchenPrintStatus: 'PENDING' as const };
+    storeGetMock.mockImplementation((key: string) => {
+      if (key === 'pendingPickupPushes') return [pendingPush];
+      if (key === 'pendingPickupKitchenPrintStatuses') return [];
+      return [];
+    });
+
+    await updatePickupKitchenPrintStatusBestEffort({
+      sourceOrderId: 'kso-1',
+      orderNumber: 'K-001',
+      status: 'FAILED',
+      error: 'no_kitchen_printer',
+    });
+
+    expect(storeSetMock).toHaveBeenCalledWith('pendingPickupPushes', [{
+      ...pendingPush,
+      kitchenPrintStatus: 'FAILED',
+    }]);
   });
 });

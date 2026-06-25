@@ -20,6 +20,7 @@ import {
   mergePickupEvent,
   seedPickupOrders,
   removePickupOrder,
+  type PickupOrderKitchenPrintStatus,
   type PickupOrderRow,
 } from './pickup-queue-merge';
 import rlog from '../../utils/logger';
@@ -237,6 +238,34 @@ interface POSLayoutProps {
   onFullscreen?: () => void;
 }
 
+type ScanToastType = 'ok' | 'warn' | 'err';
+
+function normalizePickupKitchenPrintStatus(value: unknown): PickupOrderKitchenPrintStatus {
+  return value === 'PRINTED' || value === 'UNCERTAIN' || value === 'FAILED' ? value : 'PENDING';
+}
+
+function getPickupKitchenPrintWarning(row: { kitchenPrintStatus?: unknown } | null | undefined): string | null {
+  const status = normalizePickupKitchenPrintStatus(row?.kitchenPrintStatus);
+  if (status === 'PRINTED') return null;
+  if (status === 'FAILED') return 'Phiếu bếp chưa in';
+  if (status === 'UNCERTAIN') return 'Bếp chưa xác nhận in';
+  return 'Đang chờ phiếu bếp';
+}
+
+function getPickupKitchenPrintBadge(statusValue: unknown): { text: string; className: string } {
+  const status = normalizePickupKitchenPrintStatus(statusValue);
+  if (status === 'PRINTED') {
+    return { text: 'Bếp OK', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+  }
+  if (status === 'FAILED') {
+    return { text: 'Bếp lỗi', className: 'bg-red-50 text-red-700 border-red-200' };
+  }
+  if (status === 'UNCERTAIN') {
+    return { text: 'Bếp ?', className: 'bg-amber-50 text-amber-700 border-amber-200' };
+  }
+  return { text: 'Chờ bếp', className: 'bg-slate-50 text-slate-600 border-slate-200' };
+}
+
 export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   useBarcodeForwarder();
   const { state, dispatch } = usePosStore();
@@ -248,7 +277,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [showShiftModal, setShowShiftModal] = useState<'open' | 'close' | null>(null);
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
-  const [scanToast, setScanToast] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
+  const [scanToast, setScanToast] = useState<{ text: string; type: ScanToastType } | null>(null);
   const [manualWeightPrompt, setManualWeightPrompt] = useState<ManualWeightPrompt | null>(null);
   const [scanImport, setScanImport] = useState<{
     open: boolean;
@@ -271,7 +300,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   // The pickup order currently loaded into the cart (claimed by this station).
   // Kept in state so the "Trả lại" banner survives the cart being emptied
   // (which resets checkoutDraft.kitchenSelfOrder).
-  const [activePickup, setActivePickup] = useState<{ id: string; orderNumber: string } | null>(null);
+  const [activePickup, setActivePickup] = useState<{
+    id: string;
+    orderNumber: string;
+    kitchenPrintStatus?: PickupOrderKitchenPrintStatus | null;
+  } | null>(null);
   const clock = useLiveClock();
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
@@ -361,9 +394,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   useEffect(() => { focusBarcode(); }, [focusBarcode]);
 
-  const showScanToast = useCallback((text: string, type: 'ok' | 'err') => {
+  const showScanToast = useCallback((text: string, type: ScanToastType) => {
     setScanToast({ text, type });
-    setTimeout(() => setScanToast(null), 2000);
+    setTimeout(() => setScanToast(null), type === 'warn' ? 3200 : 2000);
   }, []);
 
   // Resolve translator above the barcode callback so it can localize the
@@ -683,7 +716,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   const loadKitchenSelfOrderQr = useCallback(async (
     payload: KitchenSelfOrderQrPayload,
-    opts?: { pickupOrderId?: string | null },
+    opts?: { pickupOrderId?: string | null; showSuccessToast?: boolean },
   ): Promise<boolean> => {
     if (!dispatch) return false;
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
@@ -761,7 +794,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       });
 
       document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
-      showScanToast(`Loaded kiosk order ${payload.orderNumber}`, 'ok');
+      if (opts?.showSuccessToast !== false) {
+        showScanToast(`Loaded kiosk order ${payload.orderNumber}`, 'ok');
+      }
       return true;
     } catch (err: any) {
       rlog.error('[POSLayout] Kiosk order QR load failed:', err?.message ?? err);
@@ -770,6 +805,16 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       return false;
     }
   }, [dispatch, language, rememberLastLabelVariant, showScanToast, state?.cart.items.length]);
+
+  const warnIfPickupKitchenPrintNotReady = useCallback((
+    row: { kitchenPrintStatus?: unknown } | null | undefined,
+    orderNumber: string,
+  ) => {
+    const warning = getPickupKitchenPrintWarning(row);
+    if (!warning) return;
+    const status = normalizePickupKitchenPrintStatus(row?.kitchenPrintStatus);
+    showScanToast(`${orderNumber}: ${warning}`, status === 'FAILED' ? 'err' : 'warn');
+  }, [showScanToast]);
 
   // Load a waiting pickup order chosen from the cashier list: claim it on the
   // backend first (so it locks to this station), then build the cart from the
@@ -801,15 +846,25 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       await window.electronAPI.pos.pickupOrders.release(pickupId).catch(() => {});
       return;
     }
-    const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupId });
+    const warningRow = claim.data ?? rowOrder;
+    const hasKitchenWarning = !!getPickupKitchenPrintWarning(warningRow);
+    const loaded = await loadKitchenSelfOrderQr(decoded, {
+      pickupOrderId: pickupId,
+      showSuccessToast: !hasKitchenWarning,
+    });
     if (!loaded) {
       await window.electronAPI.pos.pickupOrders.release(pickupId).catch(() => {});
       return;
     }
-    setActivePickup({ id: pickupId, orderNumber: rowOrder.orderNumber });
+    if (loaded && hasKitchenWarning) warnIfPickupKitchenPrintNotReady(warningRow, decoded.orderNumber);
+    setActivePickup({
+      id: pickupId,
+      orderNumber: rowOrder.orderNumber,
+      kitchenPrintStatus: normalizePickupKitchenPrintStatus(claim.data?.kitchenPrintStatus ?? rowOrder.kitchenPrintStatus),
+    });
     setPickupPanelOpen(false);
     setPickupOrders((prev) => removePickupOrder(prev, pickupId));
-  }, [state, loadKitchenSelfOrderQr, showScanToast]);
+  }, [state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   // Put a loaded-but-unpaid pickup order back on the queue (release the claim).
   const releaseActivePickup = useCallback(async () => {
@@ -844,6 +899,13 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       setPickupOrders((prev) => mergePickupEvent(prev, msg));
       if ((msg.event === 'settled' || msg.event === 'cancelled') && msg.data?.id) {
         setActivePickup((cur) => (cur && cur.id === msg.data.id ? null : cur));
+      }
+      if (msg.event === 'kitchen-print-updated' && msg.data?.id) {
+        setActivePickup((cur) => (
+          cur && cur.id === msg.data.id
+            ? { ...cur, kitchenPrintStatus: normalizePickupKitchenPrintStatus(msg.data.kitchenPrintStatus) }
+            : cur
+        ));
       }
     });
     return () => { if (typeof unsub === 'function') unsub(); };
@@ -891,12 +953,21 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         if (pickupOrderId) await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
         return;
       }
-      const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupOrderId ?? null });
+      const hasKitchenWarning = !!getPickupKitchenPrintWarning(res.data);
+      const loaded = await loadKitchenSelfOrderQr(decoded, {
+        pickupOrderId: pickupOrderId ?? null,
+        showSuccessToast: !hasKitchenWarning,
+      });
       if (!loaded && pickupOrderId) {
         await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
       }
+      if (loaded && hasKitchenWarning) warnIfPickupKitchenPrintNotReady(res.data, decoded.orderNumber);
       if (loaded && pickupOrderId) {
-        setActivePickup({ id: pickupOrderId, orderNumber: decoded.orderNumber });
+        setActivePickup({
+          id: pickupOrderId,
+          orderNumber: decoded.orderNumber,
+          kitchenPrintStatus: normalizePickupKitchenPrintStatus(res.data?.kitchenPrintStatus),
+        });
       }
       if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
       return;
@@ -904,7 +975,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
     if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
     showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
-  }, [pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast]);
+  }, [pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   // A scanned KSOREF reference: claim the backend row, then build the cart from
   // the AUTHORITATIVE backend payload (the reference carries no items). Always
@@ -932,12 +1003,21 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         if (pickupOrderId) await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
         return;
       }
-      const loaded = await loadKitchenSelfOrderQr(decoded, { pickupOrderId: pickupOrderId ?? null });
+      const hasKitchenWarning = !!getPickupKitchenPrintWarning(res.data);
+      const loaded = await loadKitchenSelfOrderQr(decoded, {
+        pickupOrderId: pickupOrderId ?? null,
+        showSuccessToast: !hasKitchenWarning,
+      });
       if (!loaded && pickupOrderId) {
         await window.electronAPI.pos.pickupOrders.release(pickupOrderId).catch(() => {});
       }
+      if (loaded && hasKitchenWarning) warnIfPickupKitchenPrintNotReady(res.data, decoded.orderNumber);
       if (loaded && pickupOrderId) {
-        setActivePickup({ id: pickupOrderId, orderNumber: decoded.orderNumber });
+        setActivePickup({
+          id: pickupOrderId,
+          orderNumber: decoded.orderNumber,
+          kitchenPrintStatus: normalizePickupKitchenPrintStatus(res.data?.kitchenPrintStatus),
+        });
       }
       if (pickupOrderId) setPickupOrders((prev) => removePickupOrder(prev, pickupOrderId));
       return;
@@ -945,7 +1025,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
     if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
     showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
-  }, [state, loadKitchenSelfOrderQr, showScanToast]);
+  }, [state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -1176,6 +1256,8 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200 ${
           scanToast.type === 'ok'
             ? 'bg-emerald-600 text-white'
+            : scanToast.type === 'warn'
+              ? 'bg-amber-500 text-slate-950'
             : 'bg-red-600 text-white'
         }`}>
           {scanToast.text}
@@ -1320,6 +1402,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                     visiblePickups.map((o) => {
                       const mine = o.status === 'CLAIMED' && !!ownMachineId && o.claimedByMachineId === ownMachineId;
                       const claimedElsewhere = o.status === 'CLAIMED' && !mine;
+                      const kitchenBadge = getPickupKitchenPrintBadge(o.kitchenPrintStatus);
                       return (
                         <div key={o.id} className="flex items-center gap-1 px-2">
                           <button
@@ -1332,6 +1415,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                           >
                             <div className="min-w-0">
                               <div className="text-lg font-black text-slate-900 tabular-nums">{o.orderNumber}</div>
+                              <div className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${kitchenBadge.className}`}>
+                                {kitchenBadge.text}
+                              </div>
                               {claimedElsewhere && (
                                 <div className="text-[11px] font-semibold text-amber-600">Đang xử lý ở máy khác</div>
                               )}
@@ -1365,6 +1451,9 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           {activePickup && (
             <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
               <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
+              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).className}`}>
+                {getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).text}
+              </span>
               <button
                 type="button"
                 onClick={releaseActivePickup}

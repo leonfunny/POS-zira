@@ -6,6 +6,7 @@ import {
   formatKitchenSelfOrderNumber,
   normalizeKitchenSelfOrderPriceGrosze,
   normalizeKitchenSelfOrderQuantity,
+  resolveKitchenSelfOrderRetryAction,
   resolveKitchenSelfOrderCheckoutUnitPrice,
   resolveKitchenSelfOrderBrandName,
   sanitizeKitchenSelfOrderNote,
@@ -109,21 +110,20 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).toContain('printKitchenSelfOrderCustomerSlip(ticket)');
   });
 
-  it('prints unpaid kitchen tickets and QR payment slips before cashier payment', () => {
+  it('prints the customer slip before async kitchen ticket work', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const ticketSource = readSource('src/main/printing/kitchen-ticket.ts');
     const formatterSource = readSource('src/main/hardware/thermal/escpos-formatter.ts');
 
     expect(posModuleSource).toContain('buildKitchenSelfOrderQrPayload(created, {');
-    // The customer slip prints when the kitchen is released — confirmed-printed
-    // OR uncertain (LAN timed out, ticket most likely printed) — so the customer
-    // always gets a pickup number without dispatching a duplicate kitchen ticket.
-    expect(posModuleSource).toContain('const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true');
-    expect(posModuleSource).toContain('kitchenAlreadyReleased: kitchenReleased');
-    expect(posModuleSource).toContain('const slipPrint = kitchenReleased');
-    expect(posModuleSource).toContain('kitchenPrinted: kitchenReleased');
-    expect(posModuleSource).toContain('success = kitchenReleased && slipPrint.printed');
-    expect(posModuleSource).toContain('canRetrySlip: kitchenReleased && !slipPrint.printed');
+    expect(posModuleSource).toContain('kitchenAlreadyReleased: true');
+    expect(posModuleSource).toContain('const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket)');
+    expect(posModuleSource).toContain("kitchenPrintStatus: 'PENDING'");
+    expect(posModuleSource).toContain('void this.finishKitchenSelfOrderKitchenPrint(finalOrder, brandName, sourceLabel, payAtCounter)');
+    expect(posModuleSource).toContain('const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket)');
+    expect(posModuleSource).toContain('updatePickupKitchenPrintStatusBestEffort');
+    expect(posModuleSource).toContain('kitchenPrinted: false');
+    expect(posModuleSource).toContain('canRetrySlip: !slipPrint.printed');
     expect(posModuleSource).toContain('compactKitchenSelfOrderQrOptions');
     expect(posModuleSource).toContain('buildKitchenSelfOrderLabelQrPayload(order, kitchenAlreadyReleased)');
     expect(posModuleSource).toContain('kr: kitchenAlreadyReleased ? 1 : 0');
@@ -147,6 +147,11 @@ describe('kitchen self-order MVP wiring', () => {
     expect(layoutSource).toContain('decodeKitchenSelfOrderQr(code)');
     expect(layoutSource).toContain('window.electronAPI.pos.pickupOrders.claimByRef');
     expect(layoutSource).toContain('res.data?.payload?.qr');
+    expect(layoutSource).toContain('warnIfPickupKitchenPrintNotReady(res.data, decoded.orderNumber)');
+    expect(layoutSource).toContain('showSuccessToast?: boolean');
+    expect(layoutSource).toContain('showSuccessToast: !hasKitchenWarning');
+    expect(layoutSource).toContain('if (loaded && hasKitchenWarning)');
+    expect(layoutSource).toContain('getPickupKitchenPrintBadge');
     expect(layoutSource).not.toContain('await loadKitchenSelfOrderQr(kioskOrder);');
     expect(layoutSource).not.toContain('openPickupOrder(known, kioskOrder)');
     expect(layoutSource).not.toContain('scannedPayload?: KitchenSelfOrderQrPayload');
@@ -186,6 +191,21 @@ describe('kitchen self-order MVP wiring', () => {
     expect(posModuleSource).not.toContain('await this.printKitchenSelfOrderTicket(ticket);');
   });
 
+  it('routes kitchen-only failures through retryPrint without printing another customer slip', () => {
+    const posModuleSource = readSource('src/main/modules/pos.module.ts');
+    const retryStart = posModuleSource.indexOf("ipcMain.handle('kitchen-self-order:retryPrint'");
+    const retryEnd = posModuleSource.indexOf("ipcMain.handle('", retryStart + 1);
+    const retryBlock = retryStart >= 0 ? posModuleSource.slice(retryStart, retryEnd === -1 ? undefined : retryEnd) : '';
+
+    expect(resolveKitchenSelfOrderRetryAction({ kitchenPrinted: 0, customerSlipPrinted: 1 })).toBe('reprint_kitchen');
+    expect(retryBlock).toContain("if (action === 'reprint_kitchen')");
+    const kitchenOnlyStart = retryBlock.indexOf("if (action === 'reprint_kitchen')");
+    const kitchenOnlyEnd = retryBlock.indexOf('return {', kitchenOnlyStart);
+    const kitchenOnlyBlock = retryBlock.slice(kitchenOnlyStart, kitchenOnlyEnd);
+    expect(kitchenOnlyBlock).toContain('printKitchenSelfOrderTicket(kitchenTicket)');
+    expect(kitchenOnlyBlock).not.toContain('printKitchenSelfOrderCustomerSlip(ticket)');
+  });
+
   it('offers a no-duplicate retry that re-prints the existing order', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const preloadSource = readSource('src/preload/preload-kitchen-self-order.ts');
@@ -198,6 +218,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(retryBlock).toContain('resolveKitchenSelfOrderRetryAction');
     expect(retryBlock).not.toContain('kitchenSelfOrderRepo.create');
     expect(retryBlock).toContain('markPrintResult(order.id');
+    expect(retryBlock).toContain('finishKitchenSelfOrderKitchenPrint');
     expect(retryBlock).toContain('pushPickupOrderBestEffort');
     expect(posModuleSource).toContain('orderId: created?.id');
     expect(preloadSource).toContain("ipcRenderer.invoke('kitchen-self-order:retryPrint'");

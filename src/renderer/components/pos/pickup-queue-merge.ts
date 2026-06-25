@@ -5,6 +5,7 @@
  */
 
 export type PickupOrderStatus = 'PENDING' | 'CLAIMED' | 'SETTLED' | 'CANCELLED';
+export type PickupOrderKitchenPrintStatus = 'PENDING' | 'PRINTED' | 'UNCERTAIN' | 'FAILED';
 
 export interface PickupOrderRow {
   id: string;
@@ -13,6 +14,9 @@ export interface PickupOrderRow {
   sequence?: number;
   totalGrosze?: number;
   status: PickupOrderStatus;
+  kitchenPrintStatus?: PickupOrderKitchenPrintStatus | null;
+  kitchenPrintError?: string | null;
+  kitchenPrintUpdatedAt?: string | null;
   claimedByMachineId?: string | null;
   payload?: any;
 }

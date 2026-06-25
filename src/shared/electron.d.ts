@@ -483,6 +483,7 @@ interface ElectronAPI {
       customerSlipPrinted?: boolean;
       canRetry?: boolean;
       canRetrySlip?: boolean;
+      kitchenPrintStatus?: 'PENDING' | 'PRINTED' | 'UNCERTAIN' | 'FAILED';
       qrPayload?: string;
       error?: string | null;
     }>;
@@ -494,6 +495,7 @@ interface ElectronAPI {
       customerSlipPrinted?: boolean;
       canRetry?: boolean;
       canRetrySlip?: boolean;
+      kitchenPrintStatus?: 'PENDING' | 'PRINTED' | 'UNCERTAIN' | 'FAILED';
       qrPayload?: string;
       error?: string | null;
     }>;
@@ -505,6 +507,7 @@ interface ElectronAPI {
       customerSlipPrinted?: boolean;
       canRetry?: boolean;
       canRetrySlip?: boolean;
+      kitchenPrintStatus?: 'PENDING' | 'PRINTED' | 'UNCERTAIN' | 'FAILED';
       qrPayload?: string;
       error?: string | null;
     }>;

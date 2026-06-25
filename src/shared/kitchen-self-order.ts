@@ -3,7 +3,7 @@ export type KitchenSelfOrderFulfillment = 'DINE_IN' | 'TAKEAWAY';
 export type KitchenSelfOrderCheckoutMode = 'PAY_AT_COUNTER' | 'KIOSK_TERMINAL' | 'ORDER_ONLY';
 export type KitchenSelfOrderReleasePolicy = 'ON_SUBMIT' | 'ON_PAYMENT_CONFIRMED';
 export type KitchenSelfOrderMenuSource = 'all' | 'selected';
-export type KitchenSelfOrderRetryAction = 'none' | 'reprint_slip' | 'reprint_all';
+export type KitchenSelfOrderRetryAction = 'none' | 'reprint_slip' | 'reprint_kitchen' | 'reprint_all';
 export type KitchenSelfOrderModifierSelectionMode = 'SINGLE' | 'MULTIPLE';
 export type KitchenSelfOrderCheckoutAction = 'SUBMIT_ORDER' | 'REQUIRE_TERMINAL';
 export type KitchenSelfOrderStatus =
@@ -151,6 +151,7 @@ export function resolveKitchenSelfOrderRetryAction(
   const slip = state.customerSlipPrinted === true || Number(state.customerSlipPrinted) === 1;
   if (kitchen && slip) return 'none';
   if (kitchen && !slip) return 'reprint_slip';
+  if (!kitchen && slip) return 'reprint_kitchen';
   return 'reprint_all';
 }
 

@@ -46,7 +46,12 @@ import { localVariantImportsRepo } from '../database/repos/local-variant-imports
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
-import { pushPickupOrderBestEffort, drainPickupPushOutbox } from '../kitchen-self-order/pickup-queue-client';
+import {
+  pushPickupOrderBestEffort,
+  updatePickupKitchenPrintStatusBestEffort,
+  drainPickupOutboxesInOrder,
+  type PickupOrderKitchenPrintStatus,
+} from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
@@ -3009,38 +3014,27 @@ export class PosModule extends BaseModule {
           sourceMachineId: cfg.machineId || null,
           items: normalizedItems,
         });
-        const kitchenTicket = buildKitchenSelfOrderTicket(created, brandName, null, sourceLabel);
-        const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
-        // Treat an uncertain LAN print (timed out — the ticket most likely
-        // printed) as released so the customer still gets a pickup slip, while
-        // never dispatching a duplicate kitchen ticket through the backend.
-        const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
         const qrPayload = buildKitchenSelfOrderQrPayload(created, {
-          kitchenAlreadyReleased: kitchenReleased,
+          kitchenAlreadyReleased: true,
         });
         const refQr = buildKitchenSelfOrderRefQr(created.id, created.order_number);
         const ticket = buildKitchenSelfOrderTicket(created, brandName, refQr, sourceLabel);
         ticket.labelQrPayload = refQr;
-        const slipPrint = kitchenReleased
-          ? await this.printKitchenSelfOrderCustomerSlip(ticket)
-          : { printed: false, error: 'kitchen_not_printed' };
-        const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
-        const finalOrder = kitchenSelfOrderRepo.markPrintResult(created.id, {
-          kitchenPrinted: kitchenReleased,
+        const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
+        const error = slipPrint.error || null;
+        const finalOrder = kitchenSelfOrderRepo.markCustomerSlipResult(created.id, {
           customerSlipPrinted: slipPrint.printed,
-          kitchenRoute: kitchenPrint.route || null,
-          kitchenPrinterId: kitchenPrint.printerId || null,
-          kitchenJobId: kitchenPrint.jobId || null,
           customerSlipRoute: slipPrint.route || null,
           error,
         }) || created;
-        const success = kitchenReleased && slipPrint.printed;
+        const success = slipPrint.printed;
 
         // Best-effort: register this pay-at-counter order in the backend
         // cashier pickup queue so counter POS stations can claim/charge it
         // without scanning the slip. Fire-and-forget — never blocks or fails
         // the print/QR path (the QR slip stays the offline fallback).
-        if (menu.policies.checkoutMode === 'PAY_AT_COUNTER') {
+        const payAtCounter = menu.policies.checkoutMode === 'PAY_AT_COUNTER';
+        if (payAtCounter && success) {
           void pushPickupOrderBestEffort({
             terminalId: sourceLabel,
             sourceOrderId: finalOrder.id,
@@ -3048,7 +3042,11 @@ export class PosModule extends BaseModule {
             sequence: finalOrder.sequence_number,
             totalGrosze: finalOrder.total_grosze,
             qr: qrPayload,
+            kitchenPrintStatus: 'PENDING',
           });
+        }
+        if (success) {
+          void this.finishKitchenSelfOrderKitchenPrint(finalOrder, brandName, sourceLabel, payAtCounter);
         }
 
         return {
@@ -3056,14 +3054,12 @@ export class PosModule extends BaseModule {
           order: finalOrder,
           orderId: finalOrder.id,
           orderNumber: finalOrder.order_number,
-          kitchenPrinted: kitchenReleased,
+          kitchenPrinted: false,
           customerSlipPrinted: slipPrint.printed,
           canRetry: !success,
-          canRetrySlip: kitchenReleased && !slipPrint.printed,
-          kitchenRoute: kitchenPrint.route,
-          kitchenPrinterId: kitchenPrint.printerId,
-          kitchenJobId: kitchenPrint.jobId,
-          kitchenStatus: kitchenPrint.status,
+          canRetrySlip: !slipPrint.printed,
+          kitchenPrintStatus: success ? 'PENDING' : 'FAILED',
+          kitchenStatus: success ? 'PENDING' : 'NOT_STARTED',
           slipRoute: slipPrint.route,
           qrPayload,
           error,
@@ -3194,6 +3190,20 @@ export class PosModule extends BaseModule {
             customerSlipRoute: slipPrint.route || null,
             error: slipPrint.error || null,
           }) || order;
+          if (
+            slipPrint.printed
+            && normalizeKitchenSelfOrderCheckoutMode(cfg.kitchenSelfOrderCheckoutMode) === 'PAY_AT_COUNTER'
+          ) {
+            void pushPickupOrderBestEffort({
+              terminalId: sourceLabel,
+              sourceOrderId: updated.id,
+              orderNumber: updated.order_number,
+              sequence: updated.sequence_number,
+              totalGrosze: updated.total_grosze,
+              qr: qrPayload,
+              kitchenPrintStatus: 'PRINTED',
+            });
+          }
 
           return {
             success: slipPrint.printed,
@@ -3209,38 +3219,76 @@ export class PosModule extends BaseModule {
           };
         }
 
-        const wasKitchenReleased = !!order.kitchen_printed;
-        const kitchenTicket = buildKitchenSelfOrderTicket(order, brandName, null, sourceLabel);
-        const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
-        const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
+        if (action === 'reprint_kitchen') {
+          const qrPayload = buildKitchenSelfOrderQrPayload(order, { kitchenAlreadyReleased: true });
+          const kitchenTicket = buildKitchenSelfOrderTicket(order, brandName, null, sourceLabel);
+          const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
+          const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
+          const kitchenPrintStatus = this.kitchenSelfOrderKitchenPrintStatus(kitchenPrint);
+          const error = kitchenReleased ? null : kitchenPrint.error || 'kitchen_not_printed';
+          const finalOrder = kitchenSelfOrderRepo.markPrintResult(order.id, {
+            kitchenPrinted: kitchenReleased,
+            customerSlipPrinted: true,
+            kitchenRoute: kitchenPrint.route || null,
+            kitchenPrinterId: kitchenPrint.printerId || null,
+            kitchenJobId: kitchenPrint.jobId || null,
+            customerSlipRoute: order.customer_slip_route || null,
+            error,
+          }) || order;
+
+          if (normalizeKitchenSelfOrderCheckoutMode(cfg.kitchenSelfOrderCheckoutMode) === 'PAY_AT_COUNTER') {
+            void pushPickupOrderBestEffort({
+              terminalId: sourceLabel,
+              sourceOrderId: finalOrder.id,
+              orderNumber: finalOrder.order_number,
+              sequence: finalOrder.sequence_number,
+              totalGrosze: finalOrder.total_grosze,
+              qr: qrPayload,
+              kitchenPrintStatus,
+            });
+            void updatePickupKitchenPrintStatusBestEffort({
+              sourceOrderId: finalOrder.id,
+              orderNumber: finalOrder.order_number,
+              status: kitchenPrintStatus,
+              error,
+            });
+          }
+
+          return {
+            success: kitchenReleased,
+            orderId: finalOrder.id,
+            orderNumber: finalOrder.order_number,
+            kitchenPrinted: kitchenReleased,
+            customerSlipPrinted: true,
+            canRetry: !kitchenReleased,
+            canRetrySlip: false,
+            kitchenRoute: kitchenPrint.route,
+            kitchenPrinterId: kitchenPrint.printerId,
+            kitchenJobId: kitchenPrint.jobId,
+            kitchenPrintStatus,
+            kitchenStatus: kitchenPrint.status,
+            qrPayload,
+            error,
+          };
+        }
+
         const qrPayload = buildKitchenSelfOrderQrPayload(order, {
-          kitchenAlreadyReleased: kitchenReleased,
+          kitchenAlreadyReleased: true,
         });
         const refQr = buildKitchenSelfOrderRefQr(order.id, order.order_number);
         const ticket = buildKitchenSelfOrderTicket(order, brandName, refQr, sourceLabel);
         ticket.labelQrPayload = refQr;
-        const slipPrint = kitchenReleased
-          ? await this.printKitchenSelfOrderCustomerSlip(ticket)
-          : { printed: false, error: 'kitchen_not_printed' };
-        const error = [kitchenPrint.error, slipPrint.error].filter(Boolean).join(' | ') || null;
-        const finalOrder = kitchenSelfOrderRepo.markPrintResult(order.id, {
-          kitchenPrinted: kitchenReleased,
+        const slipPrint = await this.printKitchenSelfOrderCustomerSlip(ticket);
+        const error = slipPrint.error || null;
+        const finalOrder = kitchenSelfOrderRepo.markCustomerSlipResult(order.id, {
           customerSlipPrinted: slipPrint.printed,
-          kitchenRoute: kitchenPrint.route || null,
-          kitchenPrinterId: kitchenPrint.printerId || null,
-          kitchenJobId: kitchenPrint.jobId || null,
           customerSlipRoute: slipPrint.route || null,
           error,
         }) || order;
-        const success = kitchenReleased && slipPrint.printed;
+        const success = slipPrint.printed;
 
-        // Re-push only after the kitchen becomes released. Backend idempotency
-        // by sourceOrderId refreshes still-PENDING rows without duplicating.
-        if (
-          normalizeKitchenSelfOrderCheckoutMode(cfg.kitchenSelfOrderCheckoutMode) === 'PAY_AT_COUNTER'
-          && kitchenReleased
-          && !wasKitchenReleased
-        ) {
+        const payAtCounter = normalizeKitchenSelfOrderCheckoutMode(cfg.kitchenSelfOrderCheckoutMode) === 'PAY_AT_COUNTER';
+        if (payAtCounter && success) {
           void pushPickupOrderBestEffort({
             terminalId: sourceLabel,
             sourceOrderId: finalOrder.id,
@@ -3248,21 +3296,23 @@ export class PosModule extends BaseModule {
             sequence: finalOrder.sequence_number,
             totalGrosze: finalOrder.total_grosze,
             qr: qrPayload,
+            kitchenPrintStatus: 'PENDING',
           });
+        }
+        if (success) {
+          void this.finishKitchenSelfOrderKitchenPrint(finalOrder, brandName, sourceLabel, payAtCounter);
         }
 
         return {
           success,
           orderId: finalOrder.id,
           orderNumber: finalOrder.order_number,
-          kitchenPrinted: kitchenReleased,
+          kitchenPrinted: false,
           customerSlipPrinted: slipPrint.printed,
           canRetry: !success,
-          canRetrySlip: kitchenReleased && !slipPrint.printed,
-          kitchenRoute: kitchenPrint.route,
-          kitchenPrinterId: kitchenPrint.printerId,
-          kitchenJobId: kitchenPrint.jobId,
-          kitchenStatus: kitchenPrint.status,
+          canRetrySlip: !slipPrint.printed,
+          kitchenPrintStatus: success ? 'PENDING' : 'FAILED',
+          kitchenStatus: success ? 'PENDING' : 'NOT_STARTED',
           slipRoute: slipPrint.route,
           qrPayload,
           error,
@@ -3287,17 +3337,6 @@ export class PosModule extends BaseModule {
       try {
         const order = kitchenSelfOrderRepo.getById(id);
         if (!order) return { success: false, error: 'order_not_found', canRetrySlip: false };
-        if (!order.kitchen_printed) {
-          return {
-            success: false,
-            orderId: order.id,
-            orderNumber: order.order_number,
-            kitchenPrinted: false,
-            customerSlipPrinted: false,
-            canRetrySlip: false,
-            error: 'kitchen_not_printed',
-          };
-        }
 
         const cfg = getConfig();
         const sourceLabel = String(order.source_label || cfg.kitchenSelfOrderSourceLabel || '').trim();
@@ -3543,6 +3582,67 @@ export class PosModule extends BaseModule {
     logger.info('[PosModule] IPC handlers registered');
   }
 
+  private kitchenSelfOrderKitchenPrintStatus(result: {
+    printed: boolean;
+    uncertain?: boolean;
+  }): PickupOrderKitchenPrintStatus {
+    if (result.printed) return 'PRINTED';
+    if (result.uncertain === true) return 'UNCERTAIN';
+    return 'FAILED';
+  }
+
+  private async finishKitchenSelfOrderKitchenPrint(
+    order: KitchenSelfOrderWithItems,
+    brandName: string,
+    sourceLabel: string,
+    updatePickupStatus: boolean,
+  ): Promise<void> {
+    try {
+      const kitchenTicket = buildKitchenSelfOrderTicket(order, brandName, null, sourceLabel);
+      const kitchenPrint = await this.printKitchenSelfOrderTicket(kitchenTicket);
+      const kitchenReleased = kitchenPrint.printed || kitchenPrint.uncertain === true;
+      const kitchenPrintStatus = this.kitchenSelfOrderKitchenPrintStatus(kitchenPrint);
+      const error = kitchenReleased ? null : kitchenPrint.error || 'kitchen_not_printed';
+
+      kitchenSelfOrderRepo.markPrintResult(order.id, {
+        kitchenPrinted: kitchenReleased,
+        customerSlipPrinted: Number(order.customer_slip_printed) === 1,
+        kitchenRoute: kitchenPrint.route || null,
+        kitchenPrinterId: kitchenPrint.printerId || null,
+        kitchenJobId: kitchenPrint.jobId || null,
+        customerSlipRoute: order.customer_slip_route || null,
+        error,
+      });
+
+      if (updatePickupStatus) {
+        await updatePickupKitchenPrintStatusBestEffort({
+          sourceOrderId: order.id,
+          orderNumber: order.order_number,
+          status: kitchenPrintStatus,
+          error,
+        });
+      }
+    } catch (err: any) {
+      const error = err?.message || String(err);
+      logger.error(`[PosModule] Async kitchen self-order ticket failed for ${order.order_number}: ${error}`);
+      const current = kitchenSelfOrderRepo.getById(order.id) || order;
+      kitchenSelfOrderRepo.markPrintResult(order.id, {
+        kitchenPrinted: false,
+        customerSlipPrinted: Number(current.customer_slip_printed) === 1,
+        customerSlipRoute: current.customer_slip_route || null,
+        error,
+      });
+      if (updatePickupStatus) {
+        await updatePickupKitchenPrintStatusBestEffort({
+          sourceOrderId: order.id,
+          orderNumber: order.order_number,
+          status: 'FAILED',
+          error,
+        });
+      }
+    }
+  }
+
   /**
    * Kitchen self-order ticket path: no stock, no fiscal receipt, no sales order.
    * Normal POS payment prints only the customer receipt.
@@ -3664,10 +3764,14 @@ export class PosModule extends BaseModule {
     socket.on('pickup-order:released', forwardPickupOrder('released'));
     socket.on('pickup-order:settled', forwardPickupOrder('settled'));
     socket.on('pickup-order:cancelled', forwardPickupOrder('cancelled'));
+    socket.on('pickup-order:kitchen-print-updated', forwardPickupOrder('kitchen-print-updated'));
 
     // Retry any pickup-order settles that didn't land while offline whenever
     // the socket (re)connects — closes the loop after a transient outage.
-    socket.on('connected', () => { void drainPickupSettleOutbox(); void drainPickupPushOutbox(); });
+    socket.on('connected', () => {
+      void drainPickupSettleOutbox();
+      void drainPickupOutboxesInOrder();
+    });
   }
 
   getToolDefinitions(): ToolDefinition[] {
