@@ -36,12 +36,14 @@ describe('POS quick-add camera flow', () => {
     expect(modal).toContain('images.length >= 3');
   });
 
-  it('keeps the camera stream warm while the modal is hidden', () => {
+  it('does not start the camera while the modal is hidden', () => {
     expect(modal).toContain('cameraStartPromiseRef');
-    expect(modal).toContain('void startCamera();');
+    expect(modal).toContain('if (!open) {');
+    expect(modal).toContain('releaseSharedEnvironmentCameraStream();');
     expect(modal).toContain("open ? '' : 'pointer-events-none opacity-0'");
     expect(modal).toContain("transform: 'translateX(-120vw)'");
     expect(modal).not.toContain('if (!open) return null');
+    expect(modal).not.toMatch(/mountedRef\.current = true;\s*void startCamera\(\);/);
     expect(modal).not.toMatch(/setProductName\(result\.analysis\?\.name \?\? ''\);\s*stopCamera\(\);/);
   });
 

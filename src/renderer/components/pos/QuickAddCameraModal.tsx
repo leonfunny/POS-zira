@@ -134,7 +134,6 @@ export default function QuickAddCameraModal({
 
   useEffect(() => {
     mountedRef.current = true;
-    void startCamera();
 
     return () => {
       mountedRef.current = false;
@@ -148,7 +147,12 @@ export default function QuickAddCameraModal({
   }, [open, prepared]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      stopCamera();
+      releaseSharedEnvironmentCameraStream();
+      return;
+    }
+
     setImages([]);
     setPrepared(null);
     setProductName('');
