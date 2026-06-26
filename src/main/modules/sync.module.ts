@@ -39,6 +39,12 @@ export interface ProductSyncResult {
   error?: string;
 }
 
+interface ProductSyncRunOptions {
+  force?: boolean;
+  bypassBackoff?: boolean;
+  reason?: string;
+}
+
 export class SyncModule extends BaseModule {
   readonly name = 'sync';
 
@@ -63,6 +69,8 @@ export class SyncModule extends BaseModule {
   private _productPollTimer: ReturnType<typeof setInterval> | null = null;
   private _productPollJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private _productSyncInFlight: Promise<ProductSyncResult> | null = null;
+  private _productSyncInFlightForce = false;
+  private _productQueuedForceSync: Promise<ProductSyncResult> | null = null;
   // Backoff schedule (ms) on consecutive failures: 60s, 120s, 300s cap.
   private static readonly PRODUCT_BACKOFF_MS = [60_000, 120_000, 300_000];
   private _productBackoffStep = 0;
@@ -122,15 +130,19 @@ export class SyncModule extends BaseModule {
     // user pressed it intentionally, they want a fresh pull. Still
     // shares the in-flight promise with any concurrent periodic tick so
     // we never double-pull the catalogue.
-    ipcMain.handle('pos:sync:products', async () => this.runProductSync({ force: true }));
+    ipcMain.handle('pos:sync:products', async () => (
+      this.runProductSync({ force: true, bypassBackoff: true, reason: 'manual' })
+    ));
 
     ipcMain.handle('pos:sync:orders', async () => {
       try {
         if (this.productSync) {
           const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
           if (reconciledLocalImports > 0) {
-            await this.productSync.deltaSync();
-            notifyPosRenderers(this.container, 'pos:products-synced');
+            await this.runProductSync({
+              bypassBackoff: true,
+              reason: 'orders-reconcile-local-imports',
+            });
           }
         }
         const summary = await this.orderSync?.syncPendingOrders();
@@ -450,19 +462,17 @@ export class SyncModule extends BaseModule {
         // changes that may not bump product.updated_at — e.g., admin adjustments,
         // backfills, bulk imports). Subsequent polls use delta.
         if (this.productSync) {
-          try {
-            if (!this._didFullProductSync) {
-              await this.productSync.fullSync();
-              this._didFullProductSync = true;
-            } else {
-              await this.productSync.deltaSync();
-            }
-            const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
-            if (reconciledLocalImports > 0) {
-              await this.productSync.deltaSync();
-            }
-            notifyPosRenderers(this.container, 'pos:products-synced');
-          } catch (err) { logger.warn(`[SyncModule] Product sync failed: ${err}`); }
+          const forceInitialFullSync = !this._didFullProductSync;
+          const result = await this.runProductSync({
+            force: forceInitialFullSync,
+            bypassBackoff: forceInitialFullSync,
+            reason: forceInitialFullSync ? 'socket-connected-initial-full' : 'socket-connected-delta',
+          });
+          if (!result.success && result.error !== 'backoff' && result.error !== 'no-auth') {
+            logger.warn(
+              `[SyncModule] Product sync failed on socket connect: ${result.error ?? 'unknown'}`,
+            );
+          }
         }
 
         try { await this.staffSync?.pullStaff(); }
@@ -520,13 +530,17 @@ export class SyncModule extends BaseModule {
     bus.on('user:logged-in', async () => {
       if (!this.productSync) return;
       try {
-        await this.productSync.deltaSync();
-        const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();
-        if (reconciledLocalImports > 0) {
-          await this.productSync.deltaSync();
+        const forceEmptyCatalogFullSync = this.productSync.getLocalProductCount() === 0;
+        const result = await this.runProductSync({
+          force: forceEmptyCatalogFullSync,
+          bypassBackoff: true,
+          reason: forceEmptyCatalogFullSync ? 'post-login-empty-catalog' : 'post-login-delta',
+        });
+        if (result.success) {
+          logger.info('[SyncModule] Post-login product sync completed');
+        } else if (result.error !== 'backoff' && result.error !== 'no-auth') {
+          logger.warn(`[SyncModule] Post-login product sync failed: ${result.error ?? 'unknown'}`);
         }
-        notifyPosRenderers(this.container, 'pos:products-synced');
-        logger.info('[SyncModule] Post-login product sync completed');
       } catch (err) { logger.warn(`[SyncModule] Post-login product sync failed: ${err}`); }
       try {
         await draftProductSync.deltaSync();
@@ -630,19 +644,20 @@ export class SyncModule extends BaseModule {
   /**
    * Run a single ProductSync.deltaSync. Polite by default:
    *   - skips silently if no auth token (avoids 30s log spam)
-   *   - shares an in-flight promise so concurrent callers (periodic
-   *     tick + manual button) get the same result without double-pulling
+   *   - shares an in-flight promise so concurrent callers get the same result
+   *     without double-pulling, except the first-session full sync: that must
+   *     queue behind an in-flight delta instead of being downgraded
    *   - honours an exponential backoff after consecutive failures
    *     (60s -> 120s -> 300s cap) so a flaky backend isn't hit every 30s
    *
-   * Pass `{ force: true }` from the manual IPC handler to bypass the
-   * backoff — user clicked the button intentionally.
+   * Pass `{ force: true }` to run a full sync and bypass backoff. Pass
+   * `{ bypassBackoff: true }` for deliberate delta retries.
    *
    * Notifies the POS renderer with `pos:products-synced` on success so
    * the product/category grid reloads immediately.
    */
-  async runProductSync(opts: { force?: boolean } = {}): Promise<ProductSyncResult> {
-    if (!opts.force && Date.now() < this._productSkipUntil) {
+  async runProductSync(opts: ProductSyncRunOptions = {}): Promise<ProductSyncResult> {
+    if (!opts.force && !opts.bypassBackoff && Date.now() < this._productSkipUntil) {
       return { success: false, error: 'backoff' };
     }
     const token = getSecureAuthToken();
@@ -652,24 +667,42 @@ export class SyncModule extends BaseModule {
       return { success: false, error: 'no-auth' };
     }
     if (this._productSyncInFlight) {
+      if (opts.force && !this._productSyncInFlightForce && !this._didFullProductSync) {
+        if (!this._productQueuedForceSync) {
+          const inFlight = this._productSyncInFlight;
+          this._productQueuedForceSync = (async () => {
+            const currentResult = await inFlight;
+            if (this._didFullProductSync) return currentResult;
+            return this.runProductSync(opts);
+          })().finally(() => {
+            this._productQueuedForceSync = null;
+          });
+        }
+        return this._productQueuedForceSync;
+      }
       return this._productSyncInFlight;
     }
+    this._productSyncInFlightForce = !!opts.force;
     this._productSyncInFlight = this._doProductSync(opts);
     try {
       return await this._productSyncInFlight;
     } finally {
       this._productSyncInFlight = null;
+      this._productSyncInFlightForce = false;
     }
   }
 
-  private async _doProductSync(opts: { force?: boolean } = {}): Promise<ProductSyncResult> {
+  private async _doProductSync(opts: ProductSyncRunOptions = {}): Promise<ProductSyncResult> {
     if (!this.productSync) return { success: false, error: 'no-product-sync' };
     try {
       let productsCount: number;
       if (opts.force) {
+        logger.info(`[SyncModule] Product sync starting full sync (${opts.reason ?? 'unspecified'})`);
         const result = await this.productSync.fullSync();
         productsCount = result.productsCount;
+        this._didFullProductSync = true;
       } else {
+        logger.info(`[SyncModule] Product sync starting delta sync (${opts.reason ?? 'unspecified'})`);
         productsCount = await this.productSync.deltaSync();
       }
       const reconciledLocalImports = await this.productSync.reconcileLocalVariantImports();

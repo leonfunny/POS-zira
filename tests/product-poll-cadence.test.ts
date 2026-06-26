@@ -251,6 +251,23 @@ describe('SyncModule.runProductSync', () => {
     expect(deltaSyncMock).toHaveBeenCalledTimes(1);
   });
 
+  it('queues a forced full sync behind an in-flight delta sync', async () => {
+    let resolveDelta!: (n: number) => void;
+    deltaSyncMock.mockImplementationOnce(() => new Promise<number>((r) => { resolveDelta = r; }));
+    fullSyncMock.mockResolvedValueOnce({ productsCount: 4, categoriesCount: 1 });
+    const m = await freshModule();
+
+    const delta = m.runProductSync();
+    const forced = m.runProductSync({ force: true, reason: 'socket-connected-initial-full' });
+    expect(deltaSyncMock).toHaveBeenCalledTimes(1);
+    expect(fullSyncMock).not.toHaveBeenCalled();
+
+    resolveDelta(2);
+    await expect(delta).resolves.toEqual({ success: true, productsCount: 2 });
+    await expect(forced).resolves.toEqual({ success: true, productsCount: 4 });
+    expect(fullSyncMock).toHaveBeenCalledTimes(1);
+  });
+
   it('backoff after failure: next periodic call within 60s is skipped', async () => {
     deltaSyncMock.mockRejectedValueOnce(new Error('boom'));
     const m = await freshModule();

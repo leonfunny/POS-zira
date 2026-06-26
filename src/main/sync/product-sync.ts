@@ -41,6 +41,12 @@ export class ProductSync {
 
   constructor(private deps: ProductSyncDeps = {}) {}
 
+  getLocalProductCount(): number {
+    return database.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM product_variants',
+    )?.n ?? 0;
+  }
+
   /**
    * Full sync — download all products + categories from backend
    */
@@ -115,9 +121,7 @@ export class ProductSync {
     // different agent where clearSalonData didn't run (legacy session). The
     // cursor still points at the old data window so delta returns 0 changes
     // forever and the cashier sees an empty catalogue.
-    const productCount = database.get<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM product_variants',
-    )?.n ?? 0;
+    const productCount = this.getLocalProductCount();
     if (!lastSync?.value || productCount === 0) {
       logger.info(
         `[ProductSync] Cursor=${!!lastSync?.value}, productCount=${productCount} → forcing fullSync`,
