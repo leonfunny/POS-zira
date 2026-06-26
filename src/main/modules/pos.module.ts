@@ -38,7 +38,7 @@ import {
   type ExternalProductLookupOptions,
 } from '../pos/external-product-lookup';
 import { WindowManager } from '../windows/window-manager';
-import { productRepo } from '../database/repos/product-repo';
+import { productRepo, type ProductVariantRow } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
 import { kitchenSelfOrderCategoryPrefsRepo } from '../database/repos/kitchen-self-order-category-prefs-repo';
@@ -103,6 +103,7 @@ import type {
   ProductAdminStockAdjustmentInput,
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
+  ProductAdminVariant,
   ProductAdminVariantMutationResponse,
   PosLoyaltyLookupIpcResult,
   PosScheduleAssignNextPayload,
@@ -1181,6 +1182,81 @@ export class PosModule extends BaseModule {
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source });
     };
 
+    const refreshProductsAfterProductAdminMutationInBackground = (source: string) => {
+      void refreshProductsAfterProductAdminMutation(source);
+    };
+
+    const finiteNumber = (value: unknown): number | null => (
+      typeof value === 'number' && Number.isFinite(value) ? value : null
+    );
+
+    const getProductAdminVariantPriceGrosze = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): number => {
+      const minor = finiteNumber(variant.priceGrossGrosze);
+      if (minor !== null) return Math.max(0, Math.round(minor));
+
+      const retailPrice = finiteNumber(variant.retailPrice);
+      if (retailPrice !== null) return Math.max(0, Math.round(retailPrice * 100));
+
+      return Math.max(0, Math.round(Number(existing?.retail_price) || 0));
+    };
+
+    const encodeProductAdminNameTranslations = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): string | null => {
+      if (variant.nameTranslations && typeof variant.nameTranslations === 'object') {
+        try {
+          return JSON.stringify(variant.nameTranslations);
+        } catch {
+          return existing?.name_translations ?? null;
+        }
+      }
+      return existing?.name_translations ?? null;
+    };
+
+    const mirrorProductAdminVariant = (variant: ProductAdminVariant | undefined | null, source: string) => {
+      if (!variant?.id) return;
+
+      const existing = productRepo.getById(variant.id);
+      const priceGrosze = getProductAdminVariantPriceGrosze(variant, existing);
+      const totalStockQty = finiteNumber(variant.totalStockQty);
+      const vatRate = finiteNumber(variant.vatRate);
+      const availableQty = finiteNumber(variant.availableQty);
+      const row: ProductVariantRow = {
+        id: variant.id,
+        template_id: variant.templateId ?? existing?.template_id ?? null,
+        name: variant.name || existing?.name || variant.id,
+        sku: variant.sku ?? existing?.sku ?? null,
+        barcode: variant.barcode ?? existing?.barcode ?? null,
+        retail_price: priceGrosze,
+        category_id: variant.categoryId ?? existing?.category_id ?? null,
+        image_url: variant.imageUrl ?? existing?.image_url ?? null,
+        in_stock: totalStockQty ?? existing?.in_stock ?? 0,
+        vat_rate: vatRate ?? existing?.vat_rate ?? 23,
+        is_active: typeof variant.isActive === 'boolean'
+          ? (variant.isActive ? 1 : 0)
+          : existing?.is_active ?? 1,
+        updated_at: variant.updatedAt ?? existing?.updated_at ?? new Date().toISOString(),
+        available_qty: availableQty ?? existing?.available_qty ?? 0,
+        price_gross: priceGrosze,
+        price_net: existing?.price_net ?? 0,
+        vat_amount: existing?.vat_amount ?? 0,
+        is_on_sale: existing?.is_on_sale ?? 0,
+        thumbnail_url: variant.thumbnailUrl ?? existing?.thumbnail_url ?? null,
+        sale_unit: variant.saleUnit ?? existing?.sale_unit ?? null,
+        sell_by: variant.sellBy ?? existing?.sell_by ?? 'PIECE',
+        name_translations: encodeProductAdminNameTranslations(variant, existing),
+        customer_display_enabled: existing?.customer_display_enabled ?? 1,
+        customer_display_sort_order: existing?.customer_display_sort_order ?? null,
+        kiosk_media_json: existing?.kiosk_media_json ?? null,
+        kiosk_modifier_groups_json: existing?.kiosk_modifier_groups_json ?? null,
+        kiosk_note_enabled: existing?.kiosk_note_enabled ?? 0,
+      };
+
+      productRepo.upsertMany([row]);
+      database.markDirty();
+      logger.info(`[PosModule] Mirrored product-admin variant ${variant.id} locally (${source}, price=${priceGrosze})`);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: `${source}_local_mirror` });
+    };
+
     type ProductAdminCapability = keyof Pick<
       ProductAdminCapabilities,
       | 'canCreateProduct'
@@ -1240,7 +1316,11 @@ export class PosModule extends BaseModule {
           'canCreateProduct',
           'create product',
           (token) => apiClient.createProductVariant(token, input),
-          () => refreshProductsAfterProductAdminMutation('product_admin_create'),
+          (data) => {
+            mirrorProductAdminVariant(data.variant, 'product_admin_create');
+            refreshProductsAfterProductAdminMutationInBackground('product_admin_create');
+            return Promise.resolve();
+          },
         );
       },
     );
@@ -1252,7 +1332,11 @@ export class PosModule extends BaseModule {
           'canUpdateProduct',
           'update variant',
           (token) => apiClient.updateProductVariant(token, variantId, payload || {}),
-          () => refreshProductsAfterProductAdminMutation('product_admin_update'),
+          (data) => {
+            mirrorProductAdminVariant(data.variant, 'product_admin_update');
+            refreshProductsAfterProductAdminMutationInBackground('product_admin_update');
+            return Promise.resolve();
+          },
         ),
     );
 
@@ -1263,7 +1347,11 @@ export class PosModule extends BaseModule {
           'canDeactivateProduct',
           'deactivate variant',
           (token) => apiClient.deactivateProductVariant(token, variantId, payload || { reason: '' }),
-          () => refreshProductsAfterProductAdminMutation('product_admin_deactivate'),
+          (data) => {
+            mirrorProductAdminVariant(data.variant, 'product_admin_deactivate');
+            refreshProductsAfterProductAdminMutationInBackground('product_admin_deactivate');
+            return Promise.resolve();
+          },
         ),
     );
 
@@ -1278,13 +1366,15 @@ export class PosModule extends BaseModule {
           'canAdjustStock',
           'adjust stock',
           (token) => apiClient.adjustProductStock(token, variantId, input),
-          async (data) => {
-            await refreshProductsAfterProductAdminMutation('product_admin_stock_adjustment');
+          (data) => {
+            mirrorProductAdminVariant(data.variant, 'product_admin_stock_adjustment');
+            refreshProductsAfterProductAdminMutationInBackground('product_admin_stock_adjustment');
             notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
               source: 'product_admin',
               adjustment: data.adjustment,
               variant: data.variant,
             });
+            return Promise.resolve();
           },
         );
       },
