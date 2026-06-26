@@ -149,6 +149,7 @@ function sortCategoriesByRank(categories: CategoryRow[]): CategoryRow[] {
     (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
 }
 
+// `categories` must already include the local KSO preference overlay.
 function getKitchenCatalog(
   config: KitchenSelfOrderMenuConfig,
   categories: CategoryRow[],

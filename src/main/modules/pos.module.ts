@@ -41,6 +41,7 @@ import { WindowManager } from '../windows/window-manager';
 import { productRepo } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { kitchenSelfOrderCategoryPrefsRepo } from '../database/repos/kitchen-self-order-category-prefs-repo';
 import { StaffSync } from '../sync/staff-sync';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
@@ -1129,6 +1130,9 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
 
+    const getKitchenSelfOrderCategories = () =>
+      kitchenSelfOrderCategoryPrefsRepo.applyToCategories(productRepo.getCategories());
+
     const emptyProductAdminCapabilities = (): ProductAdminCapabilities => ({
       version: 0,
       canCreateProduct: false,
@@ -1408,21 +1412,53 @@ export class PosModule extends BaseModule {
       },
     );
 
+    ipcMain.handle(IPC_CHANNELS.POS_KITCHEN_CATEGORIES_GET_ALL, () => getKitchenSelfOrderCategories());
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_KITCHEN_CATEGORIES_UPDATE_ORDER,
+      async (_e, input: ProductAdminCategoryOrderUpdate[]) => {
+        const updates = normalizeCategoryOrderUpdates(input);
+        if (updates.length === 0) {
+          return {
+            ok: true,
+            data: { categories: [], updated: 0 },
+          };
+        }
+        try {
+          const categories = kitchenSelfOrderCategoryPrefsRepo.setSortOrders(updates);
+          database.markDirty();
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+            source: 'kitchen_self_order_category_prefs_order',
+          });
+          return {
+            ok: true,
+            data: { categories, updated: categories.length },
+          };
+        } catch (err: any) {
+          logger.warn(`[PosModule] local kitchen category order update failed: ${err?.message ?? err}`);
+          return { ok: false, error: err?.message ?? 'local-kitchen-category-order-update-failed' };
+        }
+      },
+    );
+
     ipcMain.handle(
       IPC_CHANNELS.POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED,
       async (_e, categoryId: string, enabled: boolean) => {
         const id = String(categoryId || '').trim();
         if (!id) return { ok: false, error: 'missing-category-id' };
         try {
+          const pref = kitchenSelfOrderCategoryPrefsRepo.setVisible(id, enabled === true);
+          // Legacy local mirror only; KSO reads the prefs table above.
           productRepo.setCategoryKitchenPrint(id, enabled === true);
           database.markDirty();
           notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
           notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
-            source: 'kitchen_category_local_mirror',
+            source: 'kitchen_self_order_category_prefs_visible',
           });
           return {
             ok: true,
-            data: { categoryId: id, kitchenPrint: enabled === true },
+            data: pref,
           };
         } catch (err: any) {
           logger.warn(`[PosModule] local kitchen category update failed: ${err?.message ?? err}`);
@@ -3050,7 +3086,7 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle('kitchen-self-order:getMenu', () => buildKitchenSelfOrderMenu({
       config: getConfig(),
-      categories: productRepo.getCategories(),
+      categories: getKitchenSelfOrderCategories(),
       products: productRepo.getAll(),
     }));
 
@@ -3060,7 +3096,7 @@ export class PosModule extends BaseModule {
         const cfg = getConfig();
         const menu = buildKitchenSelfOrderMenu({
           config: cfg,
-          categories: productRepo.getCategories(),
+          categories: getKitchenSelfOrderCategories(),
           products: productRepo.getAll(),
         });
         if (

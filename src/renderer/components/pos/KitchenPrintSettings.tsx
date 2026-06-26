@@ -69,7 +69,7 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
     setLoading(true);
     setError(null);
     try {
-      const rows = (await window.electronAPI.pos.categories.getAll()) as KitchenCategoryRow[];
+      const rows = (await window.electronAPI.pos.kitchenCategories.getAll()) as KitchenCategoryRow[];
       setCategories(sortKitchenCategories(rows || []));
     } catch (e: any) {
       setError(e?.message || 'Failed to load categories');
@@ -141,6 +141,7 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
     setError(null);
     try {
       const updates = nextCategories
+        .filter((category) => (category.kitchen_print ?? 0) === 1)
         .map((category, index) => ({
           id: category.id,
           sortOrder: index,
@@ -150,15 +151,20 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
         .map(({ id, sortOrder }) => ({ id, sortOrder }));
 
       if (updates.length > 0) {
-        const result = await window.electronAPI.pos.productAdmin.updateCategoryOrder(updates);
+        const result = await window.electronAPI.pos.kitchenCategories.updateOrder(updates);
         if (!result || (result as any).error || (result as any).ok === false) {
           throw new Error((result as any)?.error || 'Update failed');
         }
       }
-      setCategories(nextCategories.map((category, index) => ({
-        ...category,
-        sort_order: index,
-      })));
+      const visibleOrderById = new Map(
+        nextCategories
+          .filter((category) => (category.kitchen_print ?? 0) === 1)
+          .map((category, index) => [category.id, index]),
+      );
+      setCategories(nextCategories.map((category) =>
+        visibleOrderById.has(category.id)
+          ? { ...category, sort_order: visibleOrderById.get(category.id)! }
+          : category));
     } catch (e: any) {
       setCategories(previousCategories);
       setError(e?.message || tOr('settings.kitchenPrintToggleFailed', 'Could not save - check the connection'));
@@ -200,6 +206,12 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
         const result = await window.electronAPI.pos.kitchenCategories.setPrintEnabled(category.id, next);
         if (!result || (result as any).error || (result as any).ok === false) {
           throw new Error((result as any)?.error || 'Update failed');
+        }
+        const sortOrder = Number((result as any)?.data?.sortOrder);
+        if (next && Number.isFinite(sortOrder)) {
+          setCategories((prev) =>
+            prev.map((c) => (c.id === category.id ? { ...c, sort_order: sortOrder } : c)),
+          );
         }
       } catch (e: any) {
         setCategories((prev) =>
@@ -275,11 +287,11 @@ export default function KitchenPrintSettings({ lang }: KitchenPrintSettingsProps
       <p className="mb-3 text-xs text-slate-400">
         {tOr(
           'settings.kitchenPrintDesc',
-          'Marked categories appear in the customer kitchen self-order menu and print a kitchen ticket when the customer submits that order.',
+          'Marked categories appear in this POS machine kitchen self-order menu. Orders, payment and print jobs still sync normally.',
         )}
       </p>
       <p className="mb-3 text-[11px] font-semibold text-amber-700">
-        Kitchen visibility is saved on this POS only until backend category support is added.
+        Saved locally on this POS only. Product sync will not overwrite this kiosk menu.
       </p>
 
       {loading ? (

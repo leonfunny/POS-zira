@@ -777,10 +777,12 @@ interface ElectronAPI {
       getAll: () => Promise<PosCategory[]>;
     };
     kitchenCategories: {
+      getAll: () => Promise<PosCategory[]>;
       setPrintEnabled: (
         categoryId: string,
         enabled: boolean,
       ) => Promise<{ ok: boolean; data?: KitchenCategoryPrintUpdateResponse; error?: string }>;
+      updateOrder: (updates: ProductAdminCategoryOrderUpdate[]) => Promise<{ ok: boolean; data?: { categories: KitchenCategoryPrintUpdateResponse[]; updated: number }; error?: string }>;
     };
     productAdmin: {
       getCapabilities: () => Promise<{ ok: boolean; capabilities: ProductAdminCapabilities; error?: string }>;

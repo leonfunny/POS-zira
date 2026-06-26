@@ -258,6 +258,7 @@ describe('kitchen self-order MVP wiring', () => {
     expect(kitchenPanel).toContain('kitchenSelfOrderSlipPrinterType');
     expect(kitchenPanel).toContain('kitchenSelfOrderMenuSource');
     expect(kitchenPanel).toContain('resolveKitchenSelfOrderMenuSource');
+    expect(kitchenPanel).toContain('pos.kitchenCategories.getAll');
     expect(kitchenPanel).toContain('KitchenPrintSettings');
     expect(groceryPanel).toContain("window.open('selfCheckout')");
     expect(groceryPanel).toContain("selfCheckoutProfile: 'retail_scan'");

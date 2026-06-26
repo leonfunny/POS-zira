@@ -1523,4 +1523,26 @@ export const migrations: Migration[] = [
         ON lan_first_print_attempts(job_id);
     `,
   },
+  {
+    version: 49,
+    name: 'kitchen_self_order_category_prefs',
+    // Device-local kiosk category preferences. The categories table remains a
+    // backend catalog mirror; Kitchen Self Order visibility/order is owned by
+    // this POS machine so product sync cannot reset operator choices.
+    up: `
+      CREATE TABLE IF NOT EXISTS kitchen_self_order_category_prefs (
+        category_id TEXT PRIMARY KEY,
+        visible INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_kso_category_prefs_visible_order
+        ON kitchen_self_order_category_prefs(visible, sort_order);
+
+      INSERT OR IGNORE INTO kitchen_self_order_category_prefs (category_id, visible, sort_order, updated_at)
+      SELECT id, 1, sort_order, datetime('now')
+      FROM categories
+      WHERE kitchen_print = 1;
+    `,
+  },
 ];

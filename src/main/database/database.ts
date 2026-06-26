@@ -367,6 +367,7 @@ class Database {
       'local_variant_imports',
       'product_variants',
       'categories',
+      'kitchen_self_order_category_prefs',
       'draft_products',
       'pos_tables',
       'pos_customers',

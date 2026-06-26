@@ -268,19 +268,24 @@ describe('kitchen ticket pipeline wiring', () => {
     expect(hardwareSource).toContain('buildKitchenTicketLines(ticket)');
   });
 
-  it('keeps kitchen visibility local-only and persists order through the product-admin order batch', () => {
+  it('keeps kitchen visibility and order local-only through the kitchen category prefs overlay', () => {
     const posModuleSource = readSource('src/main/modules/pos.module.ts');
     const repoSource = readSource('src/main/database/repos/product-repo.ts');
+    const kitchenPrefsRepoSource = readSource('src/main/database/repos/kitchen-self-order-category-prefs-repo.ts');
     const kitchenSettingsSource = readSource('src/renderer/components/pos/KitchenPrintSettings.tsx');
 
     expect(posModuleSource).toContain('POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED');
-    expect(posModuleSource).toContain('POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER');
+    expect(posModuleSource).toContain('POS_KITCHEN_CATEGORIES_GET_ALL');
+    expect(posModuleSource).toContain('POS_KITCHEN_CATEGORIES_UPDATE_ORDER');
+    expect(posModuleSource).toContain('kitchenSelfOrderCategoryPrefsRepo.applyToCategories(productRepo.getCategories())');
     expect(repoSource).toContain('isKitchenPrintCategory(categoryId: string)');
     expect(repoSource).toContain('setCategoryKitchenPrint(categoryId: string, enabled: boolean)');
-    expect(repoSource).toContain('setCategorySortOrders');
     expect(repoSource).toContain('COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0)');
+    expect(kitchenPrefsRepoSource).toContain('WHERE category_id = ? AND visible = 1');
     expect(kitchenSettingsSource).toContain('kitchenCategories.setPrintEnabled');
-    expect(kitchenSettingsSource).toContain('productAdmin.updateCategoryOrder');
+    expect(kitchenSettingsSource).toContain('kitchenCategories.updateOrder');
+    expect(kitchenSettingsSource).toContain('.filter((category) => (category.kitchen_print ?? 0) === 1)');
+    expect(kitchenSettingsSource).not.toContain('productAdmin.updateCategoryOrder');
     expect(kitchenSettingsSource).not.toContain('kitchenPrint: next');
   });
 

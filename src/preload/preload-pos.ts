@@ -50,8 +50,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getAll: () => ipcRenderer.invoke('pos:categories:getAll'),
     },
     kitchenCategories: {
+      getAll: () => ipcRenderer.invoke('pos:kitchen-categories:getAll'),
       setPrintEnabled: (categoryId: string, enabled: boolean) =>
         ipcRenderer.invoke('pos:kitchen-category:set-print-enabled', categoryId, enabled),
+      updateOrder: (updates: any[]) =>
+        ipcRenderer.invoke('pos:kitchen-categories:update-order', updates),
     },
     productAdmin: {
       getCapabilities: () => ipcRenderer.invoke('pos:product-admin:capabilities'),

@@ -155,7 +155,7 @@ export default function KitchenSelfOrderPanel({
     (async () => {
       setCategoryLoadError(null);
       try {
-        const rows = (await window.electronAPI.pos.categories.getAll()) as KitchenCategoryRow[];
+        const rows = (await window.electronAPI.pos.kitchenCategories.getAll()) as KitchenCategoryRow[];
         if (cancelled) return;
         setCategories(Array.isArray(rows) ? rows : []);
         setCategoriesLoaded(true);

@@ -1291,6 +1291,8 @@ export const IPC_CHANNELS = {
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE: 'pos:product-admin:categories:update',
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER: 'pos:product-admin:categories:update-order',
   POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED: 'pos:kitchen-category:set-print-enabled',
+  POS_KITCHEN_CATEGORIES_GET_ALL: 'pos:kitchen-categories:getAll',
+  POS_KITCHEN_CATEGORIES_UPDATE_ORDER: 'pos:kitchen-categories:update-order',
 
   // POS - Categories
   POS_CATEGORIES_GET_ALL: 'pos:categories:getAll',
@@ -3075,6 +3077,7 @@ export interface ProductAdminCategoryOrderUpdateResponse {
 export interface KitchenCategoryPrintUpdateResponse {
   categoryId: string;
   kitchenPrint: boolean;
+  sortOrder?: number | null;
 }
 
 // ==========================================

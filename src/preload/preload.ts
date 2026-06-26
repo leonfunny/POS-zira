@@ -653,8 +653,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
     },
     kitchenCategories: {
+      getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_KITCHEN_CATEGORIES_GET_ALL),
       setPrintEnabled: (categoryId: string, enabled: boolean) =>
         ipcRenderer.invoke(IPC_CHANNELS.POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED, categoryId, enabled),
+      updateOrder: (updates: ProductAdminCategoryOrderUpdate[]) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_KITCHEN_CATEGORIES_UPDATE_ORDER, updates),
     },
     productAdmin: {
       getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES),
