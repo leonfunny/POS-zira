@@ -39,6 +39,17 @@ type PushEntry = {
   payload: any;
 };
 
+function isMirrorOnlyOrderCreatedRejection(entry: LocalSyncLogRow, result: any): boolean {
+  if (entry.entity_type !== 'order' || entry.event !== 'created') return false;
+  const code = String(result?.code || '').toLowerCase();
+  const detail = String(result?.detail || '').toLowerCase();
+  return (
+    code === 'order_not_on_server' &&
+    detail.includes('mirror-only') &&
+    detail.includes('legacy pos order sync')
+  );
+}
+
 // Mode ordering for comparisons
 const MODE_ORDER: Record<string, number> = {
   [SYNC_MODES.PATH_A]: 0,
@@ -317,6 +328,19 @@ export class SyncLogService {
 
             const isOrderCreated =
               entry.entity_type === 'order' && entry.event === 'created';
+
+            // Backend currently treats order/created sync_log push as a
+            // mirror-only path: the legacy order sync endpoint remains the
+            // source of truth for actually creating the order. That rejection
+            // is not cashier-actionable and should not become a red banner.
+            // Mark only the local sync_log entry done; do NOT mark the order
+            // row synced here because legacy OrderSync owns that state.
+            if (!r.accepted && isMirrorOnlyOrderCreatedRejection(entry, r)) {
+              syncLogRepo.markAccepted(entry.id, r.seq ?? 0);
+              totalAccepted++;
+              logger.info(`[SyncLog] Ignored mirror-only order/created push rejection for ${entry.entity_id}; legacy order sync owns creation`);
+              continue;
+            }
 
             // DUPLICATE on order/created means the server already has this
             // exact source_tx — the order DID land on the backend (just on

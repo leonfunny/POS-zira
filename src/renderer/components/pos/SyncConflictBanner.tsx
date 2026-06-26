@@ -27,6 +27,21 @@ const CONFLICT_LABELS: Record<string, { title: string; color: string }> = {
   UNKNOWN: { title: 'Sync error', color: '#95a5a6' },
 };
 
+function isMirrorOnlyOrderCreatedConflict(conflict: SyncConflict): boolean {
+  const type = String(conflict.conflict_type || '').toLowerCase();
+  const detail = String(conflict.detail || '').toLowerCase();
+  return (
+    conflict.entity_type === 'order' &&
+    type === 'order_not_on_server' &&
+    detail.includes('mirror-only') &&
+    detail.includes('legacy pos order sync')
+  );
+}
+
+function filterVisibleConflicts(conflicts: SyncConflict[]): SyncConflict[] {
+  return conflicts.filter((conflict) => !isMirrorOnlyOrderCreatedConflict(conflict));
+}
+
 export default function SyncConflictBanner() {
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -37,7 +52,7 @@ export default function SyncConflictBanner() {
       try {
         const result = await window.electronAPI?.pos?.sync?.getConflicts?.();
         if (Array.isArray(result)) {
-          setConflicts(result);
+          setConflicts(filterVisibleConflicts(result));
         }
       } catch {
         // IPC not available or handler not registered yet
@@ -54,7 +69,7 @@ export default function SyncConflictBanner() {
     const unsub = window.electronAPI?.pos?.sync?.onSyncEntry?.(() => {
       // Re-fetch conflicts when a sync entry arrives
       window.electronAPI?.pos?.sync?.getConflicts?.().then((result: any) => {
-        if (Array.isArray(result)) setConflicts(result);
+        if (Array.isArray(result)) setConflicts(filterVisibleConflicts(result));
       }).catch(() => {});
     });
     return () => { unsub?.(); };
