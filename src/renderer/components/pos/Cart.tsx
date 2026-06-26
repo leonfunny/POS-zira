@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow, { type CartItemLabelPrintResult } from './CartItem';
 import POSNumpad from './POSNumpad';
-import { appendDecimal, appendDigit, appendDoubleZero, backspace, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
+import { appendDecimal, appendDigit, appendDoubleZero, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 
@@ -381,6 +381,7 @@ interface PricePopupProps {
   item: CartItem;
   currency: string;
   onApply: (price: number) => void;
+  onUpdateBackendPrice: (item: CartItem, price: number) => Promise<void>;
   onClose: () => void;
   tOr: (key: string, fallback: string) => string;
 }
@@ -396,16 +397,20 @@ export function applyPricePopupBufferKey(buffer: string, key: string, replaceOnN
   return appendDigit(buffer, key);
 }
 
-function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) {
+function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tOr }: PricePopupProps) {
   const initialBuffer = (item.price / 100).toFixed(2);
   const [buffer, setBuffer] = useState(initialBuffer);
   const [replaceOnNextInput, setReplaceOnNextInput] = useState(true);
+  const [backendPriceBusy, setBackendPriceBusy] = useState(false);
+  const [backendPriceError, setBackendPriceError] = useState<string | null>(null);
   const parsedPrice = parseBufferGrosze(buffer);
   const canApply = buffer.trim().length > 0 && Number.isFinite(parsedPrice) && parsedPrice >= 0;
 
   useEffect(() => {
     setBuffer(initialBuffer);
     setReplaceOnNextInput(true);
+    setBackendPriceBusy(false);
+    setBackendPriceError(null);
   }, [initialBuffer, item.id]);
 
   useEffect(() => {
@@ -420,6 +425,20 @@ function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) 
   const pressKey = (key: string) => {
     setBuffer((value) => applyPricePopupBufferKey(value, key, replaceOnNextInput));
     setReplaceOnNextInput(false);
+    setBackendPriceError(null);
+  };
+
+  const handleUpdateBackendPrice = async () => {
+    if (!canApply || backendPriceBusy) return;
+    setBackendPriceBusy(true);
+    setBackendPriceError(null);
+    try {
+      await onUpdateBackendPrice(item, parsedPrice);
+      onClose();
+    } catch (err: any) {
+      setBackendPriceError(err?.message || tOr('pos.price.backendUpdateFailed', 'Could not update backend price'));
+      setBackendPriceBusy(false);
+    }
   };
 
   const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '00'];
@@ -480,13 +499,13 @@ function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) 
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => {
-                setBuffer((value) => backspace(value));
-                setReplaceOnNextInput(false);
-              }}
-              className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
+              onClick={handleUpdateBackendPrice}
+              disabled={!canApply || backendPriceBusy}
+              className="h-11 rounded-lg border border-red-700 bg-red-600 px-3 text-xs font-extrabold leading-tight text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:border-red-200 disabled:bg-red-200 disabled:text-red-50"
             >
-              {tOr('pos.backspace', 'Backspace')}
+              {backendPriceBusy
+                ? tOr('pos.price.backendUpdating', 'Updating...')
+                : tOr('pos.price.updateBackend', 'Update backend price')}
             </button>
             <button
               type="button"
@@ -499,6 +518,12 @@ function PricePopup({ item, currency, onApply, onClose, tOr }: PricePopupProps) 
               {tOr('pos.clear', 'Clear')}
             </button>
           </div>
+
+          {backendPriceError && (
+            <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+              {backendPriceError}
+            </p>
+          )}
 
           <div className="mt-3 flex gap-2">
             <button
@@ -583,6 +608,34 @@ export default function Cart({
   const pricePopupItem = pricePopupItemId
     ? cart.items.find((item) => item.id === pricePopupItemId) || null
     : null;
+
+  const handleUpdateBackendPrice = useCallback(async (item: CartItem, price: number) => {
+    if (!item.variantId) {
+      throw new Error(tOr('pos.price.backendMissingVariant', 'Cannot update backend price for this cart line'));
+    }
+
+    const product = await window.electronAPI.pos.products.getById(item.variantId);
+    const result = await window.electronAPI.pos.productAdmin.updateVariant(item.variantId, {
+      priceGrossGrosze: price,
+      expectedUpdatedAt: product?.updated_at || undefined,
+    });
+
+    if (!result?.ok) {
+      if (result?.code === 'UNSUPPORTED_CAPABILITY') {
+        throw new Error(tOr('pos.price.backendUnsupported', 'Backend price updates are not enabled for this salon'));
+      }
+      if (result?.code === 'UNAUTHORIZED_PRODUCT_ADMIN' || result?.error === 'no-auth') {
+        throw new Error(tOr('pos.price.backendUnauthorized', 'Log in to update backend price'));
+      }
+      if (result?.code === 'STALE_PRODUCT') {
+        throw new Error(tOr('pos.price.backendStale', 'Product changed on backend. Sync products and try again.'));
+      }
+      throw new Error(result?.error || result?.code || tOr('pos.price.backendUpdateFailed', 'Could not update backend price'));
+    }
+
+    dispatch({ type: 'cart/setItemPrice', payload: { id: item.id, price } });
+    controller.selectPayment();
+  }, [controller, dispatch, tOr]);
 
   const activeFieldFor = (id: string): 'qty' | 'price' | null => {
     if (controller.target.kind !== 'cartItem') return null;
@@ -793,6 +846,7 @@ export default function Cart({
             setPricePopupItemId(null);
             controller.selectPayment();
           }}
+          onUpdateBackendPrice={handleUpdateBackendPrice}
           onClose={() => setPricePopupItemId(null)}
           tOr={tOr}
         />
@@ -843,6 +897,7 @@ export default function Cart({
                 setPricePopupItemId(null);
                 controller.selectPayment();
               }}
+              onUpdateBackendPrice={handleUpdateBackendPrice}
               onClose={() => setPricePopupItemId(null)}
               tOr={tOr}
             />
