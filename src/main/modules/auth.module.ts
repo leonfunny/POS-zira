@@ -657,16 +657,15 @@ export class AuthModule extends BaseModule {
             return { success: true, data: { status: 'VERIFIED', restarting: true } };
           }
 
-          // Auto-connect Socket.IO (same as email login)
-          try {
-            await this.connectWithAvailablePrintAgentKey(
-              client,
-              result.access_token,
-              'telegram login',
-              newSalonId,
-              resolveAuthSalonName(result),
-            );
-          } catch (err: any) { logger.debug('[AuthModule] auto-connect after telegram login failed:', err?.message); }
+          // Auto-connect Socket.IO in the background. Auth state is already
+          // persisted; socket readiness is handled separately.
+          void this.connectWithAvailablePrintAgentKey(
+            client,
+            result.access_token,
+            'telegram login',
+            newSalonId,
+            resolveAuthSalonName(result),
+          ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after telegram login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
           if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: resolveAuthSalonName(result) });
@@ -808,16 +807,16 @@ export class AuthModule extends BaseModule {
             return { success: true, data: { user: authUser }, restarting: true };
           }
 
-          // Auto-connect
-          try {
-            await this.connectWithAvailablePrintAgentKey(
-              client,
-              result.access_token,
-              'email login',
-              newSalonId,
-              authUser.salonName || '',
-            );
-          } catch (err: any) { logger.debug('[AuthModule] auto-connect after email login failed:', err?.message); }
+          // Auto-connect in the background. Never block login on the socket/key
+          // handshake. Under backend load the WS handshake can stall up to the 30s
+          // connect timeout, which made login hang on every terminal.
+          void this.connectWithAvailablePrintAgentKey(
+            client,
+            result.access_token,
+            'email login',
+            newSalonId,
+            authUser.salonName || '',
+          ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after email login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
           if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: authUser.id, salonId: authUser.salonId || '', salonName: authUser.salonName });
@@ -1241,23 +1240,11 @@ export class AuthModule extends BaseModule {
 
       if (hasApiKey || (secureKey && hasMachineId)) {
         const token = getSecureAuthToken();
-        try {
-          if (token && hasApiKey) {
-            const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-            await this.connectWithAvailablePrintAgentKey(
-              client,
-              token,
-              'startup',
-              config.salonId || config.authUser?.salonId || '',
-              config.salonName || config.authUser?.salonName || '',
-            );
-          } else {
-            await this.connect();
-          }
-        } catch (e: any) {
-          logger.warn('[AuthModule] Auto-connect failed:', e);
-          if (token) {
-            try {
+        // Connect in the background so app startup / session restore isn't blocked
+        // by a slow backend WS handshake (was delaying launch up to 30s on each boot).
+        void (async () => {
+          try {
+            if (token && hasApiKey) {
               const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
               await this.connectWithAvailablePrintAgentKey(
                 client,
@@ -1266,11 +1253,27 @@ export class AuthModule extends BaseModule {
                 config.salonId || config.authUser?.salonId || '',
                 config.salonName || config.authUser?.salonName || '',
               );
-            } catch (retryErr: any) {
-              logger.warn('[AuthModule] Auto-connect retry with current print-agent key failed:', retryErr?.message || retryErr);
+            } else {
+              await this.connect();
+            }
+          } catch (e: any) {
+            logger.warn('[AuthModule] Auto-connect failed:', e);
+            if (token) {
+              try {
+                const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+                await this.connectWithAvailablePrintAgentKey(
+                  client,
+                  token,
+                  'startup',
+                  config.salonId || config.authUser?.salonId || '',
+                  config.salonName || config.authUser?.salonName || '',
+                );
+              } catch (retryErr: any) {
+                logger.warn('[AuthModule] Auto-connect retry with current print-agent key failed:', retryErr?.message || retryErr);
+              }
             }
           }
-        }
+        })();
       } else {
         logger.error('[AuthModule] isPaired=true but no valid credentials found (apiKey=%s, machineId=%s). Resetting isPaired.',
           hasApiKey, hasMachineId);
