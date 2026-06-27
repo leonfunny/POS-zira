@@ -13,6 +13,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { ProductSync } from '../sync/product-sync';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { fullSyncOnCooldown } from '../sync/full-sync-cooldown';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
 import { StaffSync } from '../sync/staff-sync';
@@ -461,8 +462,15 @@ export class SyncModule extends BaseModule {
         // First sync of each session = FULL sync (catches server-side stock
         // changes that may not bump product.updated_at — e.g., admin adjustments,
         // backfills, bulk imports). Subsequent polls use delta.
+        //
+        // Guard the forced full sweep with a persisted cooldown so a flapping
+        // socket / restart storm can't trigger a ~14MB full catalogue pull on
+        // every reconnect (which would feed the overload→reconnect loop). An
+        // empty local catalogue still full-syncs regardless — deltaSync() forces
+        // a full when productCount === 0 — so this never strands the cashier.
         if (this.productSync) {
-          const forceInitialFullSync = !this._didFullProductSync;
+          const forceInitialFullSync =
+            !this._didFullProductSync && !fullSyncOnCooldown('products');
           const result = await this.runProductSync({
             force: forceInitialFullSync,
             bypassBackoff: forceInitialFullSync,

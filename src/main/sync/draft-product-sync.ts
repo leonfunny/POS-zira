@@ -3,6 +3,7 @@ import { draftProductRepo, DraftProductRow } from '../database/repos/draft-produ
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
+import { fullSyncOnCooldown, markFullSync } from './full-sync-cooldown';
 
 /**
  * DraftProductSync — mirrors the master catalog draft_products table into
@@ -91,9 +92,17 @@ export class DraftProductSync {
       );
     });
     database.markDirty();
+    markFullSync('draft_products');
 
     logger.info(`[DraftProductSync] Full sync: ${rows.length}/${data.drafts.length} drafts accepted (nextSince=${data.nextSince ?? 'local'})`);
     return { count: rows.length };
+  }
+
+  /** Local mirror size — used to keep the cooldown from stranding an empty mirror. */
+  private getLocalDraftCount(): number {
+    return database.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM draft_product',
+    )?.n ?? 0;
   }
 
   /** Delta sync — only changes since the last cursor. Falls back to full sync if no cursor. */
@@ -102,6 +111,19 @@ export class DraftProductSync {
       "SELECT value FROM sync_metadata WHERE key = 'draft_products_last_sync'",
     );
     if (!lastSync?.value || this.deltaUnsupported) {
+      // Cursor missing → would re-pull every draft. On a flapping socket this
+      // repeats each reconnect. Skip the sweep when we full-synced recently AND
+      // the mirror still has data (delta-unsupported backends must still full).
+      if (
+        !this.deltaUnsupported &&
+        this.getLocalDraftCount() > 0 &&
+        fullSyncOnCooldown('draft_products')
+      ) {
+        logger.debug(
+          '[DraftProductSync] Full sweep on cooldown and mirror non-empty — skipping',
+        );
+        return this.getLocalDraftCount();
+      }
       const result = await this.fullSync();
       return result.count;
     }

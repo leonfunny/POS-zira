@@ -59,6 +59,7 @@ vi.mock('../src/main/logger', () => ({
   default: {
     info: vi.fn(),
     warn: loggerWarnMock,
+    debug: vi.fn(),
   },
 }));
 
@@ -131,5 +132,42 @@ describe('DraftProductSync', () => {
     expect(() => sync.applyUpdate({ id: 'bad-live', name: '   ' })).not.toThrow();
     expect(upsertManyMock).not.toHaveBeenCalled();
     expect(databaseSaveMock).not.toHaveBeenCalled();
+  });
+
+  it('skips the full draft sweep when the mirror is non-empty and a full sync ran within the cooldown', async () => {
+    databaseGetMock.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes("key = 'draft_products_last_sync'")) return undefined; // cursor missing
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { n: 100 }; // mirror has data
+      if (params?.[0] === 'draft_products_last_full_sync') return { value: new Date().toISOString() }; // full sync just now
+      return undefined;
+    });
+
+    const sync = new DraftProductSync();
+    const result = await sync.deltaSync();
+
+    expect(result).toBe(100);
+    expect(getDraftProductsMock).not.toHaveBeenCalled(); // no network sweep on a flapping reconnect
+    expect(clearAllMock).not.toHaveBeenCalled(); // mirror untouched
+  });
+
+  it('still full-syncs when the cursor is missing and the mirror is empty (cooldown never strands an empty catalogue)', async () => {
+    databaseGetMock.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes("key = 'draft_products_last_sync'")) return undefined;
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { n: 0 }; // mirror EMPTY
+      if (params?.[0] === 'draft_products_last_full_sync') return { value: new Date().toISOString() }; // recent full
+      return undefined;
+    });
+    getDraftProductsMock.mockResolvedValueOnce({
+      drafts: [{ id: 'd1', name: 'X' }],
+      deletedIds: [],
+      nextSince: 'c',
+    });
+
+    const sync = new DraftProductSync();
+    const result = await sync.deltaSync();
+
+    expect(result).toBe(1);
+    expect(getDraftProductsMock).toHaveBeenCalledTimes(1); // full sweep still runs
+    expect(clearAllMock).toHaveBeenCalledTimes(1);
   });
 });

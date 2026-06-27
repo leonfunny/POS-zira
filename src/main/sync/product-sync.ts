@@ -5,6 +5,7 @@ import { orderRepo } from '../database/repos/order-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
+import { markFullSync } from './full-sync-cooldown';
 import type { BackupRunReason } from '../database/backup-service';
 import {
   evaluateProductSyncGuard,
@@ -102,6 +103,7 @@ export class ProductSync {
       );
     });
     database.markDirty();
+    markFullSync('products');
 
     logger.info(
       `[ProductSync] Full sync: ${data.products.length} products, ${data.categories.length} categories (nextSince=${data.nextSince ?? 'local'})`,
