@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, RefreshCw, Search, SlidersHorizontal, Tags } from 'lucide-react';
+import { Plus, RefreshCw, ScanBarcode, Search, SlidersHorizontal, Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductKindFilter } from '../../hooks/useProducts';
@@ -16,10 +16,12 @@ interface ProductToolbarProps {
   onKindFilterChange: (value: ProductKindFilter) => void;
   loading: boolean;
   syncing: boolean;
+  canCreateProduct: boolean;
   canManageCategories: boolean;
   onRefresh: () => void;
   onSync: () => void;
   onAddProduct: () => void;
+  onAddByBarcode: () => void;
   onManageCategories: () => void;
 }
 
@@ -42,10 +44,12 @@ export default function ProductToolbar({
   onKindFilterChange,
   loading,
   syncing,
+  canCreateProduct,
   canManageCategories,
   onRefresh,
   onSync,
   onAddProduct,
+  onAddByBarcode,
   onManageCategories,
 }: ProductToolbarProps) {
   return (
@@ -82,10 +86,21 @@ export default function ProductToolbar({
         <button
           type="button"
           onClick={onAddProduct}
-          className="inline-flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700 active:bg-brand-800"
+          disabled={!canCreateProduct}
+          className="inline-flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700 active:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+          title={!canCreateProduct ? tOr(t, 'products.create.unavailable', 'Product creation needs product admin backend support') : undefined}
         >
           <Plus size={18} />
           {tOr(t, 'products.addProduct', 'Add product')}
+        </button>
+
+        <button
+          type="button"
+          onClick={onAddByBarcode}
+          className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+        >
+          <ScanBarcode size={17} />
+          {tOr(t, 'products.scanBarcode', 'Scan barcode')}
         </button>
 
         <button

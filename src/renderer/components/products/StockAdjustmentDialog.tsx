@@ -48,7 +48,7 @@ export default function StockAdjustmentDialog({
   }, [mode, newQuantity, quantity, stockBefore]);
 
   const validate = (): string | null => {
-    if (!reason.trim()) return tOr(t, 'products.stock.reasonRequired', 'Enter a reason');
+    if (mode !== 'recount' && !reason.trim()) return tOr(t, 'products.stock.reasonRequired', 'Enter a reason');
     if (mode === 'recount') {
       const next = Number(newQuantity);
       if (!Number.isFinite(next) || next < 0) {
@@ -78,7 +78,7 @@ export default function StockAdjustmentDialog({
         mode,
         quantity: mode === 'recount' ? undefined : Number(quantity),
         newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
-        reason: reason.trim(),
+        reason: mode === 'recount' ? reason.trim() || undefined : reason.trim(),
         expectedUpdatedAt: product.updated_at || undefined,
         idempotencyKey: makeIdempotencyKey(),
       });
@@ -195,7 +195,9 @@ export default function StockAdjustmentDialog({
 
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.stock.reason', 'Reason')}
+              {mode === 'recount'
+                ? tOr(t, 'products.stock.reasonOptional', 'Reason (optional)')
+                : tOr(t, 'products.stock.reason', 'Reason')}
             </span>
             <textarea
               value={reason}

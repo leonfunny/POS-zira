@@ -5,8 +5,10 @@ import type { ProductListItem } from '../../hooks/useProducts';
 interface DeactivateProductDialogProps {
   product: ProductListItem;
   t: (key: string) => string;
+  isProductInCart?: boolean;
   onClose: () => void;
   onDeactivated: () => Promise<void> | void;
+  onStaleProductHidden?: () => Promise<void> | void;
 }
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -17,40 +19,84 @@ function tOr(t: (key: string) => string, key: string, fallback: string): string 
 export default function DeactivateProductDialog({
   product,
   t,
+  isProductInCart = false,
   onClose,
   onDeactivated,
+  onStaleProductHidden,
 }: DeactivateProductDialogProps) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const handleDeactivate = async () => {
-    if (!reason.trim()) {
-      setMessage({ ok: false, text: tOr(t, 'products.deactivate.reasonRequired', 'Enter a reason') });
-      return;
+  const productIsInCart = async (): Promise<boolean> => {
+    if (isProductInCart) return true;
+    try {
+      const state = await window.electronAPI.pos.getState();
+      return (state?.cart?.items || []).some((item: any) => item?.variantId === product.id);
+    } catch {
+      return false;
     }
+  };
 
+  const failureMessage = (result: { code?: string; error?: string; status?: number } | null | undefined): string => {
+    const code = String(result?.code || '').toUpperCase();
+    const error = String(result?.error || '').toUpperCase();
+    if (code === 'STALE_PRODUCT' || result?.status === 409 || error.includes('STALE_PRODUCT')) {
+      return tOr(t, 'products.deactivate.stale', 'Product changed. Refresh the product and try again.');
+    }
+    if (code === 'UNAUTHORIZED_PRODUCT_ADMIN' || result?.status === 401 || result?.status === 403 || error.includes('UNAUTHORIZED') || error.includes('FORBIDDEN')) {
+      return tOr(t, 'products.deactivate.permissionRequired', 'Manager permission is required to hide products.');
+    }
+    if (code === 'UNSUPPORTED_CAPABILITY') {
+      return tOr(t, 'products.deactivate.permissionRequired', 'Manager permission is required to hide products.');
+    }
+    if (code === 'PRODUCT_NOT_FOUND' || result?.status === 404 || error.includes('HTTP 404')) {
+      return tOr(t, 'products.deactivate.notFound', 'Product was not found on the backend.');
+    }
+    return result?.error || result?.code || tOr(t, 'products.deactivate.failed', 'Could not hide product');
+  };
+
+  const isNotFound = (result: { code?: string; error?: string; status?: number } | null | undefined): boolean => {
+    const code = String(result?.code || '').toUpperCase();
+    const error = String(result?.error || '').toUpperCase();
+    return code === 'PRODUCT_NOT_FOUND' || result?.status === 404 || error.includes('HTTP 404');
+  };
+
+  const handleDeactivate = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      const result = await window.electronAPI.pos.productAdmin.deactivateVariant(product.id, {
-        reason: reason.trim(),
-        expectedUpdatedAt: product.updated_at || undefined,
-      });
-
-      if (!result?.ok) {
+      if (await productIsInCart()) {
         setMessage({
           ok: false,
-          text: result?.error || result?.code || tOr(t, 'products.deactivate.failed', 'Could not stop selling product'),
+          text: tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it.'),
         });
         return;
       }
 
-      setMessage({ ok: true, text: tOr(t, 'products.deactivate.success', 'Product stopped') });
+      const trimmedReason = reason.trim();
+      const result = await window.electronAPI.pos.productAdmin.deactivateVariant(product.id, {
+        expectedUpdatedAt: product.updated_at || undefined,
+        reason: trimmedReason || 'Hidden from POS',
+      });
+
+      if (!result?.ok) {
+        if (isNotFound(result) && onStaleProductHidden) {
+          await onStaleProductHidden();
+          onClose();
+          return;
+        }
+        setMessage({
+          ok: false,
+          text: failureMessage(result),
+        });
+        return;
+      }
+
       await onDeactivated();
       onClose();
     } catch (err: any) {
-      setMessage({ ok: false, text: err?.message || tOr(t, 'products.deactivate.failed', 'Could not stop selling product') });
+      setMessage({ ok: false, text: err?.message || tOr(t, 'products.deactivate.failed', 'Could not hide product') });
     } finally {
       setBusy(false);
     }
@@ -61,11 +107,11 @@ export default function DeactivateProductDialog({
       <section
         className="w-full max-w-[420px] rounded-lg bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
-        aria-label={tOr(t, 'products.deactivate.title', 'Stop selling')}
+        aria-label={tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}
       >
         <header className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4">
           <h3 className="text-base font-semibold text-slate-950">
-            {tOr(t, 'products.deactivate.title', 'Stop selling')}
+            {tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}
           </h3>
           <button
             type="button"
@@ -79,11 +125,11 @@ export default function DeactivateProductDialog({
 
         <div className="space-y-4 p-4">
           <p className="text-sm text-slate-600">
-            {tOr(t, 'products.deactivate.description', 'This hides the product from POS sales but keeps old orders and receipts intact.')}
+            {tOr(t, 'products.deactivate.hideDescription', 'This product will no longer appear for sale in this salon. Existing orders and reports are not affected.')}
           </p>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.deactivate.reason', 'Reason')}
+              {tOr(t, 'products.deactivate.reasonOptional', 'Reason (optional)')}
             </span>
             <textarea
               value={reason}
@@ -115,7 +161,7 @@ export default function DeactivateProductDialog({
             disabled={busy}
             className="h-11 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? tOr(t, 'products.deactivate.saving', 'Saving...') : tOr(t, 'products.deactivate.confirm', 'Stop selling')}
+            {busy ? tOr(t, 'products.deactivate.saving', 'Saving...') : tOr(t, 'products.deactivate.hideConfirm', 'Hide product')}
           </button>
         </footer>
       </section>

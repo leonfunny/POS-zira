@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
+import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../shared/pos-sale';
-import type { ProductAdminUpdateVariantInput } from '../../../shared/types';
+import type { ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 
@@ -12,6 +13,7 @@ interface ProductEditFormProps {
   language: string;
   t: (key: string) => string;
   canManageCategories: boolean;
+  canAdjustStock: boolean;
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onManageCategories: () => void;
@@ -35,9 +37,43 @@ function parseMoneyToGrosze(value: string): number | null {
   return Math.round(parsed * 100);
 }
 
+function decimalPlaces(value: string): number {
+  const [, fraction = ''] = value.split('.');
+  return fraction.length;
+}
+
+function parseStockQuantity(value: string, sellBy: 'PIECE' | 'WEIGHT'): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return 0;
+  if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  if (sellBy === 'PIECE') return Number.isInteger(parsed) ? parsed : null;
+  if (decimalPlaces(normalized) > 3) return null;
+  return Math.round(parsed * 1000) / 1000;
+}
+
+function currentStock(product: ProductListItem): number {
+  return Number(product.available_qty ?? product.in_stock ?? 0) || 0;
+}
+
+function stockInputFromProduct(product: ProductListItem): string {
+  return String(currentStock(product));
+}
+
+function makeIdempotencyKey(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return randomUuid;
+  return `product-stock-recount-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function looksLikeFreshScaleCategory(category: Category | undefined): boolean {
   const raw = `${category?.name || ''} ${category?.name_translations || ''}`.toLowerCase();
   return /\bscale\b|\bfresh\b|tươi|tuoi|đồ tươi|do tuoi/.test(raw);
+}
+
+function productSellBy(product: ProductListItem): 'PIECE' | 'WEIGHT' {
+  return classifyProductSale(product).sellBy;
 }
 
 export default function ProductEditForm({
@@ -46,6 +82,7 @@ export default function ProductEditForm({
   language,
   t,
   canManageCategories,
+  canAdjustStock,
   onCancel,
   onDirtyChange,
   onManageCategories,
@@ -57,8 +94,9 @@ export default function ProductEditForm({
   const [barcode, setBarcode] = useState(product.barcode || '');
   const [sku, setSku] = useState(product.sku || '');
   const [categoryId, setCategoryId] = useState(product.category_id || '');
-  const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(normalizeSellBy(product.sell_by));
+  const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(productSellBy(product));
   const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
+  const [stockQty, setStockQty] = useState(stockInputFromProduct(product));
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -70,8 +108,9 @@ export default function ProductEditForm({
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
     setCategoryId(product.category_id || '');
-    setSellBy(normalizeSellBy(product.sell_by));
+    setSellBy(productSellBy(product));
     setSaleUnit(product.sale_unit || '');
+    setStockQty(stockInputFromProduct(product));
     setImageUrl(product.image_url || '');
     setBusy(false);
     setMessage(null);
@@ -83,17 +122,20 @@ export default function ProductEditForm({
     );
   }, [categories, language]);
 
-  const dirty = useMemo(() => (
+  const productDirty = useMemo(() => (
     name !== (product.name || '')
     || priceGross !== moneyInputFromGrosze(product.retail_price)
     || vatRate !== String(Number(product.vat_rate) || 23)
     || barcode !== (product.barcode || '')
     || sku !== (product.sku || '')
     || categoryId !== (product.category_id || '')
-    || sellBy !== normalizeSellBy(product.sell_by)
+    || sellBy !== productSellBy(product)
     || saleUnit !== (product.sale_unit || '')
     || imageUrl !== (product.image_url || '')
   ), [barcode, categoryId, imageUrl, name, priceGross, product, saleUnit, sellBy, sku, vatRate]);
+
+  const stockDirty = canAdjustStock && stockQty !== stockInputFromProduct(product);
+  const dirty = productDirty || stockDirty;
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -104,6 +146,11 @@ export default function ProductEditForm({
     if (parseMoneyToGrosze(priceGross) === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
     if (!Number.isFinite(vat) || vat < 0) return tOr(t, 'products.edit.vatInvalid', 'Enter a valid VAT rate');
+    if (canAdjustStock && parseStockQuantity(stockQty, sellBy) === null) {
+      return sellBy === 'WEIGHT'
+        ? tOr(t, 'products.create.stockWeightPrecision', 'Enter kg stock with up to 3 decimal places')
+        : tOr(t, 'products.create.stockPieceInvalid', 'Piece stock must be a whole number');
+    }
     return null;
   };
 
@@ -116,6 +163,8 @@ export default function ProductEditForm({
 
     const priceGrossGrosze = parseMoneyToGrosze(priceGross);
     if (priceGrossGrosze === null) return;
+    const parsedStockQty = canAdjustStock ? parseStockQuantity(stockQty, sellBy) : null;
+    if (canAdjustStock && parsedStockQty === null) return;
 
     const payload: ProductAdminUpdateVariantInput = {
       name: name.trim(),
@@ -133,14 +182,42 @@ export default function ProductEditForm({
     setBusy(true);
     setMessage(null);
     try {
-      const result = await window.electronAPI.pos.productAdmin.updateVariant(product.id, payload);
-      if (!result?.ok) {
-        setMessage({
-          ok: false,
-          text: result?.error || result?.code || tOr(t, 'products.edit.failed', 'Could not save product'),
-        });
-        return;
+      let expectedUpdatedAtForStock = product.updated_at || undefined;
+      let savedProductFields = false;
+
+      if (productDirty) {
+        const result = await window.electronAPI.pos.productAdmin.updateVariant(product.id, payload);
+        if (!result?.ok) {
+          setMessage({
+            ok: false,
+            text: result?.error || result?.code || tOr(t, 'products.edit.failed', 'Could not save product'),
+          });
+          return;
+        }
+        expectedUpdatedAtForStock = result.data?.variant?.updatedAt || expectedUpdatedAtForStock;
+        savedProductFields = true;
       }
+
+      if (stockDirty) {
+        const stockPayload: ProductAdminStockAdjustmentInput = {
+          mode: 'recount',
+          newQuantity: parsedStockQty ?? 0,
+          expectedUpdatedAt: expectedUpdatedAtForStock,
+          idempotencyKey: makeIdempotencyKey(),
+        };
+        const stockResult = await window.electronAPI.pos.productAdmin.adjustStock(product.id, stockPayload);
+        if (!stockResult?.ok) {
+          const failure = stockResult?.error || stockResult?.code || tOr(t, 'products.stock.failed', 'Could not adjust stock');
+          setMessage({
+            ok: false,
+            text: savedProductFields
+              ? `${tOr(t, 'products.edit.stockFailed', 'Product saved, but stock could not be updated')}: ${failure}`
+              : failure,
+          });
+          return;
+        }
+      }
+
       setMessage({ ok: true, text: tOr(t, 'products.edit.success', 'Product saved') });
       await onSaved();
       onDirtyChange?.(false);
@@ -276,6 +353,9 @@ export default function ProductEditForm({
                 if (nextSellBy === 'PIECE' && (!saleUnit.trim() || saleUnit.trim().toLowerCase() === 'kg')) {
                   setSaleUnit('szt');
                 }
+                if (nextSellBy === 'PIECE' && stockQty.includes('.')) {
+                  setStockQty(String(Math.floor(Number(stockQty) || 0)));
+                }
               }}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
@@ -302,6 +382,23 @@ export default function ProductEditForm({
               : tOr(t, 'products.drawer.pieceHint', 'Normal products keep the existing piece-based flow.')}
           </div>
         </div>
+
+        {canAdjustStock ? (
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {sellBy === 'WEIGHT'
+                ? tOr(t, 'products.edit.stockKg', 'Actual stock (kg)')
+                : tOr(t, 'products.edit.stockPieces', 'Actual stock (pcs)')}
+            </span>
+            <input
+              inputMode="decimal"
+              value={stockQty}
+              onChange={(event) => setStockQty(event.target.value)}
+              step={sellBy === 'WEIGHT' ? '0.001' : '1'}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+        ) : null}
 
         <label className="block">
           <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">

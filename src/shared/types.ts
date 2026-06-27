@@ -2921,6 +2921,7 @@ export interface ProductAdminIpcResult<T> {
   data?: T;
   error?: string;
   code?: ProductAdminErrorCode | string;
+  status?: number;
   field?: string | null;
   details?: Record<string, unknown> | null;
 }
@@ -2963,7 +2964,6 @@ export interface ProductAdminCreateProductInput {
   initialStockQty?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
-  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
   imageUrl?: string | null;
   idempotencyKey?: string;
 }
@@ -2977,7 +2977,6 @@ export interface ProductAdminUpdateVariantInput {
   vatRate?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
-  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
   imageUrl?: string | null;
   isActive?: boolean;
   expectedUpdatedAt?: string;
@@ -2996,7 +2995,7 @@ export interface ProductAdminStockAdjustmentInput {
   mode: ProductStockAdjustmentMode;
   quantity?: number;
   newQuantity?: number;
-  reason: string;
+  reason?: string;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
   idempotencyKey?: string;

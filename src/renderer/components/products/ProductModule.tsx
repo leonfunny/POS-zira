@@ -3,9 +3,11 @@ import { AlertTriangle, PackageSearch } from 'lucide-react';
 import { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useProducts, ProductListItem } from '../../hooks/useProducts';
-import type { ProductAdminCapabilities } from '../../../shared/types';
+import { usePosStore } from '../../hooks/usePosStore';
+import type { ProductAdminCapabilities, ProductAdminVariant } from '../../../shared/types';
 import CategoryManagerDialog from './CategoryManagerDialog';
 import ProductAddFlow from './ProductAddFlow';
+import ProductCreateDialog from './ProductCreateDialog';
 import ProductDetailDrawer from './ProductDetailDrawer';
 import ProductTable from './ProductTable';
 import ProductToolbar from './ProductToolbar';
@@ -15,6 +17,8 @@ interface ProductModuleProps {
 }
 
 const PRODUCT_TABLE_RENDER_LIMIT = 300;
+
+type ProductModuleToast = { kind: 'success' | 'error'; text: string };
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -56,8 +60,36 @@ function adminCapabilitySummary(t: (key: string) => string, capabilities: Produc
     : enabledText;
 }
 
+function saleUnitImpliesWeight(value: unknown): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
+}
+
+function productAdminVariantToProduct(variant: ProductAdminVariant): ProductListItem {
+  const saleUnit = variant.saleUnit ?? null;
+  return {
+    id: variant.id,
+    template_id: variant.templateId ?? null,
+    name: variant.name || variant.id,
+    sku: variant.sku ?? null,
+    barcode: variant.barcode ?? null,
+    retail_price: Number(variant.priceGrossGrosze) || Math.round((Number(variant.retailPrice) || 0) * 100),
+    category_id: variant.categoryId ?? null,
+    image_url: variant.imageUrl ?? null,
+    in_stock: Number(variant.totalStockQty) || 0,
+    vat_rate: Number(variant.vatRate) || 23,
+    is_active: variant.isActive === false ? 0 : 1,
+    updated_at: variant.updatedAt ?? null,
+    available_qty: Number(variant.availableQty) || 0,
+    sale_unit: saleUnit,
+    sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',
+    name_translations: variant.nameTranslations ? JSON.stringify(variant.nameTranslations) : null,
+  };
+}
+
 export default function ProductModule({ language }: ProductModuleProps) {
   const { t } = useTranslation(language);
+  const { state: posState } = usePosStore();
   const {
     products,
     allProducts,
@@ -72,18 +104,21 @@ export default function ProductModule({ language }: ProductModuleProps) {
     setKindFilter,
     refresh,
     syncProducts,
+    hideProductLocally,
     syncing,
     syncErrorCode,
     syncOkAt,
   } = useProducts(language);
 
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addInitialBarcode, setAddInitialBarcode] = useState('');
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [adminCapabilities, setAdminCapabilities] = useState<ProductAdminCapabilities | null>(null);
   const [adminCapabilityError, setAdminCapabilityError] = useState<string | null>(null);
   const [adminCapabilitiesLoading, setAdminCapabilitiesLoading] = useState(true);
+  const [toast, setToast] = useState<ProductModuleToast | null>(null);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
@@ -94,12 +129,23 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
   const adminSummary = adminCapabilitySummary(t, adminCapabilities);
+  const selectedProductInCart = useMemo(() => {
+    if (!selectedProduct) return false;
+    return (posState?.cart?.items || []).some((item: any) => item?.variantId === selectedProduct.id);
+  }, [posState?.cart?.items, selectedProduct]);
 
   useEffect(() => {
     if (!selectedProduct) return;
     const fresh = allProducts.find((product) => product.id === selectedProduct.id);
     if (fresh && fresh !== selectedProduct) setSelectedProduct(fresh);
+    if (!fresh && !selectedProduct._isDraft) setSelectedProduct(null);
   }, [allProducts, selectedProduct]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,6 +176,28 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const handleOpenProduct = useCallback((product: ProductListItem) => {
     setSelectedProduct(product);
   }, []);
+
+  const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant) => {
+    await refresh();
+    const created = productAdminVariantToProduct(variant);
+    setSelectedProduct(created);
+    setQuery(created.barcode || created.sku || created.name);
+  }, [refresh, setQuery]);
+
+  const handleProductDeactivated = useCallback((product: ProductListItem) => {
+    hideProductLocally(product.id);
+    setSelectedProduct(null);
+    setToast({ kind: 'success', text: tOr(t, 'products.deactivate.hidden', 'Product hidden') });
+  }, [hideProductLocally, t]);
+
+  const handleStaleProductHidden = useCallback((product: ProductListItem) => {
+    hideProductLocally(product.id);
+    setSelectedProduct(null);
+    setToast({
+      kind: 'success',
+      text: tOr(t, 'products.deactivate.notFoundHidden', 'Product was already unavailable; hidden locally.'),
+    });
+  }, [hideProductLocally, t]);
 
   const handleImportDraft = useCallback((product: ProductListItem) => {
     if (!product.barcode) return;
@@ -184,10 +252,12 @@ export default function ProductModule({ language }: ProductModuleProps) {
         onKindFilterChange={setKindFilter}
         loading={loading}
         syncing={syncing}
+        canCreateProduct={adminCapabilities?.canCreateProduct === true}
         canManageCategories={canManageCategories}
         onRefresh={() => void refresh()}
         onSync={() => void syncProducts()}
-        onAddProduct={() => {
+        onAddProduct={() => setCreateOpen(true)}
+        onAddByBarcode={() => {
           setAddInitialBarcode('');
           setAddOpen(true);
         }}
@@ -275,10 +345,22 @@ export default function ProductModule({ language }: ProductModuleProps) {
         canAdjustStock={adminCapabilities?.canAdjustStock === true}
         canManageCategories={canManageCategories}
         adminBackendReady={adminBackendReady}
+        productInCart={selectedProductInCart}
         onClose={() => setSelectedProduct(null)}
         onImportDraft={handleImportDraft}
         onManageCategories={() => setCategoryManagerOpen(true)}
         onProductChanged={refresh}
+        onProductDeactivated={handleProductDeactivated}
+        onStaleProductHidden={handleStaleProductHidden}
+      />
+
+      <ProductCreateDialog
+        open={createOpen}
+        categories={categories}
+        language={language}
+        t={t}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreatedProduct}
       />
 
       <ProductAddFlow
@@ -301,6 +383,19 @@ export default function ProductModule({ language }: ProductModuleProps) {
           onClose={() => setCategoryManagerOpen(false)}
           onChanged={refresh}
         />
+      ) : null}
+
+      {toast ? (
+        <div
+          role={toast.kind === 'error' ? 'alert' : 'status'}
+          className={`fixed bottom-4 right-4 z-[70] max-w-sm rounded-md border px-4 py-3 text-sm font-medium shadow-lg ${
+            toast.kind === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-rose-200 bg-rose-50 text-rose-800'
+          }`}
+        >
+          {toast.text}
+        </div>
       ) : null}
     </div>
   );

@@ -64,7 +64,13 @@ function draftPreviewFromLookup(response: any, fallbackBarcode: string): DraftPr
   };
 }
 
+function saleUnitImpliesWeight(value: unknown): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
+}
+
 function variantToProduct(variant: any): ProductListItem {
+  const saleUnit = variant.sale_unit ?? variant.saleUnit ?? null;
   return {
     id: variant.id,
     template_id: variant.template_id ?? null,
@@ -84,8 +90,8 @@ function variantToProduct(variant: any): ProductListItem {
     vat_amount: Number(variant.vat_amount) || undefined,
     is_on_sale: Number(variant.is_on_sale) || undefined,
     thumbnail_url: variant.thumbnail_url ?? null,
-    sale_unit: variant.sale_unit ?? null,
-    sell_by: variant.sell_by ?? variant.sellBy ?? 'PIECE',
+    sale_unit: saleUnit,
+    sell_by: variant.sell_by ?? variant.sellBy ?? (saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE'),
     name_translations: variant.name_translations ?? null,
   };
 }

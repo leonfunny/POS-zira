@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
+import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import DeactivateProductDialog from './DeactivateProductDialog';
@@ -19,10 +20,13 @@ interface ProductDetailDrawerProps {
   canAdjustStock: boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
+  productInCart: boolean;
   onClose: () => void;
   onImportDraft: (product: ProductListItem) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
+  onProductDeactivated: (product: ProductListItem) => Promise<void> | void;
+  onStaleProductHidden: (product: ProductListItem) => Promise<void> | void;
 }
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -69,10 +73,13 @@ export default function ProductDetailDrawer({
   canAdjustStock,
   canManageCategories,
   adminBackendReady,
+  productInCart,
   onClose,
   onImportDraft,
   onManageCategories,
   onProductChanged,
+  onProductDeactivated,
+  onStaleProductHidden,
 }: ProductDetailDrawerProps) {
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -98,10 +105,11 @@ export default function ProductDetailDrawer({
   const categoryName = category ? resolveName(category, language) : '-';
   const image = product.thumbnail_url || product.image_url;
   const stock = product.available_qty ?? product.in_stock ?? 0;
+  const saleClass = classifyProductSale(product);
   const canPrintLabel = !!product.barcode && !labelBusy;
   const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
   const canEditProduct = canUpdateProduct && !product._isDraft;
-  const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0;
+  const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
 
   const handleCloseDrawer = () => {
     if (editing && editDirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
@@ -234,14 +242,21 @@ export default function ProductDetailDrawer({
                 title={
                   product._isDraft
                     ? tOr(t, 'products.deactivate.draftDisabled', 'Import the draft before stopping sales')
+                    : productInCart
+                      ? tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it')
                     : !canDeactivateProduct
                       ? tOr(t, 'products.deactivate.unavailable', 'Stopping sales needs product admin backend support')
                       : undefined
                 }
               >
                 <Ban size={17} />
-                {tOr(t, 'products.deactivate.button', 'Stop selling')}
+                {tOr(t, 'products.deactivate.hideButton', 'Hide product')}
               </button>
+              {productInCart && canDeactivateProduct && product.is_active !== 0 && !product._isDraft ? (
+                <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                  {tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it.')}
+                </div>
+              ) : null}
               {labelMessage ? (
                 <div className={`mt-2 rounded-md border px-3 py-2 text-xs ${
                   labelMessage.ok
@@ -274,6 +289,7 @@ export default function ProductDetailDrawer({
               language={language}
               t={t}
               canManageCategories={canManageCategories}
+              canAdjustStock={canAdjustStock}
               onManageCategories={onManageCategories}
               onDirtyChange={setEditDirty}
               onCancel={() => {
@@ -292,7 +308,7 @@ export default function ProductDetailDrawer({
               <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
               <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
               <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
-              <DetailRow label={tOr(t, 'products.drawer.sellBy', 'Sell by')} value={product.sell_by === 'WEIGHT' ? 'Weight' : 'Piece'} />
+              <DetailRow label={tOr(t, 'products.drawer.sellBy', 'Sell by')} value={saleClass.sellBy === 'WEIGHT' ? 'Weight' : 'Piece'} />
               <DetailRow label={tOr(t, 'products.drawer.saleUnit', 'Sale unit')} value={product.sale_unit || '-'} />
               <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
             </div>
@@ -312,10 +328,13 @@ export default function ProductDetailDrawer({
           <DeactivateProductDialog
             product={product}
             t={t}
+            isProductInCart={productInCart}
             onClose={() => setDeactivateOpen(false)}
             onDeactivated={async () => {
-              await onProductChanged();
-              onClose();
+              await onProductDeactivated(product);
+            }}
+            onStaleProductHidden={async () => {
+              await onStaleProductHidden(product);
             }}
           />
         ) : null}

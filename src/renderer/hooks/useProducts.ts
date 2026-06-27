@@ -26,6 +26,7 @@ interface UseProductsResult {
   setKindFilter: (filter: ProductKindFilter) => void;
   refresh: () => Promise<void>;
   syncProducts: () => Promise<void>;
+  hideProductLocally: (productId: string) => void;
   syncing: boolean;
   syncErrorCode: ProductSyncErrorCode;
   syncOkAt: number | null;
@@ -199,6 +200,10 @@ export function useProducts(language: string): UseProductsResult {
     }
   }, [refresh, syncing]);
 
+  const hideProductLocally = useCallback((productId: string) => {
+    setAllProducts((current) => current.filter((product) => product.id !== productId));
+  }, []);
+
   const products = useMemo(() => {
     const normalizedQuery = normalizeSearch(query.trim());
     return allProducts.filter((product) => {
@@ -222,6 +227,7 @@ export function useProducts(language: string): UseProductsResult {
     setKindFilter,
     refresh: () => refresh(false),
     syncProducts,
+    hideProductLocally,
     syncing,
     syncErrorCode,
     syncOkAt,

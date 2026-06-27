@@ -1167,9 +1167,16 @@ export class PosModule extends BaseModule {
       ok: false,
       error: err?.message ?? fallback,
       code: err?.code,
+      status: typeof err?.status === 'number' ? err.status : undefined,
       field: err?.field,
       details: err?.details,
     });
+
+    const isProductAdminNotFound = (result: ProductAdminIpcResult<unknown>): boolean => {
+      const code = String(result.code || '').toUpperCase();
+      const error = String(result.error || '').toUpperCase();
+      return result.status === 404 || code === 'PRODUCT_NOT_FOUND' || error.includes('HTTP 404');
+    };
 
     const refreshProductsAfterProductAdminMutation = async (source: string) => {
       try {
@@ -1198,6 +1205,17 @@ export class PosModule extends BaseModule {
       if (retailPrice !== null) return Math.max(0, Math.round(retailPrice * 100));
 
       return Math.max(0, Math.round(Number(existing?.retail_price) || 0));
+    };
+
+    const saleUnitImpliesWeight = (value: unknown): boolean => {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
+    };
+
+    const getProductAdminVariantSellBy = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): 'PIECE' | 'WEIGHT' => {
+      const raw = String(variant.sellBy ?? existing?.sell_by ?? '').trim().toUpperCase();
+      if (raw === 'WEIGHT' || saleUnitImpliesWeight(variant.saleUnit ?? existing?.sale_unit)) return 'WEIGHT';
+      return 'PIECE';
     };
 
     const encodeProductAdminNameTranslations = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): string | null => {
@@ -1241,7 +1259,7 @@ export class PosModule extends BaseModule {
         is_on_sale: existing?.is_on_sale ?? 0,
         thumbnail_url: variant.thumbnailUrl ?? existing?.thumbnail_url ?? null,
         sale_unit: variant.saleUnit ?? existing?.sale_unit ?? null,
-        sell_by: variant.sellBy ?? existing?.sell_by ?? 'PIECE',
+        sell_by: getProductAdminVariantSellBy(variant, existing),
         name_translations: encodeProductAdminNameTranslations(variant, existing),
         customer_display_enabled: existing?.customer_display_enabled ?? 1,
         customer_display_sort_order: existing?.customer_display_sort_order ?? null,
@@ -1253,6 +1271,16 @@ export class PosModule extends BaseModule {
       productRepo.upsertMany([row]);
       database.markDirty();
       logger.info(`[PosModule] Mirrored product-admin variant ${variant.id} locally (${source}, price=${priceGrosze})`);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: `${source}_local_mirror` });
+    };
+
+    const deactivateLocalProductAdminVariant = (variantId: string, source: string) => {
+      const id = String(variantId || '').trim();
+      if (!id) return;
+      productRepo.deactivateByIds([id]);
+      database.markDirty();
+      logger.info(`[PosModule] Marked product-admin variant ${id} inactive locally (${source})`);
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: `${source}_local_mirror` });
     };
@@ -1342,17 +1370,26 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT,
-      async (_e, variantId: string, payload: ProductAdminDeactivateVariantInput) =>
-        withProductAdminCapability<ProductAdminVariantMutationResponse>(
+      async (_e, variantId: string, payload: ProductAdminDeactivateVariantInput) => {
+        const result = await withProductAdminCapability<ProductAdminVariantMutationResponse>(
           'canDeactivateProduct',
           'deactivate variant',
-          (token) => apiClient.deactivateProductVariant(token, variantId, payload || { reason: '' }),
+          (token) => apiClient.deactivateProductVariant(token, variantId, {
+            ...(payload || {}),
+            reason: String(payload?.reason || '').trim() || 'Hidden from POS',
+          }),
           (data) => {
             mirrorProductAdminVariant(data.variant, 'product_admin_deactivate');
+            deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate');
             refreshProductsAfterProductAdminMutationInBackground('product_admin_deactivate');
             return Promise.resolve();
           },
-        ),
+        );
+        if (!result.ok && isProductAdminNotFound(result)) {
+          deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate_not_found');
+        }
+        return result;
+      },
     );
 
     ipcMain.handle(

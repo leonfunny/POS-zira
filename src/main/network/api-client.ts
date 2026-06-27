@@ -477,11 +477,11 @@ function normalizeTelegramTokenResponse(data: any): TelegramLoginTokenResponse {
   return { token, expiresAt, deepLink };
 }
 
-function withoutUnsupportedProductAdminSellBy<T extends { sellBy?: unknown }>(
+function withoutUnsupportedProductAdminSellBy<T extends object>(
   payload: T | null | undefined,
 ): Omit<T, 'sellBy'> {
-  const { sellBy: _ignoredSellBy, ...body } = (payload || {}) as T;
-  return body;
+  const { sellBy: _ignoredSellBy, ...body } = (payload || {}) as T & { sellBy?: unknown };
+  return body as Omit<T, 'sellBy'>;
 }
 
 /**
