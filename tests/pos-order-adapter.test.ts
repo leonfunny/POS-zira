@@ -239,6 +239,94 @@ describe('pos order adapter', () => {
     expect(item.total).toBe(420);
   });
 
+  it('keeps server gross lines when raw item totals reconcile with order gross total', () => {
+    const serverOrder = {
+      id: 'POS260627-0086',
+      status: 'PENDING_STOCK',
+      subtotal: '41.95',
+      discountAmount: '0.00',
+      taxAmount: '2.10',
+      total: '44.05',
+      paidAmount: '44.05',
+      paymentMethod: 'CASH',
+      priceType: 'brutto',
+      taxIncluded: false,
+      posMode: 'retail',
+      createdAt: '2026-06-27T15:54:08.864Z',
+      items: [
+        {
+          id: 'line-khoai-so',
+          productName: 'Khoai sọ',
+          variantId: 'variant-khoai-so',
+          variantSku: 'MOON-260529-OY7',
+          unitPrice: 25,
+          totalPrice: 12.5,
+          taxRate: '5.00',
+          taxAmount: '0.60',
+          saleQuantity: '0.500',
+          saleUnit: 'kg',
+          totalUnits: 1,
+          packQuantity: 1,
+          product: { id: 'variant-khoai-so', sku: 'MOON-260529-OY7', name: 'Khoai sọ', sellBy: 'WEIGHT', saleUnit: 'kg' },
+        },
+        {
+          id: 'line-khoai-lang',
+          productName: 'Khoai lang tím',
+          variantId: 'variant-khoai-lang',
+          variantSku: 'slodkie-ziemniaki-fioletowe',
+          unitPrice: 45,
+          totalPrice: 22.05,
+          taxRate: '5.00',
+          taxAmount: '1.05',
+          saleQuantity: '0.490',
+          saleUnit: 'kg',
+          totalUnits: 1,
+          packQuantity: 1,
+          product: { id: 'variant-khoai-lang', sku: 'slodkie-ziemniaki-fioletowe', name: 'Khoai lang tím', sellBy: 'WEIGHT', saleUnit: 'kg' },
+        },
+        {
+          id: 'line-su-hao',
+          productName: 'Su hào',
+          variantId: 'variant-su-hao',
+          variantSku: 'MOON-260529-9Y8',
+          unitPrice: 3.5,
+          totalPrice: 3.5,
+          taxRate: '5.00',
+          taxAmount: '0.17',
+          totalUnits: 1,
+          packQuantity: 1,
+          product: { id: 'variant-su-hao', sku: 'MOON-260529-9Y8', name: 'Su hào', sellBy: 'PIECE', saleUnit: 'củ' },
+        },
+        {
+          id: 'line-rau-cai-ngot',
+          productName: 'Rau cải ngọt',
+          variantId: 'variant-rau-cai-ngot',
+          variantSku: 'kapusta-pak-choi-swieza',
+          unitPrice: 6,
+          totalPrice: 6,
+          taxRate: '5.00',
+          taxAmount: '0.29',
+          totalUnits: 1,
+          packQuantity: 1,
+          product: { id: 'variant-rau-cai-ngot', sku: 'kapusta-pak-choi-swieza', name: 'Rau cải ngọt', sellBy: 'PIECE', saleUnit: 'szt.' },
+        },
+      ],
+    };
+
+    const adapted = adaptServerOrder(serverOrder);
+    const items = serverOrder.items.map((item) => adaptServerOrderItem(item, adapted.id, serverOrder));
+
+    expect(adapted.subtotal).toBe(4405);
+    expect(adapted.tax).toBe(210);
+    expect(adapted.total).toBe(4405);
+    expect(items.map((item) => item.total)).toEqual([1250, 2205, 350, 600]);
+    expect(items.reduce((sum, item) => sum + item.total, 0)).toBe(4405);
+    expect(items.reduce((sum, item) => sum + item.total, 0)).not.toBe(4626);
+    expect(items[0]).toMatchObject({ price: 2500, quantity: 0.5, sale_quantity: 0.5, sale_unit: 'kg', sell_by: 'WEIGHT' });
+    expect(items[1]).toMatchObject({ price: 4500, quantity: 0.49, sale_quantity: 0.49, sale_unit: 'kg', sell_by: 'WEIGHT' });
+    expect(items[2]).toMatchObject({ price: 350, quantity: 1, sale_unit: 'củ', sell_by: 'PIECE' });
+  });
+
   it('uses explicit gross totals for weighted server rows without recalculating', () => {
     const serverOrder = {
       id: 'server-weight-gross',

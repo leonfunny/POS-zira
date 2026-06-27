@@ -51,6 +51,21 @@ function serverOrderLooksNetPriced(s: any): boolean {
   return Math.abs((subtotal + tax - discount) - total) <= 1;
 }
 
+function rawItemTotalsMatchOrderGross(serverOrder: any): boolean {
+  const items = Array.isArray(serverOrder?.items) ? serverOrder.items : null;
+  const expectedGross = toGrosze(serverOrder?.total) + toGrosze(serverOrder?.discountAmount);
+  if (!items || items.length === 0 || expectedGross <= 0) return false;
+
+  let sum = 0;
+  for (const item of items) {
+    const total = toOptionalGrosze(item?.grossTotalPrice ?? item?.totalPrice);
+    if (total === null) return false;
+    sum += total;
+  }
+
+  return Math.abs(sum - expectedGross) <= 1;
+}
+
 function resolveServerPaymentAmount(args: {
   paymentMethod: string | null;
   total: number;
@@ -189,7 +204,7 @@ export function adaptServerOrder(s: any): any {
 }
 
 export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: any): any {
-  const sellBy = normalizeSellBy(item.sellBy ?? item.sell_by);
+  const sellBy = normalizeSellBy(item.sellBy ?? item.sell_by ?? item.product?.sellBy ?? item.product?.sell_by);
   const rawQuantity = sellBy === 'WEIGHT'
     ? item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1
     : item.totalUnits ?? item.packQuantity ?? item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? 1;
@@ -198,11 +213,12 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
     sellBy,
   });
   const saleUnit = normalizeSaleUnit({
-    saleUnit: item.saleUnit ?? item.sale_unit ?? item.unit,
+    saleUnit: item.saleUnit ?? item.sale_unit ?? item.unit ?? item.product?.saleUnit ?? item.product?.sale_unit,
     sellBy,
   });
-  const vatRate = toVatRate(item.taxRate, 23);
-  const netPricedServerOrder = serverOrderLooksNetPriced(serverOrder);
+  const vatRate = toVatRate(item.taxRate ?? item.tax_rate ?? item.product?.taxRate ?? item.product?.tax_rate, 23);
+  const rawTotalsAlreadyGross = rawItemTotalsMatchOrderGross(serverOrder);
+  const netPricedServerOrder = serverOrderLooksNetPriced(serverOrder) && !rawTotalsAlreadyGross;
   const explicitGrossUnitPrice = toOptionalGrosze(item.grossUnitPrice);
   const explicitGrossTotal = toOptionalGrosze(item.grossTotalPrice);
   let rawUnitPrice: number | null = null;
@@ -225,11 +241,11 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
     total = netPricedServerOrder ? grossFromNet(rawTotal, vatRate) : rawTotal;
   }
   return {
-    id: item.id ?? `${orderId}-${item.variantId ?? String(Math.random()).slice(2, 10)}`,
+    id: item.id ?? `${orderId}-${item.variantId ?? item.variant_id ?? item.productId ?? String(Math.random()).slice(2, 10)}`,
     order_id: orderId,
-    variant_id: item.variantId ?? null,
-    name: item.productName ?? '',
-    sku: item.variantSku ?? item.productSku ?? null,
+    variant_id: item.variantId ?? item.variant_id ?? item.productId ?? item.product?.id ?? null,
+    name: item.productName ?? item.product_name ?? item.product?.name ?? '',
+    sku: item.variantSku ?? item.variant_sku ?? item.productSku ?? item.product_sku ?? item.product?.sku ?? null,
     price,
     quantity,
     sale_quantity: quantity,

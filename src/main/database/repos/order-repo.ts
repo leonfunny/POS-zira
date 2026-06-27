@@ -192,12 +192,6 @@ function parseRepairPayload(payload: unknown): any | null {
   }
 }
 
-function hasExplicitMoney(value: unknown): boolean {
-  if (value == null || value === '') return false;
-  const n = typeof value === 'number' ? value : parseFloat(String(value));
-  return isFinite(n);
-}
-
 function incrementReason(result: ServerMirroredGrossItemRepairResult, reason: string): void {
   result.skipped++;
   result.skipped_reasons[reason] = (result.skipped_reasons[reason] ?? 0) + 1;
@@ -639,11 +633,6 @@ export const orderRepo = {
         continue;
       }
 
-      if (!payloadItems.every((item: any) => hasExplicitMoney(item.grossUnitPrice) && hasExplicitMoney(item.grossTotalPrice))) {
-        incrementReason(result, 'missing_gross_fields');
-        continue;
-      }
-
       const adaptedItems = payloadItems.map((item: any) =>
         adaptServerOrderItem(item, candidate.id, payload),
       );
@@ -680,8 +669,20 @@ export const orderRepo = {
       database.transaction(() => {
         for (const item of adaptedItems) {
           database.run(
-            'UPDATE order_items SET price = ?, total = ? WHERE order_id = ? AND id = ?',
-            [item.price, item.total, candidate.id, item.id],
+            `UPDATE order_items
+             SET price = ?, quantity = ?, sale_quantity = ?, sale_unit = ?, sell_by = ?, total = ?, vat_rate = ?
+             WHERE order_id = ? AND id = ?`,
+            [
+              item.price,
+              item.quantity,
+              item.sale_quantity ?? item.quantity,
+              item.sale_unit ?? null,
+              item.sell_by ?? null,
+              item.total,
+              item.vat_rate,
+              candidate.id,
+              item.id,
+            ],
           );
         }
       });
