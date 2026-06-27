@@ -45,36 +45,43 @@ export default function TouchKeyboard({
   onHeightChange,
 }: Props) {
   const keyboardRef = useRef<HTMLDivElement | null>(null);
+  const lastReportedHeightRef = useRef<number | null>(null);
 
   useEffect(() => {
     const element = keyboardRef.current;
     if (!element) return undefined;
 
     let frame = 0;
-    const syncHeight = () => {
-      const nextHeight = visible ? Math.ceil(element.getBoundingClientRect().height) : 0;
+    const syncHeight = (force = false) => {
+      // Use the target content height, not the in-flight animated box height.
+      // Reporting every transition frame feeds back into App padding/inset and
+      // can make fixed POS modals visibly jitter above the touch keyboard.
+      const nextHeight = visible ? Math.ceil(element.scrollHeight) : 0;
+      if (!force && lastReportedHeightRef.current === nextHeight) return;
+      lastReportedHeightRef.current = nextHeight;
       onHeightChange?.(nextHeight);
     };
 
-    syncHeight();
-    frame = window.requestAnimationFrame(syncHeight);
+    syncHeight(true);
+    frame = window.requestAnimationFrame(() => syncHeight());
+    const handleResize = () => syncHeight();
 
     if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', syncHeight);
+      window.addEventListener('resize', handleResize);
       return () => {
         window.cancelAnimationFrame(frame);
-        window.removeEventListener('resize', syncHeight);
+        window.removeEventListener('resize', handleResize);
       };
     }
 
-    const observer = new ResizeObserver(syncHeight);
+    const observer = new ResizeObserver(() => syncHeight());
     observer.observe(element);
-    window.addEventListener('resize', syncHeight);
+    window.addEventListener('resize', handleResize);
 
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener('resize', syncHeight);
+      window.removeEventListener('resize', handleResize);
     };
   }, [mode, onHeightChange, visible]);
 

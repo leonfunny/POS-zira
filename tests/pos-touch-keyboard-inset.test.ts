@@ -11,10 +11,13 @@ describe('POS touch keyboard inset', () => {
   it('measures the shared touch keyboard height and reports it to App', () => {
     expect(TOUCH_KEYBOARD).toContain('onHeightChange?: (heightPx: number) => void');
     expect(TOUCH_KEYBOARD).toContain('const keyboardRef = useRef<HTMLDivElement | null>(null)');
-    expect(TOUCH_KEYBOARD).toContain('getBoundingClientRect().height');
+    expect(TOUCH_KEYBOARD).toContain('const lastReportedHeightRef = useRef<number | null>(null)');
+    expect(TOUCH_KEYBOARD).toContain('Math.ceil(element.scrollHeight)');
     expect(TOUCH_KEYBOARD).toContain('ResizeObserver');
     expect(TOUCH_KEYBOARD).toContain('ref={keyboardRef}');
+    expect(TOUCH_KEYBOARD).toContain('lastReportedHeightRef.current === nextHeight');
     expect(TOUCH_KEYBOARD).toContain('onHeightChange?.(nextHeight)');
+    expect(TOUCH_KEYBOARD).not.toContain('getBoundingClientRect().height');
   });
 
   it('uses the measured keyboard inset instead of hardcoded 300px App padding', () => {
