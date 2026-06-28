@@ -23,14 +23,25 @@ describe('AdVideoStore', () => {
     const rec = store.addVideo(src);
     expect(rec.id).toMatch(/^ad_/);
     expect(rec.filename.endsWith('.mp4')).toBe(true);
+    expect(rec.type).toBe('video');
     expect(existsSync(store.resolvePath(rec.id, rec.filename))).toBe(true);
   });
 
-  it('rejects non-mp4 extension', () => {
+  it('accepts image files with default slide duration', () => {
+    const src = join(srcDir, 'promo.png');
+    writeFileSync(src, 'PNG');
+    const store = new AdVideoStore(dir);
+    const rec = store.addVideo(src);
+    expect(rec.type).toBe('image');
+    expect(rec.durationMs).toBe(7000);
+    expect(store.getContentType(rec.filename)).toBe('image/png');
+  });
+
+  it('rejects unsupported extension', () => {
     const src = join(srcDir, 'note.txt');
     writeFileSync(src, 'x');
     const store = new AdVideoStore(dir);
-    expect(() => store.addVideo(src)).toThrow(/mp4/i);
+    expect(() => store.addVideo(src)).toThrow(/unsupported ad media/i);
   });
 
   it('removeVideo deletes the file', () => {

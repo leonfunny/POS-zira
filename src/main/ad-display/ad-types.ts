@@ -1,15 +1,19 @@
 export type TvAdPlaybackMode = 'sequential' | 'repeat-one';
+export type TvAdMediaType = 'video' | 'image';
 
 export interface TvAdVideo {
   id: string;        // stable id, e.g. 'ad_<timestamp>_<rand>'
   filename: string;  // file trong ad-videos/, vd 'ad_169..._a1.mp4'
   order: number;     // 0-based, thứ tự phát
   enabled: boolean;
+  type?: TvAdMediaType;
+  durationMs?: number; // image slide duration; video duration comes from the file
 }
 
 export interface TvAdConfig {
   tvAdEnabled: boolean;
   tvAdPort: number;
+  tvAdControlToken?: string;
   tvAdPlaybackMode: TvAdPlaybackMode;
   tvAdRepeatVideoId: string | null;
   tvAdMuted: boolean;
@@ -20,6 +24,7 @@ export interface TvAdConfig {
 export const AD_DISPLAY_DEFAULTS: TvAdConfig = {
   tvAdEnabled: false,
   tvAdPort: 17893,
+  tvAdControlToken: undefined,
   tvAdPlaybackMode: 'sequential',
   tvAdRepeatVideoId: null,
   tvAdMuted: true,
@@ -34,6 +39,7 @@ export interface AdPlaylistPayload {
   repeatVideoId: string | null;
   muted: boolean;
   volume: number;
+  media: Array<{ id: string; url: string; order: number; type: TvAdMediaType; durationMs?: number }>;
   videos: Array<{ id: string; url: string; order: number }>;
 }
 
@@ -44,5 +50,6 @@ export interface AdDisplayStatus {
   /** Địa chỉ LAN "thật" mà TV nhiều khả năng với tới được (đã lọc adapter ảo/VPN). */
   primaryIp?: string;
   connectedClients: number;
+  remoteUrl?: string;
   error?: string;
 }

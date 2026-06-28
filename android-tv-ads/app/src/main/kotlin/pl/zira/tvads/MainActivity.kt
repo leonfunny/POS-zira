@@ -1,10 +1,12 @@
 package pl.zira.tvads
 
 import android.app.Activity
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.common.MediaItem
@@ -23,12 +25,16 @@ import pl.zira.tvads.discovery.NsdDiscovery
 import pl.zira.tvads.discovery.SubnetScanner
 import pl.zira.tvads.net.AdApiClient
 import pl.zira.tvads.player.PlaybackPlan
+import pl.zira.tvads.player.PlaybackItem
 import pl.zira.tvads.player.RepeatMode
 import pl.zira.tvads.prefs.HostStore
+import pl.zira.tvads.updater.TvAppUpdater
 import java.io.Closeable
+import java.net.URL
 
 class MainActivity : Activity() {
     private lateinit var playerView: PlayerView
+    private lateinit var imageView: ImageView
     private lateinit var overlay: LinearLayout
     private lateinit var statusText: TextView
     private var player: ExoPlayer? = null
@@ -40,6 +46,12 @@ class MainActivity : Activity() {
     private var currentVersion: String? = null
     private var loadJob: kotlinx.coroutines.Job? = null
     private var playerRetryJob: kotlinx.coroutines.Job? = null
+    private var imageJob: kotlinx.coroutines.Job? = null
+    private var activePlan: PlaybackPlan? = null
+    private var activeIndex = 0
+    private var updateJob: kotlinx.coroutines.Job? = null
+    private var updateInProgress = false
+    private var lastUpdateCheckAt = 0L
     private var consecutiveLoadFailures = 0
     private var subnetScanning = false
 
@@ -48,6 +60,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         playerView = findViewById(R.id.playerView)
+        imageView = findViewById(R.id.imageView)
         overlay = findViewById(R.id.overlay)
         statusText = findViewById(R.id.statusText)
         findViewById<Button>(R.id.enterIpBtn).setOnClickListener {
@@ -65,16 +78,17 @@ class MainActivity : Activity() {
         player?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) hideOverlay()
+                if (state == Player.STATE_ENDED) playNext()
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 // Real retry: a transient network blip must not strand the
                 // screen on an error overlay forever (SSE may still be alive,
                 // so nothing else would ever wake the player up again).
-                showOverlay("Lỗi phát video: " + (error.message ?: "") + " — tự thử lại sau 5s")
+                showOverlay("Lỗi phát quảng cáo: " + (error.message ?: "") + " — tự thử lại sau 5s")
                 playerRetryJob?.cancel()
                 playerRetryJob = scope.launch {
                     delay(5000)
-                    if (isActive && base != null) loadAndPlay()
+                    if (isActive) activePlan?.let { playCurrent(it) } ?: loadAndPlay()
                 }
             }
         })
@@ -130,6 +144,7 @@ class MainActivity : Activity() {
                 currentVersion = playlist.version
                 applyPlan(PlaybackPlan.from(playlist, b))
                 openEvents(b)
+                maybeCheckForUpdate(b, force = false)
             } catch (e: Exception) {
                 consecutiveLoadFailures++
                 showOverlay("Không kết nối được " + b + " — thử lại sau 5s (lần " + consecutiveLoadFailures + ")")
@@ -180,19 +195,74 @@ class MainActivity : Activity() {
 
     private fun applyPlan(plan: PlaybackPlan) {
         val p = player ?: return
-        if (plan.urls.isEmpty()) {
+        imageJob?.cancel()
+        activePlan = plan
+        activeIndex = 0
+        if (plan.items.isEmpty()) {
             // An empty playlist never reaches STATE_READY, so the stale
             // "connecting" overlay would sit there forever. Say what's up;
             // the SSE playlist-changed event reloads us once videos exist.
             p.clearMediaItems()
-            showOverlay("Chưa có video quảng cáo — thêm video trong POS → Cài đặt → TV Quảng cáo")
+            imageView.visibility = View.GONE
+            playerView.visibility = View.VISIBLE
+            showOverlay("Chưa có quảng cáo — thêm ảnh hoặc video trong POS → Cài đặt → TV Quảng cáo")
             return
         }
-        p.repeatMode = if (plan.repeatMode == RepeatMode.ONE) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
         p.volume = if (plan.muted) 0f else (plan.volume / 100f)
-        p.setMediaItems(plan.urls.map { MediaItem.fromUri(it) })
+        p.repeatMode = Player.REPEAT_MODE_OFF
+        playCurrent(plan)
+    }
+
+    private fun playCurrent(plan: PlaybackPlan) {
+        val item = plan.items.getOrNull(activeIndex) ?: return
+        if (item.type == "image") {
+            showImage(item, plan)
+        } else {
+            playVideo(item)
+        }
+    }
+
+    private fun playVideo(item: PlaybackItem) {
+        imageJob?.cancel()
+        imageView.visibility = View.GONE
+        playerView.visibility = View.VISIBLE
+        val p = player ?: return
+        p.stop()
+        p.clearMediaItems()
+        p.setMediaItem(MediaItem.fromUri(item.url))
         p.prepare()
         p.playWhenReady = true
+    }
+
+    private fun showImage(item: PlaybackItem, plan: PlaybackPlan) {
+        val p = player ?: return
+        p.stop()
+        p.clearMediaItems()
+        playerView.visibility = View.GONE
+        imageView.visibility = View.VISIBLE
+        hideOverlay()
+        imageJob?.cancel()
+        imageJob = scope.launch {
+            try {
+                val bmp = withContext(Dispatchers.IO) {
+                    URL(item.url).openStream().use { BitmapFactory.decodeStream(it) }
+                }
+                imageView.setImageBitmap(bmp)
+                delay(item.durationMs.coerceIn(2000L, 60000L))
+                if (isActive && activePlan === plan) playNext()
+            } catch (e: Exception) {
+                showOverlay("Lỗi tải ảnh quảng cáo — tự thử lại sau 5s")
+                delay(5000)
+                if (isActive && activePlan === plan) playCurrent(plan)
+            }
+        }
+    }
+
+    private fun playNext() {
+        val plan = activePlan ?: return
+        if (plan.items.isEmpty()) return
+        activeIndex = if (plan.repeatMode == RepeatMode.ONE) activeIndex else (activeIndex + 1) % plan.items.size
+        playCurrent(plan)
     }
 
     private fun openEvents(b: String) {
@@ -216,7 +286,34 @@ class MainActivity : Activity() {
                     currentVersion = pl.version
                     applyPlan(PlaybackPlan.from(pl, b))
                 }
+                maybeCheckForUpdate(b, force = false)
             } catch (_: Exception) {}
+        }
+    }
+
+    private fun maybeCheckForUpdate(b: String, force: Boolean) {
+        if (updateInProgress) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastUpdateCheckAt < 6 * 60 * 60 * 1000L) return
+        lastUpdateCheckAt = now
+        updateJob?.cancel()
+        updateJob = scope.launch {
+            try {
+                val updater = TvAppUpdater(this@MainActivity)
+                val update = withContext(Dispatchers.IO) { updater.check(b) } ?: return@launch
+                updateInProgress = true
+                showOverlay("Có bản Zira TV Ads ${update.latestVersionName}. Đang tải cập nhật...")
+                val apk = updater.download(b, update)
+                val opened = updater.openInstaller(apk)
+                if (!opened) {
+                    showOverlay("Cho phép cài app không rõ nguồn, sau đó mở lại Zira TV Ads để cập nhật.")
+                }
+            } catch (e: Exception) {
+                updateInProgress = false
+                showOverlay("Không cập nhật được TV app: " + (e.message ?: "unknown"))
+                delay(5000)
+                if (isActive && activePlan != null) hideOverlay()
+            }
         }
     }
 
@@ -233,6 +330,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         scope.cancel()
+        imageJob?.cancel()
+        updateJob?.cancel()
         sse?.close(); discovery?.close()
         player?.release(); player = null
         super.onDestroy()

@@ -8,7 +8,7 @@ import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
-import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
@@ -83,6 +83,15 @@ interface SettingsProps {
    *  default toggle state and the "outside plan" badge. */
   isModuleEntitled?: (tab: Tab) => boolean;
 }
+
+type TvAdMediaItem = {
+  id: string;
+  filename: string;
+  order: number;
+  enabled: boolean;
+  type?: 'video' | 'image';
+  durationMs?: number;
+};
 
 // Printer types - defined locally for Vite compatibility
 const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
@@ -615,12 +624,12 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // TV Ad state
   const [tvAdEnabled, setTvAdEnabled] = useState<boolean>((config as any)?.tvAdEnabled ?? false);
-  const [tvAdPlaylist, setTvAdPlaylist] = useState<Array<{ id: string; filename: string; order: number; enabled: boolean }>>((config as any)?.tvAdPlaylist ?? []);
+  const [tvAdPlaylist, setTvAdPlaylist] = useState<TvAdMediaItem[]>((config as any)?.tvAdPlaylist ?? []);
   const [tvAdMode, setTvAdMode] = useState<'sequential' | 'repeat-one'>((config as any)?.tvAdPlaybackMode ?? 'sequential');
   const [tvAdRepeatId, setTvAdRepeatId] = useState<string | null>((config as any)?.tvAdRepeatVideoId ?? null);
   const [tvAdMuted, setTvAdMuted] = useState<boolean>((config as any)?.tvAdMuted ?? true);
   const [tvAdVolume, setTvAdVolume] = useState<number>((config as any)?.tvAdVolume ?? 0);
-  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; primaryIp?: string; connectedClients: number } | null>(null);
+  const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; primaryIp?: string; connectedClients: number; remoteUrl?: string } | null>(null);
   const tvAdQrRef = useRef<HTMLCanvasElement | null>(null);
 
   // Connected displays (dynamic)
@@ -760,17 +769,17 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  // Vẽ QR địa chỉ kết nối TV (ip:port) khi server chạy
+  // QR opens the Android phone remote; the plain IP:port remains visible for TV pairing.
   useEffect(() => {
     const ip = tvAdStatus?.primaryIp || tvAdStatus?.ips?.[0];
     if (tvAdQrRef.current && tvAdStatus?.running && ip && tvAdStatus.port) {
-      QRCode.toCanvas(tvAdQrRef.current, `${ip}:${tvAdStatus.port}`, {
+      QRCode.toCanvas(tvAdQrRef.current, tvAdStatus.remoteUrl || `http://${ip}:${tvAdStatus.port}/remote`, {
         width: 96,
         margin: 1,
         color: { dark: '#0f172a', light: '#ffffff' },
       }).catch((err: Error) => rlog.error('[Settings] tvAd QR failed:', err));
     }
-  }, [tvAdStatus?.running, tvAdStatus?.primaryIp, tvAdStatus?.ips?.[0], tvAdStatus?.port]);
+  }, [tvAdStatus?.running, tvAdStatus?.primaryIp, tvAdStatus?.ips?.[0], tvAdStatus?.port, tvAdStatus?.remoteUrl]);
 
   const buildGeneralConfigPayload = useCallback((overrides: Partial<AgentConfig> = {}): Partial<AgentConfig> => ({
     name,
@@ -1585,6 +1594,24 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   const handleToggleTvAdVideo = async (id: string) => {
     const next = tvAdPlaylist.map(v => v.id === id ? { ...v, enabled: !v.enabled } : v);
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleMoveTvAdMedia = async (id: string, direction: -1 | 1) => {
+    const ordered = tvAdPlaylist.slice().sort((a, b) => a.order - b.order);
+    const index = ordered.findIndex(v => v.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ordered.length) return;
+    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+    const next = ordered.map((v, i) => ({ ...v, order: i }));
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleTvAdImageDuration = async (id: string, seconds: number) => {
+    const durationMs = Math.min(60, Math.max(2, Math.round(seconds || 7))) * 1000;
+    const next = tvAdPlaylist.map(v => v.id === id ? { ...v, durationMs } : v);
     setTvAdPlaylist(next);
     await persistTvAd({ tvAdPlaylist: next });
   };
@@ -5208,40 +5235,83 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               <button
                 type="button"
                 onClick={handleAddTvAdVideo}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
               >
+                <Upload className="w-4 h-4" />
                 {t('settings.tvAd.addVideo')}
               </button>
               {tvAdPlaylist.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map(v => (
-                    <li key={v.id} className="flex items-center gap-2 py-1 px-2 rounded-lg border border-slate-200 bg-slate-50">
-                      <input
-                        type="checkbox"
-                        checked={v.enabled}
-                        onChange={() => void handleToggleTvAdVideo(v.id)}
-                        className="w-4 h-4 accent-brand-600"
-                      />
-                      <span className="flex-1 text-sm text-slate-700 truncate">{v.filename}</span>
-                      {tvAdMode === 'repeat-one' && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map((v, index, arr) => {
+                    const type = v.type || (/\.(jpe?g|png|webp)$/i.test(v.filename) ? 'image' : 'video');
+                    return (
+                      <div key={v.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-b-0">
                         <input
-                          type="radio"
-                          name="tvAdRepeat"
-                          checked={tvAdRepeatId === v.id}
-                          onChange={async () => { setTvAdRepeatId(v.id); await persistTvAd({ tvAdRepeatVideoId: v.id }); }}
+                          type="checkbox"
+                          checked={v.enabled}
+                          onChange={() => void handleToggleTvAdVideo(v.id)}
                           className="w-4 h-4 accent-brand-600"
+                          title={v.enabled ? 'Enabled' : 'Disabled'}
                         />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void handleRemoveTvAdVideo(v.id)}
-                        className="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded transition-colors"
-                      >
-                        {t('settings.tvAd.remove')}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                        <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${type === 'image' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>
+                          {type === 'image' ? <ImageIcon className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />}
+                          {type === 'image' ? 'Image' : 'Video'}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{v.filename}</span>
+                        {type === 'image' && (
+                          <label className="inline-flex items-center gap-1 text-xs text-slate-500">
+                            <Clock className="w-3.5 h-3.5" />
+                            <input
+                              type="number"
+                              min={2}
+                              max={60}
+                              value={Math.round((v.durationMs || 7000) / 1000)}
+                              onChange={(e) => void handleTvAdImageDuration(v.id, Number(e.target.value))}
+                              className="w-14 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700"
+                            />
+                            s
+                          </label>
+                        )}
+                        {tvAdMode === 'repeat-one' && (
+                          <input
+                            type="radio"
+                            name="tvAdRepeat"
+                            checked={tvAdRepeatId === v.id}
+                            onChange={async () => { setTvAdRepeatId(v.id); await persistTvAd({ tvAdRepeatVideoId: v.id }); }}
+                            className="w-4 h-4 accent-brand-600"
+                            title="Repeat this item"
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleMoveTvAdMedia(v.id, -1)}
+                          disabled={index === 0}
+                          className="rounded-md border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMoveTvAdMedia(v.id, 1)}
+                          disabled={index === arr.length - 1}
+                          className="rounded-md border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveTvAdVideo(v.id)}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {t('settings.tvAd.remove')}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
@@ -5308,6 +5378,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     {(tvAdStatus.primaryIp || tvAdStatus.ips[0])}:{tvAdStatus.port}
                   </div>
                   <div className="text-xs text-slate-500 mt-1">{t('settings.tvAd.connectAddressHint')}</div>
+                  {tvAdStatus.remoteUrl && (
+                    <div className="text-xs text-slate-500 mt-1 break-all">
+                      Phone remote: {tvAdStatus.remoteUrl}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

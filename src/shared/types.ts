@@ -706,11 +706,12 @@ export interface AgentConfig {
   // TV Ads (signage) — điều khiển màn hình quảng cáo Google TV qua LAN
   tvAdEnabled?: boolean;
   tvAdPort?: number;
+  tvAdControlToken?: string;
   tvAdPlaybackMode?: 'sequential' | 'repeat-one';
   tvAdRepeatVideoId?: string | null;
   tvAdMuted?: boolean;
   tvAdVolume?: number;
-  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean }>;
+  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean; type?: 'video' | 'image'; durationMs?: number }>;
 }
 
 // Agent credentials (stored securely)
@@ -1616,6 +1617,7 @@ export interface AdDisplayStatusLike {
   ips: string[];
   primaryIp?: string;
   connectedClients: number;
+  remoteUrl?: string;
   error?: string;
 }
 

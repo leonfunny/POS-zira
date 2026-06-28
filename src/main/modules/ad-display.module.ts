@@ -1,4 +1,5 @@
 import { ipcMain, dialog, app } from 'electron';
+import { randomBytes } from 'crypto';
 import { join } from 'path';
 import { BaseModule, ModuleState } from '../core/module';
 import type { ServiceContainer } from '../core/container';
@@ -19,12 +20,35 @@ export class AdDisplayModule extends BaseModule {
   constructor(private readonly container: ServiceContainer) {
     super();
     this.store = new AdVideoStore(join(app.getPath('userData'), 'ad-videos'));
-    this.server = new AdDisplayServer(() => this.tvConfig(), this.store);
+    this.ensureControlToken();
+    this.server = new AdDisplayServer(
+      () => this.tvConfig(),
+      this.store,
+      async (partial) => {
+        const before = this.tvConfig().tvAdPlaylist || [];
+        setConfig(partial);
+        this.removeDeletedMedia(before, this.tvConfig().tvAdPlaylist || []);
+        await this.applyAll();
+      },
+    );
   }
 
   private tvConfig(): TvAdConfig {
     const c = getConfig() as Partial<TvAdConfig>;
     return { ...AD_DISPLAY_DEFAULTS, ...c } as TvAdConfig;
+  }
+
+  private ensureControlToken(): void {
+    const cfg = getConfig() as Partial<TvAdConfig>;
+    if (typeof cfg.tvAdControlToken === 'string' && cfg.tvAdControlToken.length >= 24) return;
+    setConfig({ tvAdControlToken: randomBytes(18).toString('base64url') } as Partial<AgentConfig>);
+  }
+
+  private removeDeletedMedia(before: Array<{ id: string; filename: string }>, after: Array<{ id: string }>): void {
+    const afterIds = new Set(after.map(v => v.id));
+    for (const v of before) {
+      if (!afterIds.has(v.id)) this.store.removeVideo(v.filename);
+    }
   }
 
   async start(): Promise<void> {
@@ -56,7 +80,7 @@ export class AdDisplayModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.TV_AD_PICK_VIDEO, async () => {
       const result = await dialog.showOpenDialog({
         properties: ['openFile'] as const,
-        filters: [{ name: 'Video', extensions: ['mp4', 'm4v', 'mov'] }],
+        filters: [{ name: 'Ad media', extensions: ['mp4', 'm4v', 'mov', 'jpg', 'jpeg', 'png', 'webp'] }],
       });
       if (result.canceled || !result.filePaths[0]) return null;
       try {
@@ -71,10 +95,7 @@ export class AdDisplayModule extends BaseModule {
       const before = this.tvConfig().tvAdPlaylist || [];
       setConfig(partial);
       const after = this.tvConfig().tvAdPlaylist || [];
-      const afterIds = new Set(after.map(v => v.id));
-      for (const v of before) {
-        if (!afterIds.has(v.id)) this.store.removeVideo(v.filename);
-      }
+      this.removeDeletedMedia(before, after);
       const portChanged = partial.tvAdPort !== undefined;
       const enableChanged = partial.tvAdEnabled !== undefined;
       if (portChanged || enableChanged) {

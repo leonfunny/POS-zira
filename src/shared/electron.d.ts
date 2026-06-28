@@ -1128,7 +1128,7 @@ interface ElectronAPI {
 
   // TV Ad Display
   tvAdGetStatus: () => Promise<import('./types').AdDisplayStatusLike>;
-  tvAdPickVideo: () => Promise<{ id: string; filename: string } | null>;
+  tvAdPickVideo: () => Promise<{ id: string; filename: string; type?: 'video' | 'image'; durationMs?: number } | null>;
   tvAdSave: (cfg: Partial<AgentConfig>) => Promise<{ ok: boolean }>;
 }
 

@@ -498,6 +498,7 @@ const store = new Store<AgentConfig>({
     // TV Ads (signage) — Google TV ad playlist served over LAN
     tvAdEnabled: { type: 'boolean', default: false },
     tvAdPort: { type: 'number', default: 17893 },
+    tvAdControlToken: { type: 'string' },
     tvAdPlaybackMode: { type: 'string', enum: ['sequential', 'repeat-one'], default: 'sequential' },
     tvAdRepeatVideoId: { type: ['string', 'null'], default: null },
     tvAdMuted: { type: 'boolean', default: true },

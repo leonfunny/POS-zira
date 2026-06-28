@@ -12,6 +12,15 @@
         app:use_controller="false"
         app:resize_mode="fit" />
 
+    <ImageView
+        android:id="@+id/imageView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:contentDescription="TV advertisement image"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
     <!-- Overlay: trạng thái kết nối + nút thao tác (hiện khi chưa phát) -->
     <LinearLayout
         android:id="@+id/overlay"
