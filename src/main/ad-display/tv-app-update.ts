@@ -2,8 +2,8 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 
-export const TV_APP_LATEST_VERSION_CODE = 8;
-export const TV_APP_LATEST_VERSION_NAME = '1.3.2';
+export const TV_APP_LATEST_VERSION_CODE = 9;
+export const TV_APP_LATEST_VERSION_NAME = '1.3.3';
 export const TV_APP_APK_ROUTE = '/tv-app/app-release.apk';
 
 export interface TvAppUpdateAsset {

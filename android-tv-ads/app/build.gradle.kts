@@ -11,8 +11,8 @@ android {
         applicationId = "pl.zira.tvads"
         minSdk = 21
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.3.2"
+        versionCode = 9
+        versionName = "1.3.3"
     }
     buildTypes {
         release {
