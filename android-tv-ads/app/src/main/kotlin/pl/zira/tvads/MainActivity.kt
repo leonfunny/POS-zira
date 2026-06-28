@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.zira.tvads.discovery.NsdAdvertiser
 import pl.zira.tvads.discovery.NsdDiscovery
 import pl.zira.tvads.discovery.SubnetScanner
 import pl.zira.tvads.net.AdApiClient
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private var player: ExoPlayer? = null
     private lateinit var hostStore: HostStore
     private var discovery: NsdDiscovery? = null
+    private var advertiser: NsdAdvertiser? = null
     private var sse: Closeable? = null
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var base: String? = null
@@ -129,6 +131,10 @@ class MainActivity : Activity() {
                 consecutiveLoadFailures = 0
                 currentVersion = playlist.version
                 applyPlan(PlaybackPlan.from(playlist, b))
+                // Advertise our presence on the LAN so the POS can list connected TVs
+                if (advertiser == null) {
+                    advertiser = NsdAdvertiser(this@MainActivity).also { it.start(b) }
+                }
                 openEvents(b)
             } catch (e: Exception) {
                 consecutiveLoadFailures++
@@ -233,7 +239,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         scope.cancel()
-        sse?.close(); discovery?.close()
+        sse?.close(); discovery?.close(); advertiser?.close()
         player?.release(); player = null
         super.onDestroy()
     }

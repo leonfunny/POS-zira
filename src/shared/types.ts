@@ -1603,9 +1603,19 @@ export const IPC_CHANNELS = {
 
   // TV Ad Display (signage)
   TV_AD_GET_STATUS: 'tvAd:getStatus',
+  TV_AD_GET_DEVICES: 'tvAd:getDevices',
   TV_AD_PICK_VIDEO: 'tvAd:pickVideo',
   TV_AD_SAVE: 'tvAd:save',
 } as const;
+
+// A TV running the Zira TV Ads APK that has been discovered on the LAN.
+export interface TvDiscoveredDevice {
+  name: string;
+  ip: string;
+  posHost: string;
+  model: string;
+  seenAt: number;
+}
 
 // Shared status shape for the TV Ad Display module.
 // Mirrors AdDisplayStatus from src/main/ad-display/ but lives in shared

@@ -881,6 +881,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // TV Ad Display
   tvAdGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_GET_STATUS),
+  tvAdGetDevices: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_GET_DEVICES),
   tvAdPickVideo: () => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_PICK_VIDEO),
   tvAdSave: (cfg: Partial<AgentConfig>) => ipcRenderer.invoke(IPC_CHANNELS.TV_AD_SAVE, cfg),
 });

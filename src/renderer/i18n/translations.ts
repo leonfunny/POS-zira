@@ -491,6 +491,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Stopped',
     'settings.tvAd.connectedTvs': 'Connected TVs',
     'settings.tvAd.remove': 'Remove',
+    'settings.tvAd.discoveredTvs': 'TVs found on LAN',
+    'settings.tvAd.discoveredTvsHint': 'TVs running the Zira APK that are online now',
+    'settings.tvAd.noDiscoveredTvs': 'No TVs found yet — make sure the APK is installed and on the same network',
+    'settings.tvAd.tvModel': 'Model',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Invoicing',
@@ -1997,6 +2002,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Đã dừng',
     'settings.tvAd.connectedTvs': 'TV đang kết nối',
     'settings.tvAd.remove': 'Xoá',
+    'settings.tvAd.discoveredTvs': 'TV tìm thấy trong mạng',
+    'settings.tvAd.discoveredTvsHint': 'Các TV đã cài APK Zira và đang online',
+    'settings.tvAd.noDiscoveredTvs': 'Chưa tìm thấy TV nào — kiểm tra APK đã cài và cùng mạng WiFi/LAN',
+    'settings.tvAd.tvModel': 'Thiết bị',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Hóa đơn',
@@ -3394,6 +3404,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Durduruldu',
     'settings.tvAd.connectedTvs': 'Bağlı TV\'ler',
     'settings.tvAd.remove': 'Kaldır',
+    'settings.tvAd.discoveredTvs': 'LAN\'da bulunan TV\'ler',
+    'settings.tvAd.discoveredTvsHint': 'Zira APK\'sı yüklü ve şu an çevrimiçi olan TV\'ler',
+    'settings.tvAd.noDiscoveredTvs': 'Henüz TV bulunamadı — APK\'nın yüklü ve aynı ağda olduğundan emin olun',
+    'settings.tvAd.tvModel': 'Model',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Faturalama',
@@ -4603,6 +4618,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': '已停止',
     'settings.tvAd.connectedTvs': '已连接TV',
     'settings.tvAd.remove': '删除',
+    'settings.tvAd.discoveredTvs': '局域网中发现的电视',
+    'settings.tvAd.discoveredTvsHint': '已安装 Zira APK 且当前在线的电视',
+    'settings.tvAd.noDiscoveredTvs': '尚未发现电视 — 请确保 APK 已安装且在同一网络',
+    'settings.tvAd.tvModel': '型号',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': '开票系统',
@@ -5812,6 +5832,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Зупинено',
     'settings.tvAd.connectedTvs': 'Підключені TV',
     'settings.tvAd.remove': 'Видалити',
+    'settings.tvAd.discoveredTvs': 'Телевізори в мережі',
+    'settings.tvAd.discoveredTvsHint': 'Телевізори з встановленим APK Zira, які зараз онлайн',
+    'settings.tvAd.noDiscoveredTvs': 'Телевізорів не знайдено — перевірте, чи встановлено APK і чи в одній мережі',
+    'settings.tvAd.tvModel': 'Модель',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Виставлення рахунків',
@@ -7021,6 +7046,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Остановлено',
     'settings.tvAd.connectedTvs': 'Подключённые TV',
     'settings.tvAd.remove': 'Удалить',
+    'settings.tvAd.discoveredTvs': 'Телевизоры в сети',
+    'settings.tvAd.discoveredTvsHint': 'Телевизоры с APK Zira, которые сейчас онлайн',
+    'settings.tvAd.noDiscoveredTvs': 'Телевизоры не найдены — убедитесь, что APK установлен и устройства в одной сети',
+    'settings.tvAd.tvModel': 'Модель',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Выставление счетов',
@@ -8304,6 +8334,11 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.stopped': 'Zatrzymany',
     'settings.tvAd.connectedTvs': 'Podłączone TV',
     'settings.tvAd.remove': 'Usuń',
+    'settings.tvAd.discoveredTvs': 'Telewizory w sieci',
+    'settings.tvAd.discoveredTvsHint': 'Telewizory z APK Zira, które są teraz online',
+    'settings.tvAd.noDiscoveredTvs': 'Nie znaleziono telewizorów — sprawdź, czy APK jest zainstalowany i czy urządzenia są w tej samej sieci',
+    'settings.tvAd.tvModel': 'Model',
+    'settings.tvAd.tvIp': 'IP',
 
     // Invoicing
     'invoice.title': 'Faktury',

@@ -621,6 +621,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [tvAdMuted, setTvAdMuted] = useState<boolean>((config as any)?.tvAdMuted ?? true);
   const [tvAdVolume, setTvAdVolume] = useState<number>((config as any)?.tvAdVolume ?? 0);
   const [tvAdStatus, setTvAdStatus] = useState<{ running: boolean; port: number | null; ips: string[]; primaryIp?: string; connectedClients: number } | null>(null);
+  const [tvDevices, setTvDevices] = useState<Array<{ name: string; ip: string; posHost: string; model: string; seenAt: number }>>([]);
   const tvAdQrRef = useRef<HTMLCanvasElement | null>(null);
 
   // Connected displays (dynamic)
@@ -748,12 +749,16 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     };
   }, [scaleShareEnabled, scaleSharePort]);
 
-  // TV Ad status poll
+  // TV Ad status + discovered devices poll
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       const s = await window.electronAPI.tvAdGetStatus().catch(() => null);
-      if (alive) setTvAdStatus(s as any);
+      const d = await window.electronAPI.tvAdGetDevices().catch(() => [] as any[]);
+      if (alive) {
+        setTvAdStatus(s as any);
+        setTvDevices((d as any[]) ?? []);
+      }
     };
     tick();
     const id = setInterval(tick, 3000);
@@ -5320,6 +5325,31 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 </span>
               ) : (
                 <span className="text-slate-400">{t('settings.tvAd.stopped')}</span>
+              )}
+            </div>
+
+            {/* Discovered TVs (APK devices on LAN) */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                  {t('settings.tvAd.discoveredTvs')}
+                </span>
+                <span className="text-xs text-slate-400">{t('settings.tvAd.discoveredTvsHint')}</span>
+              </div>
+              {tvDevices.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">{t('settings.tvAd.noDiscoveredTvs')}</p>
+              ) : (
+                <ul className="space-y-1">
+                  {tvDevices.map((tv) => (
+                    <li key={tv.ip} className="flex items-center gap-3 py-1.5 px-2 rounded-lg bg-white border border-slate-200">
+                      <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-slate-700 truncate">{tv.model || tv.name}</div>
+                        <div className="text-xs text-slate-400">{t('settings.tvAd.tvIp')}: {tv.ip}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </div>
