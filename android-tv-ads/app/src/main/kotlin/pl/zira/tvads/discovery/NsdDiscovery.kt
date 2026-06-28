@@ -15,7 +15,11 @@ class NsdDiscovery(context: Context) : Closeable {
 
     /** onFound delivers "http://<host>:<port>" for the first resolved POS. */
     fun start(onFound: (String) -> Unit) {
-        mlock = wifi.createMulticastLock("zira-ads").apply { setReferenceCounted(false); acquire() }
+        try {
+            mlock = wifi.createMulticastLock("zira-ads").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Exception) {
+            mlock = null
+        }
         val l = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onServiceFound(info: NsdServiceInfo) {
@@ -39,7 +43,12 @@ class NsdDiscovery(context: Context) : Closeable {
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
         listener = l
-        nsd.discoverServices("_zira-ads._tcp.", NsdManager.PROTOCOL_DNS_SD, l)
+        try {
+            nsd.discoverServices("_zira-ads._tcp.", NsdManager.PROTOCOL_DNS_SD, l)
+        } catch (_: Exception) {
+            listener = null
+            close()
+        }
     }
 
     override fun close() {

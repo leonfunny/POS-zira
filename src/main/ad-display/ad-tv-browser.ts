@@ -75,7 +75,12 @@ export class AdTvBrowser {
     const ip = this.pickIp(service);
     const name = String(service.name || 'Zira TV');
     const id = String(txt.deviceId || `${name}-${ip || service.host || service.fqdn}`);
-    this.devices.delete(id);
+    if (this.devices.delete(id)) return;
+    for (const [deviceId, device] of this.devices.entries()) {
+      if (device.name !== name) continue;
+      if (ip && device.ip && device.ip !== ip) continue;
+      this.devices.delete(deviceId);
+    }
   }
 
   private expire(): void {

@@ -163,7 +163,14 @@ class MainActivity : Activity() {
         }
         if (base == null) {
             scope.launch {
-                delay(8000)
+                delay(2500)
+                if (base == null && !subnetScanning) {
+                    showOverlay("mDNS chưa thấy POS — đang quét dải mạng...")
+                    runSubnetScan(manual = false)
+                }
+            }
+            scope.launch {
+                delay(12000)
                 if (base == null && !subnetScanning) {
                     startActivity(android.content.Intent(this@MainActivity, PairingActivity::class.java))
                 }
