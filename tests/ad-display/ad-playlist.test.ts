@@ -38,6 +38,27 @@ describe('buildAdPlaylistPayload', () => {
     expect(p.videos[1]).toMatchObject({ id: 'local-video', url: '/video/local-video' });
   });
 
+  it('includes cloud verification metadata when present', () => {
+    const p = buildAdPlaylistPayload({
+      ...base,
+      tvAdPlaylist: [
+        {
+          id: 'cloud-video',
+          filename: 'cloud-video.mp4',
+          order: 0,
+          enabled: true,
+          cloudUrl: 'https://media.enail.pro/tv/cloud-video.mp4',
+          size: 1234,
+          sha256: 'ABCDEFabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234',
+        },
+      ],
+    });
+    expect(p.media[0]).toMatchObject({
+      size: 1234,
+      sha256: 'abcdefabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234',
+    });
+  });
+
   it('version changes when playlist or settings change, stable otherwise', () => {
     const v1 = computeAdVersion(base);
     const v2 = computeAdVersion(base);

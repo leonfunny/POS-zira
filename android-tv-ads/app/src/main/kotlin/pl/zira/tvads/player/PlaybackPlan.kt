@@ -9,18 +9,18 @@ data class PlaybackItem(val id: String, val url: String, val type: String, val d
 
 data class PlaybackPlan(val items: List<PlaybackItem>, val repeatMode: RepeatMode, val muted: Boolean, val volume: Int) {
     companion object {
-        fun from(playlist: Playlist, base: String): PlaybackPlan {
+        fun from(playlist: Playlist, base: String, cachedUrls: Map<String, String> = emptyMap()): PlaybackPlan {
             if (playlist.playbackMode == "repeat-one" && playlist.repeatVideoId != null) {
                 val target = playlist.media.firstOrNull { it.id == playlist.repeatVideoId }
                 if (target != null) {
                     return PlaybackPlan(
-                        listOf(PlaybackItem(target.id, UrlBuilder.absolute(base, target.url), target.type, target.durationMs ?: 7000L)),
+                        listOf(PlaybackItem(target.id, cachedUrls[target.id] ?: UrlBuilder.absolute(base, target.url), target.type, target.durationMs ?: 7000L)),
                         RepeatMode.ONE, playlist.muted, playlist.volume,
                     )
                 }
             }
             return PlaybackPlan(
-                playlist.media.map { PlaybackItem(it.id, UrlBuilder.absolute(base, it.url), it.type, it.durationMs ?: 7000L) },
+                playlist.media.map { PlaybackItem(it.id, cachedUrls[it.id] ?: UrlBuilder.absolute(base, it.url), it.type, it.durationMs ?: 7000L) },
                 RepeatMode.ALL, playlist.muted, playlist.volume,
             )
         }

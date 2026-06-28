@@ -15,11 +15,14 @@ object PlaylistParser {
                 AdMedia(
                     id = v.getString("id"),
                     url = v.getString("url"),
-                    order = v.getInt("order"),
-                    type = v.optString("type", "video"),
-                    durationMs = if (v.has("durationMs")) v.optLong("durationMs") else null,
-                )
-            }.sortedBy { it.order }
+	                    order = v.getInt("order"),
+	                    type = v.optString("type", "video"),
+	                    durationMs = if (v.has("durationMs")) v.optLong("durationMs") else null,
+	                    source = v.optString("source", "").takeIf { it.isNotBlank() },
+	                    size = if (v.has("size")) v.optLong("size") else null,
+	                    sha256 = v.optString("sha256", "").takeIf { it.matches(Regex("^[a-fA-F0-9]{64}$")) }?.lowercase(),
+	                )
+	            }.sortedBy { it.order }
         } else {
             emptyList()
         }
@@ -28,17 +31,18 @@ object PlaylistParser {
             val v = arr.getJSONObject(i)
             AdVideo(v.getString("id"), v.getString("url"), v.getInt("order"))
         }.sortedBy { it.order }
-        val resolvedMedia = media.ifEmpty {
-            videos.map { AdMedia(it.id, it.url, it.order, "video", null) }
-        }
+	        val resolvedMedia = media.ifEmpty {
+	            videos.map { AdMedia(it.id, it.url, it.order, "video", null, null, null, null) }
+	        }
         return Playlist(
             version = o.getString("version"),
             playbackMode = o.getString("playbackMode"),
             repeatVideoId = if (o.isNull("repeatVideoId")) null else o.getString("repeatVideoId"),
             muted = o.getBoolean("muted"),
-            volume = o.getInt("volume"),
-            media = resolvedMedia,
-            videos = videos,
-        )
-    }
-}
+	            volume = o.getInt("volume"),
+	            media = resolvedMedia,
+	            videos = videos,
+	            rawJson = json,
+	        )
+	    }
+	}

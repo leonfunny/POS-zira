@@ -27,19 +27,23 @@ class PlaylistParserTest {
         assertEquals("video", p.media[0].type)
     }
 
-    @Test fun parsesMixedMediaPayload() {
-        val json = """
-          {"version":"abc123","playbackMode":"sequential","repeatVideoId":null,
-           "muted":true,"volume":0,
-           "media":[{"id":"a","url":"/media/a","order":0,"type":"image","durationMs":8000},{"id":"b","url":"/media/b","order":1,"type":"video"}],
-           "videos":[{"id":"b","url":"/video/b","order":1}]}
-        """.trimIndent()
-        val p = PlaylistParser.parse(json)
+	    @Test fun parsesMixedMediaPayload() {
+	        val json = """
+	          {"version":"abc123","playbackMode":"sequential","repeatVideoId":null,
+	           "muted":true,"volume":0,
+	           "media":[{"id":"a","url":"/media/a","order":0,"type":"image","durationMs":8000},{"id":"b","url":"https://media.enail.pro/b.mp4","order":1,"type":"video","source":"cloud","size":1234,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+	           "videos":[{"id":"b","url":"/video/b","order":1}]}
+	        """.trimIndent()
+	        val p = PlaylistParser.parse(json)
         assertEquals(2, p.media.size)
-        assertEquals("image", p.media[0].type)
-        assertEquals(8000L, p.media[0].durationMs)
-        assertEquals("video", p.media[1].type)
-    }
+	        assertEquals("image", p.media[0].type)
+	        assertEquals(8000L, p.media[0].durationMs)
+	        assertEquals("video", p.media[1].type)
+	        assertEquals("cloud", p.media[1].source)
+	        assertEquals(1234L, p.media[1].size)
+	        assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", p.media[1].sha256)
+	        assertEquals(json, p.rawJson)
+	    }
 
     @Test fun parsesRepeatOne() {
         val json = """{"version":"v","playbackMode":"repeat-one","repeatVideoId":"x",

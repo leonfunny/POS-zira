@@ -10,11 +10,14 @@ import pl.zira.tvads.player.PlaybackPlan
 import pl.zira.tvads.player.RepeatMode
 
 class PlaybackPlanTest {
-    private fun pl(mode: String, repeat: String?) = Playlist(
-        "v", mode, repeat, true, 0,
-        listOf(AdMedia("a", "/media/a", 0, "image", 5000), AdMedia("b", "/media/b", 1, "video", null)),
-        listOf(AdVideo("a", "/video/a", 0), AdVideo("b", "/video/b", 1)),
-    )
+	    private fun pl(mode: String, repeat: String?) = Playlist(
+	        "v", mode, repeat, true, 0,
+	        listOf(
+	            AdMedia("a", "/media/a", 0, "image", 5000, null, null, null),
+	            AdMedia("b", "/media/b", 1, "video", null, null, null, null),
+	        ),
+	        listOf(AdVideo("a", "/video/a", 0), AdVideo("b", "/video/b", 1)),
+	    )
 
     @Test fun absoluteUrl() {
         assertEquals("http://192.168.1.5:17893/video/a",
@@ -39,9 +42,14 @@ class PlaybackPlanTest {
         assertEquals(RepeatMode.ONE, plan.repeatMode)
     }
 
-    @Test fun repeatOneWithMissingTargetFallsBackToAll() {
-        val plan = PlaybackPlan.from(pl("repeat-one", "zzz"), "http://h:1")
-        assertEquals(listOf("http://h:1/media/a", "http://h:1/media/b"), plan.items.map { it.url })
-        assertEquals(RepeatMode.ALL, plan.repeatMode)
-    }
-}
+	    @Test fun repeatOneWithMissingTargetFallsBackToAll() {
+	        val plan = PlaybackPlan.from(pl("repeat-one", "zzz"), "http://h:1")
+	        assertEquals(listOf("http://h:1/media/a", "http://h:1/media/b"), plan.items.map { it.url })
+	        assertEquals(RepeatMode.ALL, plan.repeatMode)
+	    }
+
+	    @Test fun cachedUrlsWinOverNetworkUrls() {
+	        val plan = PlaybackPlan.from(pl("sequential", null), "http://h:1", mapOf("b" to "file:///cache/b.mp4"))
+	        assertEquals(listOf("http://h:1/media/a", "file:///cache/b.mp4"), plan.items.map { it.url })
+	    }
+	}

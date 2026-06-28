@@ -42,7 +42,16 @@ export interface AdPlaylistPayload {
   repeatVideoId: string | null;
   muted: boolean;
   volume: number;
-  media: Array<{ id: string; url: string; order: number; type: TvAdMediaType; source?: 'local' | 'cloud'; durationMs?: number }>;
+  media: Array<{
+    id: string;
+    url: string;
+    order: number;
+    type: TvAdMediaType;
+    source?: 'local' | 'cloud';
+    durationMs?: number;
+    size?: number;
+    sha256?: string;
+  }>;
   videos: Array<{ id: string; url: string; order: number }>;
 }
 

@@ -15,6 +15,8 @@ export function buildAdPlaylistPayload(config: TvAdConfig): AdPlaylistPayload {
         type,
         source: url.startsWith('http://') || url.startsWith('https://') ? 'cloud' as const : 'local' as const,
         ...(type === 'image' ? { durationMs: normalizeImageDuration(v.durationMs) } : {}),
+        ...(Number.isFinite(v.size) && Number(v.size) > 0 ? { size: Number(v.size) } : {}),
+        ...(isSha256(v.sha256) ? { sha256: String(v.sha256).toLowerCase() } : {}),
       };
     });
 
@@ -71,4 +73,8 @@ function normalizeCloudUrl(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function isSha256(value: unknown): boolean {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim());
 }

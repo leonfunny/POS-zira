@@ -27,9 +27,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.zira.tvads.cache.MediaCache
+import pl.zira.tvads.cache.OfflinePlaylistStore
 import pl.zira.tvads.discovery.NsdAdvertiser
 import pl.zira.tvads.discovery.NsdDiscovery
 import pl.zira.tvads.discovery.SubnetScanner
+import pl.zira.tvads.model.Playlist
 import pl.zira.tvads.net.AdApiClient
 import pl.zira.tvads.player.PlaybackPlan
 import pl.zira.tvads.player.PlaybackItem
@@ -55,6 +58,8 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private var player: ExoPlayer? = null
     private lateinit var hostStore: HostStore
+    private lateinit var mediaCache: MediaCache
+    private lateinit var offlinePlaylistStore: OfflinePlaylistStore
     private var discovery: NsdDiscovery? = null
     private var advertiser: NsdAdvertiser? = null
     private var sse: Closeable? = null
@@ -92,6 +97,8 @@ class MainActivity : Activity() {
             runSubnetScan(manual = true)
         }
         hostStore = HostStore(this)
+        mediaCache = MediaCache(this)
+        offlinePlaylistStore = OfflinePlaylistStore(this)
         advertiser = NsdAdvertiser(this)
         player = ExoPlayer.Builder(this).build().also { playerView.player = it }
         player?.addListener(object : Player.Listener {
@@ -178,30 +185,57 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun loadAndPlay() {
-        val b = base ?: return
-        loadJob?.cancel()
-        loadJob = scope.launch {
-            try {
-                val playlist = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
-                consecutiveLoadFailures = 0
-                currentVersion = playlist.version
-                advertiser?.start(b)
-                applyPlan(PlaybackPlan.from(playlist, b))
-                openEvents(b)
-                maybeCheckForUpdate(b, force = false)
-            } catch (e: Exception) {
-                consecutiveLoadFailures++
-                showOverlay("Không kết nối được " + b + " — thử lại sau 5s (lần " + consecutiveLoadFailures + ")")
-                // The POS may have moved to a new DHCP address while mDNS is
-                // blocked by the router — after 3 straight failures, sweep the
-                // subnet ourselves instead of hammering a dead IP forever.
-                if (consecutiveLoadFailures >= 3) runSubnetScan(manual = false)
-                delay(5000)
-                if (isActive && base == b) loadAndPlay()
-            }
-        }
-    }
+	    private fun loadAndPlay() {
+	        val b = base ?: return
+	        loadJob?.cancel()
+	        loadJob = scope.launch {
+	            try {
+	                val playlist = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
+	                consecutiveLoadFailures = 0
+	                currentVersion = playlist.version
+	                advertiser?.start(b)
+	                showOverlay("Đang chuẩn bị quảng cáo offline...")
+	                val cached = prepareOfflineMedia(playlist, b)
+	                offlinePlaylistStore.save(playlist)
+	                applyPlan(PlaybackPlan.from(playlist, b, cached))
+	                openEvents(b)
+	                maybeCheckForUpdate(b, force = false)
+	            } catch (e: Exception) {
+	                consecutiveLoadFailures++
+	                if (playOfflineFallback("Mất kết nối POS — đang phát quảng cáo đã tải về")) {
+	                    delay(5000)
+	                    if (isActive && base == b) loadAndPlay()
+	                    return@launch
+	                }
+	                showOverlay("Không kết nối được " + b + " — thử lại sau 5s (lần " + consecutiveLoadFailures + ")")
+	                // The POS may have moved to a new DHCP address while mDNS is
+	                // blocked by the router — after 3 straight failures, sweep the
+	                // subnet ourselves instead of hammering a dead IP forever.
+	                if (consecutiveLoadFailures >= 3) runSubnetScan(manual = false)
+	                delay(5000)
+	                if (isActive && base == b) loadAndPlay()
+	            }
+	        }
+	    }
+
+	    private suspend fun prepareOfflineMedia(playlist: Playlist, b: String): Map<String, String> =
+	        withContext(Dispatchers.IO) {
+	            mediaCache.prepare(playlist, b) { done, total ->
+	                if (total > 0) {
+	                    runOnUiThread { statusText.text = "Đang tải quảng cáo về TV... $done/$total" }
+	                }
+	            }
+	        }
+
+	    private fun playOfflineFallback(message: String): Boolean {
+	        val playlist = offlinePlaylistStore.load() ?: return false
+	        val cached = mediaCache.cachedUrlsFor(playlist)
+	        if (cached.isEmpty()) return false
+	        currentVersion = playlist.version
+	        showOverlay(message)
+	        applyPlan(PlaybackPlan.from(playlist, base ?: "http://offline", cached))
+	        return true
+	    }
 
     /** Sweep local /24 subnets for the POS ad server. Adopts the first hit
      *  that differs from the current base. Safe to call repeatedly. */
@@ -356,16 +390,21 @@ class MainActivity : Activity() {
 
     private fun reloadIfChanged(b: String) {
         scope.launch {
-            try {
-                val pl = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
-                if (pl.version != currentVersion) {
-                    currentVersion = pl.version
-                    applyPlan(PlaybackPlan.from(pl, b))
-                }
-                maybeCheckForUpdate(b, force = false)
-            } catch (_: Exception) {}
-        }
-    }
+	            try {
+	                val pl = withContext(Dispatchers.IO) { AdApiClient(b).fetchPlaylist() }
+	                if (pl.version != currentVersion) {
+	                    currentVersion = pl.version
+	                    showOverlay("Playlist đổi — đang tải quảng cáo mới...")
+	                    val cached = prepareOfflineMedia(pl, b)
+	                    offlinePlaylistStore.save(pl)
+	                    applyPlan(PlaybackPlan.from(pl, b, cached))
+	                }
+	                maybeCheckForUpdate(b, force = false)
+	            } catch (_: Exception) {
+	                playOfflineFallback("Mất kết nối — đang phát playlist offline")
+	            }
+	        }
+	    }
 
     private fun maybeCheckForUpdate(b: String, force: Boolean) {
         if (updateInProgress) return
