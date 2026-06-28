@@ -5,6 +5,7 @@ import logger from '../logger';
 import { buildAdPlaylistPayload } from './ad-playlist';
 import { parseRangeHeader } from './http-range';
 import { getLanIpv4List, pickPrimaryLanIp } from './ad-net';
+import { getTvAppUpdateAsset, TV_APP_APK_ROUTE, TV_APP_LATEST_VERSION_CODE, TV_APP_LATEST_VERSION_NAME } from './tv-app-update';
 import type { AdDisplayStatus, TvAdConfig } from './ad-types';
 import type { AdVideoStore } from './ad-video-store';
 
@@ -96,6 +97,25 @@ export class AdDisplayServer {
       return;
     }
 
+    if (url.pathname === '/tv-app/update.json') {
+      const asset = getTvAppUpdateAsset();
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors });
+      res.end(JSON.stringify({
+        app: 'zira-tv-ads',
+        latestVersionCode: TV_APP_LATEST_VERSION_CODE,
+        latestVersionName: TV_APP_LATEST_VERSION_NAME,
+        apkUrl: asset ? TV_APP_APK_ROUTE : null,
+        apkSize: asset?.size ?? null,
+        apkSha256: asset?.sha256 ?? null,
+      }));
+      return;
+    }
+
+    if (url.pathname === TV_APP_APK_ROUTE) {
+      this.serveTvAppApk(req, res, cors);
+      return;
+    }
+
     if (url.pathname === '/events') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
@@ -109,8 +129,13 @@ export class AdDisplayServer {
       return;
     }
 
+    if (url.pathname.startsWith('/media/')) {
+      this.serveMedia(url.pathname.slice('/media/'.length), req, res, cors);
+      return;
+    }
+
     if (url.pathname.startsWith('/video/')) {
-      this.serveVideo(url.pathname.slice('/video/'.length), req, res, cors);
+      this.serveMedia(url.pathname.slice('/video/'.length), req, res, cors);
       return;
     }
 
@@ -118,7 +143,7 @@ export class AdDisplayServer {
     res.end();
   }
 
-  private serveVideo(id: string, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): void {
+  private serveMedia(id: string, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): void {
     const cfg = this.getConfig();
     const item = (cfg.tvAdPlaylist || []).find(v => v.id === id);
     if (!item || !this.store.exists(item.filename)) {
@@ -132,7 +157,7 @@ export class AdDisplayServer {
       size = statSync(full).size;
     } catch (e) {
       // File vanished between exists() and statSync (e.g. concurrent remove).
-      logger.error('[AdDisplay] stat video failed:', (e as Error)?.message || e);
+      logger.error('[AdDisplay] stat media failed:', (e as Error)?.message || e);
       res.writeHead(404, cors);
       res.end();
       return;
@@ -151,7 +176,7 @@ export class AdDisplayServer {
       ? createReadStream(full, { start: range.start, end: range.end })
       : createReadStream(full);
     stream.on('error', (e) => {
-      logger.error('[AdDisplay] video stream error:', (e as Error)?.message || e);
+      logger.error('[AdDisplay] media stream error:', (e as Error)?.message || e);
       if (!res.headersSent) res.writeHead(404, cors);
       res.destroy();
     });
@@ -160,7 +185,7 @@ export class AdDisplayServer {
     if (range) {
       const { start, end } = range;
       res.writeHead(206, {
-        'content-type': 'video/mp4',
+        'content-type': this.store.getContentType(item.filename),
         'content-range': `bytes ${start}-${end}/${size}`,
         'accept-ranges': 'bytes',
         'content-length': String(end - start + 1),
@@ -168,7 +193,63 @@ export class AdDisplayServer {
       });
     } else {
       res.writeHead(200, {
-        'content-type': 'video/mp4',
+        'content-type': this.store.getContentType(item.filename),
+        'accept-ranges': 'bytes',
+        'content-length': String(size),
+        ...cors,
+      });
+    }
+    stream.pipe(res);
+  }
+
+  private serveTvAppApk(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): void {
+    const asset = getTvAppUpdateAsset();
+    if (!asset) {
+      res.writeHead(404, cors);
+      res.end();
+      return;
+    }
+    this.serveFile(asset.path, 'application/vnd.android.package-archive', req, res, cors);
+  }
+
+  private serveFile(full: string, contentType: string, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): void {
+    let size: number;
+    try {
+      size = statSync(full).size;
+    } catch (e) {
+      logger.error('[AdDisplay] stat file failed:', (e as Error)?.message || e);
+      res.writeHead(404, cors);
+      res.end();
+      return;
+    }
+    const range = parseRangeHeader(req.headers.range, size);
+    if (range === 'unsatisfiable') {
+      res.writeHead(416, { 'content-range': `bytes */${size}`, ...cors });
+      res.end();
+      return;
+    }
+    const stream = range
+      ? createReadStream(full, { start: range.start, end: range.end })
+      : createReadStream(full);
+    stream.on('error', (e) => {
+      logger.error('[AdDisplay] file stream error:', (e as Error)?.message || e);
+      if (!res.headersSent) res.writeHead(404, cors);
+      res.destroy();
+    });
+    res.on('close', () => stream.destroy());
+
+    if (range) {
+      const { start, end } = range;
+      res.writeHead(206, {
+        'content-type': contentType,
+        'content-range': `bytes ${start}-${end}/${size}`,
+        'accept-ranges': 'bytes',
+        'content-length': String(end - start + 1),
+        ...cors,
+      });
+    } else {
+      res.writeHead(200, {
+        'content-type': contentType,
         'accept-ranges': 'bytes',
         'content-length': String(size),
         ...cors,

@@ -1,5 +1,13 @@
 package pl.zira.tvads.model
 
+data class AdMedia(
+    val id: String,
+    val url: String,
+    val order: Int,
+    val type: String,
+    val durationMs: Long?,
+)
+
 data class AdVideo(val id: String, val url: String, val order: Int)
 
 data class Playlist(
@@ -8,5 +16,6 @@ data class Playlist(
     val repeatVideoId: String?,
     val muted: Boolean,
     val volume: Int,
+    val media: List<AdMedia>,
     val videos: List<AdVideo>,
 )

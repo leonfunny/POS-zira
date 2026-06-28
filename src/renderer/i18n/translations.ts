@@ -480,16 +480,20 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.connectAddress': 'TV connect address',
     'settings.tvAd.connectAddressHint': 'Enter this address in the Zira TV Ads app if it does not auto-discover.',
     'settings.tvAd.enable': 'Enable TV advertisement screen',
-    'settings.tvAd.addVideo': 'Add video',
+    'settings.tvAd.addVideo': 'Add image or video',
     'settings.tvAd.playbackMode': 'Playback mode',
     'settings.tvAd.sequential': 'Sequential (playlist)',
-    'settings.tvAd.repeatOne': 'Repeat one video',
+    'settings.tvAd.repeatOne': 'Repeat one item',
     'settings.tvAd.muted': 'Muted',
     'settings.tvAd.volume': 'Volume',
     'settings.tvAd.status': 'Server status',
     'settings.tvAd.running': 'Running',
     'settings.tvAd.stopped': 'Stopped',
     'settings.tvAd.connectedTvs': 'Connected TVs',
+    'settings.tvAd.onlineTvs': 'TVs online',
+    'settings.tvAd.noOnlineTvs': 'No TV found yet. Install and open Zira TV Ads on the TV, then connect it to this POS.',
+    'settings.tvAd.unknownTv': 'Unknown TV',
+    'settings.tvAd.unknownIp': 'Unknown IP',
     'settings.tvAd.remove': 'Remove',
 
     // Invoicing
@@ -1986,16 +1990,20 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.connectAddress': 'Địa chỉ kết nối cho TV',
     'settings.tvAd.connectAddressHint': 'Nhập địa chỉ này vào app Zira TV Ads nếu TV không tự tìm thấy.',
     'settings.tvAd.enable': 'Bật màn hình quảng cáo TV',
-    'settings.tvAd.addVideo': 'Thêm video',
+    'settings.tvAd.addVideo': 'Thêm ảnh hoặc video',
     'settings.tvAd.playbackMode': 'Chế độ phát',
     'settings.tvAd.sequential': 'Phát lần lượt (playlist)',
-    'settings.tvAd.repeatOne': 'Lặp 1 video',
+    'settings.tvAd.repeatOne': 'Lặp 1 quảng cáo',
     'settings.tvAd.muted': 'Tắt tiếng',
     'settings.tvAd.volume': 'Âm lượng',
     'settings.tvAd.status': 'Trạng thái server',
     'settings.tvAd.running': 'Đang chạy',
     'settings.tvAd.stopped': 'Đã dừng',
     'settings.tvAd.connectedTvs': 'TV đang kết nối',
+    'settings.tvAd.onlineTvs': 'TV online',
+    'settings.tvAd.noOnlineTvs': 'Chưa tìm thấy TV. Hãy cài và mở Zira TV Ads trên TV, rồi kết nối TV với POS này.',
+    'settings.tvAd.unknownTv': 'TV không rõ',
+    'settings.tvAd.unknownIp': 'IP không rõ',
     'settings.tvAd.remove': 'Xoá',
 
     // Invoicing
@@ -3393,6 +3401,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.running': 'Çalışıyor',
     'settings.tvAd.stopped': 'Durduruldu',
     'settings.tvAd.connectedTvs': 'Bağlı TV\'ler',
+    'settings.tvAd.onlineTvs': 'Çevrimiçi TV\'ler',
+    'settings.tvAd.noOnlineTvs': 'Henüz TV bulunamadı. TV\'ye Zira TV Ads yükleyip açın, sonra bu POS\'a bağlayın.',
+    'settings.tvAd.unknownTv': 'Bilinmeyen TV',
+    'settings.tvAd.unknownIp': 'Bilinmeyen IP',
     'settings.tvAd.remove': 'Kaldır',
 
     // Invoicing
@@ -4602,6 +4614,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.running': '运行中',
     'settings.tvAd.stopped': '已停止',
     'settings.tvAd.connectedTvs': '已连接TV',
+    'settings.tvAd.onlineTvs': '在线TV',
+    'settings.tvAd.noOnlineTvs': '尚未找到TV。请在TV上安装并打开 Zira TV Ads，然后连接到此POS。',
+    'settings.tvAd.unknownTv': '未知TV',
+    'settings.tvAd.unknownIp': '未知IP',
     'settings.tvAd.remove': '删除',
 
     // Invoicing
@@ -5811,6 +5827,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.running': 'Працює',
     'settings.tvAd.stopped': 'Зупинено',
     'settings.tvAd.connectedTvs': 'Підключені TV',
+    'settings.tvAd.onlineTvs': 'TV онлайн',
+    'settings.tvAd.noOnlineTvs': 'TV ще не знайдено. Встановіть і відкрийте Zira TV Ads на TV, потім підключіть його до цього POS.',
+    'settings.tvAd.unknownTv': 'Невідомий TV',
+    'settings.tvAd.unknownIp': 'Невідомий IP',
     'settings.tvAd.remove': 'Видалити',
 
     // Invoicing
@@ -7020,6 +7040,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.running': 'Работает',
     'settings.tvAd.stopped': 'Остановлено',
     'settings.tvAd.connectedTvs': 'Подключённые TV',
+    'settings.tvAd.onlineTvs': 'TV онлайн',
+    'settings.tvAd.noOnlineTvs': 'TV пока не найден. Установите и откройте Zira TV Ads на TV, затем подключите его к этому POS.',
+    'settings.tvAd.unknownTv': 'Неизвестный TV',
+    'settings.tvAd.unknownIp': 'Неизвестный IP',
     'settings.tvAd.remove': 'Удалить',
 
     // Invoicing
@@ -8303,6 +8327,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.tvAd.running': 'Działa',
     'settings.tvAd.stopped': 'Zatrzymany',
     'settings.tvAd.connectedTvs': 'Podłączone TV',
+    'settings.tvAd.onlineTvs': 'TV online',
+    'settings.tvAd.noOnlineTvs': 'Nie znaleziono jeszcze TV. Zainstaluj i otwórz Zira TV Ads na TV, potem połącz go z tym POS.',
+    'settings.tvAd.unknownTv': 'Nieznany TV',
+    'settings.tvAd.unknownIp': 'Nieznane IP',
     'settings.tvAd.remove': 'Usuń',
 
     // Invoicing

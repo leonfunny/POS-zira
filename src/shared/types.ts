@@ -710,7 +710,17 @@ export interface AgentConfig {
   tvAdRepeatVideoId?: string | null;
   tvAdMuted?: boolean;
   tvAdVolume?: number;
-  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean }>;
+  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean; type?: 'video' | 'image'; durationMs?: number }>;
+}
+
+export interface TvDiscoveredDevice {
+  id: string;
+  name: string;
+  ip?: string;
+  model?: string;
+  manufacturer?: string;
+  posHost?: string;
+  seenAt: number;
 }
 
 // Agent credentials (stored securely)
@@ -1603,6 +1613,7 @@ export const IPC_CHANNELS = {
 
   // TV Ad Display (signage)
   TV_AD_GET_STATUS: 'tvAd:getStatus',
+  TV_AD_GET_DEVICES: 'tvAd:getDevices',
   TV_AD_PICK_VIDEO: 'tvAd:pickVideo',
   TV_AD_SAVE: 'tvAd:save',
 } as const;

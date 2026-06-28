@@ -5,6 +5,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import pl.zira.tvads.model.Playlist
+import pl.zira.tvads.model.TvAppUpdate
+import java.io.File
 import java.io.Closeable
 import java.util.concurrent.TimeUnit
 
@@ -24,6 +26,32 @@ class AdApiClient(private val base: String) {
             val body = resp.body?.string() ?: error("empty playlist body")
             if (!resp.isSuccessful) error("playlist HTTP ${resp.code}")
             PlaylistParser.parse(body)
+        }
+    }
+
+    suspend fun fetchTvAppUpdate(): TvAppUpdate = withContext(Dispatchers.IO) {
+        val fetchClient = client.newBuilder()
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .build()
+        val req = Request.Builder().url(UrlBuilder.absolute(base, "/tv-app/update.json")).build()
+        fetchClient.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: error("empty update body")
+            if (!resp.isSuccessful) error("update HTTP ${resp.code}")
+            TvAppUpdateParser.parse(body)
+        }
+    }
+
+    suspend fun downloadTo(url: String, target: File): Unit = withContext(Dispatchers.IO) {
+        val fetchClient = client.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(120, TimeUnit.SECONDS)
+            .build()
+        val req = Request.Builder().url(url).build()
+        fetchClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("download HTTP ${resp.code}")
+            val body = resp.body ?: error("empty APK body")
+            target.outputStream().use { out -> body.byteStream().copyTo(out) }
         }
     }
 

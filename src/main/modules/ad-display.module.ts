@@ -7,6 +7,7 @@ import { IPC_CHANNELS, type AgentConfig } from '../../shared/types';
 import { AdVideoStore } from '../ad-display/ad-video-store';
 import { AdDisplayServer } from '../ad-display/ad-display-server';
 import { AdMdnsAdvertiser } from '../ad-display/ad-mdns';
+import { AdTvBrowser } from '../ad-display/ad-tv-browser';
 import { AD_DISPLAY_DEFAULTS, type TvAdConfig } from '../ad-display/ad-types';
 import logger from '../logger';
 
@@ -15,6 +16,7 @@ export class AdDisplayModule extends BaseModule {
   private store: AdVideoStore;
   private server: AdDisplayServer;
   private mdns = new AdMdnsAdvertiser();
+  private tvBrowser = new AdTvBrowser();
 
   constructor(private readonly container: ServiceContainer) {
     super();
@@ -28,6 +30,7 @@ export class AdDisplayModule extends BaseModule {
   }
 
   async start(): Promise<void> {
+    this.tvBrowser.start();
     await this.applyAll();
     this.setState(ModuleState.RUNNING);
   }
@@ -35,6 +38,7 @@ export class AdDisplayModule extends BaseModule {
   async stop(): Promise<void> {
     await this.server.stop();
     this.mdns.stop();
+    this.tvBrowser.stop();
     this.setState(ModuleState.STOPPED);
   }
 
@@ -52,11 +56,12 @@ export class AdDisplayModule extends BaseModule {
 
   registerIpcHandlers(): void {
     ipcMain.handle(IPC_CHANNELS.TV_AD_GET_STATUS, () => this.server.getStatus());
+    ipcMain.handle(IPC_CHANNELS.TV_AD_GET_DEVICES, () => this.tvBrowser.getDevices());
 
     ipcMain.handle(IPC_CHANNELS.TV_AD_PICK_VIDEO, async () => {
       const result = await dialog.showOpenDialog({
         properties: ['openFile'] as const,
-        filters: [{ name: 'Video', extensions: ['mp4', 'm4v', 'mov'] }],
+        filters: [{ name: 'Ad media', extensions: ['mp4', 'm4v', 'mov', 'jpg', 'jpeg', 'png', 'webp'] }],
       });
       if (result.canceled || !result.filePaths[0]) return null;
       try {

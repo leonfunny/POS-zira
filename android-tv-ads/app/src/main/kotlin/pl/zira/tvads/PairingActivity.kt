@@ -1,12 +1,17 @@
 package pl.zira.tvads
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +26,10 @@ import pl.zira.tvads.prefs.HostStore
 import java.util.concurrent.TimeUnit
 
 class PairingActivity : Activity() {
+    companion object {
+        private const val REQ_NEARBY_WIFI = 4102
+    }
+
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var scanning = false
 
@@ -45,6 +54,7 @@ class PairingActivity : Activity() {
         // Manual LAN sweep — works even when the router blocks mDNS multicast.
         val scanBtn = findViewById<Button>(R.id.scanBtn)
         scanBtn.setOnClickListener {
+            if (!ensureWifiDiscoveryPermission()) return@setOnClickListener
             if (scanning) return@setOnClickListener
             scanning = true
             scanBtn.isEnabled = false
@@ -90,8 +100,17 @@ class PairingActivity : Activity() {
 
     private fun health(base: String): Boolean = try {
         val c = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).build()
-        c.newCall(Request.Builder().url(UrlBuilder.absolute(base, "/health")).build()).execute().use { it.isSuccessful }
+        c.newCall(Request.Builder().url(UrlBuilder.absolute(base, "/health")).build()).execute().use {
+            it.isSuccessful && (it.body?.string()?.contains("zira-ads") == true)
+        }
     } catch (e: Exception) { false }
+
+    private fun ensureWifiDiscoveryPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED) return true
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES), REQ_NEARBY_WIFI)
+        return false
+    }
 
     override fun onDestroy() {
         scope.cancel()

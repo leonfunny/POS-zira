@@ -113,6 +113,7 @@ import type {
   PosScheduleStaffStatusPayload,
   PosScheduleWeekIpcResult,
   ScaleReadResult,
+  TvDiscoveredDevice,
 } from './types';
 
 // ── POS DB row types (mirrors repos) ──
@@ -1128,7 +1129,8 @@ interface ElectronAPI {
 
   // TV Ad Display
   tvAdGetStatus: () => Promise<import('./types').AdDisplayStatusLike>;
-  tvAdPickVideo: () => Promise<{ id: string; filename: string } | null>;
+  tvAdGetDevices: () => Promise<TvDiscoveredDevice[]>;
+  tvAdPickVideo: () => Promise<{ id: string; filename: string; type?: 'video' | 'image'; durationMs?: number } | null>;
   tvAdSave: (cfg: Partial<AgentConfig>) => Promise<{ ok: boolean }>;
 }
 
