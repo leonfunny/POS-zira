@@ -710,7 +710,19 @@ export interface AgentConfig {
   tvAdRepeatVideoId?: string | null;
   tvAdMuted?: boolean;
   tvAdVolume?: number;
-  tvAdPlaylist?: Array<{ id: string; filename: string; order: number; enabled: boolean; type?: 'video' | 'image'; durationMs?: number }>;
+  tvAdPlaylist?: Array<{
+    id: string;
+    filename: string;
+    order: number;
+    enabled: boolean;
+    type?: 'video' | 'image';
+    durationMs?: number;
+    source?: 'local' | 'cloud';
+    cloudUrl?: string;
+    cloudKey?: string;
+    size?: number;
+    sha256?: string;
+  }>;
 }
 
 export interface TvDiscoveredDevice {

@@ -8,7 +8,7 @@ import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
-import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload, Cloud, HardDrive } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 
 interface PortMismatchValidation {
@@ -91,6 +91,11 @@ type TvAdMediaItem = {
   enabled: boolean;
   type?: 'video' | 'image';
   durationMs?: number;
+  source?: 'local' | 'cloud';
+  cloudUrl?: string;
+  cloudKey?: string;
+  size?: number;
+  sha256?: string;
 };
 
 // Printer types - defined locally for Vite compatibility
@@ -1615,6 +1620,15 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const handleTvAdImageDuration = async (id: string, seconds: number) => {
     const durationMs = Math.min(60, Math.max(2, Math.round(seconds || 7))) * 1000;
     const next = tvAdPlaylist.map(v => v.id === id ? { ...v, durationMs } : v);
+    setTvAdPlaylist(next);
+    await persistTvAd({ tvAdPlaylist: next });
+  };
+
+  const handleTvAdCloudUrl = async (id: string, value: string) => {
+    const cloudUrl = value.trim();
+    const next = tvAdPlaylist.map(v => v.id === id
+      ? { ...v, cloudUrl: cloudUrl || undefined, source: cloudUrl ? 'cloud' as const : 'local' as const }
+      : v);
     setTvAdPlaylist(next);
     await persistTvAd({ tvAdPlaylist: next });
   };
@@ -5243,28 +5257,33 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <Upload className="w-4 h-4" />
                 {t('settings.tvAd.addVideo')}
               </button>
-              {tvAdPlaylist.length > 0 && (
-                <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
-                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map((v, index, arr) => {
-                    const type = v.type || (/\.(jpe?g|png|webp)$/i.test(v.filename) ? 'image' : 'video');
-                    return (
-                      <div key={v.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-b-0">
-                        <input
-                          type="checkbox"
-                          checked={v.enabled}
+	              {tvAdPlaylist.length > 0 && (
+	                <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+	                  {tvAdPlaylist.slice().sort((a, b) => a.order - b.order).map((v, index, arr) => {
+	                    const type = v.type || (/\.(jpe?g|png|webp)$/i.test(v.filename) ? 'image' : 'video');
+	                    const hasCloudUrl = !!v.cloudUrl?.trim();
+	                    return (
+	                      <div key={v.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-b-0">
+	                        <input
+	                          type="checkbox"
+	                          checked={v.enabled}
                           onChange={() => void handleToggleTvAdVideo(v.id)}
                           className="w-4 h-4 accent-brand-600"
                           title={v.enabled ? 'Enabled' : 'Disabled'}
                         />
                         <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${type === 'image' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>
-                          {type === 'image' ? <ImageIcon className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />}
-                          {type === 'image' ? 'Image' : 'Video'}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{v.filename}</span>
-                        {type === 'image' && (
-                          <label className="inline-flex items-center gap-1 text-xs text-slate-500">
-                            <Clock className="w-3.5 h-3.5" />
-                            <input
+	                          {type === 'image' ? <ImageIcon className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />}
+	                          {type === 'image' ? 'Image' : 'Video'}
+	                        </span>
+	                        <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{v.filename}</span>
+	                        <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${hasCloudUrl ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-600'}`}>
+	                          {hasCloudUrl ? <Cloud className="w-3.5 h-3.5" /> : <HardDrive className="w-3.5 h-3.5" />}
+	                          {hasCloudUrl ? 'Cloud' : 'Local'}
+	                        </span>
+	                        {type === 'image' && (
+	                          <label className="inline-flex items-center gap-1 text-xs text-slate-500">
+	                            <Clock className="w-3.5 h-3.5" />
+	                            <input
                               type="number"
                               min={2}
                               max={60}
@@ -5282,13 +5301,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                             checked={tvAdRepeatId === v.id}
                             onChange={async () => { setTvAdRepeatId(v.id); await persistTvAd({ tvAdRepeatVideoId: v.id }); }}
                             className="w-4 h-4 accent-brand-600"
-                            title="Repeat this item"
-                          />
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => void handleMoveTvAdMedia(v.id, -1)}
-                          disabled={index === 0}
+	                            title="Repeat this item"
+	                          />
+	                        )}
+	                        <button
+	                          type="button"
+	                          onClick={() => void handleMoveTvAdMedia(v.id, -1)}
+	                          disabled={index === 0}
                           className="rounded-md border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30"
                           title="Move up"
                         >
@@ -5307,14 +5326,22 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           type="button"
                           onClick={() => void handleRemoveTvAdVideo(v.id)}
                           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          {t('settings.tvAd.remove')}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
+	                        >
+	                          <Trash2 className="w-3.5 h-3.5" />
+	                          {t('settings.tvAd.remove')}
+	                        </button>
+	                        <input
+	                          type="url"
+	                          value={v.cloudUrl || ''}
+	                          onChange={(e) => void handleTvAdCloudUrl(v.id, e.target.value)}
+	                          placeholder="https://media.enail.pro/..."
+	                          className="basis-full rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+	                          title="Cloud media URL"
+	                        />
+	                      </div>
+	                    );
+	                  })}
+	                </div>
               )}
             </div>
 

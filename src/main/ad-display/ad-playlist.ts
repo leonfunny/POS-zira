@@ -7,11 +7,13 @@ export function buildAdPlaylistPayload(config: TvAdConfig): AdPlaylistPayload {
     .sort((a, b) => a.order - b.order)
     .map(v => {
       const type = v.type || inferTypeFromFilename(v.filename);
+      const url = playableUrlFor(v);
       return {
         id: v.id,
-        url: `/media/${v.id}`,
+        url,
         order: v.order,
         type,
+        source: url.startsWith('http://') || url.startsWith('https://') ? 'cloud' as const : 'local' as const,
         ...(type === 'image' ? { durationMs: normalizeImageDuration(v.durationMs) } : {}),
       };
     });
@@ -25,7 +27,7 @@ export function buildAdPlaylistPayload(config: TvAdConfig): AdPlaylistPayload {
     media,
     videos: media
       .filter(v => v.type === 'video')
-      .map(v => ({ id: v.id, url: `/video/${v.id}`, order: v.order })),
+      .map(v => ({ id: v.id, url: v.source === 'cloud' ? v.url : `/video/${v.id}`, order: v.order })),
   };
 }
 
@@ -38,7 +40,7 @@ export function computeAdVersion(config: TvAdConfig): string {
     videos: (config.tvAdPlaylist || [])
       .filter(v => v.enabled)
       .sort((a, b) => a.order - b.order)
-      .map(v => `${v.id}:${v.order}:${v.type || inferTypeFromFilename(v.filename)}:${normalizeImageDuration(v.durationMs)}`),
+      .map(v => `${v.id}:${v.order}:${v.type || inferTypeFromFilename(v.filename)}:${normalizeImageDuration(v.durationMs)}:${playableUrlFor(v)}`),
   };
   return createHash('sha1').update(JSON.stringify(signature)).digest('hex').slice(0, 12);
 }
@@ -51,4 +53,22 @@ export function normalizeImageDuration(value: unknown): number {
 
 function inferTypeFromFilename(filename: string): 'video' | 'image' {
   return /\.(jpe?g|png|webp)$/i.test(filename) ? 'image' : 'video';
+}
+
+function playableUrlFor(item: { id: string; cloudUrl?: string }): string {
+  const cloudUrl = normalizeCloudUrl(item.cloudUrl);
+  return cloudUrl || `/media/${item.id}`;
+}
+
+function normalizeCloudUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 }

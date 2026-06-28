@@ -8,6 +8,11 @@ export interface TvAdVideo {
   enabled: boolean;
   type?: TvAdMediaType;
   durationMs?: number; // image slide duration; video duration comes from the file
+  source?: 'local' | 'cloud';
+  cloudUrl?: string; // absolute https/http CDN URL; local /media remains fallback
+  cloudKey?: string;
+  size?: number;
+  sha256?: string;
 }
 
 export interface TvAdConfig {
@@ -37,7 +42,7 @@ export interface AdPlaylistPayload {
   repeatVideoId: string | null;
   muted: boolean;
   volume: number;
-  media: Array<{ id: string; url: string; order: number; type: TvAdMediaType; durationMs?: number }>;
+  media: Array<{ id: string; url: string; order: number; type: TvAdMediaType; source?: 'local' | 'cloud'; durationMs?: number }>;
   videos: Array<{ id: string; url: string; order: number }>;
 }
 
