@@ -4,19 +4,27 @@ import { PrintJobType, PrinterType, ReceiptData } from '../src/shared/types';
 const {
   createPrintJob,
   createPrintJobWithApiKey,
+  getPrintJobStatus,
+  getPrintJobStatusWithApiKey,
   getConfig,
   getSecureApiKey,
   getSecureAuthToken,
   listPrinterAssignments,
   listPrinterAssignmentsWithApiKey,
+  safeRetryPrintJob,
+  safeRetryPrintJobWithApiKey,
 } = vi.hoisted(() => ({
   createPrintJob: vi.fn(),
   createPrintJobWithApiKey: vi.fn(),
+  getPrintJobStatus: vi.fn(),
+  getPrintJobStatusWithApiKey: vi.fn(),
   getConfig: vi.fn(),
   getSecureApiKey: vi.fn(),
   getSecureAuthToken: vi.fn(),
   listPrinterAssignments: vi.fn(),
   listPrinterAssignmentsWithApiKey: vi.fn(),
+  safeRetryPrintJob: vi.fn(),
+  safeRetryPrintJobWithApiKey: vi.fn(),
 }));
 
 vi.mock('../src/main/config/store', () => ({
@@ -29,8 +37,12 @@ vi.mock('../src/main/network/api-client', () => ({
   ApiClient: class {
     createPrintJob = createPrintJob;
     createPrintJobWithApiKey = createPrintJobWithApiKey;
+    getPrintJobStatus = getPrintJobStatus;
+    getPrintJobStatusWithApiKey = getPrintJobStatusWithApiKey;
     listPrinterAssignments = listPrinterAssignments;
     listPrinterAssignmentsWithApiKey = listPrinterAssignmentsWithApiKey;
+    safeRetryPrintJob = safeRetryPrintJob;
+    safeRetryPrintJobWithApiKey = safeRetryPrintJobWithApiKey;
   },
 }));
 
@@ -123,9 +135,76 @@ describe('submitSharedReceiptPrint', () => {
         printerId: 'printer-remote-1',
         referenceType: 'POS_RECEIPT',
         referenceId: 'order-1',
+        waitForCompletion: true,
+        timeoutMs: 10000,
+        idempotencyKey: 'pos-receipt:machine-2:order-1:order:v1',
         payload: receiptData,
       }),
     );
+  });
+
+  it('auto retries an initial order copy only after SAFE_BEFORE_PRINT', async () => {
+    vi.useFakeTimers();
+    try {
+      listPrinterAssignments.mockResolvedValue({
+        assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
+      });
+      createPrintJob.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'FAILED',
+        failureClass: 'SAFE_BEFORE_PRINT',
+        retryAllowed: true,
+        sent: false,
+      });
+      safeRetryPrintJob.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'SENT',
+        retryAllowed: true,
+        sent: true,
+      });
+      getPrintJobStatus.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'COMPLETED',
+        retryAllowed: false,
+        sent: false,
+      });
+
+      const pending = submitSharedReceiptPrint(receiptData, {
+        referenceType: 'POS_RECEIPT',
+        referenceId: 'order-1',
+        source: 'pos',
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await pending;
+
+      expect(result).toMatchObject({ handled: true, printed: true, jobId: 'job-safe' });
+      expect(safeRetryPrintJob).toHaveBeenCalledWith('jwt-token', 'job-safe', 'POS receipt auto-retry #1');
+      expect(getPrintJobStatus).toHaveBeenCalledWith('jwt-token', 'job-safe');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not auto retry a timed-out initial order copy', async () => {
+    listPrinterAssignments.mockResolvedValue({
+      assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
+    });
+    createPrintJob.mockResolvedValue({
+      jobId: 'job-timeout',
+      status: 'TIMEOUT',
+      timedOut: true,
+      retryAllowed: false,
+      sent: false,
+    });
+
+    const result = await submitSharedReceiptPrint(receiptData, {
+      referenceType: 'POS_RECEIPT',
+      referenceId: 'order-1',
+      source: 'pos',
+    });
+
+    expect(result).toMatchObject({ handled: true, printed: false, jobId: 'job-timeout' });
+    expect(safeRetryPrintJob).not.toHaveBeenCalled();
   });
 
   it('adds openDrawer only when the caller explicitly requests a remote drawer pulse', async () => {

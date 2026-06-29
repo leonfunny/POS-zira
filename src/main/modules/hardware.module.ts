@@ -71,6 +71,7 @@ import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
+import { classifyPrintFailureAfterDriverCall } from '../printing/print-failure-classifier';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
@@ -902,7 +903,7 @@ export class HardwareModule extends BaseModule {
 
     if (decision.action === 'REJECT') {
       const message = `LAN_FIRST ${decision.reason}`;
-      socket?.sendJobStatus(job.jobId, 'FAILED', message);
+      socket?.sendJobStatus(job.jobId, 'FAILED', message, 'FINAL');
       return { shouldPrint: false };
     }
 
@@ -920,6 +921,7 @@ export class HardwareModule extends BaseModule {
       job.jobId,
       'FAILED',
       `LAN_FIRST duplicate not retryable${decision.failureClass ? ` (${decision.failureClass})` : ''}`,
+      decision.failureClass || 'FINAL',
     );
     return { shouldPrint: false };
   }
@@ -2436,7 +2438,7 @@ export class HardwareModule extends BaseModule {
             errorMessage: failMsg,
           });
         }
-        socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+        socket?.sendJobStatus(job.jobId, 'FAILED', failMsg, 'SAFE_BEFORE_PRINT');
         return;
       }
 
@@ -2551,7 +2553,12 @@ export class HardwareModule extends BaseModule {
             failureClass: error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
             errorMessage: failMsg,
           });
-          socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+          socket?.sendJobStatus(
+            job.jobId,
+            'FAILED',
+            failMsg,
+            error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
+          );
           return;
         }
 
@@ -2562,7 +2569,12 @@ export class HardwareModule extends BaseModule {
           const failMsg = fiscal
             ? `FISCAL PRINT FAILED — sale must be blocked: ${error.message}`
             : error.message;
-          socket?.sendJobStatus(job.jobId, 'FAILED', failMsg);
+          socket?.sendJobStatus(
+            job.jobId,
+            'FAILED',
+            failMsg,
+            classifyPrintFailureAfterDriverCall(error, fiscal),
+          );
         }
       }
     }

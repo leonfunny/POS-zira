@@ -846,7 +846,10 @@ export interface CreatePrintJobRequest {
   openDrawer?: boolean;
   waitForCompletion?: boolean;
   timeoutMs?: number;
+  idempotencyKey?: string;
 }
+
+export type PrintJobFailureClass = 'SAFE_BEFORE_PRINT' | 'UNCERTAIN_AFTER_PRINT' | 'FINAL';
 
 export interface CreatePrintJobResponse {
   jobId?: string;
@@ -856,6 +859,10 @@ export interface CreatePrintJobResponse {
   message?: string;
   errorMessage?: string;
   printerId?: string | null;
+  failureClass?: PrintJobFailureClass | null;
+  timedOut?: boolean;
+  retryAllowed?: boolean;
+  retryBlockedReason?: string | null;
   [key: string]: unknown;
 }
 
@@ -863,7 +870,7 @@ export type LanFirstPayloadHash = `sha256:${string}`;
 export type LanFirstDispatchMode = 'LAN_FIRST';
 export type LanFirstPrintTransport = 'LAN_DIRECT';
 export type LanFirstPrintResultStatus = 'COMPLETED' | 'FAILED' | 'PRINTING';
-export type LanFirstPrintFailureClass = 'SAFE_BEFORE_PRINT' | 'UNCERTAIN_AFTER_PRINT' | 'FINAL';
+export type LanFirstPrintFailureClass = PrintJobFailureClass;
 
 export interface LanFirstPrintPayloadHashInput {
   jobType: 'KITCHEN_TICKET';

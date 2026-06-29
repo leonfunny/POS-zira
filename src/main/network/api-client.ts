@@ -650,6 +650,7 @@ export class ApiClient {
     apiKey: string,
     body?: any,
     machineId?: string,
+    timeoutMs: number = DEFAULT_TIMEOUT,
   ): Promise<any> {
     const normalizedPath = path.startsWith('/api/v1/') ? path : `/api/v1${path}`;
     const url = `${this.baseUrl}${normalizedPath}`;
@@ -663,7 +664,7 @@ export class ApiClient {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-    });
+    }, timeoutMs);
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.message || `HTTP ${response.status}`);
@@ -1016,8 +1017,39 @@ export class ApiClient {
     );
   }
 
+  private printJobRequestTimeout(body?: Pick<CreatePrintJobRequest, 'waitForCompletion' | 'timeoutMs'>): number {
+    if (!body?.waitForCompletion || typeof body.timeoutMs !== 'number') return DEFAULT_TIMEOUT;
+    return Math.max(DEFAULT_TIMEOUT, Math.min(body.timeoutMs + 5_000, 65_000));
+  }
+
   async createPrintJob(token: string, body: CreatePrintJobRequest): Promise<CreatePrintJobResponse> {
-    return this.request('POST', '/print-agent/jobs', token, body);
+    return this.requestWithTimeout('POST', '/print-agent/jobs', token, body, this.printJobRequestTimeout(body));
+  }
+
+  private async requestWithTimeout(
+    method: string,
+    path: string,
+    token: string,
+    body: any,
+    timeoutMs: number,
+  ): Promise<any> {
+    const normalizedPath = path.startsWith('/api/v1/') ? path : `/api/v1${path}`;
+    const url = `${this.baseUrl}${normalizedPath}`;
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    }, timeoutMs);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    const text = await response.text();
+    if (!text) return {};
+    return JSON.parse(text);
   }
 
   async recordFiscalReceiptEvent(token: string, body: {
@@ -1074,6 +1106,53 @@ export class ApiClient {
       '/print-agent/agent/jobs',
       apiKey,
       body,
+      machineId,
+      this.printJobRequestTimeout(body),
+    );
+  }
+
+  async getPrintJobStatus(token: string, jobId: string): Promise<CreatePrintJobResponse> {
+    return this.request('GET', `/print-agent/jobs/${encodeURIComponent(jobId)}`, token);
+  }
+
+  async getPrintJobStatusWithApiKey(
+    apiKey: string,
+    jobId: string,
+    machineId?: string,
+  ): Promise<CreatePrintJobResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'GET',
+      `/print-agent/agent/jobs/${encodeURIComponent(jobId)}`,
+      apiKey,
+      undefined,
+      machineId,
+    );
+  }
+
+  async safeRetryPrintJob(
+    token: string,
+    jobId: string,
+    reason?: string,
+  ): Promise<CreatePrintJobResponse> {
+    return this.request(
+      'POST',
+      `/print-agent/jobs/${encodeURIComponent(jobId)}/safe-retry`,
+      token,
+      reason ? { reason } : {},
+    );
+  }
+
+  async safeRetryPrintJobWithApiKey(
+    apiKey: string,
+    jobId: string,
+    machineId?: string,
+    reason?: string,
+  ): Promise<CreatePrintJobResponse> {
+    return this.requestWithPrintAgentApiKey(
+      'POST',
+      `/print-agent/agent/jobs/${encodeURIComponent(jobId)}/safe-retry`,
+      apiKey,
+      reason ? { reason } : {},
       machineId,
     );
   }

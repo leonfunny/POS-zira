@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import logger from '../logger';
 import {
   PrintJobEvent,
+  PrintJobFailureClass,
   PrintJobStatus,
   RemoteSessionRequest,
   RemoteSessionResponse,
@@ -199,7 +200,7 @@ export default class SocketClient extends EventEmitter {
     logger.info(`[Socket] Elavon payment requested: ${data.orderId}, amount: ${data.amount}`);
   }
 
-  sendJobStatus(jobId: string, status: string, errorMessage?: string): void {
+  sendJobStatus(jobId: string, status: string, errorMessage?: string, failureClass?: PrintJobFailureClass | null): void {
     if (!this.socket?.connected) {
       logger.warn('Cannot send job status: not connected');
       return;
@@ -209,6 +210,7 @@ export default class SocketClient extends EventEmitter {
       jobId,
       status,
       errorMessage,
+      ...(failureClass ? { failureClass } : {}),
     });
 
     logger.debug(`Sent job status: ${jobId} -> ${status}`);

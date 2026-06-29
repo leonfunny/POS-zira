@@ -4,6 +4,8 @@ import { PrintJobType, PrinterType, ReceiptData } from '../src/shared/types';
 const {
   createPrintJob,
   createPrintJobWithApiKey,
+  getPrintJobStatus,
+  getPrintJobStatusWithApiKey,
   getConfig,
   getSecureApiKey,
   getSecureAuthToken,
@@ -11,9 +13,13 @@ const {
   listPrinterAssignmentsWithApiKey,
   listSalonPrinters,
   listSalonPrintersWithApiKey,
+  safeRetryPrintJob,
+  safeRetryPrintJobWithApiKey,
 } = vi.hoisted(() => ({
   createPrintJob: vi.fn(),
   createPrintJobWithApiKey: vi.fn(),
+  getPrintJobStatus: vi.fn(),
+  getPrintJobStatusWithApiKey: vi.fn(),
   getConfig: vi.fn(),
   getSecureApiKey: vi.fn(),
   getSecureAuthToken: vi.fn(),
@@ -21,6 +27,8 @@ const {
   listPrinterAssignmentsWithApiKey: vi.fn(),
   listSalonPrinters: vi.fn(),
   listSalonPrintersWithApiKey: vi.fn(),
+  safeRetryPrintJob: vi.fn(),
+  safeRetryPrintJobWithApiKey: vi.fn(),
 }));
 
 vi.mock('../src/main/config/store', () => ({
@@ -33,10 +41,14 @@ vi.mock('../src/main/network/api-client', () => ({
   ApiClient: class {
     createPrintJob = createPrintJob;
     createPrintJobWithApiKey = createPrintJobWithApiKey;
+    getPrintJobStatus = getPrintJobStatus;
+    getPrintJobStatusWithApiKey = getPrintJobStatusWithApiKey;
     listPrinterAssignments = listPrinterAssignments;
     listPrinterAssignmentsWithApiKey = listPrinterAssignmentsWithApiKey;
     listSalonPrinters = listSalonPrinters;
     listSalonPrintersWithApiKey = listSalonPrintersWithApiKey;
+    safeRetryPrintJob = safeRetryPrintJob;
+    safeRetryPrintJobWithApiKey = safeRetryPrintJobWithApiKey;
   },
 }));
 
@@ -150,10 +162,72 @@ describe('submitSharedFiscalPrint', () => {
         referenceId: 'order-1',
         waitForCompletion: true,
         timeoutMs: 60000,
+        idempotencyKey: 'pos-fiscal:machine-2:order-1:default:v1',
         payload: receiptData,
       }),
     );
     expect(createPrintJob.mock.calls[0][1]).not.toHaveProperty('openDrawer');
+  });
+
+  it('auto retries fiscal only after backend reports SAFE_BEFORE_PRINT', async () => {
+    vi.useFakeTimers();
+    try {
+      createPrintJob.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'FAILED',
+        failureClass: 'SAFE_BEFORE_PRINT',
+        retryAllowed: true,
+        sent: false,
+      });
+      safeRetryPrintJob.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'SENT',
+        retryAllowed: true,
+        sent: true,
+      });
+      getPrintJobStatus.mockResolvedValue({
+        jobId: 'job-safe',
+        status: 'COMPLETED',
+        retryAllowed: false,
+        sent: false,
+      });
+
+      const pending = submitSharedFiscalPrint(receiptData, {
+        referenceType: 'POS_FISCAL_RECEIPT',
+        referenceId: 'order-1',
+        source: 'pos',
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await pending;
+
+      expect(result).toMatchObject({ handled: true, printed: true, jobId: 'job-safe' });
+      expect(safeRetryPrintJob).toHaveBeenCalledWith('jwt-token', 'job-safe', 'POS fiscal auto-retry #1');
+      expect(getPrintJobStatus).toHaveBeenCalledWith('jwt-token', 'job-safe');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not auto retry fiscal TIMEOUT responses', async () => {
+    createPrintJob.mockResolvedValue({
+      jobId: 'job-timeout',
+      status: 'TIMEOUT',
+      timedOut: true,
+      retryAllowed: false,
+      message: 'POS1 did not answer',
+    });
+
+    const result = await submitSharedFiscalPrint(receiptData, {
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: 'order-1',
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      printed: false,
+      status: 'TIMEOUT',
+    });
+    expect(safeRetryPrintJob).not.toHaveBeenCalled();
   });
 
   it('fails closed when the backend only reports sent=true without final completion', async () => {

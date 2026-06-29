@@ -234,4 +234,48 @@ describe('ApiClient LAN_FIRST print-agent API-key methods', () => {
     });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(body);
   });
+
+  it('calls the API-key safe-retry endpoint with machine auth and reason', async () => {
+    mockJsonResponse({ jobId: 'job-1', status: 'SENT', retryAllowed: true, sent: true });
+
+    await new ApiClient('https://api.test').safeRetryPrintJobWithApiKey(
+      'api-key-1',
+      'job-1',
+      'machine-1',
+      'POS fiscal auto-retry #1',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/v1/print-agent/agent/jobs/job-1/safe-retry');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-print-agent-api-key': 'api-key-1',
+        'x-print-agent-machine-id': 'machine-1',
+      },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ reason: 'POS fiscal auto-retry #1' });
+  });
+
+  it('fetches API-key print job status with machine auth', async () => {
+    mockJsonResponse({ jobId: 'job-1', status: 'FAILED', failureClass: 'SAFE_BEFORE_PRINT' });
+
+    await new ApiClient('https://api.test').getPrintJobStatusWithApiKey(
+      'api-key-1',
+      'job-1',
+      'machine-1',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/v1/print-agent/agent/jobs/job-1');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-print-agent-api-key': 'api-key-1',
+        'x-print-agent-machine-id': 'machine-1',
+      },
+    });
+  });
 });

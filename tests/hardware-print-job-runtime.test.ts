@@ -552,6 +552,7 @@ describe('HardwareModule print job runtime guards', () => {
       'job-lan-1',
       'FAILED',
       expect.stringMatching(/PAYLOAD_HASH_MISMATCH/),
+      'FINAL',
     );
   });
 
