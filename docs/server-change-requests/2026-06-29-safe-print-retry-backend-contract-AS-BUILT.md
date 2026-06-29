@@ -1,10 +1,13 @@
 # POS2 -> POS1 Safe Print Retry -- Backend Contract (AS BUILT)
 
 Date: 2026-06-29
-Status: **Backend code COMPLETE + unit-tested (50/50 green, tsc clean). NOT yet
-deployed to Contabo, migration NOT yet run.** Keep POS2 auto-retry behind your
-capability/config gate until the deploy + staging smoke test pass (see section 8).
-Backend repo: eNail `backend/`, branch `feat/product-admin-create-product`.
+Status: **DEPLOYED to Contabo production 2026-06-29.** Backend live (50/50 unit
+tests green, tsc clean); migration `2124100000000` applied (last_retry_* columns
+present); health 200 via api.enail.pro; guarded-retry routes wired
+(`/agent/jobs/:jobId/safe-retry` returns 401 without key). Run your capability
+check + the staging smoke test (section 8) before enabling POS2 auto-retry.
+Backend repo: eNail `backend/`, branch `feat/product-admin-create-product`
+(commits `cda7130b` + `f656b436`), shipped to Contabo dist + source.
 Answers request: `server-change-requests/2026-06-29-safe-print-retry-backend-contract.md`
 Client plan: `POS2_TO_POS1_SAFE_PRINT_RETRY_PLAN_2026-06-29.md`
 
@@ -280,21 +283,21 @@ printer loop with 2s gaps; fiscal may legitimately wait up to 60s.
 
 ---
 
-## 8. Deploy + client rollout dependency (NOT done yet)
+## 8. Deploy + client rollout status (DEPLOYED 2026-06-29)
 
-The client plan's gates S1-S4 require the contract **deployed and verified**.
-Current state:
+The client plan's gates S1-S4 require the contract **deployed and verified** --
+this is now DONE on Contabo production:
 
-1. Backend code complete on `feat/product-admin-create-product`; unit tests
-   green; project `tsc --noEmit` clean. **Not committed/deployed.**
-2. **DB migration pending:** `2124100000000-AddPrintJobRetryMetadata` adds
-   `print_jobs.last_retry_reason`, `last_retry_at`, `last_retry_by`. Must run
-   `npm run migration:run` on the target DB before/with deploy. (The earlier
-   `2123500000000-AddLanFirstKitchenPrintJobs` migration -- idempotency_key,
-   payload_hash, dispatch_mode, failure_class, unique index -- is the other
-   prerequisite; confirm it is applied on Contabo.)
-3. Until deployed to the live backend (Contabo serves chesaigon), **keep POS2
-   auto-retry disabled** behind your capability/config gate.
+1. Backend committed + pushed (`feat/product-admin-create-product`,
+   `cda7130b` + `f656b436`); unit tests 50/50 green; `tsc --noEmit` clean.
+   **Deployed to Contabo** (dist + source shipped).
+2. **DB migration applied:** `2124100000000-AddPrintJobRetryMetadata` ran on the
+   live Contabo DB; `print_jobs.last_retry_reason/last_retry_at/last_retry_by`
+   confirmed present. Prerequisites (`2123500000000-AddLanFirstKitchenPrintJobs`
+   with idempotency_key/payload_hash/dispatch_mode/failure_class + unique index,
+   and `CreateFiscalReceipts`/backfill/fix) were ALREADY applied on Contabo.
+3. Verified: api.enail.pro health 200, login 401, `enail-backend` online with 0
+   unstable restarts, `safeRetryJob` + `safe-retry` routes live in running dist.
 
 ### Capability detection (no dedicated endpoint was added)
 Detect the deployed contract by either:
