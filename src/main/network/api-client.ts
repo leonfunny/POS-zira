@@ -1514,7 +1514,7 @@ export class ApiClient {
     token: string,
     payload: ProductAdminCreateProductInput,
   ): Promise<ProductAdminProductMutationResponse> {
-    const { idempotencyKey, ...body } = withoutUnsupportedProductAdminSellBy(payload);
+    const { idempotencyKey, ...body } = payload;
     return this.productAdminRequest<ProductAdminProductMutationResponse>(
       token,
       'POST',

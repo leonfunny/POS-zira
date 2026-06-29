@@ -2966,6 +2966,7 @@ export interface ProductAdminCreateProductInput {
   initialStockQty?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
+  sellBy?: 'PIECE' | 'WEIGHT';
   imageUrl?: string | null;
   idempotencyKey?: string;
 }
