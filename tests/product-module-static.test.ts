@@ -9,8 +9,11 @@ function readSource(relativePath: string): string {
 const app = readSource('../src/renderer/App.tsx');
 const sidebar = readSource('../src/renderer/components/Sidebar.tsx');
 const moduleSource = readSource('../src/renderer/components/products/ProductModule.tsx');
-const toolbar = readSource('../src/renderer/components/products/ProductToolbar.tsx');
 const drawer = readSource('../src/renderer/components/products/ProductDetailDrawer.tsx');
+const categoryGrid = readSource('../src/renderer/components/products/CategoryGrid.tsx');
+const tileGrid = readSource('../src/renderer/components/products/ProductTileGrid.tsx');
+const editView = readSource('../src/renderer/components/products/ProductEditView.tsx');
+const searchOverlay = readSource('../src/renderer/components/products/ProductSearchOverlay.tsx');
 const categoryManager = readSource('../src/renderer/components/products/CategoryManagerDialog.tsx');
 const stockDialog = readSource('../src/renderer/components/products/StockAdjustmentDialog.tsx');
 const editForm = readSource('../src/renderer/components/products/ProductEditForm.tsx');
@@ -46,14 +49,15 @@ describe('Product module implementation contract', () => {
 
   it('keeps product mutations behind product-admin capabilities', () => {
     expect(drawer).toContain('products.drawer.readOnly');
+    expect(editView).toContain('products.drawer.readOnly');
     expect(moduleSource).toContain('window.electronAPI.pos.productAdmin.getCapabilities()');
     expect(moduleSource).toContain('products.admin.notReady');
     expect(moduleSource).toContain('canUpdateProduct={adminCapabilities?.canUpdateProduct === true}');
     expect(moduleSource).toContain('canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}');
     expect(moduleSource).toContain('canAdjustStock={adminCapabilities?.canAdjustStock === true}');
     expect(moduleSource).toContain('canManageCategories={canManageCategories}');
-    expect(drawer).toContain('canEditProduct = canUpdateProduct && !product._isDraft');
-    expect(drawer).toContain('canStopSelling = canDeactivateProduct && !product._isDraft');
+    expect(editView).toContain('canEditProduct = canUpdateProduct && !product._isDraft');
+    expect(editView).toContain('canStopSelling = canDeactivateProduct && !product._isDraft');
   });
 
   it('exposes product-admin capabilities fail-closed without exposing mutations', () => {
@@ -100,13 +104,18 @@ describe('Product module implementation contract', () => {
   it('creates manual products through product-admin with optional barcode and kg stock support', () => {
     expect(moduleSource).toContain('ProductCreateDialog');
     expect(moduleSource).toContain('canCreateProduct={adminCapabilities?.canCreateProduct === true}');
-    expect(toolbar).toContain('canCreateProduct');
-    expect(toolbar).toContain('onAddByBarcode');
+    expect(categoryGrid).toContain('canCreateProduct ? (');
+    expect(tileGrid).toContain('canCreateProduct ? (');
+    expect(searchOverlay).toContain('canCreateProduct &&');
     expect(createDialog).toContain('window.electronAPI.pos.productAdmin.createProduct');
     expect(createDialog).toContain('barcode: barcode.trim() || null');
     expect(createDialog).toContain('initialStockQty: validation.initialStockQty');
     expect(createDialog).toContain('saleUnit: unit');
-    expect(createDialog).not.toContain('\n      sellBy,\n');
+    expect(createDialog).toContain('\n      sellBy,\n');
+    expect(createDialog).toContain("setStockQty('0')");
+    expect(createDialog).toContain('setIdempotencyKey(makeIdempotencyKey())');
+    expect(createDialog).toContain('initialCategoryId');
+    expect(createDialog).toContain('initialBarcode');
     expect(createDialog).toContain("sellBy === 'WEIGHT'");
     expect(createDialog).toContain('products.create.stockPieceInvalid');
     expect(createDialog).toContain('products.create.stockWeightPrecision');
@@ -114,9 +123,8 @@ describe('Product module implementation contract', () => {
 
   it('enables stock adjustment UI only through the capability-gated backend path', () => {
     expect(moduleSource).toContain('canAdjustStock={adminCapabilities?.canAdjustStock === true}');
-    expect(drawer).toContain('StockAdjustmentDialog');
-    expect(drawer).toContain('canOpenStockAdjustment = canAdjustStock && !product._isDraft');
-    expect(drawer).toContain('products.stock.unavailable');
+    expect(editView).toContain('StockAdjustmentDialog');
+    expect(editView).toContain('canOpenStockAdjustment = canAdjustStock && !product._isDraft');
     expect(stockDialog).toContain('window.electronAPI.pos.productAdmin.adjustStock');
     expect(stockDialog).toContain('idempotencyKey: makeIdempotencyKey()');
     expect(stockDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');
@@ -130,17 +138,17 @@ describe('Product module implementation contract', () => {
   });
 
   it('enables product edit and stop-selling only through backend product-admin IPC', () => {
-    expect(drawer).toContain('ProductEditForm');
-    expect(drawer).toContain('DeactivateProductDialog');
-    expect(drawer).toContain('disabled={!canEditProduct}');
-    expect(drawer).toContain('disabled={!canStopSelling}');
-    expect(drawer).toContain('productInCart');
-    expect(drawer).toContain('products.deactivate.hideButton');
+    expect(editView).toContain('ProductEditForm');
+    expect(editView).toContain('DeactivateProductDialog');
+    expect(editView).toContain('disabled={!canEditProduct}');
+    expect(editView).toContain('disabled={!canStopSelling}');
+    expect(editView).toContain('productInCart');
+    expect(editView).toContain('products.deactivate.hideButton');
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.updateVariant');
     expect(editForm).toContain('parseMoneyToGrosze');
     expect(editForm).toContain('priceGrossGrosze');
     expect(editForm).toContain('expectedUpdatedAt: product.updated_at || undefined');
-    expect(drawer).toContain('canAdjustStock={canAdjustStock}');
+    expect(editView).toContain('canAdjustStock={canAdjustStock}');
     expect(editForm).toContain('canAdjustStock && stockQty !== stockInputFromProduct(product)');
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.adjustStock');
     expect(editForm).toContain("mode: 'recount'");
@@ -148,7 +156,7 @@ describe('Product module implementation contract', () => {
     expect(editForm).toContain('expectedUpdatedAtForStock = result.data?.variant?.updatedAt');
     expect(editForm).toContain('idempotencyKey: makeIdempotencyKey()');
     expect(editForm).toContain('classifyProductSale');
-    expect(drawer).toContain('classifyProductSale');
+    expect(editView).toContain('classifyProductSale');
     expect(posModule).toContain('getProductAdminVariantSellBy');
     expect(editForm).not.toContain('\n      sellBy,\n');
     expect(apiClient).toContain('withoutUnsupportedProductAdminSellBy');
@@ -175,9 +183,8 @@ describe('Product module implementation contract', () => {
   it('enables category management only through backend product-admin IPC', () => {
     expect(moduleSource).toContain('CategoryManagerDialog');
     expect(moduleSource).toContain('adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true');
-    expect(toolbar).toContain('canManageCategories');
-    expect(toolbar).toContain('products.category.unavailable');
-    expect(drawer).toContain('onManageCategories={onManageCategories}');
+    expect(categoryGrid).toContain('canManageCategories ? (');
+    expect(editView).toContain('onManageCategories={onManageCategories}');
     expect(editForm).toContain('canManageCategories');
     expect(editForm).toContain('onManageCategories');
     expect(moduleSource).toContain('localCategoryCount={categories.length}');
@@ -203,17 +210,34 @@ describe('Product module implementation contract', () => {
     expect(moduleSource).toContain('usePosStore()');
     expect(moduleSource).toContain('selectedProductInCart');
     expect(moduleSource).toContain('products.deactivate.hidden');
-    expect(moduleSource).toContain('PRODUCT_TABLE_RENDER_LIMIT');
+    expect(tileGrid).toContain('PRODUCT_TILE_RENDER_LIMIT = 300');
+    expect(searchOverlay).toContain('window.electronAPI.pos.products.getByBarcode');
+    expect(moduleSource).toContain('syncProducts');
+    expect(moduleSource).toContain('setKindFilter');
+    expect(moduleSource).toContain("setAddInitialBarcode('')");
+    expect(categoryGrid).toContain('onAddByBarcode');
+    expect(tileGrid).toContain('onAddByBarcode');
     expect(useProducts).toContain('onProductsSynced');
     expect(useProducts).toContain('onCatalogUpdated');
     expect(useProducts).toContain('onStockUpdated');
     expect(useProducts).toContain('onDraftProductsSynced');
   });
 
-  it('distinguishes backend sync from local reload and auto-clears sync success', () => {
-    expect(toolbar).toContain('products.syncTitle');
-    expect(toolbar).toContain('products.refreshLocal');
+  it('refreshes product state from sync events and auto-clears sync success', () => {
+    expect(useProducts).toContain('const reload = () => { void refresh(true); };');
+    expect(useProducts).toContain('onProductsSynced(reload)');
     expect(useProducts).toContain('window.setTimeout(() => setSyncOkAt(null), 4500)');
+  });
+
+  it('composes the category drill-down shell while retaining the legacy drawer fallback file', () => {
+    expect(moduleSource).toContain('CategoryGrid');
+    expect(moduleSource).toContain('ProductTileGrid');
+    expect(moduleSource).toContain('ProductEditView');
+    expect(moduleSource).toContain('ProductSearchOverlay');
+    expect(moduleSource).not.toContain('ProductTable');
+    expect(moduleSource).not.toContain('ProductToolbar');
+    expect(moduleSource).not.toContain('ProductDetailDrawer');
+    expect(drawer).toContain('export default function ProductDetailDrawer');
   });
 
   it('keeps the Products tab Vietnamese labels accented and render-limit copy translated', () => {
@@ -230,6 +254,10 @@ describe('Product module implementation contract', () => {
       expect(block, `${lang} missing render-limit hint`).toContain("'products.renderLimitHint'");
       expect(block, `${lang} missing hide-product title`).toContain("'products.deactivate.hideTitle'");
       expect(block, `${lang} missing hide-product success`).toContain("'products.deactivate.hidden'");
+      expect(block, `${lang} missing category-grid label`).toContain("'products.categories'");
+      expect(block, `${lang} missing search overlay placeholder`).toContain("'products.searchCodePlaceholder'");
+      expect(block, `${lang} missing duplicate scan label`).toContain("'products.scan.duplicate'");
+      expect(block, `${lang} missing uncategorised label`).toContain("'products.uncategorised'");
     }
   });
 
@@ -264,7 +292,7 @@ describe('Product module implementation contract', () => {
     expect(electronDts).toContain('options?: import(\'./types\').LabelPrintOptions');
     expect(hardwareModule).toContain('ipcMain.handle(IPC_CHANNELS.PRINT_LABEL');
     expect(hardwareModule).toContain('return this.printLabel(barcode, text, options)');
-    expect(drawer).toContain('window.electronAPI.printLabel');
+    expect(editView).toContain('window.electronAPI.printLabel');
   });
 
   it('keeps the backend mutation contract explicit before enabling product edits', () => {

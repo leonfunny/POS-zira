@@ -1,24 +1,33 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, PackageSearch } from 'lucide-react';
-import { Language } from '../../i18n/translations';
-import { useTranslation } from '../../i18n/useTranslation';
-import { useProducts, ProductListItem } from '../../hooks/useProducts';
-import { usePosStore } from '../../hooks/usePosStore';
+import { AlertTriangle, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import type { ProductAdminCapabilities, ProductAdminVariant } from '../../../shared/types';
+import { resolveName } from '../../../shared/catalog-names';
+import type { Language } from '../../i18n/translations';
+import { useTranslation } from '../../i18n/useTranslation';
+import { useProducts, type ProductKindFilter, type ProductListItem } from '../../hooks/useProducts';
+import { usePosStore } from '../../hooks/usePosStore';
+import CategoryGrid, { type ProductCategorySelection } from './CategoryGrid';
 import CategoryManagerDialog from './CategoryManagerDialog';
 import ProductAddFlow from './ProductAddFlow';
 import ProductCreateDialog from './ProductCreateDialog';
-import ProductDetailDrawer from './ProductDetailDrawer';
-import ProductTable from './ProductTable';
-import ProductToolbar from './ProductToolbar';
+import ProductEditView from './ProductEditView';
+import ProductSearchOverlay from './ProductSearchOverlay';
+import ProductTileGrid from './ProductTileGrid';
+import { LOW_STOCK_THRESHOLD } from './product-stock-color';
 
 interface ProductModuleProps {
   language: Language;
 }
 
-const PRODUCT_TABLE_RENDER_LIMIT = 300;
+type BrowseView =
+  | { name: 'categories' }
+  | { name: 'products'; categoryId: ProductCategorySelection };
+
+type ProductView = BrowseView | { name: 'edit'; productId: string; returnTo: BrowseView };
 
 type ProductModuleToast = { kind: 'success' | 'error'; text: string };
+
+const PRODUCT_KIND_FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts'];
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -42,13 +51,10 @@ function adminCapabilitySummary(t: (key: string) => string, capabilities: Produc
 
   if (capabilities.canCreateProduct) enabled.push(tOr(t, 'products.admin.capability.createProduct', 'create products'));
   else disabled.push(tOr(t, 'products.admin.capability.createProduct', 'create products'));
-
   if (capabilities.canUpdateProduct) enabled.push(tOr(t, 'products.admin.capability.updateProduct', 'edit products'));
   if (capabilities.canDeactivateProduct) enabled.push(tOr(t, 'products.admin.capability.deactivateProduct', 'stop selling'));
-
   if (capabilities.canAdjustStock) enabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
   else disabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
-
   if (capabilities.canCreateCategory || capabilities.canUpdateCategory) {
     enabled.push(tOr(t, 'products.admin.capability.categories', 'categories'));
   }
@@ -87,31 +93,51 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
   };
 }
 
+function matchesProductKind(product: ProductListItem, filter: ProductKindFilter): boolean {
+  const stock = product.available_qty ?? product.in_stock ?? 0;
+  const price = Number(product.retail_price) || 0;
+  switch (filter) {
+    case 'drafts':
+      return product._isDraft === true;
+    case 'noPrice':
+      return price <= 0;
+    case 'outOfStock':
+      return !product._isDraft && stock <= 0;
+    case 'lowStock':
+      return !product._isDraft && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
+    case 'all':
+    default:
+      return true;
+  }
+}
+
 export default function ProductModule({ language }: ProductModuleProps) {
   const { t } = useTranslation(language);
   const { state: posState } = usePosStore();
   const {
-    products,
+    products: searchProducts,
     allProducts,
     categories,
     loading,
     error,
     query,
     setQuery,
-    categoryId,
-    setCategoryId,
-    kindFilter,
-    setKindFilter,
     refresh,
     syncProducts,
     hideProductLocally,
+    kindFilter,
+    setKindFilter,
     syncing,
     syncErrorCode,
     syncOkAt,
   } = useProducts(language);
 
+  const [view, setView] = useState<ProductView>({ name: 'categories' });
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createCategoryId, setCreateCategoryId] = useState<string | null>(null);
+  const [createBarcode, setCreateBarcode] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addInitialBarcode, setAddInitialBarcode] = useState('');
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
@@ -123,23 +149,54 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
   const catalogProductCount = allProducts.length - draftCount;
-  const noPriceCount = useMemo(() => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length, [allProducts]);
-  const visibleProducts = useMemo(() => products.slice(0, PRODUCT_TABLE_RENDER_LIMIT), [products]);
-  const productRowsTruncated = visibleProducts.length < products.length;
+  const noPriceCount = useMemo(
+    () => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length,
+    [allProducts],
+  );
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
   const adminSummary = adminCapabilitySummary(t, adminCapabilities);
+  const filteredAllProducts = useMemo(
+    () => allProducts.filter((product) => matchesProductKind(product, kindFilter)),
+    [allProducts, kindFilter],
+  );
+
+  const browseProducts = useMemo(() => {
+    if (view.name !== 'products') return [];
+    if (view.categoryId === 'ALL') return filteredAllProducts;
+    if (view.categoryId === null) return filteredAllProducts.filter((product) => product.category_id == null);
+    return filteredAllProducts.filter((product) => product.category_id === view.categoryId);
+  }, [filteredAllProducts, view]);
+
+  const browseCategoryName = useMemo(() => {
+    if (view.name !== 'products') return '';
+    if (view.categoryId === 'ALL') return tOr(t, 'products.allCategories', 'All products');
+    if (view.categoryId === null) return tOr(t, 'products.uncategorised', 'Uncategorised');
+    const category = categoryById.get(view.categoryId);
+    return category ? resolveName(category, language) : tOr(t, 'products.uncategorised', 'Uncategorised');
+  }, [categoryById, language, t, view]);
+
+  const currentCategoryId = view.name === 'products' && view.categoryId !== 'ALL'
+    ? view.categoryId
+    : null;
+
   const selectedProductInCart = useMemo(() => {
     if (!selectedProduct) return false;
-    return (posState?.cart?.items || []).some((item: any) => item?.variantId === selectedProduct.id);
+    return (posState?.cart?.items || []).some((item) => item.variantId === selectedProduct.id);
   }, [posState?.cart?.items, selectedProduct]);
 
   useEffect(() => {
-    if (!selectedProduct) return;
+    if (!selectedProduct || loading) return;
     const fresh = allProducts.find((product) => product.id === selectedProduct.id);
-    if (fresh && fresh !== selectedProduct) setSelectedProduct(fresh);
-    if (!fresh && !selectedProduct._isDraft) setSelectedProduct(null);
-  }, [allProducts, selectedProduct]);
+    if (fresh && fresh !== selectedProduct) {
+      setSelectedProduct(fresh);
+      return;
+    }
+    if (!fresh && !selectedProduct._isDraft) {
+      setSelectedProduct(null);
+      setView((current) => current.name === 'edit' ? current.returnTo : current);
+    }
+  }, [allProducts, loading, selectedProduct]);
 
   useEffect(() => {
     if (!toast) return;
@@ -157,17 +214,16 @@ export default function ProductModule({ language }: ProductModuleProps) {
         if (cancelled) return;
         setAdminCapabilities(response.capabilities);
         setAdminCapabilityError(response.ok ? null : response.error || 'product-admin-unavailable');
-      } catch (err) {
+      } catch (caught) {
         if (cancelled) return;
         setAdminCapabilities(null);
-        setAdminCapabilityError(err instanceof Error ? err.message : 'product-admin-unavailable');
+        setAdminCapabilityError(caught instanceof Error ? caught.message : 'product-admin-unavailable');
       } finally {
         if (!cancelled) setAdminCapabilitiesLoading(false);
       }
     }
 
     void loadAdminCapabilities();
-
     return () => {
       cancelled = true;
     };
@@ -175,37 +231,57 @@ export default function ProductModule({ language }: ProductModuleProps) {
 
   const handleOpenProduct = useCallback((product: ProductListItem) => {
     setSelectedProduct(product);
+    setView((current) => ({
+      name: 'edit',
+      productId: product.id,
+      returnTo: current.name === 'edit' ? current.returnTo : current,
+    }));
+  }, []);
+
+  const handleOpenCreate = useCallback((categoryId: string | null, barcode = '') => {
+    if (adminCapabilities?.canCreateProduct !== true) return;
+    setCreateCategoryId(categoryId);
+    setCreateBarcode(barcode);
+    setCreateOpen(true);
+  }, [adminCapabilities?.canCreateProduct]);
+
+  const handleOpenAddByBarcode = useCallback(() => {
+    setAddInitialBarcode('');
+    setAddOpen(true);
+  }, []);
+
+  const returnFromEdit = useCallback(() => {
+    setSelectedProduct(null);
+    setView((current) => current.name === 'edit' ? current.returnTo : { name: 'categories' });
   }, []);
 
   const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant) => {
     await refresh();
-    const created = productAdminVariantToProduct(variant);
-    setSelectedProduct(created);
-    setQuery(created.barcode || created.sku || created.name);
-  }, [refresh, setQuery]);
+    handleOpenProduct(productAdminVariantToProduct(variant));
+  }, [handleOpenProduct, refresh]);
 
   const handleProductDeactivated = useCallback((product: ProductListItem) => {
     hideProductLocally(product.id);
-    setSelectedProduct(null);
+    returnFromEdit();
     setToast({ kind: 'success', text: tOr(t, 'products.deactivate.hidden', 'Product hidden') });
-  }, [hideProductLocally, t]);
+  }, [hideProductLocally, returnFromEdit, t]);
 
   const handleStaleProductHidden = useCallback((product: ProductListItem) => {
     hideProductLocally(product.id);
-    setSelectedProduct(null);
+    returnFromEdit();
     setToast({
       kind: 'success',
       text: tOr(t, 'products.deactivate.notFoundHidden', 'Product was already unavailable; hidden locally.'),
     });
-  }, [hideProductLocally, t]);
+  }, [hideProductLocally, returnFromEdit, t]);
 
   const handleImportDraft = useCallback((product: ProductListItem) => {
     if (!product.barcode) return;
-    setSelectedProduct(null);
+    returnFromEdit();
     setAddInitialBarcode(product.barcode);
     setAddOpen(true);
     setQuery(product.barcode);
-  }, [setQuery]);
+  }, [returnFromEdit, setQuery]);
 
   const syncMessage = syncErrorCode
     ? syncErrorCode === 'no-auth'
@@ -216,7 +292,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
       : null;
 
   return (
-    <div className="flex h-[calc(100vh-2rem)] flex-col gap-4">
+    <div className="flex h-[calc(100vh-2rem)] flex-col gap-3">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-950">{tOr(t, 'products.title', 'Products')}</h1>
@@ -226,10 +302,12 @@ export default function ProductModule({ language }: ProductModuleProps) {
         </div>
         <div className="flex flex-wrap gap-2 text-xs text-slate-600">
           <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-            <span className="font-semibold text-slate-950">{products.length}</span> {tOr(t, 'products.count.visible', 'visible')}
+            <span className="font-semibold text-slate-950">{view.name === 'products' ? browseProducts.length : filteredAllProducts.length}</span>{' '}
+            {tOr(t, 'products.count.visible', 'visible')}
           </span>
           <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-            <span className="font-semibold text-slate-950">{catalogProductCount}</span> {tOr(t, 'products.count.catalog', 'POS products')}
+            <span className="font-semibold text-slate-950">{catalogProductCount}</span>{' '}
+            {tOr(t, 'products.count.catalog', 'POS products')}
           </span>
           <span className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-violet-700">
             <span className="font-semibold">{draftCount}</span> {tOr(t, 'products.filters.drafts', 'Drafts')}
@@ -240,29 +318,53 @@ export default function ProductModule({ language }: ProductModuleProps) {
         </div>
       </header>
 
-      <ProductToolbar
-        t={t}
-        language={language}
-        query={query}
-        onQueryChange={setQuery}
-        categoryId={categoryId}
-        onCategoryChange={setCategoryId}
-        categories={categories}
-        kindFilter={kindFilter}
-        onKindFilterChange={setKindFilter}
-        loading={loading}
-        syncing={syncing}
-        canCreateProduct={adminCapabilities?.canCreateProduct === true}
-        canManageCategories={canManageCategories}
-        onRefresh={() => void refresh()}
-        onSync={() => void syncProducts()}
-        onAddProduct={() => setCreateOpen(true)}
-        onAddByBarcode={() => {
-          setAddInitialBarcode('');
-          setAddOpen(true);
-        }}
-        onManageCategories={() => setCategoryManagerOpen(true)}
-      />
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+            <SlidersHorizontal size={14} />
+            {tOr(t, 'products.col.status', 'Status')}
+          </span>
+          {PRODUCT_KIND_FILTERS.map((filter) => {
+            const active = kindFilter === filter;
+            return (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setKindFilter(filter)}
+                className={`min-h-9 rounded-md border px-3 text-sm font-medium ${
+                  active
+                    ? 'border-brand-600 bg-brand-50 text-brand-700'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {tOr(t, `products.filters.${filter}`, filter)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void syncProducts()}
+            disabled={syncing}
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
+          >
+            <RefreshCw size={17} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? tOr(t, 'products.syncing', 'Syncing...') : tOr(t, 'products.sync', 'Sync')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={loading}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
+            aria-label={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
+          >
+            <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </section>
 
       {syncMessage ? (
         <div className={`rounded-md border px-3 py-2 text-sm ${
@@ -275,15 +377,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
       ) : null}
 
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {tOr(t, 'products.error', 'Could not load products')}: {error}
-        </div>
-      ) : null}
-
-      {productRowsTruncated ? (
-        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
-          {tOr(t, 'products.renderLimit', 'Showing first')} {visibleProducts.length} / {products.length}.{' '}
-          {tOr(t, 'products.renderLimitHint', 'Use search or filters to narrow the list.')}
         </div>
       ) : null}
 
@@ -298,60 +393,81 @@ export default function ProductModule({ language }: ProductModuleProps) {
           ? tOr(t, 'products.admin.checking', 'Checking product admin backend...')
           : adminBackendReady
             ? adminSummary || tOr(t, 'products.admin.ready', 'Product admin backend is available')
-            : `${tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}${adminCapabilityError ? `: ${adminCapabilityError}` : ''}`}
+            : (
+              <span className="flex items-center gap-2">
+                <AlertTriangle size={18} className="shrink-0" />
+                {tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}
+                {adminCapabilityError ? `: ${adminCapabilityError}` : ''}
+              </span>
+            )}
       </div>
 
-      {!adminCapabilitiesLoading && !adminBackendReady ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <div className="flex gap-2">
-            <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-            <span>
-              {tOr(t, 'products.drawer.readOnly', 'Editing needs product management backend support. This view is read-only for now.')}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
       {loading && allProducts.length === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm text-slate-500">
+        <div className="flex min-h-0 flex-1 items-center justify-center border border-slate-200 bg-white text-sm text-slate-500">
           {tOr(t, 'products.loading', 'Loading products...')}
         </div>
-      ) : products.length === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white text-center">
-          <div className="px-6">
-            <PackageSearch size={42} className="mx-auto mb-3 text-slate-300" />
-            <div className="text-sm font-medium text-slate-600">{tOr(t, 'products.empty', 'No products found')}</div>
-          </div>
-        </div>
-      ) : (
-        <ProductTable
-          products={visibleProducts}
+      ) : view.name === 'categories' ? (
+        <CategoryGrid
+          categories={categories}
+          products={filteredAllProducts}
+          language={language}
+          t={t}
+          canCreateProduct={adminCapabilities?.canCreateProduct === true}
+          canManageCategories={canManageCategories}
+          onOpenCategory={(categoryId) => setView({ name: 'products', categoryId })}
+          onOpenSearch={() => setSearchOpen(true)}
+          onAddProduct={() => handleOpenCreate(null)}
+          onAddByBarcode={handleOpenAddByBarcode}
+          onManageCategories={() => setCategoryManagerOpen(true)}
+        />
+      ) : view.name === 'products' ? (
+        <ProductTileGrid
+          products={browseProducts}
+          categoryName={browseCategoryName}
+          language={language}
+          t={t}
+          canCreateProduct={adminCapabilities?.canCreateProduct === true}
+          onBack={() => setView({ name: 'categories' })}
+          onAddProduct={() => handleOpenCreate(currentCategoryId)}
+          onAddByBarcode={handleOpenAddByBarcode}
+          onOpenSearch={() => setSearchOpen(true)}
+          onSelect={handleOpenProduct}
+        />
+      ) : selectedProduct ? (
+        <ProductEditView
+          product={selectedProduct}
+          categories={categories}
           categoryById={categoryById}
           language={language}
           t={t}
-          selectedId={selectedProduct?.id}
-          onSelect={handleOpenProduct}
+          canUpdateProduct={adminCapabilities?.canUpdateProduct === true}
+          canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
+          canAdjustStock={adminCapabilities?.canAdjustStock === true}
+          canManageCategories={canManageCategories}
+          adminBackendReady={adminBackendReady}
+          productInCart={selectedProductInCart}
+          onBack={returnFromEdit}
+          onImportDraft={handleImportDraft}
+          onManageCategories={() => setCategoryManagerOpen(true)}
+          onProductChanged={refresh}
+          onProductDeactivated={handleProductDeactivated}
+          onStaleProductHidden={handleStaleProductHidden}
         />
-      )}
+      ) : null}
 
-      <ProductDetailDrawer
-        product={selectedProduct}
-        categories={categories}
-        categoryById={categoryById}
+      <ProductSearchOverlay
+        open={searchOpen}
+        query={query}
+        products={searchProducts}
+        allProducts={allProducts}
+        currentCategoryId={currentCategoryId}
         language={language}
         t={t}
-        canUpdateProduct={adminCapabilities?.canUpdateProduct === true}
-        canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
-        canAdjustStock={adminCapabilities?.canAdjustStock === true}
-        canManageCategories={canManageCategories}
-        adminBackendReady={adminBackendReady}
-        productInCart={selectedProductInCart}
-        onClose={() => setSelectedProduct(null)}
-        onImportDraft={handleImportDraft}
-        onManageCategories={() => setCategoryManagerOpen(true)}
-        onProductChanged={refresh}
-        onProductDeactivated={handleProductDeactivated}
-        onStaleProductHidden={handleStaleProductHidden}
+        canCreateProduct={adminCapabilities?.canCreateProduct === true}
+        onQueryChange={setQuery}
+        onOpenProduct={handleOpenProduct}
+        onCreateWithBarcode={(barcode, categoryId) => handleOpenCreate(categoryId, barcode)}
+        onClose={() => setSearchOpen(false)}
       />
 
       <ProductCreateDialog
@@ -359,6 +475,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
         categories={categories}
         language={language}
         t={t}
+        initialCategoryId={createCategoryId}
+        initialBarcode={createBarcode}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreatedProduct}
       />

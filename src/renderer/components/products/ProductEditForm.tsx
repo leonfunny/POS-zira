@@ -6,6 +6,7 @@ import { normalizeSellBy } from '../../../shared/pos-sale';
 import type { ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 
 interface ProductEditFormProps {
   product: ProductListItem;
@@ -91,6 +92,9 @@ export default function ProductEditForm({
   const [name, setName] = useState(product.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
   const [vatRate, setVatRate] = useState(String(Number(product.vat_rate) || 23));
+  const [priceNet, setPriceNet] = useState(
+    netFromGross(moneyInputFromGrosze(product.retail_price), String(Number(product.vat_rate) || 23)),
+  );
   const [barcode, setBarcode] = useState(product.barcode || '');
   const [sku, setSku] = useState(product.sku || '');
   const [categoryId, setCategoryId] = useState(product.category_id || '');
@@ -105,6 +109,9 @@ export default function ProductEditForm({
     setName(product.name || '');
     setPriceGross(moneyInputFromGrosze(product.retail_price));
     setVatRate(String(Number(product.vat_rate) || 23));
+    setPriceNet(
+      netFromGross(moneyInputFromGrosze(product.retail_price), String(Number(product.vat_rate) || 23)),
+    );
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
     setCategoryId(product.category_id || '');
@@ -251,30 +258,59 @@ export default function ProductEditForm({
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {sellBy === 'WEIGHT'
-                ? tOr(t, 'products.drawer.priceGrossPerKg', 'Gross price per kg')
-                : tOr(t, 'products.drawer.priceGross', 'Gross price')}
+                ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
+                : tOr(t, 'products.drawer.priceNet', 'Net price')}
             </span>
             <input
               inputMode="decimal"
-              value={priceGross}
-              onChange={(event) => setPriceGross(event.target.value)}
+              value={priceNet}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPriceNet(next);
+                setPriceGross(grossFromNet(next, vatRate));
+              }}
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
           </label>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.vat', 'VAT')}
+              {tOr(t, 'products.drawer.vat', 'VAT')} %
             </span>
             <input
               type="number"
               min="0"
               step="1"
               value={vatRate}
-              onChange={(event) => setVatRate(event.target.value)}
+              onChange={(event) => {
+                const nextVat = event.target.value;
+                setVatRate(nextVat);
+                if (parsePriceNumber(priceNet) !== null) {
+                  setPriceGross(grossFromNet(priceNet, nextVat));
+                } else {
+                  setPriceNet(netFromGross(priceGross, nextVat));
+                }
+              }}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {sellBy === 'WEIGHT'
+                ? tOr(t, 'products.drawer.priceGrossPerKg', 'Gross price / kg')
+                : tOr(t, 'products.drawer.priceGross', 'Gross price')}
+            </span>
+            <input
+              inputMode="decimal"
+              value={priceGross}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPriceGross(next);
+                setPriceNet(netFromGross(next, vatRate));
+              }}
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
           </label>

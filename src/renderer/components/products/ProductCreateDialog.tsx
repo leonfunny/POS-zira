@@ -3,12 +3,15 @@ import { X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { ProductAdminCreateProductInput, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
+import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 
 interface ProductCreateDialogProps {
   open: boolean;
   categories: Category[];
   language: string;
   t: (key: string) => string;
+  initialCategoryId?: string | null;
+  initialBarcode?: string;
   onClose: () => void;
   onCreated: (variant: ProductAdminVariant) => Promise<void> | void;
 }
@@ -24,8 +27,10 @@ function parseMoneyToGrosze(value: string): number | null {
   const normalized = value.trim().replace(',', '.');
   if (!normalized) return null;
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const grosze = Math.round(parsed * 100);
+  if (grosze < 1) return null;
+  return grosze;
 }
 
 function decimalPlaces(value: string): number {
@@ -57,6 +62,8 @@ export default function ProductCreateDialog({
   categories,
   language,
   t,
+  initialCategoryId,
+  initialBarcode,
   onClose,
   onCreated,
 }: ProductCreateDialogProps) {
@@ -64,27 +71,31 @@ export default function ProductCreateDialog({
   const [barcode, setBarcode] = useState('');
   const [sku, setSku] = useState('');
   const [priceGross, setPriceGross] = useState('');
+  const [priceNet, setPriceNet] = useState('');
   const [vatRate, setVatRate] = useState('23');
   const [categoryId, setCategoryId] = useState('');
   const [sellBy, setSellBy] = useState<SellByMode>('PIECE');
   const [saleUnit, setSaleUnit] = useState('szt');
-  const [stockQty, setStockQty] = useState('1');
+  const [stockQty, setStockQty] = useState('0');
   const [imageUrl, setImageUrl] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setName('');
-    setBarcode('');
+    setBarcode(initialBarcode ?? '');
     setSku('');
     setPriceGross('');
+    setPriceNet('');
     setVatRate('23');
-    setCategoryId('');
+    setCategoryId(initialCategoryId ?? '');
     setSellBy('PIECE');
     setSaleUnit('szt');
-    setStockQty('1');
+    setStockQty('0');
     setImageUrl('');
+    setIdempotencyKey(makeIdempotencyKey());
     setBusy(false);
     setError(null);
   }, [open]);
@@ -141,8 +152,9 @@ export default function ProductCreateDialog({
       initialStockQty: validation.initialStockQty,
       categoryId: categoryId || null,
       saleUnit: unit,
+      sellBy,
       imageUrl: imageUrl.trim() || null,
-      idempotencyKey: makeIdempotencyKey(),
+      idempotencyKey,
     };
 
     setBusy(true);
@@ -228,31 +240,67 @@ export default function ProductCreateDialog({
             </label>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
                 {sellBy === 'WEIGHT'
-                  ? tOr(t, 'products.drawer.priceGrossPerKg', 'Gross price per kg')
-                  : tOr(t, 'products.drawer.priceGross', 'Gross price')}
+                  ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
+                  : tOr(t, 'products.drawer.priceNet', 'Net price')}
               </span>
               <input
+                type="number"
                 inputMode="decimal"
-                value={priceGross}
-                onChange={(event) => setPriceGross(event.target.value)}
+                min="0"
+                step="0.01"
+                value={priceNet}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setPriceNet(next);
+                  setPriceGross(grossFromNet(next, vatRate));
+                }}
                 placeholder="0.00"
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {tOr(t, 'products.drawer.vat', 'VAT')}
+                {tOr(t, 'products.drawer.vat', 'VAT')} %
               </span>
               <input
                 type="number"
                 min="0"
                 step="1"
                 value={vatRate}
-                onChange={(event) => setVatRate(event.target.value)}
+                onChange={(event) => {
+                  const nextVat = event.target.value;
+                  setVatRate(nextVat);
+                  if (parsePriceNumber(priceNet) !== null) {
+                    setPriceGross(grossFromNet(priceNet, nextVat));
+                  } else {
+                    setPriceNet(netFromGross(priceGross, nextVat));
+                  }
+                }}
+                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {sellBy === 'WEIGHT'
+                  ? tOr(t, 'products.drawer.priceGrossPerKg', 'Gross price / kg')
+                  : tOr(t, 'products.drawer.priceGross', 'Gross price')}
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                value={priceGross}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setPriceGross(next);
+                  setPriceNet(netFromGross(next, vatRate));
+                }}
+                placeholder="0.00"
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
@@ -367,7 +415,7 @@ export default function ProductCreateDialog({
           <button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={busy}
+            disabled={busy || !idempotencyKey}
             className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? tOr(t, 'products.create.creating', 'Creating...') : tOr(t, 'products.create.submit', 'Create product')}
