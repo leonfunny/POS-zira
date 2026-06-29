@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, MoreHorizontal, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import type { ProductAdminCapabilities, ProductAdminVariant } from '../../../shared/types';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Language } from '../../i18n/translations';
@@ -141,6 +141,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [addInitialBarcode, setAddInitialBarcode] = useState('');
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [adminCapabilities, setAdminCapabilities] = useState<ProductAdminCapabilities | null>(null);
   const [adminCapabilityError, setAdminCapabilityError] = useState<string | null>(null);
   const [adminCapabilitiesLoading, setAdminCapabilitiesLoading] = useState(true);
@@ -203,6 +204,10 @@ export default function ProductModule({ language }: ProductModuleProps) {
     const timeout = window.setTimeout(() => setToast(null), 3500);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    setActionsOpen(false);
+  }, [view.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -283,6 +288,18 @@ export default function ProductModule({ language }: ProductModuleProps) {
     setQuery(product.barcode);
   }, [returnFromEdit, setQuery]);
 
+  const handleActionsBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocus = event.relatedTarget;
+    if (!(nextFocus instanceof Node) || !event.currentTarget.contains(nextFocus)) {
+      setActionsOpen(false);
+    }
+  };
+
+  const handleRefreshLocal = () => {
+    setActionsOpen(false);
+    void refresh();
+  };
+
   const syncMessage = syncErrorCode
     ? syncErrorCode === 'no-auth'
       ? tOr(t, 'products.noAuth', 'Log in to sync products')
@@ -293,78 +310,102 @@ export default function ProductModule({ language }: ProductModuleProps) {
 
   return (
     <div className="flex h-[calc(100vh-2rem)] flex-col gap-3">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-950">{tOr(t, 'products.title', 'Products')}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {tOr(t, 'products.subtitle', 'Manage the sellable POS catalog, drafts, prices, stock, and barcodes.')}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs text-slate-600">
-          <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-            <span className="font-semibold text-slate-950">{view.name === 'products' ? browseProducts.length : filteredAllProducts.length}</span>{' '}
-            {tOr(t, 'products.count.visible', 'visible')}
-          </span>
-          <span className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-            <span className="font-semibold text-slate-950">{catalogProductCount}</span>{' '}
-            {tOr(t, 'products.count.catalog', 'POS products')}
-          </span>
-          <span className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-violet-700">
-            <span className="font-semibold">{draftCount}</span> {tOr(t, 'products.filters.drafts', 'Drafts')}
-          </span>
-          <span className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
-            <span className="font-semibold">{noPriceCount}</span> {tOr(t, 'products.filters.noPrice', 'No price')}
-          </span>
-        </div>
-      </header>
+      {view.name !== 'edit' ? (
+        <>
+          <header className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h1 className="text-lg font-semibold text-slate-950">{tOr(t, 'products.title', 'Products')}</h1>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {tOr(t, 'products.subtitle', 'Manage the sellable POS catalog, drafts, prices, stock, and barcodes.')}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-xs text-slate-600">
+              <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700">
+                <span className="font-semibold text-slate-950">{view.name === 'products' ? browseProducts.length : filteredAllProducts.length}</span>{' '}
+                {tOr(t, 'products.count.visible', 'visible')}
+              </span>
+              <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700">
+                <span className="font-semibold text-slate-950">{catalogProductCount}</span>{' '}
+                {tOr(t, 'products.count.catalog', 'POS products')}
+              </span>
+              <span className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-violet-700">
+                <span className="font-semibold">{draftCount}</span> {tOr(t, 'products.filters.drafts', 'Drafts')}
+              </span>
+              <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700">
+                <span className="font-semibold">{noPriceCount}</span> {tOr(t, 'products.filters.noPrice', 'No price')}
+              </span>
+            </div>
+          </header>
 
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
-            <SlidersHorizontal size={14} />
-            {tOr(t, 'products.col.status', 'Status')}
-          </span>
-          {PRODUCT_KIND_FILTERS.map((filter) => {
-            const active = kindFilter === filter;
-            return (
+          <section className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase text-slate-500">
+                <SlidersHorizontal size={14} />
+                {tOr(t, 'products.col.status', 'Status')}
+              </span>
+              {PRODUCT_KIND_FILTERS.map((filter) => {
+                const active = kindFilter === filter;
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setKindFilter(filter)}
+                    className={`min-h-8 rounded-md border px-2.5 text-sm font-medium ${
+                      active
+                        ? 'border-brand-600 bg-brand-50 text-brand-700'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {tOr(t, `products.filters.${filter}`, filter)}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1.5">
               <button
-                key={filter}
                 type="button"
-                onClick={() => setKindFilter(filter)}
-                className={`min-h-9 rounded-md border px-3 text-sm font-medium ${
-                  active
-                    ? 'border-brand-600 bg-brand-50 text-brand-700'
-                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-                }`}
+                onClick={() => void syncProducts()}
+                disabled={syncing}
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
               >
-                {tOr(t, `products.filters.${filter}`, filter)}
+                <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+                {syncing ? tOr(t, 'products.syncing', 'Syncing...') : tOr(t, 'products.sync', 'Sync')}
               </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void syncProducts()}
-            disabled={syncing}
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
-          >
-            <RefreshCw size={17} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? tOr(t, 'products.syncing', 'Syncing...') : tOr(t, 'products.sync', 'Sync')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={loading}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
-            aria-label={tOr(t, 'products.refreshLocal', 'Reload local catalog')}
-          >
-            <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      </section>
+              <div className="relative" onBlur={handleActionsBlur}>
+                <button
+                  type="button"
+                  onClick={() => setActionsOpen((open) => !open)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                  title={tOr(t, 'products.actions', 'Product actions')}
+                  aria-label={tOr(t, 'products.actions', 'Product actions')}
+                  aria-haspopup="menu"
+                  aria-expanded={actionsOpen}
+                >
+                  <MoreHorizontal size={17} />
+                </button>
+                {actionsOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-10 z-30 w-56 rounded-md border border-slate-200 bg-white p-1 text-sm shadow-lg"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={handleRefreshLocal}
+                      disabled={loading}
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                      {tOr(t, 'products.refreshLocal', 'Reload local catalog')}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        </>
+      ) : null}
 
       {syncMessage ? (
         <div className={`rounded-md border px-3 py-2 text-sm ${
@@ -382,25 +423,27 @@ export default function ProductModule({ language }: ProductModuleProps) {
         </div>
       ) : null}
 
-      <div className={`rounded-md border px-3 py-2 text-sm ${
-        adminCapabilitiesLoading
-          ? 'border-slate-200 bg-white text-slate-600'
-          : adminBackendReady
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-amber-200 bg-amber-50 text-amber-800'
-      }`}>
-        {adminCapabilitiesLoading
-          ? tOr(t, 'products.admin.checking', 'Checking product admin backend...')
-          : adminBackendReady
-            ? adminSummary || tOr(t, 'products.admin.ready', 'Product admin backend is available')
-            : (
-              <span className="flex items-center gap-2">
-                <AlertTriangle size={18} className="shrink-0" />
-                {tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}
-                {adminCapabilityError ? `: ${adminCapabilityError}` : ''}
-              </span>
-            )}
-      </div>
+      {view.name === 'edit' && adminBackendReady ? null : (
+        <div className={`rounded-md border px-2 py-1.5 text-xs ${
+          adminCapabilitiesLoading
+            ? 'border-slate-200 bg-white text-slate-600'
+            : adminBackendReady
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-amber-200 bg-amber-50 text-amber-800'
+        }`}>
+          {adminCapabilitiesLoading
+            ? tOr(t, 'products.admin.checking', 'Checking product admin backend...')
+            : adminBackendReady
+              ? adminSummary || tOr(t, 'products.admin.ready', 'Product admin backend is available')
+              : (
+                <span className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  {tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}
+                  {adminCapabilityError ? `: ${adminCapabilityError}` : ''}
+                </span>
+              )}
+        </div>
+      )}
 
       {loading && allProducts.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-center justify-center border border-slate-200 bg-white text-sm text-slate-500">

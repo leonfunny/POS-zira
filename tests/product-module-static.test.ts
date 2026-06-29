@@ -223,6 +223,16 @@ describe('Product module implementation contract', () => {
     expect(useProducts).toContain('onDraftProductsSynced');
   });
 
+  it('keeps local refresh in a secondary actions menu and compacts edit chrome', () => {
+    expect(moduleSource).toContain('const [actionsOpen, setActionsOpen] = useState(false);');
+    expect(moduleSource).toContain('const handleRefreshLocal = () => {');
+    expect(moduleSource).toContain("tOr(t, 'products.actions', 'Product actions')");
+    expect(moduleSource).toContain("tOr(t, 'products.refreshLocal', 'Reload local catalog')");
+    expect(moduleSource).toContain('void refresh();');
+    expect(moduleSource).toContain("{view.name !== 'edit' ? (");
+    expect(moduleSource).toContain("{view.name === 'edit' && adminBackendReady ? null : (");
+  });
+
   it('refreshes product state from sync events and auto-clears sync success', () => {
     expect(useProducts).toContain('const reload = () => { void refresh(true); };');
     expect(useProducts).toContain('onProductsSynced(reload)');
