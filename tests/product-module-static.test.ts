@@ -164,8 +164,13 @@ describe('Product module implementation contract', () => {
     expect(editForm).toContain('classifyProductSale');
     expect(editView).toContain('classifyProductSale');
     expect(posModule).toContain('getProductAdminVariantSellBy');
-    expect(editForm).not.toContain('\n      sellBy,\n');
-    expect(apiClient).toContain('withoutUnsupportedProductAdminSellBy');
+    expect(sharedTypes).toContain("sellBy?: 'PIECE' | 'WEIGHT';");
+    expect(editForm).toContain('\n      sellBy,\n');
+    expect(editForm).toContain('const originalSellBy = productSellBy(product);');
+    expect(editForm).toContain("setStockQty('0')");
+    expect(editForm).toContain('stockResetNotice');
+    expect(editForm).toContain('products.edit.stockResetNotice');
+    expect(apiClient).not.toContain('withoutUnsupportedProductAdminSellBy');
     expect(editForm).toContain('products.edit.discardConfirm');
     expect(deactivateDialog).toContain('window.electronAPI.pos.productAdmin.deactivateVariant');
     expect(deactivateDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');

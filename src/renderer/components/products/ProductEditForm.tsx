@@ -89,6 +89,7 @@ export default function ProductEditForm({
   onManageCategories,
   onSaved,
 }: ProductEditFormProps) {
+  const originalSellBy = productSellBy(product);
   const [name, setName] = useState(product.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
   const [vatRate, setVatRate] = useState(String(Number(product.vat_rate) || 23));
@@ -104,6 +105,7 @@ export default function ProductEditForm({
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [stockResetNotice, setStockResetNotice] = useState(false);
 
   useEffect(() => {
     setName(product.name || '');
@@ -115,12 +117,13 @@ export default function ProductEditForm({
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
     setCategoryId(product.category_id || '');
-    setSellBy(productSellBy(product));
+    setSellBy(originalSellBy);
     setSaleUnit(product.sale_unit || '');
     setStockQty(stockInputFromProduct(product));
     setImageUrl(product.image_url || '');
     setBusy(false);
     setMessage(null);
+    setStockResetNotice(false);
   }, [product.id]);
 
   const sortedCategories = useMemo(() => {
@@ -136,10 +139,10 @@ export default function ProductEditForm({
     || barcode !== (product.barcode || '')
     || sku !== (product.sku || '')
     || categoryId !== (product.category_id || '')
-    || sellBy !== productSellBy(product)
+    || sellBy !== originalSellBy
     || saleUnit !== (product.sale_unit || '')
     || imageUrl !== (product.image_url || '')
-  ), [barcode, categoryId, imageUrl, name, priceGross, product, saleUnit, sellBy, sku, vatRate]);
+  ), [barcode, categoryId, imageUrl, name, originalSellBy, priceGross, product, saleUnit, sellBy, sku, vatRate]);
 
   const stockDirty = canAdjustStock && stockQty !== stockInputFromProduct(product);
   const dirty = productDirty || stockDirty;
@@ -181,6 +184,7 @@ export default function ProductEditForm({
       vatRate: Number(vatRate),
       categoryId: categoryId || null,
       saleUnit: saleUnit.trim() || null,
+      sellBy,
       imageUrl: imageUrl.trim() || null,
       isActive: product.is_active !== 0,
       expectedUpdatedAt: product.updated_at || undefined,
@@ -239,6 +243,20 @@ export default function ProductEditForm({
   const handleCancel = () => {
     if (dirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
     onCancel();
+  };
+
+  const changeSellBy = (value: string) => {
+    const nextSellBy = normalizeSellBy(value);
+    setSellBy(nextSellBy);
+    if (nextSellBy === originalSellBy) {
+      setSaleUnit(product.sale_unit || (nextSellBy === 'WEIGHT' ? 'kg' : 'szt'));
+      setStockQty(stockInputFromProduct(product));
+      setStockResetNotice(false);
+      return;
+    }
+    setSaleUnit(nextSellBy === 'WEIGHT' ? 'kg' : 'szt');
+    setStockQty('0');
+    setStockResetNotice(true);
   };
 
   return (
@@ -352,8 +370,7 @@ export default function ProductEditForm({
                   setCategoryId(nextCategoryId);
                   const nextCategory = categories.find((category) => category.id === nextCategoryId);
                   if (looksLikeFreshScaleCategory(nextCategory)) {
-                    setSellBy('WEIGHT');
-                    setSaleUnit('kg');
+                    changeSellBy('WEIGHT');
                   }
                 }}
                 className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
@@ -382,17 +399,7 @@ export default function ProductEditForm({
             </span>
             <select
               value={sellBy}
-              onChange={(event) => {
-                const nextSellBy = normalizeSellBy(event.target.value);
-                setSellBy(nextSellBy);
-                if (nextSellBy === 'WEIGHT') setSaleUnit('kg');
-                if (nextSellBy === 'PIECE' && (!saleUnit.trim() || saleUnit.trim().toLowerCase() === 'kg')) {
-                  setSaleUnit('szt');
-                }
-                if (nextSellBy === 'PIECE' && stockQty.includes('.')) {
-                  setStockQty(String(Math.floor(Number(stockQty) || 0)));
-                }
-              }}
+              onChange={(event) => changeSellBy(event.target.value)}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
               <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Piece')}</option>
@@ -433,6 +440,11 @@ export default function ProductEditForm({
               step={sellBy === 'WEIGHT' ? '0.001' : '1'}
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
+            {stockResetNotice ? (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                {tOr(t, 'products.edit.stockResetNotice', 'Changing the sale unit clears current stock - re-enter the quantity in the new unit.')}
+              </span>
+            ) : null}
           </label>
         ) : null}
 
