@@ -108,7 +108,13 @@ describe('Product module implementation contract', () => {
     expect(tileGrid).toContain('canCreateProduct ? (');
     expect(searchOverlay).toContain('canCreateProduct &&');
     expect(createDialog).toContain('window.electronAPI.pos.productAdmin.createProduct');
-    expect(createDialog).toContain('barcode: barcode.trim() || null');
+    expect(moduleSource).toContain('products={allProducts}');
+    expect(createDialog).toContain('barcode: normalizedBarcode || null');
+    expect(createDialog).toContain('sku: normalizedSku || null');
+    expect(createDialog).toContain('findDuplicateBarcodeSet(normalizedBarcode');
+    expect(createDialog).toContain('products.create.duplicateBarcode');
+    expect(createDialog).toContain('products.create.duplicateSku');
+    expect(createDialog).not.toContain('retailPrice: validation.priceGrossGrosze / 100');
     expect(createDialog).toContain('initialStockQty: validation.initialStockQty');
     expect(createDialog).toContain('saleUnit: unit');
     expect(createDialog).toContain('\n      sellBy,\n');
@@ -267,6 +273,8 @@ describe('Product module implementation contract', () => {
       expect(block, `${lang} missing category-grid label`).toContain("'products.categories'");
       expect(block, `${lang} missing search overlay placeholder`).toContain("'products.searchCodePlaceholder'");
       expect(block, `${lang} missing duplicate scan label`).toContain("'products.scan.duplicate'");
+      expect(block, `${lang} missing duplicate create label`).toContain("'products.create.duplicateBarcode'");
+      expect(block, `${lang} missing duplicate SKU create label`).toContain("'products.create.duplicateSku'");
       expect(block, `${lang} missing uncategorised label`).toContain("'products.uncategorised'");
     }
   });

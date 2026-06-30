@@ -1551,6 +1551,12 @@ export class ApiClient {
         || (typeof data === 'object' && typeof data?.error === 'string' ? data.error : null)
         || raw
         || `HTTP ${response.status}`;
+      const stringErrorCode = data
+        && typeof data === 'object'
+        && typeof data.error === 'string'
+        && /^[A-Z0-9_]+$/.test(data.error)
+        ? data.error
+        : undefined;
       const error = new Error(message) as Error & {
         status?: number;
         code?: string;
@@ -1560,7 +1566,7 @@ export class ApiClient {
       };
       error.status = response.status;
       if (data && typeof data === 'object') {
-        error.code = data.code ?? envelopeError?.code;
+        error.code = data.code ?? envelopeError?.code ?? stringErrorCode;
         error.field = data.field ?? envelopeError?.field;
         error.details = data.details ?? envelopeError?.details;
         error.serverBody = data;
@@ -1591,9 +1597,9 @@ export class ApiClient {
 
   async createProductVariant(
     token: string,
-    payload: ProductAdminCreateProductInput,
+    payload: ProductAdminCreateProductInput & { retailPrice?: unknown },
   ): Promise<ProductAdminProductMutationResponse> {
-    const { idempotencyKey, ...body } = payload;
+    const { idempotencyKey, retailPrice: _ignoredRetailPrice, ...body } = payload;
     return this.productAdminRequest<ProductAdminProductMutationResponse>(
       token,
       'POST',

@@ -2900,6 +2900,7 @@ export interface ProductAdminCapabilities {
 }
 
 export type ProductAdminErrorCode =
+  | 'DUPLICATE_PRODUCT'
   | 'DUPLICATE_BARCODE'
   | 'DUPLICATE_SKU'
   | 'STALE_PRODUCT'
@@ -2967,7 +2968,6 @@ export interface ProductAdminCreateProductInput {
   name: string;
   barcode?: string | null;
   sku?: string | null;
-  retailPrice?: number;
   priceGrossGrosze?: number;
   vatRate: number;
   initialStockQty?: number;

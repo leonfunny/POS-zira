@@ -1,13 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { ProductAdminCreateProductInput, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
+import type { ProductListItem } from '../../hooks/useProducts';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
+import { findDuplicateBarcodeSet } from './scan-match';
 
 interface ProductCreateDialogProps {
   open: boolean;
   categories: Category[];
+  products: ProductListItem[];
   language: string;
   t: (key: string) => string;
   initialCategoryId?: string | null;
@@ -57,9 +60,19 @@ function makeIdempotencyKey(): string {
   return `product-create-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function createDuplicateMessage(code: string | null | undefined, t: (key: string) => string): string | null {
+  const normalized = String(code || '').toUpperCase();
+  if (normalized === 'DUPLICATE_SKU') return tOr(t, 'products.create.duplicateSku', 'SKU already exists');
+  if (normalized === 'DUPLICATE_BARCODE' || normalized === 'DUPLICATE_PRODUCT') {
+    return tOr(t, 'products.create.duplicateBarcode', 'Barcode already exists');
+  }
+  return null;
+}
+
 export default function ProductCreateDialog({
   open,
   categories,
+  products,
   language,
   t,
   initialCategoryId,
@@ -67,6 +80,7 @@ export default function ProductCreateDialog({
   onClose,
   onCreated,
 }: ProductCreateDialogProps) {
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
   const [name, setName] = useState('');
   const [barcode, setBarcode] = useState('');
   const [sku, setSku] = useState('');
@@ -106,6 +120,37 @@ export default function ProductCreateDialog({
     );
   }, [categories, language]);
 
+  const activeProducts = useMemo(
+    () => products.filter((product) => !product._isDraft),
+    [products],
+  );
+
+  const getDuplicateBarcodeMessage = useCallback((rawBarcode: string): string | null => {
+    const normalizedBarcode = rawBarcode.trim();
+    if (!normalizedBarcode) return null;
+    const duplicateProducts = findDuplicateBarcodeSet(normalizedBarcode, activeProducts);
+    if (duplicateProducts.length === 0) return null;
+    const firstDuplicate = duplicateProducts[0];
+    const duplicateName = resolveName(firstDuplicate, language) || firstDuplicate.name || normalizedBarcode;
+    return `${tOr(t, 'products.create.duplicateBarcode', 'Barcode already exists')}: ${duplicateName}`;
+  }, [activeProducts, language, t]);
+
+  const applyBarcodeScan = useCallback((rawBarcode: string) => {
+    const normalizedScan = rawBarcode.trim();
+    setBarcode(normalizedScan);
+    const duplicateMessage = getDuplicateBarcodeMessage(normalizedScan);
+    setError(duplicateMessage);
+  }, [getDuplicateBarcodeMessage]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const unsubscribe = window.electronAPI.onBarcodeScanned((scannedBarcode: string) => {
+      applyBarcodeScan(scannedBarcode);
+      barcodeInputRef.current?.focus();
+    });
+    return () => unsubscribe?.();
+  }, [open, applyBarcodeScan]);
+
   const changeSellBy = (nextSellBy: SellByMode) => {
     setSellBy(nextSellBy);
     setSaleUnit((current) => {
@@ -141,12 +186,30 @@ export default function ProductCreateDialog({
       return;
     }
 
+    const normalizedBarcode = barcode.trim();
+    if (normalizedBarcode) {
+      const duplicateMessage = getDuplicateBarcodeMessage(normalizedBarcode);
+      if (duplicateMessage) {
+        setError(duplicateMessage);
+        return;
+      }
+    }
+
+    const normalizedSku = sku.trim();
+    if (normalizedSku) {
+      const duplicateSku = activeProducts.find((product) => product.sku?.trim() === normalizedSku);
+      if (duplicateSku) {
+        const duplicateName = resolveName(duplicateSku, language) || duplicateSku.name || normalizedSku;
+        setError(`${tOr(t, 'products.create.duplicateSku', 'SKU already exists')}: ${duplicateName}`);
+        return;
+      }
+    }
+
     const unit = saleUnit.trim() || (sellBy === 'WEIGHT' ? 'kg' : 'szt');
     const payload: ProductAdminCreateProductInput = {
       name: name.trim(),
-      barcode: barcode.trim() || null,
-      sku: sku.trim() || null,
-      retailPrice: validation.priceGrossGrosze / 100,
+      barcode: normalizedBarcode || null,
+      sku: normalizedSku || null,
       priceGrossGrosze: validation.priceGrossGrosze,
       vatRate: Number(vatRate),
       initialStockQty: validation.initialStockQty,
@@ -162,7 +225,8 @@ export default function ProductCreateDialog({
     try {
       const result = await window.electronAPI.pos.productAdmin.createProduct(payload);
       if (!result?.ok || !result.data?.variant) {
-        setError(result?.error || result?.code || tOr(t, 'products.create.failed', 'Could not create product'));
+        const duplicateMessage = createDuplicateMessage(result?.code, t);
+        setError(duplicateMessage || result?.error || result?.code || tOr(t, 'products.create.failed', 'Could not create product'));
         return;
       }
       await onCreated(result.data.variant);
@@ -221,8 +285,9 @@ export default function ProductCreateDialog({
                 {tOr(t, 'products.drawer.barcode', 'Barcode')}
               </span>
               <input
+                ref={barcodeInputRef}
                 value={barcode}
-                onChange={(event) => setBarcode(event.target.value)}
+                onChange={(event) => applyBarcodeScan(event.target.value)}
                 placeholder={tOr(t, 'products.create.barcodeOptional', 'Optional')}
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />

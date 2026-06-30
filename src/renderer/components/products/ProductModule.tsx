@@ -516,6 +516,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
       <ProductCreateDialog
         open={createOpen}
         categories={categories}
+        products={allProducts}
         language={language}
         t={t}
         initialCategoryId={createCategoryId}
