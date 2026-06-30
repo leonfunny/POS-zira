@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Tags } from 'lucide-react';
-import { resolveName } from '../../../shared/catalog-names';
+import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 import type { ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
@@ -15,11 +15,15 @@ interface ProductEditFormProps {
   t: (key: string) => string;
   canManageCategories: boolean;
   canAdjustStock: boolean;
+  canEditDisplayName: boolean;
+  displayNameAffectsMultipleVariants: boolean;
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onManageCategories: () => void;
   onSaved: () => Promise<void> | void;
 }
+
+const DISPLAY_NAME_LOCALES = ['vi', 'pl', 'en'] as const;
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -77,6 +81,15 @@ function productSellBy(product: ProductListItem): 'PIECE' | 'WEIGHT' {
   return classifyProductSale(product).sellBy;
 }
 
+function displayNamesFromProduct(product: ProductListItem): Record<string, string> {
+  const translations = parseTranslations(product.name_translations);
+  return {
+    vi: translations.vi ?? '',
+    pl: translations.pl ?? '',
+    en: translations.en ?? '',
+  };
+}
+
 export default function ProductEditForm({
   product,
   categories,
@@ -84,6 +97,8 @@ export default function ProductEditForm({
   t,
   canManageCategories,
   canAdjustStock,
+  canEditDisplayName,
+  displayNameAffectsMultipleVariants,
   onCancel,
   onDirtyChange,
   onManageCategories,
@@ -103,6 +118,7 @@ export default function ProductEditForm({
   const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
   const [stockQty, setStockQty] = useState(stockInputFromProduct(product));
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
+  const [displayNames, setDisplayNames] = useState<Record<string, string>>(() => displayNamesFromProduct(product));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockResetNotice, setStockResetNotice] = useState(false);
@@ -121,6 +137,7 @@ export default function ProductEditForm({
     setSaleUnit(product.sale_unit || '');
     setStockQty(stockInputFromProduct(product));
     setImageUrl(product.image_url || '');
+    setDisplayNames(displayNamesFromProduct(product));
     setBusy(false);
     setMessage(null);
     setStockResetNotice(false);
@@ -132,7 +149,19 @@ export default function ProductEditForm({
     );
   }, [categories, language]);
 
-  const productDirty = useMemo(() => (
+  const originalDisplayNames = useMemo(
+    () => displayNamesFromProduct(product),
+    [product.id, product.name_translations],
+  );
+  const nameTranslationsPatch = useMemo(
+    () => canEditDisplayName
+      ? diffNameTranslations(originalDisplayNames, displayNames, DISPLAY_NAME_LOCALES)
+      : {},
+    [canEditDisplayName, displayNames, originalDisplayNames],
+  );
+  const translationsDirty = Object.keys(nameTranslationsPatch).length > 0;
+
+  const variantFieldsDirty = useMemo(() => (
     name !== (product.name || '')
     || priceGross !== moneyInputFromGrosze(product.retail_price)
     || vatRate !== String(Number(product.vat_rate) || 23)
@@ -144,6 +173,7 @@ export default function ProductEditForm({
     || imageUrl !== (product.image_url || '')
   ), [barcode, categoryId, imageUrl, name, originalSellBy, priceGross, product, saleUnit, sellBy, sku, vatRate]);
 
+  const productDirty = variantFieldsDirty || translationsDirty;
   const stockDirty = canAdjustStock && stockQty !== stockInputFromProduct(product);
   const dirty = productDirty || stockDirty;
 
@@ -177,18 +207,25 @@ export default function ProductEditForm({
     if (canAdjustStock && parsedStockQty === null) return;
 
     const payload: ProductAdminUpdateVariantInput = {
-      name: name.trim(),
-      barcode: barcode.trim() || null,
-      sku: sku.trim() || null,
-      priceGrossGrosze,
-      vatRate: Number(vatRate),
-      categoryId: categoryId || null,
-      saleUnit: saleUnit.trim() || null,
-      sellBy,
-      imageUrl: imageUrl.trim() || null,
-      isActive: product.is_active !== 0,
       expectedUpdatedAt: product.updated_at || undefined,
     };
+    if (variantFieldsDirty) {
+      Object.assign(payload, {
+        name: name.trim(),
+        barcode: barcode.trim() || null,
+        sku: sku.trim() || null,
+        priceGrossGrosze,
+        vatRate: Number(vatRate),
+        categoryId: categoryId || null,
+        saleUnit: saleUnit.trim() || null,
+        sellBy,
+        imageUrl: imageUrl.trim() || null,
+        isActive: product.is_active !== 0,
+      });
+    }
+    if (translationsDirty && canEditDisplayName) {
+      payload.nameTranslations = nameTranslationsPatch;
+    }
 
     setBusy(true);
     setMessage(null);
@@ -275,6 +312,59 @@ export default function ProductEditForm({
             className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           />
         </label>
+
+        {canEditDisplayName ? (
+          <div className="border-t border-slate-200 pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs font-semibold uppercase text-slate-500">
+                {tOr(t, 'products.edit.displayNames', 'Display names')}
+              </h4>
+              {displayNameAffectsMultipleVariants ? (
+                <span className="text-xs font-medium text-amber-700">
+                  {tOr(t, 'products.edit.displayNameAllVariants', 'Applies to all variants of this product')}
+                </span>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-slate-600">
+                  {tOr(t, 'products.edit.displayNameVi', 'Vietnamese')}
+                </span>
+                <input
+                  value={displayNames.vi}
+                  onChange={(event) => setDisplayNames((current) => ({ ...current, vi: event.target.value }))}
+                  placeholder={name.trim() || product.name}
+                  maxLength={255}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-slate-600">
+                  {tOr(t, 'products.edit.displayNamePl', 'Polish')}
+                </span>
+                <input
+                  value={displayNames.pl}
+                  onChange={(event) => setDisplayNames((current) => ({ ...current, pl: event.target.value }))}
+                  placeholder={name.trim() || product.name}
+                  maxLength={255}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-slate-600">
+                  {tOr(t, 'products.edit.displayNameEn', 'English (optional)')}
+                </span>
+                <input
+                  value={displayNames.en}
+                  onChange={(event) => setDisplayNames((current) => ({ ...current, en: event.target.value }))}
+                  placeholder={name.trim() || product.name}
+                  maxLength={255}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label className="block">

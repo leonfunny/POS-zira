@@ -16,6 +16,8 @@ interface ProductEditViewProps {
   language: string;
   t: (key: string) => string;
   canUpdateProduct: boolean;
+  canEditDisplayName: boolean;
+  displayNameAffectsMultipleVariants: boolean;
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
   canManageCategories: boolean;
@@ -69,6 +71,8 @@ export default function ProductEditView({
   language,
   t,
   canUpdateProduct,
+  canEditDisplayName,
+  displayNameAffectsMultipleVariants,
   canDeactivateProduct,
   canAdjustStock,
   canManageCategories,
@@ -264,6 +268,8 @@ export default function ProductEditView({
             t={t}
             canManageCategories={canManageCategories}
             canAdjustStock={canAdjustStock}
+            canEditDisplayName={canEditDisplayName}
+            displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
             onManageCategories={onManageCategories}
             onDirtyChange={setEditDirty}
             onCancel={() => {

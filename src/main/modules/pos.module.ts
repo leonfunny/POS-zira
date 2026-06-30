@@ -1139,6 +1139,7 @@ export class PosModule extends BaseModule {
       version: 0,
       canCreateProduct: false,
       canUpdateProduct: false,
+      canEditDisplayName: false,
       canDeactivateProduct: false,
       canAdjustStock: false,
       canCreateCategory: false,
@@ -1299,7 +1300,7 @@ export class PosModule extends BaseModule {
     const withProductAdminCapability = async <T>(
       capability: ProductAdminCapability,
       label: string,
-      action: (token: string) => Promise<T>,
+      action: (token: string, capabilities: ProductAdminCapabilities) => Promise<T>,
       afterSuccess?: (data: T) => Promise<void>,
     ): Promise<ProductAdminIpcResult<T>> => {
       const token = getSecureAuthToken();
@@ -1309,7 +1310,7 @@ export class PosModule extends BaseModule {
         if (capabilities[capability] !== true) {
           return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' };
         }
-        const data = await action(token);
+        const data = await action(token, capabilities);
         if (afterSuccess) await afterSuccess(data);
         return { ok: true, data };
       } catch (err: any) {
@@ -1360,7 +1361,20 @@ export class PosModule extends BaseModule {
         withProductAdminCapability<ProductAdminVariantMutationResponse>(
           'canUpdateProduct',
           'update variant',
-          (token) => apiClient.updateProductVariant(token, variantId, payload || {}),
+          (token, capabilities) => {
+            const { nameTranslations, ...legacyPayload } = payload || {};
+            const canSendDisplayName = capabilities.version >= 2 && capabilities.canEditDisplayName === true;
+            if (nameTranslations !== undefined && !canSendDisplayName) {
+              const error = new Error('display-name-editing-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            return apiClient.updateProductVariant(
+              token,
+              variantId,
+              canSendDisplayName ? (payload || {}) : legacyPayload,
+            );
+          },
           (data) => {
             mirrorProductAdminVariant(data.variant, 'product_admin_update');
             refreshProductsAfterProductAdminMutationInBackground('product_admin_update');

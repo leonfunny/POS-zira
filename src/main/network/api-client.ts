@@ -1580,6 +1580,7 @@ export class ApiClient {
       version: Number(raw?.version) || 0,
       canCreateProduct: raw?.canCreateProduct === true,
       canUpdateProduct: raw?.canUpdateProduct === true,
+      canEditDisplayName: raw?.canEditDisplayName === true,
       canDeactivateProduct: raw?.canDeactivateProduct === true,
       canAdjustStock: raw?.canAdjustStock === true,
       canCreateCategory: raw?.canCreateCategory === true,

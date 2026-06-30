@@ -2893,6 +2893,7 @@ export interface ProductAdminCapabilities {
   version: number;
   canCreateProduct: boolean;
   canUpdateProduct: boolean;
+  canEditDisplayName: boolean;
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
   canCreateCategory: boolean;
@@ -2981,6 +2982,7 @@ export interface ProductAdminCreateProductInput {
 
 export interface ProductAdminUpdateVariantInput {
   name?: string;
+  nameTranslations?: Record<string, string | null>;
   barcode?: string | null;
   sku?: string | null;
   priceGrossGrosze?: number;

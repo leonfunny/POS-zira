@@ -49,6 +49,21 @@ export function parseTranslations(
   }
 }
 
+export function diffNameTranslations(
+  original: NameTranslations,
+  current: NameTranslations,
+  locales: readonly string[],
+): NameTranslations {
+  const patch: NameTranslations = {};
+  for (const rawLocale of locales) {
+    const locale = rawLocale.toLowerCase();
+    const originalValue = (original[locale] ?? '').trim();
+    const currentValue = (current[locale] ?? '').trim();
+    if (currentValue !== originalValue) patch[locale] = currentValue;
+  }
+  return patch;
+}
+
 /**
  * Resolve a row's display name for a given UI language.
  * Looks up the row's translations map (parsing on demand if still raw) and

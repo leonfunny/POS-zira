@@ -165,7 +165,7 @@ describe('Product module implementation contract', () => {
     expect(editView).toContain('classifyProductSale');
     expect(posModule).toContain('getProductAdminVariantSellBy');
     expect(sharedTypes).toContain("sellBy?: 'PIECE' | 'WEIGHT';");
-    expect(editForm).toContain('\n      sellBy,\n');
+    expect(editForm).toMatch(/\n\s+sellBy,\n/);
     expect(editForm).toContain('const originalSellBy = productSellBy(product);');
     expect(editForm).toContain("setStockQty('0')");
     expect(editForm).toContain('stockResetNotice');

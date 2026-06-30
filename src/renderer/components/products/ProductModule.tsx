@@ -156,6 +156,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
   );
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
+  const canEditDisplayName = !!adminCapabilities && adminCapabilities.version >= 2 && adminCapabilities.canEditDisplayName === true;
   const adminSummary = adminCapabilitySummary(t, adminCapabilities);
   const filteredAllProducts = useMemo(
     () => allProducts.filter((product) => matchesProductKind(product, kindFilter)),
@@ -185,6 +186,11 @@ export default function ProductModule({ language }: ProductModuleProps) {
     if (!selectedProduct) return false;
     return (posState?.cart?.items || []).some((item) => item.variantId === selectedProduct.id);
   }, [posState?.cart?.items, selectedProduct]);
+
+  const selectedTemplateVariantCount = useMemo(() => {
+    if (!selectedProduct?.template_id) return 1;
+    return allProducts.filter((product) => product.template_id === selectedProduct.template_id).length;
+  }, [allProducts, selectedProduct]);
 
   useEffect(() => {
     if (!selectedProduct || loading) return;
@@ -484,6 +490,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
           language={language}
           t={t}
           canUpdateProduct={adminCapabilities?.canUpdateProduct === true}
+          canEditDisplayName={canEditDisplayName}
+          displayNameAffectsMultipleVariants={selectedTemplateVariantCount > 1}
           canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
           canAdjustStock={adminCapabilities?.canAdjustStock === true}
           canManageCategories={canManageCategories}
