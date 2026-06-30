@@ -2958,7 +2958,7 @@ export interface ProductAdminVariant {
   availableQty: number;
   isActive: boolean;
   saleUnit?: string | null;
-  sellBy?: 'PIECE' | 'WEIGHT' | string | null;
+  sellBy?: 'PIECE' | 'WEIGHT' | null;
   imageUrl?: string | null;
   thumbnailUrl?: string | null;
   updatedAt: string;
@@ -2983,11 +2983,11 @@ export interface ProductAdminUpdateVariantInput {
   name?: string;
   barcode?: string | null;
   sku?: string | null;
-  retailPrice?: number;
   priceGrossGrosze?: number;
   vatRate?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
+  sellBy?: 'PIECE' | 'WEIGHT';
   imageUrl?: string | null;
   isActive?: boolean;
   expectedUpdatedAt?: string;
