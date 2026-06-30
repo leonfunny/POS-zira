@@ -1130,6 +1130,7 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
     ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
+    ipcMain.handle(IPC_CHANNELS.POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY, () => productRepo.getAllCategories());
 
     const getKitchenSelfOrderCategories = () =>
       kitchenSelfOrderCategoryPrefsRepo.applyToCategories(productRepo.getCategories());

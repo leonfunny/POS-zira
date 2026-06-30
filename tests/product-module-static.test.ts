@@ -209,7 +209,7 @@ describe('Product module implementation contract', () => {
 
   it('loads products, drafts, categories, and preserves filters on sync events', () => {
     expect(useProducts).toContain('window.electronAPI.pos.products.getAll()');
-    expect(useProducts).toContain('window.electronAPI.pos.categories.getAll()');
+    expect(useProducts).toContain('window.electronAPI.pos.categories.getAllIncludingEmpty()');
     expect(useProducts).toContain('DRAFT_PRODUCTS_INITIAL_LIMIT');
     expect(useProducts).toContain('window.electronAPI.pos.draftProducts.getAll(DRAFT_PRODUCTS_INITIAL_LIMIT)');
     expect(useProducts).toContain('hideProductLocally');

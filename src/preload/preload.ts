@@ -651,6 +651,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     categories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
+      getAllIncludingEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY),
     },
     kitchenCategories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_KITCHEN_CATEGORIES_GET_ALL),

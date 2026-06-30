@@ -377,6 +377,14 @@ export const productRepo = {
     );
   },
 
+  getAllCategories(): CategoryRow[] {
+    return database.all<CategoryRow>(
+      `SELECT *
+       FROM categories
+       ORDER BY sort_order, name`,
+    );
+  },
+
   /**
    * Mark all products NOT in the given set as inactive.
    * Called during full sync to handle products deleted on backend.

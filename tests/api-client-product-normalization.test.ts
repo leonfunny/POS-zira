@@ -149,4 +149,43 @@ describe('ApiClient product normalization', () => {
       price_gross: 750,
     });
   });
+
+  it('merges public categories that have no products into the POS sync payload', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        items: [{
+          id: 'cat-empty',
+          name: 'test',
+          color: '#d97706',
+          imageUrl: 'https://img.test/cat.png',
+          displayOrder: 7,
+          updatedAt: '2026-06-30T10:00:00.000Z',
+          nameTranslations: { vi: 'test' },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const result = await new ApiClient('https://api.test').getPosProducts('token-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.test/api/v1/warehouse/public/categories',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer token-1',
+          'X-Salon-Slug': 'test-salon',
+        }),
+      }),
+    );
+    expect(result.categories).toEqual([expect.objectContaining({
+      id: 'cat-empty',
+      name: 'test',
+      icon: 'https://img.test/cat.png',
+      color: '#d97706',
+      sort_order: 7,
+      updated_at: '2026-06-30T10:00:00.000Z',
+      name_translations: JSON.stringify({ vi: 'test' }),
+    })]);
+  });
 });

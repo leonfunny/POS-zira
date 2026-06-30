@@ -55,6 +55,15 @@ describe('POS product category contamination guards', () => {
     expect(sql).not.toMatch(/SELECT \* FROM categories ORDER BY/);
   });
 
+  it('has a separate Products-admin category read path that includes empty categories', () => {
+    productRepo.getAllCategories();
+
+    const sql = vi.mocked(database.all).mock.calls[0][0] as string;
+    expect(sql).toMatch(/FROM categories/);
+    expect(sql).not.toMatch(/WHERE EXISTS/);
+    expect(sql).toMatch(/ORDER BY/);
+  });
+
   it('does not seed demo catalog when the app is paired or authenticated', () => {
     const source = readFileSync(
       resolve(__dirname, '../src/main/core/orchestrator.ts'),

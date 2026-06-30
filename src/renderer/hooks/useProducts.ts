@@ -138,7 +138,7 @@ export function useProducts(language: string): UseProductsResult {
     try {
       const [productRows, categoryRows, draftRows] = await Promise.all([
         window.electronAPI.pos.products.getAll(),
-        window.electronAPI.pos.categories.getAll(),
+        window.electronAPI.pos.categories.getAllIncludingEmpty(),
         window.electronAPI.pos.draftProducts.getAll(DRAFT_PRODUCTS_INITIAL_LIMIT).catch(() => []),
       ]);
       if (requestId !== requestIdRef.current) return;

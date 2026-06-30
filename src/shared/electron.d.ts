@@ -775,6 +775,7 @@ interface ElectronAPI {
     };
     categories: {
       getAll: () => Promise<PosCategory[]>;
+      getAllIncludingEmpty: () => Promise<PosCategory[]>;
     };
     kitchenCategories: {
       getAll: () => Promise<PosCategory[]>;

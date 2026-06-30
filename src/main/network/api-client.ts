@@ -1775,26 +1775,56 @@ export class ApiClient {
       }
     };
 
+    const normalizeCategory = (cat: any): any | null => {
+      if (!cat?.id || !cat?.name) return null;
+      return {
+        id: cat.id,
+        name: cat.name,
+        icon: cat.imageUrl ?? cat.icon ?? null,
+        color: cat.color ?? null,
+        sort_order: cat.displayOrder ?? cat.sortOrder ?? cat.sort_order ?? 0,
+        updated_at: cat.updatedAt ?? cat.updated_at ?? null,
+        name_translations: encodeTranslations(cat.nameTranslations ?? cat.name_translations),
+        // KSO category visibility is device-local and must not be overwritten by product sync.
+        kitchen_print: null,
+        kiosk_modifier_groups_json: encodeJsonField(
+          cat.kioskModifierGroups ?? cat.kiosk_modifier_groups ?? cat.modifierGroups,
+        ),
+      };
+    };
+
+    const fetchPublicCategories = async (): Promise<any[]> => {
+      try {
+        const url = `${this.baseUrl}/api/v1/warehouse/public/categories`;
+        const response = await fetchWithTimeout(url, { headers });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || `HTTP ${response.status}`);
+        }
+        const raw = await response.json();
+        const rows: any[] = Array.isArray(raw)
+          ? raw
+          : raw.items ?? raw.categories ?? [];
+        return rows
+          .map(normalizeCategory)
+          .filter((category): category is any => !!category);
+      } catch (err: any) {
+        logger.warn(`[ApiClient] Public category sync skipped: ${err?.message ?? err}`);
+        return [];
+      }
+    };
+
     // Extract unique categories from embedded template.category
     const categoryMap = new Map<string, any>();
     for (const item of items) {
-      const cat = item.template?.category;
-      if (cat?.id && cat?.name && !categoryMap.has(cat.id)) {
-        categoryMap.set(cat.id, {
-          id: cat.id,
-          name: cat.name,
-          icon: cat.imageUrl ?? null,
-          color: cat.color ?? null,
-          sort_order: cat.displayOrder ?? 0,
-          updated_at: cat.updatedAt ?? null,
-          name_translations: encodeTranslations(cat.nameTranslations ?? cat.name_translations),
-          // KSO category visibility is device-local and must not be overwritten by product sync.
-          kitchen_print: null,
-          kiosk_modifier_groups_json: encodeJsonField(
-            cat.kioskModifierGroups ?? cat.kiosk_modifier_groups ?? cat.modifierGroups,
-          ),
-        });
+      const category = normalizeCategory(item.template?.category);
+      if (category && !categoryMap.has(category.id)) {
+        categoryMap.set(category.id, category);
       }
+    }
+
+    for (const category of await fetchPublicCategories()) {
+      categoryMap.set(category.id, category);
     }
 
     // Map API items to ProductVariantRow shape. The public products

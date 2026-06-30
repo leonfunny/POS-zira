@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     categories: {
       getAll: () => ipcRenderer.invoke('pos:categories:getAll'),
+      getAllIncludingEmpty: () => ipcRenderer.invoke('pos:categories:getAllIncludingEmpty'),
     },
     kitchenCategories: {
       getAll: () => ipcRenderer.invoke('pos:kitchen-categories:getAll'),

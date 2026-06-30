@@ -1304,6 +1304,7 @@ export const IPC_CHANNELS = {
 
   // POS - Categories
   POS_CATEGORIES_GET_ALL: 'pos:categories:getAll',
+  POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY: 'pos:categories:getAllIncludingEmpty',
 
   // POS - Orders
   POS_ORDERS_CREATE: 'pos:orders:create',
