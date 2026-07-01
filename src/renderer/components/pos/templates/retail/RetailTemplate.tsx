@@ -210,10 +210,11 @@ interface RetailTemplateProps {
   onLastLabelVariantChange?: (variantId: string) => void;
   onPrintLastCartLabelCommand?: () => void | Promise<void>;
   onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
+  onAddProductFeedback?: (displayName: string) => void;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const allowOversell = config?.allowOversell === true;
@@ -586,20 +587,22 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         }
         return;
       }
+      const displayName = resolveName(product, lang) || product.name;
       const anomaly = findLinePriceAnomaly(result.item.price, product.retail_price);
       if (anomaly) {
-        showToolbarError(formatPriceAnomalyMessage(resolveName(product, lang) || product.name, anomaly));
+        showToolbarError(formatPriceAnomalyMessage(displayName, anomaly));
         return;
       }
       dispatch({ type: 'cart/addItem', payload: result.item });
       lastLabelVariantIdRef.current = product.id;
       onLastLabelVariantChange?.(product.id);
+      onAddProductFeedback?.(displayName);
     } catch (err: any) {
       showToolbarError(err?.message || tOr('pos.scale.failed', 'Scale did not return a weight'));
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();

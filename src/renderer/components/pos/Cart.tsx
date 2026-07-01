@@ -570,7 +570,10 @@ export default function Cart({
   const [pricePopupItemId, setPricePopupItemId] = useState<string | null>(null);
   const [scaleBusyItemId, setScaleBusyItemId] = useState<string | null>(null);
   const [scaleErrors, setScaleErrors] = useState<Record<string, string>>({});
+  const [freshItemId, setFreshItemId] = useState<string | null>(null);
   const itemsScrollRef = useRef<HTMLDivElement>(null);
+  const previousItemQtyRef = useRef<Record<string, number> | null>(null);
+  const freshItemTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tOr = useCallback((key: string, fallback: string) => {
     const value = t(key);
@@ -744,6 +747,39 @@ export default function Cart({
     return () => cancelAnimationFrame(frame);
   }, [cart.items.length, cartAutoScrollSignature]);
 
+  useEffect(() => {
+    const previous = previousItemQtyRef.current;
+    let nextFreshItemId: string | null = null;
+
+    if (previous) {
+      for (const item of cart.items) {
+        const before = previous[item.id];
+        if (before == null || item.quantity > before) {
+          nextFreshItemId = item.id;
+          break;
+        }
+      }
+    }
+
+    const nextQuantities: Record<string, number> = {};
+    for (const item of cart.items) nextQuantities[item.id] = item.quantity;
+    previousItemQtyRef.current = nextQuantities;
+
+    if (!nextFreshItemId) return;
+    setFreshItemId(nextFreshItemId);
+    if (freshItemTimerRef.current) clearTimeout(freshItemTimerRef.current);
+    freshItemTimerRef.current = setTimeout(() => {
+      setFreshItemId((current) => current === nextFreshItemId ? null : current);
+      freshItemTimerRef.current = null;
+    }, 650);
+  }, [cartAutoScrollSignature]);
+
+  useEffect(() => {
+    return () => {
+      if (freshItemTimerRef.current) clearTimeout(freshItemTimerRef.current);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-white">
       {/* ─── HEADER ───────────────────────────────────────────────
@@ -830,6 +866,7 @@ export default function Cart({
                 activeBuffer={controller.buffer}
                 t={t}
                 lang={lang}
+                fresh={freshItemId === item.id}
               />
               {renderItemExtra?.(item)}
             </div>

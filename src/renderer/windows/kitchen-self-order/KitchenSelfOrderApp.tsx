@@ -267,6 +267,30 @@ function defaultModifiers(groups: KitchenSelfOrderModifierGroup[]): KitchenSelfO
       })));
 }
 
+let cachedAddAudioCtx: AudioContext | null = null;
+
+function playAddFeedback(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    if (!cachedAddAudioCtx) cachedAddAudioCtx = new Ctx();
+    const ctx = cachedAddAudioCtx!;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 1320;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.11);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch {
+    /* ignore: missing AudioContext, autoplay policy, or closed output */
+  }
+}
+
 export default function KitchenSelfOrderApp() {
   const [step, setStep] = useState<Step>('menu');
   const [language, setLanguage] = useState<KitchenSelfOrderLanguage>('pl');
@@ -280,9 +304,12 @@ export default function KitchenSelfOrderApp() {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
   const [customerError, setCustomerError] = useState<string | null>(null);
+  const [addFeedback, setAddFeedback] = useState<{ productId: string; key: number } | null>(null);
   const [resetCountdown, setResetCountdown] = useState(20);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const announcedRef = useRef<string | null>(null);
+  const addFeedbackSeqRef = useRef(0);
+  const addFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const t = COPY[language];
 
   const refreshMenu = useCallback(async () => {
@@ -334,6 +361,24 @@ export default function KitchenSelfOrderApp() {
 
   useEffect(() => {
     warmUpOrderNumberClips();
+  }, []);
+
+  const triggerAddFeedback = useCallback((productId: string) => {
+    playAddFeedback();
+    const key = addFeedbackSeqRef.current + 1;
+    addFeedbackSeqRef.current = key;
+    setAddFeedback({ productId, key });
+    if (addFeedbackTimerRef.current) clearTimeout(addFeedbackTimerRef.current);
+    addFeedbackTimerRef.current = setTimeout(() => {
+      setAddFeedback((current) => current?.key === key ? null : current);
+      addFeedbackTimerRef.current = null;
+    }, 420);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (addFeedbackTimerRef.current) clearTimeout(addFeedbackTimerRef.current);
+    };
   }, []);
 
   const resetSession = useCallback(() => {
@@ -447,6 +492,7 @@ export default function KitchenSelfOrderApp() {
         },
       ];
     });
+    triggerAddFeedback(product.id);
   };
 
   const saveConfiguredItem = (
@@ -473,6 +519,7 @@ export default function KitchenSelfOrderApp() {
         },
       ];
     });
+    if (!lineId) triggerAddFeedback(product.id);
     setConfigurator(null);
   };
 
@@ -755,6 +802,7 @@ export default function KitchenSelfOrderApp() {
                     product={product}
                     language={language}
                     onOpen={openProduct}
+                    addFeedbackKey={addFeedback?.productId === product.id ? addFeedback.key : 0}
                   />
                 ))}
               </div>
@@ -1078,17 +1126,21 @@ function ProductCard({
   product,
   language,
   onOpen,
+  addFeedbackKey = 0,
 }: {
   product: KitchenSelfOrderMenuProduct;
   language: KitchenSelfOrderLanguage;
   onOpen: (product: KitchenSelfOrderMenuProduct) => void;
+  addFeedbackKey?: number;
 }) {
   const name = localizedName(product, language);
+  const justAdded = addFeedbackKey > 0;
   return (
     <button
+      key={justAdded ? addFeedbackKey : 'idle'}
       type="button"
       onClick={() => onOpen(product)}
-      className="kso-product-card sc-focusable group"
+      className={`kso-product-card sc-focusable group ${justAdded ? 'kso-product-card-added' : ''}`}
     >
       <ProductImage product={product} name={name} className="kso-product-media" />
       <div className="kso-product-body">
@@ -1105,6 +1157,11 @@ function ProductCard({
       >
         <Plus size={23} strokeWidth={3} />
       </span>
+      {justAdded && (
+        <span key={addFeedbackKey} className="kso-product-added-check" aria-hidden="true">
+          <Check size={52} strokeWidth={3.2} />
+        </span>
+      )}
     </button>
   );
 }
@@ -1162,6 +1219,14 @@ function CartPanel({
   onReview: () => void;
 }) {
   const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const [badgeBounceKey, setBadgeBounceKey] = useState(0);
+  const previousCountRef = useRef(count);
+
+  useEffect(() => {
+    if (count > previousCountRef.current) setBadgeBounceKey((key) => key + 1);
+    previousCountRef.current = count;
+  }, [count]);
+
   return (
     <aside className="grid min-h-0 grid-rows-[64px_1fr_auto] rounded-lg border border-[var(--kso-line)] bg-[var(--kso-surface)]">
       <div className="flex items-center justify-between border-b border-[var(--kso-line)] px-4">
@@ -1169,7 +1234,10 @@ function CartPanel({
           <ShoppingCart size={23} />
           {t.cart}
         </h2>
-        <span className="flex h-8 min-w-8 items-center justify-center rounded-full bg-[var(--kso-accent-soft)] px-2 text-sm font-black text-[var(--kso-accent-deep)]">
+        <span
+          key={badgeBounceKey}
+          className={`kso-cart-badge flex h-8 min-w-8 items-center justify-center rounded-full bg-[var(--kso-accent-soft)] px-2 text-sm font-black text-[var(--kso-accent-deep)] ${badgeBounceKey > 0 ? 'kso-cart-badge-bounce' : ''}`}
+        >
           {count}
         </span>
       </div>

@@ -23,6 +23,7 @@ interface CartItemProps {
   scaleError?: string | null;
   activeField?: 'qty' | 'price' | null;
   activeBuffer?: string;
+  fresh?: boolean;
   t?: (key: string) => string;
   /** Operator UI language. Resolves item.name_translations for display only;
    *  orders/fiscal lines keep canonical item.name while paper receipts
@@ -43,6 +44,7 @@ export default function CartItemRow({
   scaleError,
   activeField,
   activeBuffer,
+  fresh = false,
   t,
   lang,
 }: CartItemProps) {
@@ -113,7 +115,7 @@ export default function CartItemRow({
   return (
     <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
-    }`}>
+    } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
       <div className="flex items-start justify-between gap-3">
         <p className="flex-1 min-w-0 text-sm font-extrabold text-slate-950 leading-snug line-clamp-1">
           {resolveName(item, lang)}

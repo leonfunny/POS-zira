@@ -511,6 +511,10 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     await printCartItemLabel(item);
   }, [printCartItemLabel, showScanToast, state?.cart.items, tOr]);
 
+  const handleRetailAddProductFeedback = useCallback((displayName: string) => {
+    showScanToast(`+ ${displayName}`, 'ok');
+  }, [showScanToast]);
+
   /**
    * Open the scan-import modal for an EAN that's not in the local catalog.
    * Tries the local draft mirror first (fast, offline-safe), falls back to
@@ -1588,6 +1592,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             onLastLabelVariantChange={rememberLastLabelVariant}
             onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
             onManualWeightRequired={openManualWeightPrompt}
+            onAddProductFeedback={handleRetailAddProductFeedback}
             homeResetKey={homeResetKey}
           />
         )}
