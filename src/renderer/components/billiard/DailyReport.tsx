@@ -196,7 +196,7 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
             onClick={() => setRange(r)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               range === r
-                ? 'bg-blue-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
           >

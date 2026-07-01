@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import ConfirmActionDialog from './ConfirmActionDialog';
 import { buildConfirmCopy } from './confirm-action-copy';
+import Button from '../shared/Button';
 import Modal from '../shared/Modal';
 
 interface HoldOrderRow {
@@ -101,12 +102,9 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
       closeLabel={tOr(t, 'pos.close', 'Close')}
       bodyClassName="px-5 py-4"
       footer={(
-        <button
-          onClick={handleClose}
-          className="w-full py-2 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 transition-colors hover:bg-slate-50"
-        >
+        <Button variant="secondary" onClick={handleClose} className="w-full">
           {t('pos.cancel')}
-        </button>
+        </Button>
       )}
     >
           <div className="flex gap-2 mb-3">

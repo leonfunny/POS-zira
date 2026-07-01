@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { InvoiceCustomerRow, InvoiceCustomerCreateDTO, CompanyLookupResult } from '../../../shared/types';
 import { useTranslation } from '../../i18n/useTranslation';
 import rlog from '../../utils/logger';
+import Button from '../shared/Button';
+import TextInput from '../shared/TextInput';
 
 interface CustomerPickerProps {
   value: InvoiceCustomerRow | null;
@@ -275,12 +277,9 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
           <div className="space-y-3">
             {/* NIP with lookup button */}
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                NIP / VAT EU
-              </label>
               <div className="flex gap-2">
-                <input
-                  type="text"
+                <TextInput
+                  label="NIP / VAT EU"
                   value={newCustomer.nip || ''}
                   onChange={(e) => {
                     const val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
@@ -288,40 +287,35 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
                     setLookupResult(null);
                   }}
                   placeholder="1234567890 lub DE123456789"
-                  className="flex-1 px-2 py-1.5 border border-slate-300 rounded text-sm font-mono focus:ring-1 focus:ring-brand-300 outline-none"
+                  containerClassName="flex-1"
+                  inputClassName="font-mono"
                 />
-                <button
+                <Button
                   onClick={handleLookupNip}
                   disabled={lookupLoading || !newCustomer.nip || newCustomer.nip.length < 8}
-                  className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  className="self-end px-3"
                   title="Wyszukaj w GUS/VIES"
-                >
-                  {lookupLoading ? (
+                  icon={lookupLoading ? (
                     <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
                   ) : (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   )}
+                >
                   GUS
-                </button>
+                </Button>
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 {t('invoice.nip.helpText')}
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                {t('invoice.customerName')} *
-              </label>
-              <input
-                type="text"
-                value={newCustomer.name}
-                onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })}
-                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-brand-300 outline-none"
-              />
-            </div>
+            <TextInput
+              label={`${t('invoice.customerName')} *`}
+              value={newCustomer.name}
+              onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })}
+            />
 
             {/* Address fields (shown if we have lookup result or manually expanded) */}
             {(lookupResult?.valid || newCustomer.street) && (
@@ -392,23 +386,23 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
           </div>
 
           <div className="flex gap-2 mt-4">
-            <button
+            <Button
               onClick={handleCreateNew}
               disabled={creating}
-              className="flex-1 px-3 py-1.5 bg-brand-600 text-white text-sm rounded font-medium hover:bg-brand-700 disabled:opacity-50"
+              className="flex-1"
             >
               {creating ? t('common.saving') : t('common.add')}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => {
                 setShowCreate(false);
                 setLookupResult(null);
                 setError(null);
               }}
-              className="px-3 py-1.5 border border-slate-300 text-slate-600 text-sm rounded hover:bg-slate-50"
             >
               {t('common.cancel')}
-            </button>
+            </Button>
           </div>
         </div>
       )}

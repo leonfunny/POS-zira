@@ -151,7 +151,7 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
     switch (status) {
       case 'new': return { label: t('kds.accept') || 'Accept', next: 'in_progress', color: 'bg-amber-500 hover:bg-amber-600' };
       case 'in_progress': return { label: t('kds.markReady') || 'Ready', next: 'ready', color: 'bg-emerald-500 hover:bg-emerald-600' };
-      case 'ready': return { label: t('kds.delivered') || 'Delivered', next: 'delivered', color: 'bg-blue-500 hover:bg-blue-600' };
+      case 'ready': return { label: t('kds.delivered') || 'Delivered', next: 'delivered', color: 'bg-brand-500 hover:bg-brand-600' };
       default: return null;
     }
   };

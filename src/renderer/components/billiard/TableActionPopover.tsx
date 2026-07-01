@@ -110,7 +110,7 @@ export function TableActionPopover({
                 {table.resource.pricingRules.basePrice} PLN/h
               </p>
             )}
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center" onClick={onStartSession} disabled={isPending}>
+            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onStartSession} disabled={isPending}>
               <Play className="w-3.5 h-3.5 mr-2" /> {t('billiard.startSession') || 'Start Session'}
             </button>
           </>
@@ -210,7 +210,7 @@ export function TableActionPopover({
                 <Pause className="w-3.5 h-3.5 mr-2" /> {t('billiard.pauseSession') || 'Pause'}
               </button>
             ) : (
-              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center" onClick={onResume} disabled={isPending}>
+              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onResume} disabled={isPending}>
                 <Play className="w-3.5 h-3.5 mr-2" /> {t('billiard.resumeSession') || 'Resume'}
               </button>
             )}
@@ -220,7 +220,7 @@ export function TableActionPopover({
             <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center" onClick={onTransfer}>
               <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> {t('billiard.transferTable') || 'Transfer'}
             </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center" onClick={onPayment}>
+            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onPayment}>
               <CreditCard className="w-3.5 h-3.5 mr-2" /> {t('billiard.payment') || 'Payment'}
             </button>
             <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center" onClick={onEnd} disabled={isPending}>

@@ -10,6 +10,7 @@ import {
   useBilliardCombos,
   useRestaurantCombos,
 } from '../../hooks/useBilliardData';
+import TextInput from '../shared/TextInput';
 
 interface AddItemToTabModalProps {
   sessionId: string;
@@ -209,7 +210,7 @@ export function AddItemToTabModal({
             <button
               className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                 mode === 'catalog'
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  ? 'bg-brand-600 text-white hover:bg-brand-700'
                   : 'border border-gray-300 hover:bg-gray-50'
               }`}
               onClick={() => setMode('catalog')}
@@ -221,7 +222,7 @@ export function AddItemToTabModal({
               <button
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                   mode === 'combos'
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    ? 'bg-brand-600 text-white hover:bg-brand-700'
                     : 'border border-gray-300 hover:bg-gray-50'
                 }`}
                 onClick={() => setMode('combos')}
@@ -233,7 +234,7 @@ export function AddItemToTabModal({
             <button
               className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                 mode === 'custom'
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  ? 'bg-brand-600 text-white hover:bg-brand-700'
                   : 'border border-gray-300 hover:bg-gray-50'
               }`}
               onClick={() => setMode('custom')}
@@ -261,11 +262,11 @@ export function AddItemToTabModal({
               {categories.length > 0 && (
                 <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                   <button
-                    className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
-                      selectedCategory === null
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'border-gray-300 hover:bg-gray-50'
-                    }`}
+                  className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
+                    selectedCategory === null
+                      ? 'bg-brand-600 text-white border-brand-600'
+                      : 'border-gray-300 hover:bg-gray-50'
+                  }`}
                     onClick={() => setSelectedCategory(null)}
                   >
                     {t('common.all') || 'All'}
@@ -275,7 +276,7 @@ export function AddItemToTabModal({
                       key={cat.id}
                       className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                         selectedCategory === cat.id
-                          ? 'bg-blue-600 text-white border-blue-600'
+                          ? 'bg-brand-600 text-white border-brand-600'
                           : 'border-gray-300 hover:bg-gray-50'
                       }`}
                       onClick={() => setSelectedCategory(cat.id)}
@@ -433,52 +434,40 @@ export function AddItemToTabModal({
           ) : (
             /* Custom item form */
             <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <label htmlFor="item-name" className="text-sm font-medium">
-                  {t('billiard.itemName') || 'Item Name'} *
-                </label>
-                <input
-                  id="item-name"
-                  placeholder={
-                    t('billiard.itemNamePlaceholder') || 'e.g., Beer, Coffee, Snacks'
-                  }
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoFocus
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              <TextInput
+                id="item-name"
+                label={`${t('billiard.itemName') || 'Item Name'} *`}
+                labelClassName="text-sm font-medium text-gray-900"
+                placeholder={
+                  t('billiard.itemNamePlaceholder') || 'e.g., Beer, Coffee, Snacks'
+                }
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+              />
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label htmlFor="item-quantity" className="text-sm font-medium">
-                    {t('billiard.quantity') || 'Quantity'} *
-                  </label>
-                  <input
-                    id="item-quantity"
-                    type="number"
-                    min={1}
-                    value={quantity}
-                    onChange={(e) =>
-                      setQuantity(Math.max(1, parseInt(e.target.value) || 1))
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="item-price" className="text-sm font-medium">
-                    {t('billiard.unitPrice') || 'Unit Price'} *
-                  </label>
-                  <input
-                    id="item-price"
-                    type="number"
-                    min={0.01}
-                    step={0.01}
-                    value={unitPrice}
-                    onChange={(e) => setUnitPrice(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+                <TextInput
+                  id="item-quantity"
+                  label={`${t('billiard.quantity') || 'Quantity'} *`}
+                  labelClassName="text-sm font-medium text-gray-900"
+                  type="number"
+                  min={1}
+                  value={quantity}
+                  onChange={(e) =>
+                    setQuantity(Math.max(1, parseInt(e.target.value) || 1))
+                  }
+                />
+                <TextInput
+                  id="item-price"
+                  label={`${t('billiard.unitPrice') || 'Unit Price'} *`}
+                  labelClassName="text-sm font-medium text-gray-900"
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={unitPrice}
+                  onChange={(e) => setUnitPrice(e.target.value)}
+                  placeholder="0.00"
+                />
               </div>
             </div>
           )}
@@ -495,7 +484,7 @@ export function AddItemToTabModal({
               {t('common.cancel') || 'Cancel'}
             </button>
             <button
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center"
               onClick={handleCustomSubmit}
               disabled={!isCustomValid || addItem.isPending}
             >

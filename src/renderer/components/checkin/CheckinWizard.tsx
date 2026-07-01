@@ -418,7 +418,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                         <button
                           onClick={() => wizard.startService(c.id)}
                           disabled={state.isSubmitting}
-                          className="px-2.5 py-1 text-[10px] font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="px-2.5 py-1 text-[10px] font-bold bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {t('wizard.start')}
                         </button>

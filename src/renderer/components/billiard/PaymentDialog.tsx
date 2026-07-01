@@ -225,7 +225,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
           </button>
           {step === 'select' && (
             <button
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center"
               onClick={handlePay}
               disabled={processPayment.isPending}
             >

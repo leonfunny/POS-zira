@@ -662,7 +662,7 @@ function FloorPlanInner({ language }: { language: Language }) {
                 <span>m</span>
                 {roomDimsDirty && (
                   <button
-                    className="h-8 px-3 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    className="h-8 px-3 text-xs font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors"
                     onClick={saveRoomDimensions}
                   >
                     {t('common.save') || 'Save'}
@@ -707,7 +707,7 @@ function FloorPlanInner({ language }: { language: Language }) {
           <button
             className={`h-8 px-3 text-xs font-medium rounded-md transition-colors flex items-center ${
               editMode
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                ? 'bg-brand-600 text-white hover:bg-brand-700'
                 : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
             }`}
             onClick={() => setEditMode(!editMode)}
@@ -889,7 +889,7 @@ function FloorPlanInner({ language }: { language: Language }) {
                   </p>
                   {!editMode && (
                     <button
-                      className="h-8 px-3 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center"
+                      className="h-8 px-3 text-sm font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors flex items-center"
                       onClick={() => { setEditMode(true); setAddDialogOpen(true); }}
                     >
                       <Plus className="w-4 h-4 mr-1" /> {t('billiard.addFirstTable') || 'Add First Table'}
@@ -1075,7 +1075,7 @@ function FloorPlanInner({ language }: { language: Language }) {
                 {t('common.cancel') || 'Cancel'}
               </button>
               <button
-                className="h-9 px-4 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                className="h-9 px-4 text-sm font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors"
                 onClick={handleChangeImageConfirm}
               >
                 {t('common.apply') || 'Apply'}

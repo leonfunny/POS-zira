@@ -4,6 +4,7 @@ import rlog from '../utils/logger';
 import { useTranslation } from '../i18n/useTranslation';
 import { useConfig } from '../hooks/useConfig';
 import { deriveBooksyPushWarning } from './booksyPushWarning';
+import Button from './shared/Button';
 
 export default function BooksySync() {
   const { config: appConfig } = useConfig();
@@ -899,15 +900,17 @@ export default function BooksySync() {
                 </div>
               </div>
 
-              <button
+              <Button
                 onClick={handleLaunchChrome}
-                className="w-full px-4 py-3 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                className="w-full"
+                icon={(
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-3.952 6.848c.404.037.813.055 1.229.055 6.627 0 12-5.373 12-12 0-1.003-.124-1.979-.357-2.912zm-3.317 3.148a3.818 3.818 0 1 0 0 7.636 3.818 3.818 0 0 0 0-7.636z"/>
+                  </svg>
+                )}
               >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-3.952 6.848c.404.037.813.055 1.229.055 6.627 0 12-5.373 12-12 0-1.003-.124-1.979-.357-2.912zm-3.317 3.148a3.818 3.818 0 1 0 0 7.636 3.818 3.818 0 0 0 0-7.636z"/>
-                </svg>
                 {t('booksy.setup.openChrome')}
-              </button>
+              </Button>
 
               <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
                 <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold flex-shrink-0">2</div>
@@ -925,17 +928,17 @@ export default function BooksySync() {
                 </div>
               </div>
 
-              <button
+              <Button
                 onClick={async () => {
                   setShowSetupWizard(false);
                   await window.electronAPI.booksy.start();
                   const s = await window.electronAPI.booksy.getStatus();
                   setStatus(s);
                 }}
-                className="w-full px-4 py-3 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-700 transition-colors"
+                className="w-full"
               >
                 {t('booksy.setup.startSync')}
-              </button>
+              </Button>
             </div>
 
             <p className="text-xs text-center text-slate-400">
@@ -959,12 +962,12 @@ export default function BooksySync() {
               <p className="text-xs text-slate-500">{t('booksy.setup.quickDesc')}</p>
             </div>
           </div>
-          <button
+          <Button
             onClick={() => setShowSetupWizard(true)}
-            className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            className="w-full"
           >
             {t('booksy.setup.quickButton')}
-          </button>
+          </Button>
         </div>
       )}
     </div>

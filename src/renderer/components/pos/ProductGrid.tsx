@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { SearchX } from 'lucide-react';
 import type { Product } from '../../hooks/usePosDb';
+import Button from '../shared/Button';
 import ProductCard, { type ProductLongPressResult } from './ProductCard';
 
 interface ProductGridProps {
@@ -74,13 +75,9 @@ export default function ProductGrid({ products, onAddProduct, onLongPressProduct
           <SearchX className="w-12 h-12 mx-auto mb-3 text-slate-300" aria-hidden="true" />
           <p className="text-sm font-medium text-slate-600">{message}</p>
           {onClearSearch && (
-            <button
-              type="button"
-              onClick={onClearSearch}
-              className="mt-4 min-h-11 px-5 rounded-lg bg-brand-600 text-white text-sm font-bold hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-200 cursor-pointer touch-manipulation"
-            >
+            <Button onClick={onClearSearch} className="mt-4">
               {tOr('pos.search.clear', 'Clear search')}
-            </button>
+            </Button>
           )}
         </div>
       </div>

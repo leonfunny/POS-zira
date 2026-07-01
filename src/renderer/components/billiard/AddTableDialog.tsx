@@ -3,6 +3,7 @@ import { Loader2, ChevronLeft, Check, RectangleHorizontal } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
 import { useToast } from './Toast';
+import TextInput from '../shared/TextInput';
 import { getNextName } from './utils';
 import {
   FLOOR_PLAN_CATEGORIES,
@@ -29,14 +30,14 @@ function AssetCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-blue-400 ${
+      className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
         isSelected
-          ? 'border-blue-600 bg-blue-50'
+          ? 'border-brand-600 bg-brand-50'
           : 'border-gray-200 bg-white'
       }`}
     >
       {isSelected && (
-        <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center">
+        <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-600 flex items-center justify-center">
           <Check className="w-2.5 h-2.5 text-white" />
         </span>
       )}
@@ -85,7 +86,7 @@ function AssetPickerGrid({
           onClick={() => setActiveCategory(null)}
           className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
             activeCategory === null
-              ? 'bg-blue-600 text-white'
+              ? 'bg-brand-600 text-white'
               : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
           }`}
         >
@@ -98,7 +99,7 @@ function AssetPickerGrid({
             onClick={() => setActiveCategory(cat.key)}
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               activeCategory === cat.key
-                ? 'bg-blue-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
             }`}
           >
@@ -113,14 +114,14 @@ function AssetPickerGrid({
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-blue-400 ${
+          className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
             selected === null
-              ? 'border-blue-600 bg-blue-50'
+              ? 'border-brand-600 bg-brand-50'
               : 'border-gray-200 bg-white'
           }`}
         >
           {selected === null && (
-            <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center">
+            <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-600 flex items-center justify-center">
               <Check className="w-2.5 h-2.5 text-white" />
             </span>
           )}
@@ -250,12 +251,10 @@ export function AddTableDialog({
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
-                <label htmlFor="table-name" className="text-sm font-medium">
-                  {t('billiard.tableName') || 'Name'}
-                </label>
-                <input
+                <TextInput
                   id="table-name"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  label={t('billiard.tableName') || 'Name'}
+                  labelClassName="text-sm font-medium text-gray-900"
                   placeholder="Table 1"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -266,19 +265,15 @@ export function AddTableDialog({
                   {t('billiard.nameSuggestionHint') || 'Press up/down to adjust number'}
                 </p>
               </div>
-              <div className="space-y-2">
-                <label htmlFor="table-price" className="text-sm font-medium">
-                  {t('billiard.hourlyRate') || 'Hourly Rate'} (PLN/h)
-                </label>
-                <input
-                  id="table-price"
-                  type="number"
-                  min={0}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={price}
-                  onChange={(e) => setPrice(Number(e.target.value))}
-                />
-              </div>
+              <TextInput
+                id="table-price"
+                label={`${t('billiard.hourlyRate') || 'Hourly Rate'} (PLN/h)`}
+                labelClassName="text-sm font-medium text-gray-900"
+                type="number"
+                min={0}
+                value={price}
+                onChange={(e) => setPrice(Number(e.target.value))}
+              />
             </div>
           )}
         </div>
@@ -295,7 +290,7 @@ export function AddTableDialog({
           {step === 'asset' ? (
             <button
               type="button"
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center"
               onClick={() => setStep('details')}
             >
               {t('common.next') || 'Next'}
@@ -303,7 +298,7 @@ export function AddTableDialog({
           ) : (
             <button
               type="button"
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center"
               onClick={handleSubmit}
               disabled={isPending}
             >

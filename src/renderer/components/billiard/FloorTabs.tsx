@@ -42,7 +42,7 @@ export function FloorTabs({
               inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium
               transition-all border
               ${isActive
-                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                 : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-900'
               }
             `}

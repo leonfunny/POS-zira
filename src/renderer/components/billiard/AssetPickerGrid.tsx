@@ -29,7 +29,7 @@ export function AssetPickerGrid({
           onClick={() => setActiveCategory(null)}
           className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
             activeCategory === null
-              ? 'bg-blue-600 text-white'
+              ? 'bg-brand-600 text-white'
               : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
           }`}
         >
@@ -42,7 +42,7 @@ export function AssetPickerGrid({
             onClick={() => setActiveCategory(cat.key)}
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               activeCategory === cat.key
-                ? 'bg-blue-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
             }`}
           >
@@ -57,14 +57,14 @@ export function AssetPickerGrid({
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-blue-400 ${
+          className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
             selected === null
-              ? 'border-blue-600 bg-blue-50'
+              ? 'border-brand-600 bg-brand-50'
               : 'border-gray-200 bg-white'
           }`}
         >
           {selected === null && (
-            <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center">
+            <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-600 flex items-center justify-center">
               <Check className="w-2.5 h-2.5 text-white" />
             </span>
           )}
@@ -104,14 +104,14 @@ function AssetCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-blue-400 ${
+      className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
         isSelected
-          ? 'border-blue-600 bg-blue-50'
+          ? 'border-brand-600 bg-brand-50'
           : 'border-gray-200 bg-white'
       }`}
     >
       {isSelected && (
-        <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center">
+        <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-600 flex items-center justify-center">
           <Check className="w-2.5 h-2.5 text-white" />
         </span>
       )}
