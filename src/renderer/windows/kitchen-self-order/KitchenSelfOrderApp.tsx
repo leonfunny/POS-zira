@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import TouchKeyboard from '../../components/shared/TouchKeyboard';
+import { useKioskIdleReset } from '../../hooks/useKioskIdleReset';
 import {
   formatKitchenSelfOrderModifierLabels,
   normalizeKitchenSelfOrderFulfillment,
@@ -116,6 +117,9 @@ const COPY = {
     newOrder: 'Nowe zamówienie',
     autoReset: 'Nowe zamówienie rozpocznie się za',
     seconds: 's',
+    stillThereTitle: 'Jesteś tam jeszcze?',
+    stillThereBody: 'Zamówienie zostanie wyczyszczone za {seconds} s.',
+    stillThereConfirm: 'Kontynuuję zamówienie',
   },
   vi: {
     menu: 'Thực đơn',
@@ -160,6 +164,9 @@ const COPY = {
     newOrder: 'Đơn mới',
     autoReset: 'Đơn mới sẽ bắt đầu sau',
     seconds: 'giây',
+    stillThereTitle: 'Bạn còn ở đó không?',
+    stillThereBody: 'Đơn sẽ được xóa sau {seconds} giây.',
+    stillThereConfirm: 'Tiếp tục gọi món',
   },
   en: {
     menu: 'Menu',
@@ -204,6 +211,9 @@ const COPY = {
     newOrder: 'New order',
     autoReset: 'A new order will start in',
     seconds: 's',
+    stillThereTitle: 'Are you still there?',
+    stillThereBody: 'This order will be cleared in {seconds} s.',
+    stillThereConfirm: 'Continue ordering',
   },
 };
 
@@ -551,6 +561,21 @@ export default function KitchenSelfOrderApp() {
     '--kso-accent': menu?.brand.accentColor || '#DA7756',
   } as React.CSSProperties;
   const orderLockedForRetry = !!(submitResult && !submitResult.success && submitResult.orderId);
+  const idleReset = useKioskIdleReset({
+    enabled: step === 'review'
+      || step === 'terminal'
+      || (step === 'menu' && (cart.length > 0 || configurator !== null)),
+    warnAfterMs: 60_000,
+    resetAfterMs: 75_000,
+    onReset: resetSession,
+  });
+  const idleWarningOverlay = idleReset.warning ? (
+    <KioskIdleWarning
+      t={t}
+      secondsLeft={idleReset.secondsLeft}
+      onContinue={idleReset.dismissWarning}
+    />
+  ) : null;
 
   if (step === 'review') {
     return (
@@ -595,6 +620,7 @@ export default function KitchenSelfOrderApp() {
             )}
           />
         )}
+        {idleWarningOverlay}
       </KioskShell>
     );
   }
@@ -621,6 +647,7 @@ export default function KitchenSelfOrderApp() {
             </button>
           </div>
         </div>
+        {idleWarningOverlay}
       </KioskShell>
     );
   }
@@ -764,6 +791,7 @@ export default function KitchenSelfOrderApp() {
           )}
         />
       )}
+      {idleWarningOverlay}
     </KioskShell>
   );
 }
@@ -778,6 +806,49 @@ function KioskShell({
   return (
     <div className="sc-shell kso-shell h-full overflow-hidden" style={style}>
       {children}
+    </div>
+  );
+}
+
+function KioskIdleWarning({
+  t,
+  secondsLeft,
+  onContinue,
+}: {
+  t: CopyText;
+  secondsLeft: number;
+  onContinue: () => void;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby="kso-idle-title"
+      aria-describedby="kso-idle-body"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/65 p-6"
+    >
+      <div className="w-full max-w-2xl rounded-xl bg-[var(--kso-surface)] p-10 text-center shadow-2xl">
+        <h2
+          id="kso-idle-title"
+          className="kso-serif text-5xl font-black leading-tight text-[var(--kso-ink)]"
+        >
+          {t.stillThereTitle}
+        </h2>
+        <p
+          id="kso-idle-body"
+          className="mx-auto mt-5 max-w-xl text-2xl font-bold leading-9 text-[var(--kso-muted)]"
+        >
+          {t.stillThereBody.replace('{seconds}', String(secondsLeft))}
+        </p>
+        <button
+          type="button"
+          onClick={onContinue}
+          autoFocus
+          className="kso-primary-button mt-8 min-h-[72px] w-full justify-center text-2xl"
+        >
+          <Check size={26} strokeWidth={3} />
+          {t.stillThereConfirm}
+        </button>
+      </div>
     </div>
   );
 }
