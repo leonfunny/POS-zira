@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import ConfirmActionDialog from './ConfirmActionDialog';
 import { buildConfirmCopy } from './confirm-action-copy';
+import Modal from '../shared/Modal';
 
 interface HoldOrderRow {
   id: string;
@@ -92,32 +93,33 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleClose}>
-      <div
-        className="bg-slate-800 rounded-xl w-full max-w-lg mx-4 shadow-2xl border border-slate-700"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white">{t('pos.heldOrders')}</h2>
-          <button onClick={handleClose} className="text-slate-400 hover:text-white">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="px-5 py-4">
+    <Modal
+      title={t('pos.heldOrders')}
+      onClose={handleClose}
+      size="lg"
+      busy={!!pendingDelete}
+      closeLabel={tOr(t, 'pos.close', 'Close')}
+      bodyClassName="px-5 py-4"
+      footer={(
+        <button
+          onClick={handleClose}
+          className="w-full py-2 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 transition-colors hover:bg-slate-50"
+        >
+          {t('pos.cancel')}
+        </button>
+      )}
+    >
           <div className="flex gap-2 mb-3">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('pos.searchHeld')}
-              className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             />
             <select
               value={timeFilter}
               onChange={(e) => setTimeFilter(e.target.value)}
-              className="px-2 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
+              className="px-2 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             >
               <option value="all">{t('pos.filter.all')}</option>
               <option value="1h">{t('pos.filter.last1h')}</option>
@@ -126,7 +128,7 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
             <select
               value={staffFilter}
               onChange={(e) => setStaffFilter(e.target.value)}
-              className="px-2 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
+              className="px-2 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             >
               <option value="all">{t('pos.filter.staffAll')}</option>
               {staffOptions.map((s) => (
@@ -136,21 +138,21 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
           </div>
           <div className="max-h-[50vh] overflow-y-auto">
             {sorted.length === 0 ? (
-            <div className="text-sm text-slate-400 text-center py-8">{t('pos.noHeldOrders')}</div>
+            <div className="text-sm text-slate-500 text-center py-8">{t('pos.noHeldOrders')}</div>
           ) : (
             <div className="space-y-2">
               {sorted.map((o) => (
                 <div
                   key={o.id}
-                  className="w-full text-left p-3 rounded-lg border border-slate-700 bg-slate-900/50 hover:bg-slate-900 transition-colors"
+                  className="w-full text-left p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <button
                       onClick={() => onSelect(o.id)}
                       className="flex-1 text-left"
                     >
-                      <div className="font-medium text-white">{o.title}</div>
-                      <div className="mt-1 text-xs text-slate-400">
+                      <div className="font-medium text-slate-950">{o.title}</div>
+                      <div className="mt-1 text-xs text-slate-500">
                         {o.items} {t('pos.items')} · {(o.total / 100).toFixed(2)} {t('pos.currency')}
                         {o.staffName ? ` · ${o.staffName}` : ''}
                       </div>
@@ -170,18 +172,7 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
             </div>
           )}
           </div>
-        </div>
-
-        <div className="px-5 py-4 border-t border-slate-700">
-          <button
-            onClick={handleClose}
-            className="w-full py-2 rounded-lg font-semibold text-white bg-slate-700 hover:bg-slate-600 transition-colors"
-          >
-            {t('pos.cancel')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
     {pendingDelete && pendingDeleteCopy && (
       <ConfirmActionDialog
         open
