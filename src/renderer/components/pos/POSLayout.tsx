@@ -216,7 +216,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
         </div>
 
         <label className="block mt-4">
-          <span className="text-xs font-bold uppercase text-slate-500">{unit}</span>
+          <span className="text-xs font-bold uppercase text-slate-600">{unit}</span>
           <input
             autoFocus
             value={value}
@@ -1271,7 +1271,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   if (!state) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-gray-400">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-gray-600">
         {/* Hidden barcode input must exist even during loading so scanner keystrokes are captured */}
         <input
           ref={barcodeRef}
@@ -1389,7 +1389,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             {t(MODE_LABELS[posMode])}
           </span>
           {session.staffName && (
-            <span className="text-xs text-gray-500 font-medium">
+            <span className="text-xs text-gray-600 font-medium">
               {session.staffName}
             </span>
           )}
@@ -1413,7 +1413,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         <div className="flex items-center gap-2.5">
           {/* Current time */}
           <div className="text-right">
-            <span className="block text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">{clock.toLocaleDateString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+            <span className="block text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{clock.toLocaleDateString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
             <span className="block text-sm font-bold text-slate-700 tabular-nums">
               {clock.toLocaleTimeString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
@@ -1454,7 +1454,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg py-2">
                   {visiblePickups.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-sm text-slate-400">Chưa có đơn bếp chờ thu</div>
+                    <div className="px-4 py-6 text-center text-sm text-slate-600">Chưa có đơn bếp chờ thu</div>
                   ) : (
                     visiblePickups.map((o) => {
                       const mine = o.status === 'CLAIMED' && !!ownMachineId && o.claimedByMachineId === ownMachineId;
@@ -1559,7 +1559,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                       }`}
                     >
                       <span>{languageNames[l]}</span>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">{l}</span>
+                      <span className="text-[10px] font-bold text-slate-600 uppercase">{l}</span>
                     </button>
                   ))}
                 </div>

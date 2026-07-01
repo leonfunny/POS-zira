@@ -252,7 +252,7 @@ function DiscountPopup({
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <p className="text-sm font-extrabold text-slate-950">{tOr('pos.numpad.discount', 'Discount')}</p>
-            <p className="mt-0.5 text-xs font-semibold text-slate-500">
+            <p className="mt-0.5 text-xs font-semibold text-slate-600">
               {tOr('pos.cart.subtotal', 'Subtotal')}: {formatCompactMoney(subtotal, currency)}
             </p>
           </div>
@@ -455,7 +455,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
             <p className="text-sm font-extrabold text-slate-950">{tOr('pos.price.edit', 'Edit price')}</p>
-            <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{item.name}</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-slate-600">{item.name}</p>
           </div>
           <button
             type="button"
@@ -471,14 +471,14 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
 
         <div className="p-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-            <p className="text-xs font-bold text-slate-500">{tOr('pos.price.new', 'New price')}</p>
+            <p className="text-xs font-bold text-slate-600">{tOr('pos.price.new', 'New price')}</p>
             <div className="mt-1 flex items-baseline justify-between gap-3">
               <span className="min-w-0 flex-1 truncate text-3xl font-black tabular-nums text-slate-950">
                 {buffer || '0'}
               </span>
-              <span className="text-base font-extrabold text-slate-500">{currency}</span>
+              <span className="text-base font-extrabold text-slate-600">{currency}</span>
             </div>
-            <p className="mt-1 text-xs font-semibold text-slate-500">
+            <p className="mt-1 text-xs font-semibold text-slate-600">
               {tOr('pos.price.current', 'Current')}: {formatCompactMoney(item.price, currency)}
             </p>
           </div>
@@ -802,7 +802,7 @@ export default function Cart({
                 {tOr('pos.cart.qty', 'Qty')}
               </span>
             ) : (
-              <span className="min-w-0 truncate text-xs font-bold text-slate-500">{t('pos.cart.empty')}</span>
+              <span className="min-w-0 truncate text-xs font-bold text-slate-600">{t('pos.cart.empty')}</span>
             )}
           </h2>
           {heldCartsCount > 0 && (
@@ -845,7 +845,7 @@ export default function Cart({
             </div>
             <div>
               <p className="text-sm font-bold text-slate-600">{t('pos.cart.empty')}</p>
-              <p className="text-xs text-slate-500 mt-1">{t('pos.cart.emptyHint')}</p>
+              <p className="text-xs text-slate-600 mt-1">{t('pos.cart.emptyHint')}</p>
             </div>
           </div>
         ) : (
@@ -1023,7 +1023,7 @@ export default function Cart({
           <div className="flex items-baseline justify-between pt-2 mb-2 border-t border-slate-200">
             <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
             <span className="text-slate-950 leading-none tabular-nums">
-              <span className="text-2xl font-black">{totalStr}</span>
+              <span className="text-3xl font-black">{totalStr}</span>
               <span className="text-base font-bold ml-1.5 text-slate-600">{currency}</span>
             </span>
           </div>

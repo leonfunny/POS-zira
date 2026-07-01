@@ -117,7 +117,7 @@ export default function CartItemRow({
       isActive ? 'bg-brand-50' : ''
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
       <div className="flex items-start justify-between gap-3">
-        <p className="flex-1 min-w-0 text-sm font-extrabold text-slate-950 leading-snug line-clamp-1">
+        <p className="flex-1 min-w-0 text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
           {resolveName(item, lang)}
         </p>
         <span className="text-base font-black text-slate-950 tabular-nums leading-none shrink-0">

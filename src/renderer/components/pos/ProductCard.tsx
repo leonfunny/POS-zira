@@ -166,7 +166,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       onContextMenu={(event) => event.preventDefault()}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
-      className={`group bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[184px] select-none ${
+      className={`group bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[196px] select-none ${
         soldOut
           ? 'opacity-60 cursor-not-allowed'
           : 'hover:shadow-md cursor-pointer touch-manipulation'
@@ -237,11 +237,11 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       </div>
 
       <div className="flex-1 pt-1.5 pb-1 flex flex-col">
-        <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
+        <p className="text-sm font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
       </div>
 
-      <div className="flex items-end justify-between gap-2 shrink-0">
-        <span className="text-sm font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
+      <div className="flex items-end justify-between gap-1.5 shrink-0">
+        <span className="text-lg font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
         </span>
         {!soldOut && (
