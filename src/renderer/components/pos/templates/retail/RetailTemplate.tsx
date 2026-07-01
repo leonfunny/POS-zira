@@ -227,6 +227,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const [paymentInitialMethod, setPaymentInitialMethod] = useState<PaymentInitialMethod>('CASH');
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchResults, setSearchResults] = useState<Product[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [searchPending, setSearchPending] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [autoCameraEnabled, setAutoCameraEnabled] = useState(false);
@@ -321,28 +323,42 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // Load categories + products on mount. If initial load returns empty
   // (sync not finished yet after login), retry once after a short delay.
   useEffect(() => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const load = async () => {
-      const [cats, prods] = await Promise.all([
-        window.electronAPI.pos.categories.getAll(),
-        window.electronAPI.pos.products.getAll(),
-      ]);
-      setCategories(cats);
-      setAllProducts(prods);
-      if (prods.length === 0) {
-        // Sync may still be in progress — retry after 2s
-        setTimeout(async () => {
-          const [retryCats, retryProds] = await Promise.all([
-            window.electronAPI.pos.categories.getAll(),
-            window.electronAPI.pos.products.getAll(),
-          ]);
-          if (retryProds.length > 0) {
-            setCategories(retryCats);
-            setAllProducts(retryProds);
-          }
-        }, 2000);
+      setCatalogLoading(true);
+      try {
+        const [cats, prods] = await Promise.all([
+          window.electronAPI.pos.categories.getAll(),
+          window.electronAPI.pos.products.getAll(),
+        ]);
+        setCategories(cats);
+        setAllProducts(prods);
+        if (prods.length === 0) {
+          // Sync may still be in progress — retry after 2s
+          retryTimer = setTimeout(async () => {
+            try {
+              const [retryCats, retryProds] = await Promise.all([
+                window.electronAPI.pos.categories.getAll(),
+                window.electronAPI.pos.products.getAll(),
+              ]);
+              if (retryProds.length > 0) {
+                setCategories(retryCats);
+                setAllProducts(retryProds);
+              }
+            } finally {
+              setCatalogLoading(false);
+            }
+          }, 2000);
+          return;
+        }
+      } finally {
+        if (!retryTimer) setCatalogLoading(false);
       }
     };
     load();
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, []);
 
   // Non-search category browsing is synchronous from the local catalogue
@@ -410,19 +426,30 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // Search fetch stays async because it also consults draft_products; the
   // displayed search rows above still react synchronously to category changes.
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRunIdRef = useRef(0);
   useEffect(() => {
     let cancelled = false;
     if (!searchQuery) {
+      searchRunIdRef.current += 1;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
       setSearchResults([]);
+      setSearchPending(false);
       return () => {
         cancelled = true;
       };
     }
 
+    setSearchPending(true);
+
     const run = async () => {
-      const result = await loadSearchResults();
-      if (!cancelled) setSearchResults(result);
+      const runId = ++searchRunIdRef.current;
+      setSearchPending(true);
+      try {
+        const result = await loadSearchResults();
+        if (!cancelled) setSearchResults(result);
+      } finally {
+        if (!cancelled && searchRunIdRef.current === runId) setSearchPending(false);
+      }
     };
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -475,6 +502,17 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     setAutoCameraStatus('off');
     setAutoCameraResult(message ?? tOr('pos.autoCamera.paused', 'Auto paused'));
   }, [tOr]);
+
+  const handleSearchChange = useCallback((value: string) => {
+    interruptAutoCamera();
+    voiceChoicePendingRef.current = false;
+    setSearchQuery(value);
+  }, [interruptAutoCamera]);
+
+  const handleClearSearch = useCallback(() => {
+    handleSearchChange('');
+    document.dispatchEvent(new CustomEvent('pos:focus-search'));
+  }, [handleSearchChange]);
 
   useEffect(() => {
     const handler = () => interruptAutoCamera();
@@ -1014,6 +1052,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const browseActiveCategoryId = searchQuery ? null : activeCategoryId;
   const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
   const showCategoryGallery = !searchQuery && browseActiveCategoryId === null;
+  const showCatalogSkeleton = catalogLoading && allProducts.length === 0 && !searchQuery.trim();
 
   useEffect(() => {
     if (!homeResetKey) return;
@@ -1051,14 +1090,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               <div className="w-[min(380px,44%)] min-w-[310px] shrink-0">
               <SearchBar
                 value={searchQuery}
-                onChange={(value) => {
-                  interruptAutoCamera();
-                  voiceChoicePendingRef.current = false;
-                  setSearchQuery(value);
-                }}
+                onChange={handleSearchChange}
                 onBarcodeScanned={handleBarcodeScanned}
                 commandBarcodes={RETAIL_SCAN_COMMANDS}
                 placeholder={tOr('pos.searchByCode', 'Search by EAN / SKU...')}
+                pending={searchPending}
               />
               </div>
 
@@ -1260,7 +1296,18 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               </div>
             </div>
           </div>
-          {showCategoryGallery ? (
+          {showCatalogSkeleton ? (
+            <ProductGrid
+              products={visibleProducts}
+              onAddProduct={handleAddProduct}
+              onLongPressProduct={handlePrintProductCode}
+              t={t}
+              allowOversell={allowOversell}
+              resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
+              lang={lang}
+              loading
+            />
+          ) : showCategoryGallery ? (
             <div className="flex-1 min-h-0 overflow-y-auto bg-white rounded-lg">
               <div className="flex items-baseline justify-between gap-3 px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-[1]">
                 <h2 className="text-base font-extrabold text-slate-950">
@@ -1343,6 +1390,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               allowOversell={allowOversell}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
+              emptySearchQuery={searchPending ? '' : searchQuery}
+              onClearSearch={handleClearSearch}
             />
           )}
           <div className="-mx-3 -mb-3 shrink-0">

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
+import { Loader2 } from 'lucide-react';
 
 export interface SearchBarHandle {
   focus: () => void;
@@ -10,10 +11,11 @@ interface SearchBarProps {
   onBarcodeScanned?: (barcode: string) => void;
   commandBarcodes?: string[];
   placeholder?: string;
+  pending?: boolean;
 }
 
 const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar(
-  { value, onChange, onBarcodeScanned, commandBarcodes = [], placeholder },
+  { value, onChange, onBarcodeScanned, commandBarcodes = [], placeholder, pending = false },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -135,8 +137,17 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
           inputMode="none"
           data-keyboard="false"
           autoComplete="off"
-          className="w-full h-12 pl-11 pr-12 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-900 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-shadow shadow-sm"
+          className={`w-full h-12 pl-11 ${pending && value ? 'pr-24' : 'pr-12'} bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-900 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition-shadow shadow-sm`}
         />
+        {pending && (
+          <span
+            role="status"
+            aria-label="Searching products"
+            className={`absolute ${value ? 'right-14' : 'right-3.5'} top-1/2 -translate-y-1/2 text-brand-600 pointer-events-none`}
+          >
+            <Loader2 size={20} className="animate-spin" aria-hidden="true" />
+          </span>
+        )}
         {value && (
           <button
             onMouseDown={(e) => e.preventDefault()}
