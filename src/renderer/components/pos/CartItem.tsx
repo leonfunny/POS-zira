@@ -128,7 +128,7 @@ export default function CartItemRow({
           type="button"
           onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
           title={tOr('pos.cart.editPrice', 'Edit price')}
-          className={`min-h-7 min-w-0 flex-1 truncate rounded-md px-2 py-0.5 text-left text-xs font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
+          className={`min-h-11 min-w-0 flex-1 truncate rounded-md px-2 py-0.5 text-left text-sm font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
             priceHighlight
               ? 'bg-brand-100 text-brand-900 ring-1 ring-brand-400'
               : 'text-slate-600 hover:text-brand-800'
@@ -147,19 +147,19 @@ export default function CartItemRow({
               disabled={scaleBusy}
               title={scaleBusy ? tOr('pos.scale.reading', 'Reading scale') : tOr('pos.scale.read', 'Read scale')}
               aria-label={tOr('pos.scale.read', 'Read scale')}
-              className="w-10 h-10 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              className="w-11 h-11 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-200"
             >
               <Scale size={18} strokeWidth={2.4} />
             </button>
           )}
-          <div className="inline-flex h-10 items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden">
+          <div className="inline-flex h-12 items-center rounded-lg border border-slate-300 bg-slate-50 overflow-hidden">
             {sellBy !== 'WEIGHT' && (
               <button
                 type="button"
                 onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
                 disabled={item.quantity <= 1}
                 aria-label="Decrease quantity"
-                className={`w-10 h-10 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
+                className={`w-12 h-12 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
                   item.quantity <= 1
                     ? 'text-slate-300 cursor-not-allowed'
                     : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
@@ -170,7 +170,7 @@ export default function CartItemRow({
               type="button"
               onClick={() => onSelectField?.(item.id, 'qty')}
               title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
-              className={`h-10 min-w-12 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
+              className={`h-12 min-w-14 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
                 sellBy === 'WEIGHT' ? '' : 'border-x'
               } ${
                 qtyHighlight
@@ -185,7 +185,7 @@ export default function CartItemRow({
                 type="button"
                 onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
                 aria-label="Increase quantity"
-                className="w-10 h-10 flex items-center justify-center bg-slate-900 hover:bg-black active:bg-slate-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
+                className="w-12 h-12 flex items-center justify-center bg-slate-900 hover:bg-black active:bg-slate-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
               >+</button>
             )}
           </div>
@@ -200,7 +200,7 @@ export default function CartItemRow({
                 disabled={labelState === 'printing'}
                 aria-label={tOr('pos.cart.printLabel', 'Print label')}
                 title={tOr('pos.cart.printLabel', 'Print label')}
-                className={`h-10 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+                className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
                   labelState === 'printing'
                     ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-wait'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -215,7 +215,7 @@ export default function CartItemRow({
               type="button"
               onClick={() => setEditingNotes(true)}
               aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
-              className={`h-10 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+              className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
                 item.notes
                   ? 'border-brand-300 text-brand-800 bg-brand-50 hover:bg-brand-100'
                   : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -229,7 +229,7 @@ export default function CartItemRow({
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
-            className="h-10 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-red-200 inline-flex items-center gap-1.5"
+            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-red-200 inline-flex items-center gap-1.5"
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>

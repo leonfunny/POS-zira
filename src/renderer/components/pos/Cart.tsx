@@ -260,7 +260,7 @@ function DiscountPopup({
             type="button"
             onClick={onClose}
             aria-label={tOr('pos.cancel', 'Cancel')}
-            className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="h-11 w-11 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
@@ -461,7 +461,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
             type="button"
             onClick={onClose}
             aria-label={tOr('pos.cancel', 'Cancel')}
-            className="h-9 w-9 shrink-0 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="h-11 w-11 shrink-0 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
             <svg className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
@@ -966,9 +966,9 @@ export default function Cart({
                     onClick={() => dispatch({ type: 'cart/clearDiscount' })}
                     aria-label="Remove discount"
                     title="Remove discount"
-                    className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors touch-manipulation"
+                    className="w-11 h-11 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors touch-manipulation"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>

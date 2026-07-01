@@ -208,7 +208,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
           <button
             type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-md text-slate-500 hover:bg-slate-100 flex items-center justify-center shrink-0"
+            className="w-11 h-11 rounded-md text-slate-500 hover:bg-slate-100 flex items-center justify-center shrink-0"
             aria-label={tOr('common.close', 'Close')}
           >
             &times;
@@ -1326,7 +1326,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           </span>
           <button
             onClick={() => setFiscalAlert(null)}
-            className="ml-2 rounded-md bg-white/20 px-2 py-1 text-xs font-bold hover:bg-white/30"
+            className="ml-2 inline-flex min-h-11 items-center justify-center rounded-md bg-white/20 px-3 text-xs font-bold hover:bg-white/30"
           >
             {tOr('pos.fiscal.dismiss', 'Đã hiểu')}
           </button>
@@ -1486,7 +1486,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                             <button
                               type="button"
                               onClick={() => releasePickupFromList(o)}
-                              className="shrink-0 px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200"
+                              className="inline-flex min-h-11 shrink-0 items-center justify-center px-3 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200"
                             >
                               Trả lại
                             </button>
@@ -1510,7 +1510,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               <button
                 type="button"
                 onClick={releaseActivePickup}
-                className="px-2 py-0.5 text-[11px] font-bold text-orange-700 bg-white/70 rounded-md hover:bg-white"
+                className="inline-flex min-h-11 items-center justify-center px-3 text-[11px] font-bold text-orange-700 bg-white/70 rounded-md hover:bg-white"
                 title="Trả đơn về danh sách"
               >
                 Trả lại
@@ -1522,7 +1522,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           {onFullscreen && (
             <button
               onClick={onFullscreen}
-              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
               title="Enter fullscreen mode"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1535,7 +1535,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           <div className="relative">
             <button
               onClick={() => setLangOpen(!langOpen)}
-              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
               title="Change language"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

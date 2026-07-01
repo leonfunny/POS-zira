@@ -101,9 +101,9 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
         onClick={handleKeyboardToggle}
         aria-label="Toggle on-screen keyboard"
         title="Toggle on-screen keyboard"
-        className="shrink-0 h-9 w-9 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
+        className="shrink-0 h-12 w-12 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
       >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <rect x="3" y="6" width="18" height="12" rx="2" strokeWidth={1.8} />
           <path strokeLinecap="round" strokeWidth={1.8} d="M7 10h.01M11 10h.01M15 10h.01M7 14h.01M11 14h.01M15 14h.01M8 17h8" />
         </svg>

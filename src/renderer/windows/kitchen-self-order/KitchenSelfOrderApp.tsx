@@ -1252,7 +1252,7 @@ function CartLine({
           type="button"
           onClick={() => onEdit(item.lineId)}
           aria-label={t.edit}
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-[var(--kso-muted)] hover:bg-[var(--kso-accent-soft)]"
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg text-[var(--kso-muted)] hover:bg-[var(--kso-accent-soft)]"
         >
           <Pencil size={18} />
         </button>
@@ -1285,7 +1285,7 @@ function QuantityControl({
         type="button"
         disabled={disabled}
         onClick={() => onChange(quantity - 1)}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
+        className="flex h-14 w-14 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
       >
         <Minus size={18} />
       </button>
@@ -1294,7 +1294,7 @@ function QuantityControl({
         type="button"
         disabled={disabled}
         onClick={() => onChange(normalizeKitchenSelfOrderQuantity(quantity + 1))}
-        className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
+        className="flex h-14 w-14 items-center justify-center rounded-lg border border-[var(--kso-line)] bg-[var(--kso-accent-soft)] disabled:opacity-40"
       >
         <Plus size={18} />
       </button>
@@ -1459,7 +1459,7 @@ function ProductConfigurator({
               type="button"
               onClick={onCancel}
               aria-label={t.cancel}
-              className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--kso-line)]"
+              className="flex h-14 w-14 items-center justify-center rounded-lg border border-[var(--kso-line)]"
             >
               <X size={22} />
             </button>

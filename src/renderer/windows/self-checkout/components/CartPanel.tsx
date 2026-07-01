@@ -100,17 +100,17 @@ export default function CartPanel({
                     <button
                       type="button"
                       onClick={() => onRemove(item.variantId)}
-                      className="sc-focusable flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
+                      className="sc-focusable flex h-14 w-14 shrink-0 items-center justify-center rounded-xl text-[var(--sc-muted)] hover:bg-red-50 hover:text-[var(--sc-danger)]"
                       aria-label={t.remove}
                     >
                       <Trash2 size={22} />
                     </button>
                   </div>
-                  <div className="mt-2 flex items-center gap-3">
+                  <div className="mt-2 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => onDecrement(item.variantId)}
-                      className={`sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 font-black ${
+                      className={`sc-focusable flex h-14 w-14 items-center justify-center rounded-xl border-2 font-black ${
                         isLastOne
                           ? 'border-red-200 bg-red-50 text-[var(--sc-danger)] hover:bg-red-100'
                           : 'border-[var(--sc-border)] bg-white hover:bg-[var(--sc-surface-muted)]'
@@ -125,7 +125,7 @@ export default function CartPanel({
                     <button
                       type="button"
                       onClick={() => onIncrement(item.variantId)}
-                      className="sc-focusable flex h-11 w-11 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
+                      className="sc-focusable flex h-14 w-14 items-center justify-center rounded-xl border-2 border-[var(--sc-border)] bg-white font-black hover:bg-[var(--sc-surface-muted)]"
                       aria-label="+"
                     >
                       <Plus size={22} />

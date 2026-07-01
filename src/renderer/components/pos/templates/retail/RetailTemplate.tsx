@@ -1144,7 +1144,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   onClick={() => scrollCategories('left')}
                   aria-label={tOr('pos.scrollCategoriesLeft', 'Scroll categories left')}
                   tabIndex={canScrollLeft ? 0 : -1}
-                  className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
                     canScrollLeft ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
                   }`}
                 >
@@ -1246,7 +1246,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   onClick={() => scrollCategories('right')}
                   aria-label={tOr('pos.scrollCategoriesRight', 'Scroll categories right')}
                   tabIndex={canScrollRight ? 0 : -1}
-                  className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
                     canScrollRight ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
                   }`}
                 >
