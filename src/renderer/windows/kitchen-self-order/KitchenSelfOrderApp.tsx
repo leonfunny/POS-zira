@@ -47,7 +47,7 @@ declare global {
   }
 }
 
-type Step = 'menu' | 'review' | 'terminal' | 'done';
+type Step = 'attract' | 'menu' | 'review' | 'terminal' | 'done';
 
 interface CartItem {
   lineId: string;
@@ -75,6 +75,8 @@ interface SubmitResult {
 
 const COPY = {
   pl: {
+    attractTitle: 'Dotknij, aby zamówić',
+    attractSubtitle: 'Zamów i odbierz przy ladzie',
     menu: 'Menu',
     categories: 'Kategorie',
     all: 'Wszystko',
@@ -122,6 +124,8 @@ const COPY = {
     stillThereConfirm: 'Kontynuuję zamówienie',
   },
   vi: {
+    attractTitle: 'Chạm để gọi món',
+    attractSubtitle: 'Gọi món và nhận tại quầy',
     menu: 'Thực đơn',
     categories: 'Danh mục',
     all: 'Tất cả',
@@ -169,6 +173,8 @@ const COPY = {
     stillThereConfirm: 'Tiếp tục gọi món',
   },
   en: {
+    attractTitle: 'Touch to order',
+    attractSubtitle: 'Order and collect at the counter',
     menu: 'Menu',
     categories: 'Categories',
     all: 'All',
@@ -219,6 +225,15 @@ const COPY = {
 
 type CopyText = (typeof COPY)[KitchenSelfOrderLanguage];
 
+const ATTRACT_LANGUAGE_OPTIONS: Array<{
+  value: KitchenSelfOrderLanguage;
+  label: string;
+}> = [
+  { value: 'pl', label: 'Polski' },
+  { value: 'vi', label: 'Tiếng Việt' },
+  { value: 'en', label: 'English' },
+];
+
 function formatPLN(grosze: number): string {
   return `${(Math.round(grosze) / 100).toFixed(2).replace('.', ',')} zł`;
 }
@@ -235,6 +250,15 @@ function localizedName(
     name: entity.name,
     name_translations: entity.nameTranslations,
   }, language);
+}
+
+function productMediaStyle(product: KitchenSelfOrderMenuProduct): React.CSSProperties {
+  const focal = product.media.focalPoint || { x: 0.5, y: 0.5 };
+  return {
+    objectFit: product.media.fit === 'COVER' ? 'cover' : 'contain',
+    objectPosition: `${focal.x * 100}% ${focal.y * 100}%`,
+    transform: `scale(${product.media.zoom})`,
+  };
 }
 
 function modifierTotal(item: Pick<CartItem, 'modifiers'>): number {
@@ -292,7 +316,7 @@ function playAddFeedback(): void {
 }
 
 export default function KitchenSelfOrderApp() {
-  const [step, setStep] = useState<Step>('menu');
+  const [step, setStep] = useState<Step>('attract');
   const [language, setLanguage] = useState<KitchenSelfOrderLanguage>('pl');
   const [fulfillment, setFulfillment] = useState<KitchenSelfOrderFulfillment>('DINE_IN');
   const [menu, setMenu] = useState<KitchenSelfOrderMenu | null>(null);
@@ -392,7 +416,7 @@ export default function KitchenSelfOrderApp() {
     setCustomerError(null);
     setSubmitting(false);
     setResetCountdown(20);
-    setStep('menu');
+    setStep('attract');
   }, []);
 
   useEffect(() => {
@@ -458,6 +482,14 @@ export default function KitchenSelfOrderApp() {
   }, [menu, productsByCategory]);
 
   const showCategoryGallery = !query && !activeCategoryId && visibleCategories.length > 1;
+  const attractProducts = useMemo(() => {
+    if (!menu) return [];
+    return visibleCategories
+      .map((category) =>
+        (productsByCategory.get(category.id) || []).find((product) => product.media.url) || null)
+      .filter((product): product is KitchenSelfOrderMenuProduct => !!product?.media.url)
+      .slice(0, 5);
+  }, [menu, productsByCategory, visibleCategories]);
 
   const groupsForProduct = useCallback((product: KitchenSelfOrderMenuProduct) => {
     if (!menu) return [];
@@ -623,6 +655,23 @@ export default function KitchenSelfOrderApp() {
       onContinue={idleReset.dismissWarning}
     />
   ) : null;
+
+  if (step === 'attract') {
+    return (
+      <KioskShell style={themeStyle}>
+        <AttractScreen
+          menu={menu}
+          language={language}
+          products={attractProducts}
+          onStart={() => setStep('menu')}
+          onLanguage={(nextLanguage) => {
+            setLanguage(nextLanguage);
+            setStep('menu');
+          }}
+        />
+      </KioskShell>
+    );
+  }
 
   if (step === 'review') {
     return (
@@ -854,6 +903,140 @@ function KioskShell({
   return (
     <div className="sc-shell kso-shell h-full overflow-hidden" style={style}>
       {children}
+    </div>
+  );
+}
+
+function AttractScreen({
+  menu,
+  language,
+  products,
+  onStart,
+  onLanguage,
+}: {
+  menu: KitchenSelfOrderMenu | null;
+  language: KitchenSelfOrderLanguage;
+  products: KitchenSelfOrderMenuProduct[];
+  onStart: () => void;
+  onLanguage: (language: KitchenSelfOrderLanguage) => void;
+}) {
+  const brandName = menu?.brand.name || 'Zira POS';
+  const hasHeroImages = products.length > 0;
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onStart();
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${COPY[language].attractTitle}. ${COPY[language].attractSubtitle}`}
+      onClick={onStart}
+      onKeyDown={handleKeyDown}
+      className={`kso-attract-screen ${hasHeroImages ? 'kso-attract-screen-with-images' : 'kso-attract-screen-fallback'}`}
+    >
+      {hasHeroImages ? (
+        <div className="kso-attract-photo-grid" data-count={products.length} aria-hidden="true">
+          {products.map((product, index) => (
+            <AttractHeroTile key={`${product.id}:${index}`} product={product} index={index} />
+          ))}
+        </div>
+      ) : (
+        <div className="kso-attract-fallback-mark" aria-hidden="true">
+          {brandName.slice(0, 1).toUpperCase()}
+        </div>
+      )}
+      <div className="kso-attract-scrim" aria-hidden="true" />
+
+      <div className="relative z-10 flex h-full min-h-0 flex-col p-6 sm:p-8 lg:p-10">
+        <div className="kso-attract-brand">
+          {menu?.brand.logoUrl ? (
+            <img
+              src={menu.brand.logoUrl}
+              alt=""
+              className="h-14 w-14 rounded-lg object-contain"
+              draggable={false}
+            />
+          ) : (
+            <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-[var(--kso-surface)] text-2xl font-black text-[var(--kso-accent-deep)]">
+              {brandName.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          <span className="min-w-0 truncate text-3xl font-black text-white">
+            {brandName}
+          </span>
+        </div>
+
+        <div className="kso-attract-content">
+          <section className="kso-attract-copy">
+            <div className="kso-attract-headline kso-attract-pulse">
+              {ATTRACT_LANGUAGE_OPTIONS.map(({ value }) => (
+                <div
+                  key={value}
+                  lang={value}
+                  className={language === value ? 'text-white' : 'text-white/80'}
+                >
+                  {COPY[value].attractTitle}
+                </div>
+              ))}
+            </div>
+            <p className="kso-attract-subtitle">
+              {COPY[language].attractSubtitle}
+            </p>
+          </section>
+
+          <div
+            className="kso-attract-language-list"
+            aria-label="Choose language"
+          >
+            {ATTRACT_LANGUAGE_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onLanguage(value);
+                }}
+                className="kso-attract-language-button min-h-[96px]"
+              >
+                <span>{label}</span>
+                <ChevronRight size={34} strokeWidth={3} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttractHeroTile({
+  product,
+  index,
+}: {
+  product: KitchenSelfOrderMenuProduct;
+  index: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="kso-attract-photo" data-slot={index + 1}>
+      {product.media.url && !failed ? (
+        <img
+          src={product.media.url}
+          alt=""
+          loading={index === 0 ? 'eager' : 'lazy'}
+          decoding="async"
+          draggable={false}
+          onError={() => setFailed(true)}
+          className="h-full w-full"
+          style={productMediaStyle(product)}
+        />
+      ) : (
+        <div className="h-full w-full bg-[var(--kso-accent-soft)]" />
+      )}
     </div>
   );
 }
@@ -1096,13 +1279,7 @@ function CategoryTile({
             decoding="async"
             onError={() => setFailed(true)}
             className="h-full w-full"
-            style={{
-              objectFit: product.media.fit === 'COVER' ? 'cover' : 'contain',
-              objectPosition: product.media.focalPoint
-                ? `${product.media.focalPoint.x * 100}% ${product.media.focalPoint.y * 100}%`
-                : '50% 50%',
-              transform: `scale(${product.media.zoom})`,
-            }}
+            style={productMediaStyle(product)}
           />
         ) : (
           <div className="kso-category-tile-fallback" aria-hidden="true">
@@ -1183,7 +1360,6 @@ function ProductImage({
       </div>
     );
   }
-  const focal = product.media.focalPoint || { x: 0.5, y: 0.5 };
   return (
     <div className={`${className} overflow-hidden bg-[var(--kso-accent-soft)]`}>
       <img
@@ -1193,11 +1369,7 @@ function ProductImage({
         decoding="async"
         onError={() => setFailed(true)}
         className="h-full w-full"
-        style={{
-          objectFit: product.media.fit === 'COVER' ? 'cover' : 'contain',
-          objectPosition: `${focal.x * 100}% ${focal.y * 100}%`,
-          transform: `scale(${product.media.zoom})`,
-        }}
+        style={productMediaStyle(product)}
       />
     </div>
   );
