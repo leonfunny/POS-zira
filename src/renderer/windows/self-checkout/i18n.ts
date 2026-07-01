@@ -128,6 +128,13 @@ interface ScStrings {
   staffConfirmTitle: string;
   staffConfirmBody: string;
   staffConfirmButton: string;
+  staffPinTitle: string;
+  staffPinHint: string;
+  staffPinConfirm: string;
+  staffPinCancel: string;
+  staffPinError: string;
+  staffPinLocked: string;
+  staffPinBackspace: string;
   replayVoice: string;
   popularCategories: string;
   productsInCategory: string;
@@ -243,6 +250,13 @@ const PL: ScStrings = {
   staffConfirmTitle: 'Czekam na obsługę',
   staffConfirmBody: 'Obsługa odbierze płatność i potwierdzi przyjęcie pieniędzy.',
   staffConfirmButton: 'Pieniądze przyjęte',
+  staffPinTitle: 'Kod personelu',
+  staffPinHint: 'Wpisz kod, aby potwierdzić płatność.',
+  staffPinConfirm: 'Potwierdź',
+  staffPinCancel: 'Anuluj',
+  staffPinError: 'Nieprawidłowy kod',
+  staffPinLocked: 'Za dużo prób. Poczekaj {seconds} s.',
+  staffPinBackspace: 'Usuń cyfrę',
   replayVoice: 'Odtwórz komunikat',
   invoiceToggleLabel: 'Faktura na firmę?',
   invoiceToggleHint: 'Podaj NIP przed potwierdzeniem płatności.',
@@ -373,6 +387,13 @@ const EN: ScStrings = {
   staffConfirmTitle: 'Waiting for staff',
   staffConfirmBody: 'Staff will collect payment and confirm money received.',
   staffConfirmButton: 'Money received',
+  staffPinTitle: 'Staff code',
+  staffPinHint: 'Enter the staff code to confirm payment.',
+  staffPinConfirm: 'Confirm',
+  staffPinCancel: 'Cancel',
+  staffPinError: 'Invalid code',
+  staffPinLocked: 'Too many attempts. Wait {seconds}s.',
+  staffPinBackspace: 'Delete digit',
   replayVoice: 'Replay announcement',
   invoiceToggleLabel: 'Invoice for company?',
   invoiceToggleHint: 'Enter NIP before confirming payment.',
@@ -503,6 +524,13 @@ const VI: ScStrings = {
   staffConfirmTitle: 'Chờ nhân viên',
   staffConfirmBody: 'Nhân viên sẽ thu tiền và xác nhận đã nhận.',
   staffConfirmButton: 'Đã thu tiền',
+  staffPinTitle: 'Mã nhân viên',
+  staffPinHint: 'Nhập mã nhân viên để xác nhận thanh toán.',
+  staffPinConfirm: 'Xác nhận',
+  staffPinCancel: 'Hủy',
+  staffPinError: 'Mã không đúng',
+  staffPinLocked: 'Thử quá nhiều lần. Chờ {seconds} giây.',
+  staffPinBackspace: 'Xóa số',
   replayVoice: 'Phát lại',
   invoiceToggleLabel: 'Hóa đơn cho công ty?',
   invoiceToggleHint: 'Nhập mã NIP trước khi xác nhận thanh toán.',

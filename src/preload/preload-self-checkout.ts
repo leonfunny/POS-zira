@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { IPC_CHANNELS } from '../shared/types';
 
 // Narrow bridge for the public customer self-checkout kiosk. Do not reuse the
 // broader customer-display preload here: the kiosk is a public surface and
@@ -59,6 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('self-checkout:help-request', payload),
     checkStatus: (id: string) =>
       ipcRenderer.invoke('self-checkout:help-status', id),
+    staffVerify: (code: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.DELETE_CONFIRM_VERIFY, code),
     readiness: () => ipcRenderer.invoke('self-checkout:readiness'),
     close: () => ipcRenderer.invoke('self-checkout:close'),
   },

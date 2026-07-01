@@ -2,18 +2,25 @@
 // yet, so after the customer picks CARD, CASH, or BLIK we (1) play a
 // pre-rendered Polish announcement over the kiosk speakers so staff knows the
 // amount + method, then (2) wait for staff to physically collect/confirm
-// payment and tap "Money received" before saving the order and printing.
+// payment, tap "Money received", and verify their staff PIN before saving the
+// order and printing.
 //
 // The announcement is assembled from clips in `public/tts-pl/` rendered by
 // `scripts/generate-tts-clips.mjs`. See `polish-amount-tts.ts` for the
 // sequence-building logic and Web Speech API fallback.
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Banknote, CheckCircle2, CreditCard, Loader2, RotateCcw, Smartphone, X } from 'lucide-react';
+import { AlertTriangle, Banknote, CreditCard, Delete, Loader2, Lock, RotateCcw, ShieldCheck, Smartphone, X } from 'lucide-react';
 import LanguageSwitch from '../LanguageSwitch';
 import { ScLanguage, getScStrings } from '../i18n';
 import type { SelfCheckoutPaymentProfile } from '../self-checkout-model';
 import { formatPLN } from '../useScCart';
 import { cancelAnnouncement, playAnnouncement, warmUpClipCache } from '../polish-amount-tts';
+import {
+  canAttempt,
+  initialStaffPinGateState,
+  recordFailure,
+  recordSuccess,
+} from '../lib/staff-pin-gate';
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'BLIK';
 
@@ -24,6 +31,23 @@ type Phase = 'idle' | 'awaitStaff' | 'processing';
 // land in their phone and taps "Money received".
 const BLIK_PHONE_DISPLAY = '729 448 788';
 const ASSISTED_PAYMENT_METHODS: PaymentMethod[] = ['BLIK', 'CARD', 'CASH'];
+const STAFF_PIN_MAX_LENGTH = 16;
+const STAFF_PIN_KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'cancel', '0', 'backspace'] as const;
+
+type SelfCheckoutStaffApi = {
+  staffVerify?: (code: string) => Promise<{ valid: boolean }>;
+  helpRequest?: (payload: { reason: string; cartTotalGrosze: number }) => Promise<unknown>;
+};
+
+function getSelfCheckoutStaffApi(): SelfCheckoutStaffApi | undefined {
+  return (window as Window & {
+    electronAPI?: { selfCheckout?: SelfCheckoutStaffApi };
+  }).electronAPI?.selfCheckout;
+}
+
+function formatStaffPinLocked(template: string, seconds: number): string {
+  return template.replace('{seconds}', String(seconds));
+}
 
 interface PaymentScreenProps {
   lang: ScLanguage;
@@ -56,6 +80,12 @@ export default function PaymentScreen({
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [nipDigits, setNipDigits] = useState('');
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinCode, setPinCode] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinSubmitting, setPinSubmitting] = useState(false);
+  const [pinGate, setPinGate] = useState(initialStaffPinGateState);
+  const [pinNow, setPinNow] = useState(() => Date.now());
 
   useEffect(() => {
     warmUpClipCache();
@@ -63,6 +93,29 @@ export default function PaymentScreen({
       cancelAnnouncement();
     };
   }, []);
+
+  useEffect(() => {
+    if (!pinGate.lockedUntil || Date.now() >= pinGate.lockedUntil) return;
+
+    setPinNow(Date.now());
+    const intervalId = window.setInterval(() => {
+      const nextNow = Date.now();
+      setPinNow(nextNow);
+      if (nextNow >= pinGate.lockedUntil!) {
+        window.clearInterval(intervalId);
+      }
+    }, 500);
+
+    return () => window.clearInterval(intervalId);
+  }, [pinGate.lockedUntil]);
+
+  useEffect(() => {
+    if (phase === 'awaitStaff') return;
+    setPinOpen(false);
+    setPinCode('');
+    setPinError(null);
+    setPinSubmitting(false);
+  }, [phase]);
 
   const chooseMethod = (next: PaymentMethod) => {
     if (phase !== 'idle' || !assisted) return;
@@ -78,6 +131,8 @@ export default function PaymentScreen({
 
   const nipValid = nipDigits.length === 10;
   const invoiceBlocked = invoiceOpen && !nipValid;
+  const staffPinLocked = !canAttempt(pinGate, pinNow);
+  const staffPinLockSeconds = Math.max(0, Math.ceil(((pinGate.lockedUntil ?? pinNow) - pinNow) / 1000));
 
   const confirmReceived = async () => {
     if (phase !== 'awaitStaff' || !method) return;
@@ -90,9 +145,72 @@ export default function PaymentScreen({
     }
   };
 
+  const closePinPanel = () => {
+    setPinOpen(false);
+    setPinCode('');
+    setPinError(null);
+    setPinSubmitting(false);
+  };
+
+  const openStaffPinPanel = () => {
+    if (invoiceBlocked) return;
+    setPinNow(Date.now());
+    setPinOpen(true);
+    setPinCode('');
+    setPinError(null);
+  };
+
+  const handlePinDigit = (digit: string) => {
+    if (staffPinLocked || pinSubmitting) return;
+    setPinError(null);
+    setPinCode((current) => (
+      current.length >= STAFF_PIN_MAX_LENGTH ? current : `${current}${digit}`
+    ));
+  };
+
+  const handlePinBackspace = () => {
+    if (staffPinLocked || pinSubmitting) return;
+    setPinError(null);
+    setPinCode((current) => current.slice(0, -1));
+  };
+
+  const handlePinSubmit = async () => {
+    const now = Date.now();
+    setPinNow(now);
+    if (phase !== 'awaitStaff' || !method || invoiceBlocked) return;
+    if (!canAttempt(pinGate, now) || pinCode.length < 4 || pinSubmitting) return;
+
+    setPinSubmitting(true);
+    try {
+      const staffApi = getSelfCheckoutStaffApi();
+      const result = await staffApi?.staffVerify?.(pinCode).catch(() => ({ valid: false }));
+      if (result?.valid === true) {
+        setPinGate(recordSuccess());
+        closePinPanel();
+        await confirmReceived();
+        return;
+      }
+
+      const nextGate = recordFailure(pinGate, now);
+      const enteredLock = canAttempt(pinGate, now) && !canAttempt(nextGate, now);
+      setPinGate(nextGate);
+      setPinCode('');
+      setPinError(enteredLock ? null : t.staffPinError);
+      if (enteredLock) {
+        void staffApi?.helpRequest?.({
+          reason: 'STAFF_PIN_FAILED',
+          cartTotalGrosze: totalGrosze,
+        }).catch(() => undefined);
+      }
+    } finally {
+      setPinSubmitting(false);
+    }
+  };
+
   const handleCancel = () => {
     if (phase === 'processing') return;
     cancelAnnouncement();
+    closePinPanel();
     setMethod(null);
     setPhase('idle');
     setInvoiceOpen(false);
@@ -301,29 +419,47 @@ export default function PaymentScreen({
               )}
 
               {awaitingStaff && (
-                <div className="mt-6 flex flex-col gap-3">
-                  <button
-                    type="button"
-                    onClick={confirmReceived}
-                    disabled={invoiceBlocked}
-                    className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-emerald-600 bg-emerald-600 px-6 py-5 text-2xl font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300"
-                  >
-                    <CheckCircle2 size={28} />
-                    {t.staffConfirmButton}
-                  </button>
-                  {invoiceBlocked && (
-                    <div role="alert" className="text-center text-sm font-bold text-[var(--sc-danger)]">
-                      {t.invoiceNipInvalid}
+                <div className="mt-6">
+                  {pinOpen ? (
+                    <StaffPinPanel
+                      strings={t}
+                      codeLength={pinCode.length}
+                      errorText={pinError}
+                      locked={staffPinLocked}
+                      lockedSeconds={staffPinLockSeconds}
+                      submitting={pinSubmitting}
+                      submitDisabled={pinCode.length < 4}
+                      onDigit={handlePinDigit}
+                      onBackspace={handlePinBackspace}
+                      onCancel={closePinPanel}
+                      onSubmit={handlePinSubmit}
+                    />
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      <button
+                        type="button"
+                        onClick={openStaffPinPanel}
+                        disabled={invoiceBlocked}
+                        className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-[var(--sc-border)] bg-white px-6 py-5 text-2xl font-black text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Lock size={28} />
+                        {t.staffConfirmButton}
+                      </button>
+                      {invoiceBlocked && (
+                        <div role="alert" className="text-center text-sm font-bold text-[var(--sc-danger)]">
+                          {t.invoiceNipInvalid}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={replayAnnouncement}
+                        className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-[var(--sc-border)] bg-white px-6 py-4 text-xl font-bold text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)]"
+                      >
+                        <RotateCcw size={24} />
+                        {t.replayVoice}
+                      </button>
                     </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={replayAnnouncement}
-                    className="sc-focusable flex items-center justify-center gap-3 rounded-[24px] border-2 border-[var(--sc-border)] bg-white px-6 py-4 text-xl font-bold text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)]"
-                  >
-                    <RotateCcw size={24} />
-                    {t.replayVoice}
-                  </button>
                 </div>
               )}
 
@@ -348,6 +484,136 @@ export default function PaymentScreen({
             </aside>
         </div>
       </section>
+    </div>
+  );
+}
+
+function StaffPinPanel({
+  strings,
+  codeLength,
+  errorText,
+  locked,
+  lockedSeconds,
+  submitting,
+  submitDisabled,
+  onDigit,
+  onBackspace,
+  onCancel,
+  onSubmit,
+}: {
+  strings: ReturnType<typeof getScStrings>;
+  codeLength: number;
+  errorText: string | null;
+  locked: boolean;
+  lockedSeconds: number;
+  submitting: boolean;
+  submitDisabled: boolean;
+  onDigit: (digit: string) => void;
+  onBackspace: () => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const inputDisabled = locked || submitting;
+  const dotCount = Math.max(4, codeLength);
+
+  return (
+    <div className="rounded-[24px] border-2 border-[var(--sc-border)] bg-white p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--sc-surface-muted)] text-[var(--sc-ink)]">
+          <Lock size={24} />
+        </div>
+        <div className="min-w-0">
+          <h3 className="text-2xl font-black text-[var(--sc-ink)]">
+            {strings.staffPinTitle}
+          </h3>
+          <p className="mt-1 text-base font-semibold leading-6 text-[var(--sc-muted)]">
+            {strings.staffPinHint}
+          </p>
+        </div>
+      </div>
+
+      <div
+        aria-label={strings.staffPinTitle}
+        className="mt-4 flex min-h-[64px] flex-wrap items-center justify-center gap-3 rounded-2xl border-2 border-[var(--sc-border)] bg-[var(--sc-surface-muted)] px-4 py-3"
+      >
+        {Array.from({ length: dotCount }).map((_, index) => (
+          <span
+            key={index}
+            className={`h-4 w-4 rounded-full ${
+              index < codeLength
+                ? 'bg-[var(--sc-ink)]'
+                : 'border-2 border-[var(--sc-border)] bg-white'
+            }`}
+          />
+        ))}
+      </div>
+
+      {errorText && !locked && (
+        <div role="alert" className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-center text-base font-black text-red-800">
+          {errorText}
+        </div>
+      )}
+
+      {locked && (
+        <div role="alert" className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-base font-black text-amber-900">
+          {formatStaffPinLocked(strings.staffPinLocked, lockedSeconds)}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {STAFF_PIN_KEYPAD.map((key) => {
+          if (key === 'cancel') {
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={onCancel}
+                disabled={submitting}
+                className="sc-focusable min-h-[64px] rounded-2xl border-2 border-[var(--sc-border)] bg-white px-2 text-lg font-black text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {strings.staffPinCancel}
+              </button>
+            );
+          }
+
+          if (key === 'backspace') {
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={onBackspace}
+                disabled={inputDisabled || codeLength === 0}
+                aria-label={strings.staffPinBackspace}
+                className="sc-focusable flex min-h-[64px] items-center justify-center rounded-2xl border-2 border-[var(--sc-border)] bg-white text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Delete size={28} />
+              </button>
+            );
+          }
+
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onDigit(key)}
+              disabled={inputDisabled}
+              className="sc-focusable min-h-[64px] rounded-2xl border-2 border-[var(--sc-border)] bg-white text-3xl font-black text-[var(--sc-ink)] transition-colors hover:border-[var(--sc-primary)] hover:bg-[var(--sc-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {key}
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={inputDisabled || submitDisabled}
+        className="sc-focusable mt-3 flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[24px] border-2 border-[var(--sc-primary)] bg-[var(--sc-primary)] px-6 text-xl font-black text-white transition-colors hover:bg-[var(--sc-primary-deep)] disabled:cursor-not-allowed disabled:border-[var(--sc-border)] disabled:bg-[var(--sc-surface-muted)] disabled:text-[var(--sc-muted)]"
+      >
+        {submitting ? <Loader2 size={24} className="animate-spin" /> : <ShieldCheck size={24} />}
+        {strings.staffPinConfirm}
+      </button>
     </div>
   );
 }
