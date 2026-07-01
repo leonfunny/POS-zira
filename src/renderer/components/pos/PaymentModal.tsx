@@ -124,7 +124,10 @@ export default function PaymentModal({
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
   const [receiptRetrying, setReceiptRetrying] = useState(false);
   const [paymentSnapshot, setPaymentSnapshot] = useState<PaymentSnapshot | null>(null);
-  const [customerNip, setCustomerNip] = useState(() => getInitialCustomerNip(checkoutDraft, extraOrderFields));
+  const initialCustomerNip = getInitialCustomerNip(checkoutDraft, extraOrderFields);
+  const [customerNip, setCustomerNip] = useState(initialCustomerNip);
+  const [nipOpen, setNipOpen] = useState(initialCustomerNip.length > 0 || initialMethod === 'INVOICE');
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
   const [loyaltyPhone, setLoyaltyPhone] = useState(() =>
     String(extraOrderFields?.customer_phone ?? '').trim(),
   );
@@ -235,6 +238,7 @@ export default function PaymentModal({
     : 0;
   const customerNipValid = customerNip.length === 0 || customerNip.length === 10;
   const customerNipForOrder = customerNip.length === 10 ? customerNip : null;
+  const nipForcedOpen = customerNip.length > 0 || method === 'INVOICE';
 
   const isB2B = extraOrderFields?.mode === 'b2b';
   const canPayInvoice = extraOrderFields?.canPayInvoice ?? false;
@@ -254,6 +258,10 @@ export default function PaymentModal({
   useEffect(() => {
     if (method === 'INVOICE' && !canPayInvoice) setMethod('CASH');
   }, [canPayInvoice, method]);
+
+  useEffect(() => {
+    if (nipForcedOpen) setNipOpen(true);
+  }, [nipForcedOpen]);
 
   useEffect(() => {
     if (method === 'CASH' && !splitMode) inputRef.current?.focus();
@@ -1069,6 +1077,45 @@ export default function PaymentModal({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNipOpen(open => (open && !nipForcedOpen ? false : true))}
+                  aria-expanded={nipOpen}
+                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${
+                    nipOpen
+                      ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
+                      : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
+                  }`}
+                >
+                  <span className="shrink-0 text-base leading-none">+</span>
+                  <span className="truncate">{tOr('pos.payment.addNip', 'Add NIP')}</span>
+                  {nipOpen && (
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoyaltyOpen(open => !open)}
+                  aria-expanded={loyaltyOpen}
+                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${
+                    loyaltyOpen
+                      ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
+                      : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
+                  }`}
+                >
+                  <span className="shrink-0 text-base leading-none">♥</span>
+                  <span className="truncate">{tOr('pos.payment.loyaltyChip', 'Loyalty')}</span>
+                  {loyaltyOpen && (
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <p className="text-xs font-semibold uppercase text-slate-500">{t('pos.payment')}</p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1106,6 +1153,7 @@ export default function PaymentModal({
                 </div>
               </div>
 
+              {loyaltyOpen && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -1255,7 +1303,9 @@ export default function PaymentModal({
                   </div>
                 )}
               </div>
+              )}
 
+              {nipOpen && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span id="payment-customer-nip-label" className="text-sm font-semibold text-slate-900">
@@ -1352,6 +1402,7 @@ export default function PaymentModal({
                     : tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.')}
                 </p>
               </div>
+              )}
             </aside>
 
             <section className="flex min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
