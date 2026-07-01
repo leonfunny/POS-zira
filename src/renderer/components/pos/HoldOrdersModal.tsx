@@ -78,7 +78,7 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('pos.searchHeld')}
-              className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+              className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
             />
             <select
               value={timeFilter}

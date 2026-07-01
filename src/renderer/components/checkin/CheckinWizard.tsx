@@ -398,7 +398,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                             {isWaiting ? t('wizard.waiting') : t('wizard.inService')}
                           </span>
                           {c.is_walkin === 1 && (
-                            <span className="text-[10px] bg-purple-100 text-purple-600 font-semibold px-1.5 py-0.5 rounded-full">{t('wizard.walkIn')}</span>
+                            <span className="text-[10px] bg-brand-100 text-brand-600 font-semibold px-1.5 py-0.5 rounded-full">{t('wizard.walkIn')}</span>
                           )}
                         </div>
                         <div className="text-xs font-semibold text-slate-800 truncate">{c.customer_name || 'Guest'}</div>

@@ -115,10 +115,10 @@ export default function ScanImportModal({
       onClick={handleCancel}
     >
       <div
-        className="bg-slate-800 rounded-2xl w-full max-w-md mx-4 shadow-2xl border border-purple-500/40 overflow-hidden"
+        className="bg-slate-800 rounded-2xl w-full max-w-md mx-4 shadow-2xl border border-brand-500/40 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 py-4 border-b border-slate-700 bg-gradient-to-r from-emerald-700/30 to-purple-700/30">
+        <div className="px-5 py-4 border-b border-slate-700 bg-gradient-to-r from-emerald-700/30 to-brand-700/30">
           <div className="text-xs uppercase tracking-wider text-emerald-300 font-semibold">
             {tOr('pos.scanImport.title', 'New product from catalog')}
           </div>
@@ -148,7 +148,7 @@ export default function ScanImportModal({
                 </div>
                 <div className="mt-0.5 text-xs text-slate-400">{vatText}</div>
                 {preview.status ? (
-                  <div className="mt-2 inline-flex px-2 py-0.5 rounded-md bg-purple-900/40 border border-purple-500/30 text-[10px] uppercase tracking-wide text-purple-300">
+                  <div className="mt-2 inline-flex px-2 py-0.5 rounded-md bg-brand-900/40 border border-brand-500/30 text-[10px] uppercase tracking-wide text-brand-300">
                     {preview.status}
                   </div>
                 ) : null}

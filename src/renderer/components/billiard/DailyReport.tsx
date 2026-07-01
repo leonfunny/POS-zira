@@ -273,8 +273,8 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
                 icon={<Users className="w-5 h-5" />}
                 label={t('report.totalGuests') || 'Total Guests'}
                 value={String(summary.totalGuests)}
-                color="text-purple-600 dark:text-purple-400"
-                bg="bg-purple-50 dark:bg-purple-900/20"
+                color="text-brand-600 dark:text-brand-400"
+                bg="bg-brand-50 dark:bg-brand-900/20"
               />
               <SummaryCard
                 icon={<UtensilsCrossed className="w-5 h-5" />}
@@ -301,7 +301,7 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <Package className="w-4 h-4 text-purple-500" />
+                  <Package className="w-4 h-4 text-brand-500" />
                   <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
                     {t('report.package') || 'Package/Combo'}
                   </span>

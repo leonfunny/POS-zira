@@ -126,7 +126,7 @@ export function TableActionPopover({
                     <p className="text-xs font-medium truncate">{session.customerName}</p>
                   )}
                   {session.combo?.name && (
-                    <span className="inline-block text-[9px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 px-1.5 py-0.5 rounded-full">
+                    <span className="inline-block text-[9px] bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 px-1.5 py-0.5 rounded-full">
                       {session.combo.name}
                     </span>
                   )}

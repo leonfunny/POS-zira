@@ -695,13 +695,13 @@ function RefundPanel({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
                       disabled={qty <= 0}
-                      className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                      className="w-11 h-11 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
                       -
                     </button>
-                    <span className="w-8 text-center text-sm font-extrabold tabular-nums">{qty}</span>
+                    <span className="w-10 text-center text-sm font-extrabold tabular-nums">{qty}</span>
                     <button onClick={() => setItemQty(item.id, qty + 1, item.maxQty)}
                       disabled={qty >= item.maxQty}
-                      className="w-8 h-8 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
+                      className="w-11 h-11 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
                       +
                     </button>
                   </div>
@@ -1287,6 +1287,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState<ReprintStatus>(null);
+  const [cancelStatus, setCancelStatus] = useState<ReprintStatus>(null);
   const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [mirroringId, setMirroringId] = useState<string | null>(null);
@@ -1422,6 +1423,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     setDetailLoadingId(orderId);
     setReprintStatus(null);
     setDeleteStatus(null);
+    setCancelStatus(null);
     try {
       if (serverItemsMap[orderId] && serverItemsMap[orderId].length > 0) {
         const order = orders.find((o) => o.id === orderId);
@@ -1699,7 +1701,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); }}
+              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); setCancelStatus(null); }}
               className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -2081,23 +2083,47 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               )}
 
               {order.backend_id && order.status !== 'CANCELLED' && refundStatus === 'none' && !showRefund && (
-                <button
-                  disabled={cancelling || isMirroring}
-                  onClick={async () => {
-                    if (!(await ensureMirrored(order))) return;
-                    if (!confirm(tOr(t, 'pos.history.cancelConfirm', 'Cancel this order? This cannot be undone.'))) return;
-                    setCancelling(true);
-                    try {
-                      const res = await window.electronAPI.pos.orders.cancel(order.id);
-                      if (res.success) { handleSelectOrder(order.id); loadOrders(); }
-                      else { alert(res.error || 'Cancel failed'); }
-                    } catch (err: any) { alert(err.message); }
-                    finally { setCancelling(false); }
-                  }}
-                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
-                >
-                  {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
-                </button>
+                <>
+                  <button
+                    disabled={cancelling || isMirroring}
+                    onClick={async () => {
+                      if (!(await ensureMirrored(order))) return;
+                      if (!confirm(tOr(t, 'pos.history.cancelConfirm', 'Cancel this order? This cannot be undone.'))) return;
+                      setCancelling(true);
+                      setCancelStatus(null);
+                      try {
+                        const res = await window.electronAPI.pos.orders.cancel(order.id);
+                        if (res.success) { handleSelectOrder(order.id); loadOrders(); }
+                        else {
+                          setCancelStatus({
+                            type: 'error',
+                            message: res.error || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
+                          });
+                        }
+                      } catch (err: any) {
+                        setCancelStatus({
+                          type: 'error',
+                          message: err?.message || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
+                        });
+                      }
+                      finally { setCancelling(false); }
+                    }}
+                    className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
+                  >
+                    {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
+                  </button>
+                  {cancelStatus && (
+                    <div
+                      className={`rounded-lg border px-3 py-3 text-sm font-bold ${
+                        cancelStatus.type === 'ok'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-red-200 bg-red-50 text-red-800'
+                      }`}
+                    >
+                      {cancelStatus.message}
+                    </div>
+                  )}
+                </>
               )}
 
               {canDeleteLocal && !showRefund && (

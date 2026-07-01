@@ -1551,7 +1551,7 @@ export default function PaymentModal({
                             type="button"
                             onClick={() => updateDenom(denom, -1)}
                             aria-label={`Remove one ${denom / 100} ${currency} bill`}
-                            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-slate-800 text-white text-sm font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-slate-300"
                           >
                             −
                           </button>

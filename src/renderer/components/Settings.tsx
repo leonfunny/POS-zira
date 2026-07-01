@@ -2550,7 +2550,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     <div className="font-medium text-slate-700">{brand} — {model}</div>
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                       dev.connectionType === 'USB' ? 'bg-blue-100 text-blue-700' :
-                      dev.connectionType === 'SERIAL' ? 'bg-purple-100 text-purple-700' :
+                      dev.connectionType === 'SERIAL' ? 'bg-brand-100 text-brand-700' :
                       dev.connectionType === 'NETWORK' ? 'bg-cyan-100 text-cyan-700' :
                       'bg-slate-100 text-slate-500'
                     }`}>
@@ -2637,7 +2637,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           onClick={() => handleAutoSetup(targetType, dev)}
                           disabled={autoSettingUp || isBusy}
                           className={`px-2.5 py-1.5 rounded-md text-xs font-medium disabled:opacity-50 transition-colors flex items-center gap-1.5 ${
-                            isZebra ? 'bg-purple-50 text-purple-700 hover:bg-purple-100' :
+                            isZebra ? 'bg-brand-50 text-brand-700 hover:bg-brand-100' :
                             isPosnet ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' :
                             'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                           }`}

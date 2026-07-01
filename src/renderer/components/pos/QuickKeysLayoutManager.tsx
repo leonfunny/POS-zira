@@ -147,7 +147,7 @@ export default function QuickKeysLayoutManager({ isOpen, onClose, registerId, t,
                 <button
                   key={m.value}
                   onClick={() => setMode(m.value)}
-                  className={`px-2 py-1 text-xs rounded ${mode === m.value ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                  className={`px-2 py-1 text-xs rounded ${mode === m.value ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300'}`}
                 >
                   {t(m.labelKey)}
                 </button>
@@ -294,7 +294,7 @@ export default function QuickKeysLayoutManager({ isOpen, onClose, registerId, t,
                             }}
                             className={`min-h-[36px] px-2.5 py-2 text-[11px] leading-tight rounded-lg border font-medium ${
                               tile.variant === 'primary'
-                                ? 'bg-purple-600/20 text-purple-200 border-purple-500/40'
+                                ? 'bg-brand-600/20 text-brand-200 border-brand-500/40'
                                 : tile.variant === 'danger'
                                   ? 'bg-red-900/30 text-red-200 border-red-700/50'
                                   : 'bg-slate-800 text-slate-200 border-slate-700'
@@ -310,7 +310,7 @@ export default function QuickKeysLayoutManager({ isOpen, onClose, registerId, t,
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={handleSave} className="px-3 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-500">
+                  <button onClick={handleSave} className="px-3 py-2 text-sm rounded bg-brand-600 text-white hover:bg-brand-500">
                     {t('settings.save')}
                   </button>
                   <button onClick={handleSetActive} className="px-3 py-2 text-sm rounded bg-green-700 text-white hover:bg-green-600">

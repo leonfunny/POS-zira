@@ -285,7 +285,7 @@ export const DraggableTable = memo(function DraggableTable({
                   </div>
                 )}
                 {session.combo?.name && (
-                  <span className="text-[8px] bg-purple-500/20 text-purple-800 px-1.5 py-0.5 rounded-full truncate max-w-full">
+                  <span className="text-[8px] bg-brand-500/20 text-brand-800 px-1.5 py-0.5 rounded-full truncate max-w-full">
                     {session.combo.name}
                   </span>
                 )}

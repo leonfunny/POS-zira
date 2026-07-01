@@ -28,7 +28,7 @@ export default function QuickKeys({ items, columns = 3 }: QuickKeysProps) {
         (() => {
           const variant = item.variant ?? 'neutral';
           const variantClass = variant === 'primary'
-            ? 'bg-purple-600/20 text-purple-200 border-purple-500/40 hover:bg-purple-600/30'
+            ? 'bg-brand-600/20 text-brand-200 border-brand-500/40 hover:bg-brand-600/30'
             : variant === 'danger'
               ? 'bg-red-900/30 text-red-200 border-red-700/50 hover:bg-red-900/50'
               : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700';

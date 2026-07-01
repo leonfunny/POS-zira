@@ -191,39 +191,39 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
         {soldOut && (
           <div className="absolute inset-0 bg-white/60 flex items-center justify-center">
-            <span className="text-[11px] text-red-700 bg-red-50 border border-red-300 px-3 py-1.5 rounded font-extrabold leading-none shadow-sm">
+            <span className="text-xs text-red-700 bg-red-50 border border-red-300 px-3 py-1.5 rounded font-extrabold leading-none shadow-sm">
               {t?.('pos.product.soldOut') ?? 'Sold out'}
             </span>
           </div>
         )}
         {lowStock && (
-          <span className="absolute top-2 left-2 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+          <span className="absolute top-2 left-2 text-xs text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             {stockQty} {saleClass.isWeighted ? saleClass.saleUnit : pieces}
           </span>
         )}
         {oversoldStock && (
-          <span className="absolute top-2 left-2 text-[10px] text-red-800 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+          <span className="absolute top-2 left-2 text-xs text-red-800 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             {formatTemplate(t?.('pos.product.oversoldStock') ?? 'Stock: {stock}', { stock: stockQty })} {stockUnit}
           </span>
         )}
         {saleClass.isWeighted && !soldOut && (
-          <span className="absolute bottom-2 left-2 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-1 rounded font-extrabold leading-none shadow-sm">
+          <span className="absolute bottom-2 left-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-1 rounded font-extrabold leading-none shadow-sm">
             {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : 'WEIGHT'}
           </span>
         )}
         {product.is_on_sale === 1 && !soldOut && !isDraft && (
-          <span className="absolute top-2 right-2 text-[10px] text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+          <span className="absolute top-2 right-2 text-xs text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             SALE
           </span>
         )}
         {isDraft && (
-          <span className="absolute top-2 right-2 text-[10px] text-purple-700 bg-purple-50 border border-purple-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
+          <span className="absolute top-2 right-2 text-xs text-sky-700 bg-sky-50 border border-sky-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
             DRAFT
           </span>
         )}
         {longPressState !== 'idle' && (
           <div
-            className={`absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] font-extrabold ${
+            className={`absolute inset-0 flex items-center justify-center px-3 text-center text-xs font-extrabold ${
               longPressState === 'error'
                 ? 'bg-red-900/70 text-white'
                 : longPressState === 'printed'

@@ -48,7 +48,7 @@ export default function TableMap({ tables, activeTableId, onSelectTable, t }: Ta
                   className={`
                     p-2 rounded border text-center transition-all text-xs
                     ${colorClass}
-                    ${isActive ? 'ring-2 ring-purple-500 ring-offset-1 ring-offset-slate-900' : ''}
+                    ${isActive ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-slate-900' : ''}
                   `}
                 >
                   <div className="font-semibold">{table.name}</div>

@@ -204,7 +204,7 @@ export function SessionDetailModal({
               {/* Combo badge */}
               {session.combo?.name && (
                 <div className="flex justify-center">
-                  <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full font-medium">
+                  <span className="text-xs bg-brand-100 text-brand-700 px-2.5 py-1 rounded-full font-medium">
                     {session.combo.name}
                   </span>
                 </div>

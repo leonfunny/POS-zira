@@ -189,7 +189,7 @@ export default function RestaurantTemplate({ state, dispatch, t, language, sessi
                     key={table.id}
                     onClick={() => handleSelectTable(table.id)}
                     className={`px-2 py-1 rounded text-[11px] ${
-                      table.id === activeTableId ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      table.id === activeTableId ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
                   >
                     {table.name}

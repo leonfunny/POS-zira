@@ -146,7 +146,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
     const styles: Record<InvoiceStatus, string> = {
       DRAFT:          'bg-slate-100 text-slate-600 border border-slate-200',
       ISSUED:         'bg-blue-50 text-blue-700 border border-blue-100',
-      SENT:           'bg-purple-50 text-purple-700 border border-purple-100',
+      SENT:           'bg-brand-50 text-brand-700 border border-brand-100',
       PAID:           'bg-green-50 text-green-700 border border-green-100',
       PARTIALLY_PAID: 'bg-amber-50 text-amber-700 border border-amber-100',
       OVERDUE:        'bg-red-50 text-red-700 border border-red-100',

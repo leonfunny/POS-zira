@@ -440,7 +440,7 @@ function SessionRow({
         {/* Type badge */}
         <span className="shrink-0" title={isPackage ? 'Package' : 'Per-minute'}>
           {isPackage
-            ? <Package className="w-4 h-4 text-purple-500" />
+            ? <Package className="w-4 h-4 text-brand-500" />
             : <Timer className="w-4 h-4 text-blue-500" />
           }
         </span>

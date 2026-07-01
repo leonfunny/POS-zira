@@ -25,7 +25,7 @@ export default function DiningOptions({ orderType, onChange, t }: DiningOptionsP
             className={`
               flex-1 px-1 py-1 text-xs rounded transition-colors
               ${orderType === opt.value
-                ? 'bg-purple-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }
             `}

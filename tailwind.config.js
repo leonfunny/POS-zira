@@ -6,18 +6,6 @@ export default {
   theme: {
     extend: {
       colors: {
-        purple: {
-          50: '#fff7f2',
-          100: '#fde9dd',
-          200: '#f6cbb6',
-          300: '#eea98a',
-          400: '#e38462',
-          500: '#da7756',
-          600: '#c5684a',
-          700: '#a9533a',
-          800: '#7f3f2d',
-          900: '#5e2e21',
-        },
         brand: {
           50: '#fff7f2',
           100: '#fde9dd',
