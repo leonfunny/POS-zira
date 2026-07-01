@@ -7,6 +7,8 @@ import {
   type PrintReceiptResponse,
 } from './receipt-outcome';
 import { formatInitialCashAmount } from './format-cash-amount';
+import { useConfig } from '../../hooks/useConfig';
+import { resolveFiscalAction, type FiscalAction } from './payment-fiscal-prompt-mode';
 
 interface PaymentModalProps {
   cart: CartState;
@@ -100,6 +102,7 @@ export default function PaymentModal({
   scanCommands,
   extraOrderFields,
 }: PaymentModalProps) {
+  const { config } = useConfig();
   const [method, setMethod] = useState<PaymentMethod>(initialMethod ?? 'CASH');
   const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
   // Per-denomination bill counts (grosze → count). The cashier taps a
@@ -139,6 +142,7 @@ export default function PaymentModal({
     const value = t(key);
     return value !== key ? value : fallback;
   };
+  const fiscalOnCashSale = config?.fiscalOnCashSale;
 
   const handleLoyaltyLookup = async () => {
     const phone = loyaltyPhone.trim();
@@ -308,6 +312,48 @@ export default function PaymentModal({
     setPrintWarning(null);
   };
 
+  const finishCompletedPayment = () => {
+    if (onComplete) { onComplete(); } else { onClose(); }
+  };
+
+  const showFiscalWarningThenClose = (warning: string) => {
+    setPrintWarning(warning);
+    setSavingLabel('');
+    setTimeout(() => {
+      finishCompletedPayment();
+    }, 4000);
+  };
+
+  const printFiscalReceiptForOrder = async (orderId: string): Promise<string | null> => {
+    try {
+      const result = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
+      if (!result?.fiscalPrinted) {
+        return result?.error || tOr('pos.payment.fiscalFailed', 'Fiscal receipt not printed - reprint from Order History');
+      }
+    } catch (err) {
+      rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
+      return (err as Error)?.message || tOr('pos.payment.fiscalFailed', 'Fiscal receipt not printed - reprint from Order History');
+    }
+    return null;
+  };
+
+  const printFiscalFromRecovery = async (orderId: string) => {
+    setReceiptRetrying(true);
+    setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
+    const warning = await printFiscalReceiptForOrder(orderId);
+    setReceiptRetrying(false);
+    setSavingLabel('');
+    setReceiptRecovery(null);
+    setPrintWarning(null);
+
+    if (warning) {
+      showFiscalWarningThenClose(warning);
+      return;
+    }
+
+    finishCompletedPayment();
+  };
+
   // ─── Add split tender ─────────────────────────────────────
 
   const addTender = () => {
@@ -454,16 +500,21 @@ export default function PaymentModal({
 
     // ─── Payment-method-aware print routing ──────────────────────────
     // CASH (or split with any cash tender): print the order copy on the
-    //   thermal RECEIPT printer + open drawer, then ASK the cashier
-    //   whether to also print the fiscal receipt.
+    //   thermal RECEIPT printer + open drawer, then follow the terminal's
+    //   CASH/BLIK fiscal mode.
     // BLIK: print the order copy with the BLIK phone instruction, no drawer,
-    //   then ask whether to also print the fiscal receipt.
+    //   then follow the terminal's CASH/BLIK fiscal mode.
     // CARD/TRANSFER: skip the order copy, fire the fiscal receipt directly.
     // INVOICE: skip both prints (debt already increased above).
     const printOrderCopy = hasCash || hasBlik;
     const printOrderCopyWithDrawer = hasCash;
     const autoPrintFiscal = !printOrderCopy && method !== 'INVOICE';
-    const offerFiscalPrompt = printOrderCopy && hasFiscalPrinter;
+    const fiscalAction = resolveFiscalAction({
+      printOrderCopy,
+      hasFiscalPrinter,
+      method,
+      mode: fiscalOnCashSale,
+    });
 
     setSavingLabel(t('test.printing') || 'Printing...');
     let printResult: PrintReceiptResponse | undefined;
@@ -490,18 +541,11 @@ export default function PaymentModal({
       if (!hasFiscalPrinter) {
         rlog.warn('[PaymentModal] No fiscal printer configured; skipping fiscal receipt for non-cash payment');
       } else {
-        setSavingLabel(t('pos.payment.fiscalPrinting') || 'Printing fiscal receipt...');
-        try {
-          const fiscalResult = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
-          if (!fiscalResult?.fiscalPrinted) {
-            fiscalWarning = fiscalResult?.error || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
-          }
-        } catch (err) {
-          rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
-          fiscalWarning = (err as Error)?.message || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
-        }
+        setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
+        fiscalWarning = await printFiscalReceiptForOrder(orderId);
       }
     }
+    setSavingLabel('');
 
     const outcome = deriveReceiptOutcome(printResult, t);
     setPaymentSnapshot({
@@ -522,12 +566,12 @@ export default function PaymentModal({
       setPrintWarning(outcome.warning);
       setReceiptRecovery({
         orderId,
-        nextAction: offerFiscalPrompt ? 'fiscalPrompt' : 'close',
+        nextAction: fiscalAction === 'skip' ? 'close' : 'fiscalPrompt',
       });
       return;
     }
 
-    if (offerFiscalPrompt) {
+    if (fiscalAction === 'prompt') {
       // Pause here — order is saved + thermal copy printed. The fiscal
       // prompt overlay will close the modal when the cashier picks an
       // option (print fiscal or skip).
@@ -536,16 +580,18 @@ export default function PaymentModal({
       return;
     }
 
-    if (fiscalWarning) {
-      setPrintWarning(fiscalWarning);
+    if (printOrderCopy && fiscalAction === 'autoPrint') {
+      setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
+      fiscalWarning = await printFiscalReceiptForOrder(orderId);
       setSavingLabel('');
-      setTimeout(() => {
-        if (onComplete) { onComplete(); } else { onClose(); }
-      }, 4000);
+    }
+
+    if (fiscalWarning) {
+      showFiscalWarningThenClose(fiscalWarning);
       return;
     }
 
-    if (onComplete) { onComplete(); } else { onClose(); }
+    finishCompletedPayment();
   };
 
   const handleFiscalPromptChoice = async (printFiscal: boolean) => {
@@ -555,45 +601,47 @@ export default function PaymentModal({
 
     if (!printFiscal) {
       setFiscalPrompt(null);
-      if (onComplete) { onComplete(); } else { onClose(); }
+      finishCompletedPayment();
       return;
     }
 
     setFiscalBusy(true);
-    setSavingLabel(t('pos.payment.fiscalPrinting') || 'Printing fiscal receipt...');
-    let warning: string | null = null;
-    try {
-      const result = await window.electronAPI.pos.payment.printFiscalReceipt(orderId);
-      if (!result?.fiscalPrinted) {
-        warning = result?.error || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
-      }
-    } catch (err) {
-      rlog.warn('[PaymentModal] Fiscal receipt print failed:', err);
-      warning = (err as Error)?.message || t('pos.payment.fiscalFailed') || 'Fiscal receipt not printed - reprint from Order History';
-    }
+    setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
+    const warning = await printFiscalReceiptForOrder(orderId);
     setFiscalBusy(false);
     setSavingLabel('');
     setFiscalPrompt(null);
 
     if (warning) {
-      setPrintWarning(warning);
-      setTimeout(() => {
-        if (onComplete) { onComplete(); } else { onClose(); }
-      }, 4000);
+      showFiscalWarningThenClose(warning);
       return;
     }
 
-    if (onComplete) { onComplete(); } else { onClose(); }
+    finishCompletedPayment();
   };
 
-  const finishReceiptRecovery = (recovery: ReceiptRecovery) => {
+  const finishReceiptRecovery = async (recovery: ReceiptRecovery) => {
+    if (recovery.nextAction === 'fiscalPrompt') {
+      const action: FiscalAction = resolveFiscalAction({
+        printOrderCopy: true,
+        hasFiscalPrinter,
+        method,
+        mode: fiscalOnCashSale,
+      });
+      if (action === 'prompt') {
+        setReceiptRecovery(null);
+        setPrintWarning(null);
+        setFiscalPrompt({ orderId: recovery.orderId });
+        return;
+      }
+      if (action === 'autoPrint') {
+        await printFiscalFromRecovery(recovery.orderId);
+        return;
+      }
+    }
     setReceiptRecovery(null);
     setPrintWarning(null);
-    if (recovery.nextAction === 'fiscalPrompt') {
-      setFiscalPrompt({ orderId: recovery.orderId });
-      return;
-    }
-    if (onComplete) { onComplete(); } else { onClose(); }
+    finishCompletedPayment();
   };
 
   const handleRetryReceipt = async () => {
@@ -609,7 +657,7 @@ export default function PaymentModal({
       const outcome = deriveReceiptOutcome(result, t);
       if (outcome.receiptPrinted) {
         setSavingLabel('');
-        finishReceiptRecovery(recovery);
+        await finishReceiptRecovery(recovery);
         return;
       }
       setPrintWarning(outcome.warning);
@@ -625,7 +673,7 @@ export default function PaymentModal({
 
   const handleContinueWithoutReceipt = () => {
     if (!receiptRecovery || receiptRetrying) return;
-    finishReceiptRecovery(receiptRecovery);
+    void finishReceiptRecovery(receiptRecovery);
   };
 
   const completePayment = useCallback(async (paymentAmountOverride?: number) => {

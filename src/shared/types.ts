@@ -585,6 +585,7 @@ export interface AgentConfig {
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
     allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
+    fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
     labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
     labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
     googleCustomSearchApiKey?: string;    // Optional fallback for EAN lookup when public product databases miss.

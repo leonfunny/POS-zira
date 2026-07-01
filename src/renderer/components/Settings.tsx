@@ -101,6 +101,16 @@ const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 const DEFAULT_SCALE_SHARE_PORT = 17891;
 const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
+type FiscalOnCashSaleMode = NonNullable<AgentConfig['fiscalOnCashSale']>;
+const FISCAL_ON_CASH_SALE_OPTIONS: Array<{
+  value: FiscalOnCashSaleMode;
+  labelKey: string;
+  fallback: string;
+}> = [
+  { value: 'always', labelKey: 'settings.fiscalOnCashSale.always', fallback: 'Always print' },
+  { value: 'never', labelKey: 'settings.fiscalOnCashSale.never', fallback: 'Never print' },
+  { value: 'ask', labelKey: 'settings.fiscalOnCashSale.ask', fallback: 'Ask each time' },
+];
 type FiscalDailyReportSettings = NonNullable<AgentConfig['fiscalDailyReport']>;
 type NormalizedFiscalDailyReportSettings = Required<FiscalDailyReportSettings>;
 const DEFAULT_FISCAL_DAILY_REPORT_SETTINGS: NormalizedFiscalDailyReportSettings = {
@@ -522,6 +532,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [language, setLanguage] = useState<Language>(config?.language || 'en');
 
   const t = getTranslation(language);
+  const tOr = (key: string, fallback: string) => {
+    const value = t(key);
+    return value !== key ? value : fallback;
+  };
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
 
   // Test print state
@@ -573,6 +587,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
+  const [fiscalOnCashSale, setFiscalOnCashSale] = useState<FiscalOnCashSaleMode>(config?.fiscalOnCashSale || 'ask');
   const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
   const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
@@ -789,6 +804,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
     allowOversell,
+    fiscalOnCashSale,
     scale: {
       enabled: scaleConnection !== 'none',
       connection: scaleConnection,
@@ -822,7 +838,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     ...overrides,
   }), [
     name, autoStart, language,
-    posEnabled, posMode, posLanguage, allowOversell,
+    posEnabled, posMode, posLanguage, allowOversell, fiscalOnCashSale,
     scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
@@ -1095,6 +1111,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
       setAllowOversell(config.allowOversell ?? false);
+      setFiscalOnCashSale(config.fiscalOnCashSale || 'ask');
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
@@ -4622,6 +4639,37 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   }`}
                 />
               </button>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <label className="block text-sm font-semibold text-slate-700">
+                {tOr('settings.fiscalOnCashSale', 'Fiscal receipt on cash/BLIK sale')}
+              </label>
+              <div
+                className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3"
+                role="radiogroup"
+                aria-label={tOr('settings.fiscalOnCashSale', 'Fiscal receipt on cash/BLIK sale')}
+              >
+                {FISCAL_ON_CASH_SALE_OPTIONS.map(option => {
+                  const selected = fiscalOnCashSale === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setFiscalOnCashSale(option.value)}
+                      className={`min-h-[44px] rounded-lg border px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${
+                        selected
+                          ? 'border-brand-500 bg-brand-50 text-brand-700'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {tOr(option.labelKey, option.fallback)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Category priority ranking — retail browse order + size */}
