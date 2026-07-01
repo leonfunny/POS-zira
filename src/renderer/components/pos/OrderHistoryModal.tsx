@@ -19,6 +19,8 @@ import {
   getRefundBreakdownLines,
   type RefundBreakdownLine,
 } from './refund-breakdown';
+import ConfirmActionDialog from './ConfirmActionDialog';
+import { buildConfirmCopy, type ConfirmActionKind } from './confirm-action-copy';
 import {
   calculateRefundLineAmount,
   getRefundLineUnitPrice,
@@ -76,6 +78,13 @@ interface OrderHistoryModalProps {
 type RefundStatus = 'none' | 'full' | 'partial';
 type ReprintStatus = { type: 'ok' | 'error'; message: string } | null;
 type RefundPanelCompleteOptions = { keepRefundOpen?: boolean };
+type OrderConfirmAction = Extract<ConfirmActionKind, 'void' | 'cancel' | 'deleteLocal'>;
+type PendingOrderConfirm = {
+  action: OrderConfirmAction;
+  order: OrderRow;
+  isSynced?: boolean;
+  onConfirm: () => Promise<void> | void;
+};
 type RefundSuccessSummary = {
   amount: number;
   lines: RefundBreakdownLine[];
@@ -107,6 +116,10 @@ const REFUND_REASONS = [
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
+}
+
+function confirmCopyBaseKey(titleKey: string): string {
+  return titleKey.endsWith('.title') ? titleKey.slice(0, -'.title'.length) : titleKey;
 }
 
 // ── Per-document print badges ─────────────────────────────────────────────
@@ -1030,6 +1043,7 @@ function OrderMutationPanel({
   onUpdated,
   ensureMirrored,
   isMirroring,
+  onRequestConfirm,
 }: {
   order: OrderRow;
   items: OrderItemRow[];
@@ -1038,6 +1052,7 @@ function OrderMutationPanel({
   onUpdated: (closed?: boolean) => void;
   ensureMirrored: () => Promise<boolean>;
   isMirroring: boolean;
+  onRequestConfirm: (request: PendingOrderConfirm) => void;
 }) {
   const [paymentMethod, setPaymentMethod] = useState(order.payment_method || 'CASH');
   const [paidText, setPaidText] = useState(formatMoneyInput(order.payment_amount || order.total));
@@ -1118,10 +1133,14 @@ function OrderMutationPanel({
     })).filter((item) => item.quantity > 0),
   });
 
-  const voidOrder = async () => {
-    const label = isSynced ? 'Void this synced order on server?' : 'Delete this local unsynced order?';
-    if (!confirm(label)) return;
-    await runMutation('void', { type: 'void', restock: true });
+  const voidOrder = () => {
+    if (busy || !canSubmit) return;
+    onRequestConfirm({
+      action: 'void',
+      order,
+      isSynced,
+      onConfirm: () => runMutation('void', { type: 'void', restock: true }),
+    });
   };
 
   return (
@@ -1288,6 +1307,8 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
   const [deleting, setDeleting] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState<ReprintStatus>(null);
   const [cancelStatus, setCancelStatus] = useState<ReprintStatus>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingOrderConfirm | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [dataSource, setDataSource] = useState<'local+server' | 'local-only' | 'server-unreachable'>('local-only');
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [mirroringId, setMirroringId] = useState<string | null>(null);
@@ -1576,15 +1597,6 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
   const handleDeleteLocalOrder = async (order: OrderRow) => {
     if (deleting) return;
-    const label = getOrderLabel(order);
-    const confirmed = confirm(
-      tOr(
-        t,
-        'pos.history.deleteConfirm',
-        `Delete ${label}? This removes the local order and restores its stock. Synced orders must be cancelled or refunded instead.`,
-      ),
-    );
-    if (!confirmed) return;
 
     setDeleting(true);
     setDeleteStatus(null);
@@ -1672,6 +1684,66 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     }
   };
 
+  const requestOrderConfirm = (request: PendingOrderConfirm) => {
+    if (confirmBusy) return;
+    setPendingConfirm(request);
+  };
+
+  const requestDeleteLocalOrder = (order: OrderRow) => {
+    if (deleting) return;
+    requestOrderConfirm({
+      action: 'deleteLocal',
+      order,
+      isSynced: false,
+      onConfirm: () => handleDeleteLocalOrder(order),
+    });
+  };
+
+  const cancelPendingConfirm = () => {
+    if (!confirmBusy) setPendingConfirm(null);
+  };
+
+  const confirmPendingAction = async () => {
+    const request = pendingConfirm;
+    if (!request || confirmBusy) return;
+
+    setConfirmBusy(true);
+    try {
+      await request.onConfirm();
+      setPendingConfirm(null);
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
+  const confirmDialog = pendingConfirm ? (() => {
+    const copy = buildConfirmCopy(pendingConfirm.action, {
+      label: getOrderLabel(pendingConfirm.order),
+      total: formatMoney(pendingConfirm.order.total, currency),
+      isSynced: pendingConfirm.isSynced ?? Boolean(pendingConfirm.order.backend_id),
+    });
+    const baseKey = confirmCopyBaseKey(copy.titleKey);
+
+    return (
+      <ConfirmActionDialog
+        open
+        tier={copy.tier}
+        title={tOr(t, copy.titleKey, copy.titleFallback)}
+        body={tOr(t, `${baseKey}.body`, copy.bodyFallback)}
+        consequence={tOr(t, `${baseKey}.consequence`, copy.consequenceFallback)}
+        itemName={getOrderLabel(pendingConfirm.order)}
+        confirmLabel={tOr(t, `${baseKey}.confirm`, copy.confirmLabelFallback)}
+        cancelLabel={tOr(t, 'pos.cancel', 'Cancel')}
+        continueLabel={tOr(t, 'pos.confirm.continue', 'Continue')}
+        backLabel={tOr(t, 'pos.confirm.back', 'Back')}
+        danger
+        busy={confirmBusy}
+        onConfirm={confirmPendingAction}
+        onCancel={cancelPendingConfirm}
+      />
+    );
+  })() : null;
+
   if (detail) {
     const { order, items } = detail;
     const refundStatus = getRefundStatus(order);
@@ -1695,8 +1767,38 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
     const canDeleteLocal = order._origin !== 'server' && !order.backend_id && order.synced !== 1 && order.synced !== 2;
+    const requestCancelOrder = async () => {
+      if (cancelling || isMirroring) return;
+      if (!(await ensureMirrored(order))) return;
+      requestOrderConfirm({
+        action: 'cancel',
+        order,
+        isSynced: Boolean(order.backend_id),
+        onConfirm: async () => {
+          setCancelling(true);
+          setCancelStatus(null);
+          try {
+            const res = await window.electronAPI.pos.orders.cancel(order.id);
+            if (res.success) { handleSelectOrder(order.id); loadOrders(); }
+            else {
+              setCancelStatus({
+                type: 'error',
+                message: res.error || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
+              });
+            }
+          } catch (err: any) {
+            setCancelStatus({
+              type: 'error',
+              message: err?.message || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
+            });
+          }
+          finally { setCancelling(false); }
+        },
+      });
+    };
 
     return (
+      <>
       <DialogShell onClose={onClose}>
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -2079,6 +2181,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   }}
                   ensureMirrored={() => ensureMirrored(order)}
                   isMirroring={isMirroring}
+                  onRequestConfirm={requestOrderConfirm}
                 />
               )}
 
@@ -2086,28 +2189,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <>
                   <button
                     disabled={cancelling || isMirroring}
-                    onClick={async () => {
-                      if (!(await ensureMirrored(order))) return;
-                      if (!confirm(tOr(t, 'pos.history.cancelConfirm', 'Cancel this order? This cannot be undone.'))) return;
-                      setCancelling(true);
-                      setCancelStatus(null);
-                      try {
-                        const res = await window.electronAPI.pos.orders.cancel(order.id);
-                        if (res.success) { handleSelectOrder(order.id); loadOrders(); }
-                        else {
-                          setCancelStatus({
-                            type: 'error',
-                            message: res.error || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
-                          });
-                        }
-                      } catch (err: any) {
-                        setCancelStatus({
-                          type: 'error',
-                          message: err?.message || tOr(t, 'pos.history.cancelFailed', 'Cancel failed'),
-                        });
-                      }
-                      finally { setCancelling(false); }
-                    }}
+                    onClick={requestCancelOrder}
                     className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
                   >
                     {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
@@ -2133,7 +2215,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                     {tOr(t, 'pos.history.deleteLocalHint', 'Only unsynced local orders can be deleted. Stock will be restored.')}
                   </p>
                   <button
-                    onClick={() => handleDeleteLocalOrder(order)}
+                    onClick={() => requestDeleteLocalOrder(order)}
                     disabled={deleting || isMirroring}
                     className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-red-300 bg-white px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
                   >
@@ -2175,10 +2257,13 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
           </aside>
         </div>
       </DialogShell>
+      {confirmDialog}
+      </>
     );
   }
 
   return (
+    <>
     <DialogShell onClose={onClose}>
       <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
         <div className="min-w-0">
@@ -2354,5 +2439,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
         </div>
       </div>
     </DialogShell>
+    {confirmDialog}
+    </>
   );
 }

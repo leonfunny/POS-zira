@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
-import { useDeleteConfirm } from '../DeleteConfirmModal';
+import React, { useEffect, useMemo, useState } from 'react';
+import ConfirmActionDialog from './ConfirmActionDialog';
+import { buildConfirmCopy } from './confirm-action-copy';
 
 interface HoldOrderRow {
   id: string;
@@ -19,11 +20,20 @@ interface HoldOrdersModalProps {
   t: (key: string) => string;
 }
 
+function tOr(t: (key: string) => string, key: string, fallback: string): string {
+  const value = t(key);
+  return value && value !== key ? value : fallback;
+}
+
+function confirmCopyBaseKey(titleKey: string): string {
+  return titleKey.endsWith('.title') ? titleKey.slice(0, -'.title'.length) : titleKey;
+}
+
 export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onDelete, t }: HoldOrdersModalProps) {
-  const { confirmDelete, DeleteModal } = useDeleteConfirm();
   const [query, setQuery] = useState('');
   const [staffFilter, setStaffFilter] = useState('all');
   const [timeFilter, setTimeFilter] = useState('all');
+  const [pendingDelete, setPendingDelete] = useState<HoldOrderRow | null>(null);
 
   const staffOptions = useMemo(() => {
     const names = new Set<string>();
@@ -55,17 +65,41 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
     return [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [filtered]);
 
+  useEffect(() => {
+    if (!isOpen) setPendingDelete(null);
+  }, [isOpen]);
+
+  const handleClose = () => {
+    setPendingDelete(null);
+    onClose();
+  };
+
+  const handleConfirmDelete = () => {
+    if (!pendingDelete) return;
+    onDelete(pendingDelete.id);
+    setPendingDelete(null);
+  };
+
+  const pendingDeleteCopy = pendingDelete
+    ? buildConfirmCopy('deleteHeld', {
+      label: pendingDelete.title,
+      total: `${(pendingDelete.total / 100).toFixed(2)} ${tOr(t, 'pos.currency', 'zl')}`,
+    })
+    : null;
+  const pendingDeleteBaseKey = pendingDeleteCopy ? confirmCopyBaseKey(pendingDeleteCopy.titleKey) : '';
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleClose}>
       <div
         className="bg-slate-800 rounded-xl w-full max-w-lg mx-4 shadow-2xl border border-slate-700"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-white">{t('pos.heldOrders')}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button onClick={handleClose} className="text-slate-400 hover:text-white">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -124,15 +158,8 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-xs text-slate-500">{new Date(o.createdAt).toLocaleString()}</span>
                       <button
-                        onClick={() => {
-                          confirmDelete({
-                            title: t('deleteConfirm.title'),
-                            message: t('deleteConfirm.message'),
-                            itemName: o.title,
-                            onConfirm: () => onDelete(o.id),
-                          });
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-red-900/40 text-red-300 hover:bg-red-900/60"
+                        onClick={() => setPendingDelete(o)}
+                        className="min-h-11 rounded-lg border border-red-300 bg-red-50 px-3 text-sm font-extrabold text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
                       >
                         {t('pos.delete')}
                       </button>
@@ -147,16 +174,29 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
 
         <div className="px-5 py-4 border-t border-slate-700">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="w-full py-2 rounded-lg font-semibold text-white bg-slate-700 hover:bg-slate-600 transition-colors"
           >
             {t('pos.cancel')}
           </button>
         </div>
       </div>
-
-      {/* Delete Confirmation Modal */}
-      <DeleteModal />
     </div>
+    {pendingDelete && pendingDeleteCopy && (
+      <ConfirmActionDialog
+        open
+        tier={pendingDeleteCopy.tier}
+        title={tOr(t, pendingDeleteCopy.titleKey, pendingDeleteCopy.titleFallback)}
+        body={tOr(t, `${pendingDeleteBaseKey}.body`, pendingDeleteCopy.bodyFallback)}
+        consequence={tOr(t, `${pendingDeleteBaseKey}.consequence`, pendingDeleteCopy.consequenceFallback)}
+        itemName={pendingDelete.title}
+        confirmLabel={tOr(t, `${pendingDeleteBaseKey}.confirm`, pendingDeleteCopy.confirmLabelFallback)}
+        cancelLabel={tOr(t, 'pos.cancel', 'Cancel')}
+        danger
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+    )}
+    </>
   );
 }
