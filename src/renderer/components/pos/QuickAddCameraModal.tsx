@@ -4,6 +4,7 @@ import {
   getSharedEnvironmentCameraStream,
   releaseSharedEnvironmentCameraStream,
 } from './camera-stream';
+import ConfirmActionDialog from './ConfirmActionDialog';
 
 export interface QuickAddCapturedImage {
   dataUrl: string;
@@ -66,6 +67,7 @@ export default function QuickAddCameraModal({
   const [error, setError] = useState<string | null>(null);
   const [recognized, setRecognized] = useState<any[] | null>(null);
   const [recognizing, setRecognizing] = useState(false);
+  const [pendingAbandonConfirm, setPendingAbandonConfirm] = useState(false);
 
   const tOr = (key: string, fallback: string) => {
     const v = t(key);
@@ -249,19 +251,15 @@ export default function QuickAddCameraModal({
 
   const requestClose = () => {
     if (busy) return;
-    if (
-      prepared &&
-      !window.confirm(tOr(
-        'pos.quickAdd.confirmAbandon',
-        'This product was already created. Close anyway and leave price/stock unfinished?',
-      ))
-    ) {
+    if (prepared) {
+      setPendingAbandonConfirm(true);
       return;
     }
     onClose();
   };
 
   return (
+    <>
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/75 ${
         open ? '' : 'pointer-events-none opacity-0'
@@ -482,5 +480,24 @@ export default function QuickAddCameraModal({
         <canvas ref={canvasRef} className="hidden" />
       </div>
     </div>
+    {pendingAbandonConfirm && (
+      <ConfirmActionDialog
+        open
+        tier="light"
+        title={tOr('common.confirmTitle', 'Please confirm')}
+        body={tOr(
+          'pos.quickAdd.confirmAbandon',
+          'This product was already created. Close anyway and leave price/stock unfinished?',
+        )}
+        confirmLabel={tOr('common.confirm', 'Confirm')}
+        cancelLabel={tOr('common.cancel', 'Cancel')}
+        onConfirm={() => {
+          setPendingAbandonConfirm(false);
+          onClose();
+        }}
+        onCancel={() => setPendingAbandonConfirm(false)}
+      />
+    )}
+    </>
   );
 }

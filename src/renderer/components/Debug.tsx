@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import rlog from '../utils/logger';
+import ConfirmActionDialog from './pos/ConfirmActionDialog';
 
 interface DiagnosticsData {
   appVersion: string;
@@ -45,6 +46,7 @@ export default function Debug() {
   const [loading, setLoading] = useState(true);
   const [backupRunning, setBackupRunning] = useState(false);
   const [restorePath, setRestorePath] = useState<string | null>(null);
+  const [pendingRestoreConfirm, setPendingRestoreConfirm] = useState<BackupListItem | null>(null);
   const [copied, setCopied] = useState(false);
 
   const loadDiagnostics = async () => {
@@ -106,10 +108,12 @@ export default function Debug() {
   };
 
   const handlePrepareRestore = async (backup: BackupListItem) => {
-    const confirmed = window.confirm(
-      `Restore ${backup.name} on next restart?\n\nThe current database will be safety-backed-up before restore is applied.`,
-    );
-    if (!confirmed) return;
+    setPendingRestoreConfirm(backup);
+  };
+
+  const handleConfirmPrepareRestore = async () => {
+    const backup = pendingRestoreConfirm;
+    if (!backup) return;
 
     setRestorePath(backup.path);
     try {
@@ -124,6 +128,7 @@ export default function Debug() {
       rlog.error('[Debug] Prepare restore failed:', error);
     } finally {
       setRestorePath(null);
+      setPendingRestoreConfirm(null);
     }
   };
 
@@ -172,6 +177,7 @@ Pending Restore: ${backupStatus?.pendingRestoreSourcePath || '-'}`;
   }
 
   return (
+    <>
     <div className="space-y-4 pb-12">
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-800 mb-3">
@@ -366,6 +372,23 @@ Pending Restore: ${backupStatus?.pendingRestoreSourcePath || '-'}`;
         </ul>
       </div>
     </div>
+    {pendingRestoreConfirm && (
+      <ConfirmActionDialog
+        open
+        tier="light"
+        title="Please confirm"
+        body={`Restore ${pendingRestoreConfirm.name} on next restart?\n\nThe current database will be safety-backed-up before restore is applied.`}
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        danger
+        busy={restorePath === pendingRestoreConfirm.path}
+        onConfirm={handleConfirmPrepareRestore}
+        onCancel={() => {
+          if (!restorePath) setPendingRestoreConfirm(null);
+        }}
+      />
+    )}
+    </>
   );
 }
 

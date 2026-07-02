@@ -141,13 +141,6 @@ src/renderer/windows/customer/components/CustomerDisplayShell.tsx:<span classNam
 src/renderer/windows/self-checkout/LanguageSwitch.tsx:className=\{`mt-0\.5 font-bold \$\{compact \? 'text-\[10px\]' : 'text-xs'\} text-\[var\(--sc-muted\)\]`\}
 
 # native confirm: Legacy native confirm calls awaiting modal migration. New renderer confirms must use app dialogs.
-src/renderer/components/Settings.tsx:const confirmed = window\.confirm\(
-src/renderer/components/Debug.tsx:const confirmed = window\.confirm\(
-src/renderer/components/label/LabelModule.tsx:const confirmed = window\.confirm\(copy\.highCopyConfirm\(quantity\)\);
-src/renderer/components/pos/QuickAddCameraModal.tsx:!window\.confirm\(tOr\(
-src/renderer/components/products/ProductEditForm.tsx:if \(dirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
-src/renderer/components/products/ProductDetailDrawer.tsx:if \(editing && editDirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
-src/renderer/components/products/ProductEditView.tsx:if \(editing && editDirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
 
 # native alert: Legacy native alert calls awaiting inline/modal error handling. New renderer alerts are banned.
 src/renderer/components/BooksySync.tsx:alert\(t\('booksy\.chromeOpenError'\) \+ result\.error\);

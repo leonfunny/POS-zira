@@ -6,6 +6,7 @@ import { Language, languageNames, getTranslation, printerTypeIcons } from '../i1
 import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
+import ConfirmActionDialog from './pos/ConfirmActionDialog';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
 import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
@@ -103,6 +104,7 @@ const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
 const DEFAULT_SCALE_SHARE_PORT = 17891;
 const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
+const FISCAL_DAILY_REPORT_CONFIRM_BODY = 'This will close the current fiscal day on the ELZAB printer now. Continue only if you are physically beside the printer and ready to collect the report.';
 type FiscalOnCashSaleMode = NonNullable<AgentConfig['fiscalOnCashSale']>;
 const FISCAL_ON_CASH_SALE_OPTIONS: Array<{
   value: FiscalOnCashSaleMode;
@@ -554,6 +556,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   } | null>(null);
   const [copiedTestError, setCopiedTestError] = useState(false);
   const [printingFiscalDailyReport, setPrintingFiscalDailyReport] = useState(false);
+  const [pendingFiscalDailyReportConfirm, setPendingFiscalDailyReportConfirm] = useState(false);
   const [fiscalDailyReportResult, setFiscalDailyReportResult] = useState<FiscalDailyReportPrintResponse | null>(null);
   // Live progress — updated as each step streams back from main process
   const [liveSteps, setLiveSteps] = useState<Array<{ step: string; ok: boolean; detail?: string; error?: string }>>([]);
@@ -1298,10 +1301,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   const handlePrintFiscalDailyReportNow = async () => {
     if (printingFiscalDailyReport || testingPrinter) return;
-    const confirmed = window.confirm(
-      'This will close the current fiscal day on the ELZAB printer now. Continue only if you are physically beside the printer and ready to collect the report.',
-    );
-    if (!confirmed) return;
+    setPendingFiscalDailyReportConfirm(true);
+  };
+
+  const handleConfirmPrintFiscalDailyReportNow = async () => {
+    if (printingFiscalDailyReport || testingPrinter) return;
 
     setPrintingFiscalDailyReport(true);
     setFiscalDailyReportResult(null);
@@ -1315,6 +1319,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       });
     } finally {
       setPrintingFiscalDailyReport(false);
+      setPendingFiscalDailyReportConfirm(false);
     }
   };
 
@@ -2557,6 +2562,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const showSettingsSearchEmptyState = settingsSearch.trim().length > 0 && !settingsSearchHasResults;
 
   return (
+    <>
     <div className="space-y-4">
       <div role="tablist" aria-label="Settings sections" className="flex gap-2 rounded-lg border border-slate-200 bg-white p-1">
         {([
@@ -6246,6 +6252,23 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       {/* Auto-save indicator */}
       <p className="text-center text-xs text-slate-400">{t('settings.autoSaveHint')}</p>
     </div>
+    {pendingFiscalDailyReportConfirm && (
+      <ConfirmActionDialog
+        open
+        tier="light"
+        title={tOr('common.confirmTitle', 'Please confirm')}
+        body={FISCAL_DAILY_REPORT_CONFIRM_BODY}
+        confirmLabel={tOr('common.confirm', 'Confirm')}
+        cancelLabel={tOr('common.cancel', 'Cancel')}
+        danger
+        busy={printingFiscalDailyReport}
+        onConfirm={handleConfirmPrintFiscalDailyReportNow}
+        onCancel={() => {
+          if (!printingFiscalDailyReport) setPendingFiscalDailyReportConfirm(false);
+        }}
+      />
+    )}
+    </>
   );
 }
 

@@ -20,9 +20,10 @@ import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
-import type { Language } from '../../i18n/translations';
+import { getTranslation, type Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import { formatProductLabelPriceText } from '../../utils/product-label';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface LabelModuleProps {
   language: Language;
@@ -43,6 +44,12 @@ interface RecentPrint {
   barcode: string;
   copies: number;
   printedAt: Date;
+}
+
+interface PendingHighCopyPrint {
+  product: LabelProduct;
+  requestedCopies: number;
+  options: { confirmHighCopy?: boolean };
 }
 
 interface LabelCopy {
@@ -356,10 +363,15 @@ function BarcodePreview({ barcode }: { barcode: string }) {
   );
 }
 
-export default function LabelModule({ language: _language }: LabelModuleProps) {
+export default function LabelModule({ language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
   const [labelLanguage, setLabelLanguage] = useState<LabelLanguage>(() => coerceLabelLanguage(config?.posLanguage));
   const copy = COPY[labelLanguage] || COPY.vi;
+  const t = getTranslation(language);
+  const tOr = (key: string, fallback: string) => {
+    const value = t(key);
+    return value && value !== key ? value : fallback;
+  };
   const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(labelLanguage);
   const products = allProducts as LabelProduct[];
   const [query, setQuery] = useState('');
@@ -373,6 +385,8 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
   const [optimisticProductIds, setOptimisticProductIds] = useState<string[]>([]);
+  const [pendingHighCopyPrint, setPendingHighCopyPrint] = useState<PendingHighCopyPrint | null>(null);
+  const [confirmingHighCopyPrint, setConfirmingHighCopyPrint] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pinSearchSectionRef = useRef<HTMLElement | null>(null);
   const statusResetTimeoutRef = useRef<number | null>(null);
@@ -593,11 +607,8 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
     }
 
     if (options.confirmHighCopy !== false && quantity > HIGH_COPY_CONFIRM_THRESHOLD) {
-      const confirmed = window.confirm(copy.highCopyConfirm(quantity));
-      if (!confirmed) {
-        setStatus({ type: 'idle', message: copy.ready });
-        return;
-      }
+      setPendingHighCopyPrint({ product, requestedCopies, options });
+      return;
     }
 
     setStatus({ type: 'printing', message: copy.printing, productId: product.id });
@@ -634,6 +645,27 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
       setStatus({ type: 'error', message: err?.message || copy.printerError });
     }
   }, [clearStatusResetTimeout, copy, labelLanguage]);
+
+  const handleCancelHighCopyPrint = useCallback(() => {
+    if (confirmingHighCopyPrint) return;
+    setPendingHighCopyPrint(null);
+    setStatus({ type: 'idle', message: copy.ready });
+  }, [confirmingHighCopyPrint, copy.ready]);
+
+  const handleConfirmHighCopyPrint = useCallback(async () => {
+    const pending = pendingHighCopyPrint;
+    if (!pending || confirmingHighCopyPrint) return;
+    setConfirmingHighCopyPrint(true);
+    try {
+      await printProduct(pending.product, pending.requestedCopies, {
+        ...pending.options,
+        confirmHighCopy: false,
+      });
+      setPendingHighCopyPrint(null);
+    } finally {
+      setConfirmingHighCopyPrint(false);
+    }
+  }, [confirmingHighCopyPrint, pendingHighCopyPrint, printProduct]);
 
   const handlePrint = useCallback(() => {
     if (!selectedProduct) {
@@ -703,6 +735,7 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
   }, [handlePrint, query, settingsOpen]);
 
   return (
+    <>
     <div className="h-[calc(100vh-2rem)] min-h-0 overflow-hidden bg-slate-50 text-slate-900">
       <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(360px,400px),minmax(0,1fr)]">
         <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
@@ -1239,5 +1272,19 @@ export default function LabelModule({ language: _language }: LabelModuleProps) {
         </section>
       </div>
     </div>
+    {pendingHighCopyPrint && (
+      <ConfirmActionDialog
+        open
+        tier="light"
+        title={tOr('common.confirmTitle', 'Please confirm')}
+        body={copy.highCopyConfirm(clampCopies(pendingHighCopyPrint.requestedCopies))}
+        confirmLabel={tOr('common.confirm', 'Confirm')}
+        cancelLabel={tOr('common.cancel', 'Cancel')}
+        busy={confirmingHighCopyPrint}
+        onConfirm={handleConfirmHighCopyPrint}
+        onCancel={handleCancelHighCopyPrint}
+      />
+    )}
+    </>
   );
 }

@@ -7,6 +7,7 @@ import type { ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput }
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface ProductEditFormProps {
   product: ProductListItem;
@@ -122,6 +123,7 @@ export default function ProductEditForm({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockResetNotice, setStockResetNotice] = useState(false);
+  const [pendingCancelConfirm, setPendingCancelConfirm] = useState(false);
 
   useEffect(() => {
     setName(product.name || '');
@@ -278,7 +280,10 @@ export default function ProductEditForm({
   };
 
   const handleCancel = () => {
-    if (dirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
+    if (dirty) {
+      setPendingCancelConfirm(true);
+      return;
+    }
     onCancel();
   };
 
@@ -297,6 +302,7 @@ export default function ProductEditForm({
   };
 
   return (
+    <>
     <section className="mt-5 rounded-lg border border-slate-200 bg-white">
       <div className="border-b border-slate-200 px-4 py-3">
         <h3 className="text-sm font-semibold text-slate-950">{tOr(t, 'products.edit.title', 'Edit product')}</h3>
@@ -576,5 +582,22 @@ export default function ProductEditForm({
         </button>
       </footer>
     </section>
+    {pendingCancelConfirm && (
+      <ConfirmActionDialog
+        open
+        tier="light"
+        title={tOr(t, 'common.confirmTitle', 'Please confirm')}
+        body={tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?')}
+        confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
+        cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
+        danger
+        onConfirm={() => {
+          setPendingCancelConfirm(false);
+          onCancel();
+        }}
+        onCancel={() => setPendingCancelConfirm(false)}
+      />
+    )}
+    </>
   );
 }

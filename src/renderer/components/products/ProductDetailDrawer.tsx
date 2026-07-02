@@ -8,6 +8,7 @@ import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm from './ProductEditForm';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface ProductDetailDrawerProps {
   product: ProductListItem | null;
@@ -91,6 +92,7 @@ export default function ProductDetailDrawer({
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [pendingCloseConfirm, setPendingCloseConfirm] = useState(false);
 
   useEffect(() => {
     setLabelBusy(false);
@@ -99,6 +101,7 @@ export default function ProductDetailDrawer({
     setEditing(false);
     setEditDirty(false);
     setDeactivateOpen(false);
+    setPendingCloseConfirm(false);
   }, [product?.id]);
 
   if (!product) return null;
@@ -116,7 +119,10 @@ export default function ProductDetailDrawer({
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
 
   const handleCloseDrawer = () => {
-    if (editing && editDirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
+    if (editing && editDirty) {
+      setPendingCloseConfirm(true);
+      return;
+    }
     onClose();
   };
 
@@ -345,6 +351,22 @@ export default function ProductDetailDrawer({
           />
         ) : null}
       </aside>
+      {pendingCloseConfirm ? (
+        <ConfirmActionDialog
+          open
+          tier="light"
+          title={tOr(t, 'common.confirmTitle', 'Please confirm')}
+          body={tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?')}
+          confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
+          cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
+          danger
+          onConfirm={() => {
+            setPendingCloseConfirm(false);
+            onClose();
+          }}
+          onCancel={() => setPendingCloseConfirm(false)}
+        />
+      ) : null}
     </div>
   );
 }

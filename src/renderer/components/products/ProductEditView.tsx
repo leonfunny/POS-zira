@@ -8,6 +8,7 @@ import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm from './ProductEditForm';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface ProductEditViewProps {
   product: ProductListItem;
@@ -91,6 +92,7 @@ export default function ProductEditView({
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [pendingBackConfirm, setPendingBackConfirm] = useState(false);
 
   useEffect(() => {
     setLabelBusy(false);
@@ -99,6 +101,7 @@ export default function ProductEditView({
     setEditing(false);
     setEditDirty(false);
     setDeactivateOpen(false);
+    setPendingBackConfirm(false);
   }, [product.id]);
 
   const currency = tOr(t, 'pos.currency', 'zl');
@@ -114,7 +117,10 @@ export default function ProductEditView({
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
 
   const handleBack = () => {
-    if (editing && editDirty && !window.confirm(tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?'))) return;
+    if (editing && editDirty) {
+      setPendingBackConfirm(true);
+      return;
+    }
     onBack();
   };
 
@@ -316,6 +322,23 @@ export default function ProductEditView({
           onStaleProductHidden={async () => {
             await onStaleProductHidden(product);
           }}
+        />
+      ) : null}
+
+      {pendingBackConfirm ? (
+        <ConfirmActionDialog
+          open
+          tier="light"
+          title={tOr(t, 'common.confirmTitle', 'Please confirm')}
+          body={tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?')}
+          confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
+          cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
+          danger
+          onConfirm={() => {
+            setPendingBackConfirm(false);
+            onBack();
+          }}
+          onCancel={() => setPendingBackConfirm(false)}
         />
       ) : null}
     </section>
