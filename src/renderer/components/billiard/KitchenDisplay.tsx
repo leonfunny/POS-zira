@@ -45,8 +45,8 @@ const STATUS_STYLE: Record<KdsStatus, { bg: string; border: string; text: string
   new:         { bg: 'bg-red-50',    border: 'border-red-200',    text: 'text-red-700',    icon: AlertCircle },
   in_progress: { bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-700',  icon: Flame },
   ready:       { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', icon: CheckCircle2 },
-  delivered:   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-500',   icon: Truck },
-  cancelled:   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-400',   icon: X },
+  delivered:   { bg: 'bg-slate-50',   border: 'border-slate-200',   text: 'text-slate-500',   icon: Truck },
+  cancelled:   { bg: 'bg-slate-50',   border: 'border-slate-200',   text: 'text-slate-400',   icon: X },
 };
 
 function formatElapsedMinutes(createdAt: string): string {
@@ -157,9 +157,9 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
   };
 
   return (
-    <div className="h-full flex flex-col bg-gray-900 text-white">
+    <div className="h-full flex flex-col bg-slate-900 text-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-800 border-b border-slate-700">
         <div className="flex items-center gap-3">
           <ChefHat className="w-6 h-6 text-orange-400" />
           <h1 className="text-lg font-bold">{t('kds.title') || 'Kitchen Display'}</h1>
@@ -172,15 +172,15 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
-            className="p-2 rounded-lg hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
             title={soundEnabled ? 'Mute' : 'Unmute'}
           >
-            {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5 text-gray-500" />}
+            {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5 text-slate-500" />}
           </button>
           {onClose && (
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-gray-700 transition-colors"
+              className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -189,7 +189,7 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
       </div>
 
       {/* Filter tabs */}
-      <div className="flex gap-1 px-4 py-2 bg-gray-800/50">
+      <div className="flex gap-1 px-4 py-2 bg-slate-800/50">
         {(['all', 'new', 'in_progress', 'ready'] as FilterTab[]).map((tab) => {
           const isActive = filter === tab;
           const count = counts[tab];
@@ -205,14 +205,14 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
               onClick={() => setFilter(tab)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-white text-gray-900'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  ? 'bg-white text-slate-900'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700'
               }`}
             >
               {labels[tab]}
               {count > 0 && (
                 <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${
-                  isActive ? 'bg-gray-200 text-gray-700' : 'bg-gray-700 text-gray-300'
+                  isActive ? 'bg-slate-200 text-slate-700' : 'bg-slate-700 text-slate-300'
                 }`}>
                   {count}
                 </span>
@@ -225,7 +225,7 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
       {/* Order grid */}
       <div className="flex-1 overflow-y-auto p-4">
         {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+          <div className="flex flex-col items-center justify-center h-full text-slate-500">
             <ChefHat className="w-16 h-16 mb-4 opacity-30" />
             <p className="text-lg font-medium">{t('kds.noOrders') || 'No active orders'}</p>
             <p className="text-sm mt-1">{t('kds.noOrdersHint') || 'Orders will appear here when items are added to tables'}</p>
@@ -251,18 +251,18 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
                     order.status === 'new' ? 'bg-red-100' : order.status === 'in_progress' ? 'bg-amber-100' : 'bg-emerald-100'
                   }`}>
                     <div className="flex items-center gap-2">
-                      <span className="text-base font-bold text-gray-900">
+                      <span className="text-base font-bold text-slate-900">
                         {order.table_name || 'Table'}
                       </span>
                       {order.floor_name && (
-                        <span className="text-[10px] text-gray-500 bg-white/60 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] text-slate-500 bg-white/60 px-1.5 py-0.5 rounded">
                           {order.floor_name}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-gray-500" />
-                      <span className={`text-xs font-mono tabular-nums ${isUrgent ? 'text-red-600 font-bold' : 'text-gray-600'}`}>
+                      <Clock className="w-3.5 h-3.5 text-slate-500" />
+                      <span className={`text-xs font-mono tabular-nums ${isUrgent ? 'text-red-600 font-bold' : 'text-slate-600'}`}>
                         {elapsed}
                       </span>
                     </div>
@@ -272,28 +272,28 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
                   <div className="px-3 py-2 space-y-1">
                     {order.items.map((item) => (
                       <div key={item.id} className="flex items-start gap-2">
-                        <span className="text-base font-bold text-gray-900 min-w-[24px]">
+                        <span className="text-base font-bold text-slate-900 min-w-[24px]">
                           {item.quantity}x
                         </span>
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-gray-800 block truncate">
+                          <span className="text-sm font-medium text-slate-800 block truncate">
                             {item.name}
                           </span>
                           {item.notes && (
-                            <span className="text-xs text-gray-500 italic">{item.notes}</span>
+                            <span className="text-xs text-slate-500 italic">{item.notes}</span>
                           )}
                         </div>
                       </div>
                     ))}
                     {order.notes && (
-                      <div className="text-xs text-gray-600 bg-white/50 rounded px-2 py-1 mt-1 italic">
+                      <div className="text-xs text-slate-600 bg-white/50 rounded px-2 py-1 mt-1 italic">
                         {order.notes}
                       </div>
                     )}
                   </div>
 
                   {/* Status + Action */}
-                  <div className="px-3 py-2 border-t border-gray-200/50 flex items-center justify-between gap-2">
+                  <div className="px-3 py-2 border-t border-slate-200/50 flex items-center justify-between gap-2">
                     <div className={`flex items-center gap-1 text-xs font-medium ${config.text}`}>
                       <StatusIcon className="w-3.5 h-3.5" />
                       {statusLabels[order.status]}
@@ -302,7 +302,7 @@ export function KitchenDisplay({ language, onClose }: KitchenDisplayProps) {
                       {order.status !== 'delivered' && order.status !== 'cancelled' && (
                         <button
                           onClick={() => updateStatus(order.id, 'cancelled')}
-                          className="px-2 py-1 text-xs rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors"
+                          className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-600 hover:bg-slate-300 transition-colors"
                         >
                           {t('kds.cancel') || 'Cancel'}
                         </button>

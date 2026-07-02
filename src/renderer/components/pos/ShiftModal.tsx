@@ -117,11 +117,11 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
     >
           {mode === 'open' && (
             <div>
-              <label className="text-xs text-gray-500 font-medium block mb-1.5">
+              <label className="text-xs text-slate-500 font-medium block mb-1.5">
                 {label('pos.shift.selectStaff', 'Select staff')}
               </label>
               {loadingStaff ? (
-                <div className="w-full px-3 py-3 bg-slate-50 border border-gray-200 rounded-xl text-gray-500 text-sm">
+                <div className="w-full px-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 text-sm">
                   {label('pos.loading', 'Loading...')}
                 </div>
               ) : staffList.length > 0 ? (
@@ -136,7 +136,7 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
                         className={`min-h-14 rounded-xl border px-3 py-2 text-left transition-colors ${
                           active
                             ? 'border-emerald-500 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-100'
-                            : 'border-gray-200 bg-slate-50 text-gray-800 hover:border-brand-300 hover:bg-white'
+                            : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-brand-300 hover:bg-white'
                         }`}
                       >
                         <span className="block text-sm font-bold truncate">{staff.name}</span>
@@ -154,7 +154,7 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
           )}
 
           <div>
-            <label className="text-xs text-gray-500 font-medium block mb-1.5">
+            <label className="text-xs text-slate-500 font-medium block mb-1.5">
               {mode === 'open' ? t('pos.shift.openingCash') : t('pos.shift.closingCash')}
             </label>
             <div className="flex items-center gap-2">
@@ -165,10 +165,10 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
                 onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCashAmount(e.target.value); }}
                 placeholder="0.00"
                 autoFocus={mode === 'close'}
-                className="flex-1 px-3 py-2.5 bg-slate-50 border border-gray-200 rounded-xl text-xl text-gray-900 text-right font-bold focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xl text-slate-900 text-right font-bold focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
                 onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleSubmit()}
               />
-              <span className="text-sm font-medium text-gray-500">{t('pos.currency')}</span>
+              <span className="text-sm font-medium text-slate-500">{t('pos.currency')}</span>
             </div>
           </div>
         {error && (

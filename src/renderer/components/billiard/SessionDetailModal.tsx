@@ -186,14 +186,14 @@ export function SessionDetailModal({
                 {isPackage ? <Timer className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
                 {tableName}
                 {session.customerName && (
-                  <span className="text-gray-500 font-normal">
+                  <span className="text-slate-500 font-normal">
                     &mdash; {session.customerName}
                   </span>
                 )}
               </h3>
               <button
                 onClick={() => onOpenChange(false)}
-                className="p-1 rounded hover:bg-gray-100"
+                className="p-1 rounded hover:bg-slate-100"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -211,13 +211,13 @@ export function SessionDetailModal({
               )}
 
               {/* Timer Display */}
-              <div className="text-center py-6 bg-gray-50 rounded-lg">
+              <div className="text-center py-6 bg-slate-50 rounded-lg">
                 {isPackage ? (
                   <>
                     <p className={`text-5xl font-mono font-bold tabular-nums tracking-wider ${remainingLow ? 'text-orange-600' : ''}`}>
                       {remainingText}
                     </p>
-                    <p className="text-sm text-gray-500 mt-2">
+                    <p className="text-sm text-slate-500 mt-2">
                       {isPaused
                         ? (t('billiard.paused') || 'Paused')
                         : (t('billiard.remaining') || 'Remaining')}
@@ -233,7 +233,7 @@ export function SessionDetailModal({
                     <p className="text-5xl font-mono font-bold tabular-nums tracking-wider">
                       {formatDuration(elapsed)}
                     </p>
-                    <p className="text-sm text-gray-500 mt-2">
+                    <p className="text-sm text-slate-500 mt-2">
                       {isPaused
                         ? (t('billiard.paused') || 'Paused')
                         : (t('billiard.running') || 'Running')}
@@ -241,7 +241,7 @@ export function SessionDetailModal({
                   </>
                 )}
                 {billingModeLabel && (
-                  <span className="inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
+                  <span className="inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
                     {billingModeLabel}
                   </span>
                 )}
@@ -249,7 +249,7 @@ export function SessionDetailModal({
 
               {/* Price Breakdown */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase text-gray-500 tracking-wide">
+                <h3 className="text-sm font-semibold uppercase text-slate-500 tracking-wide">
                   {t('billiard.priceBreakdown') || 'Price Breakdown'}
                 </h3>
                 <div className="border rounded-lg divide-y">
@@ -275,7 +275,7 @@ export function SessionDetailModal({
                       </span>
                     </div>
                   )}
-                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+                  <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
                     <span className="font-semibold">
                       {t('billiard.total') || 'Total'}
                     </span>
@@ -289,7 +289,7 @@ export function SessionDetailModal({
               {/* Running Tab - Items List */}
               {items.length > 0 && (
                 <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase text-gray-500 tracking-wide">
+                  <h3 className="text-sm font-semibold uppercase text-slate-500 tracking-wide">
                     {t('billiard.runningTab') || 'Running Tab'}
                   </h3>
                   <div className="border rounded-lg divide-y">
@@ -300,7 +300,7 @@ export function SessionDetailModal({
                       >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{item.name}</p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-slate-500">
                             {item.quantity} x {formatCurrency(item.unitPrice || 0)}
                           </p>
                         </div>
@@ -310,7 +310,7 @@ export function SessionDetailModal({
                           </span>
                           {isActive && (
                             <button
-                              className="p-1.5 rounded hover:bg-gray-100 text-red-600 hover:text-red-700"
+                              className="p-1.5 rounded hover:bg-slate-100 text-red-600 hover:text-red-700"
                               onClick={() => handleRemoveItem(item.id)}
                               disabled={removeItem.isPending}
                               aria-label={t('common.remove') || 'Remove'}
@@ -329,7 +329,7 @@ export function SessionDetailModal({
               {isActive && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   <button
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center disabled:opacity-50"
                     onClick={handlePauseResume}
                     disabled={pauseSession.isPending || resumeSession.isPending}
                   >
@@ -346,7 +346,7 @@ export function SessionDetailModal({
                   </button>
 
                   <button
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center"
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center"
                     onClick={() => setAddItemOpen(true)}
                   >
                     <Plus className="w-4 h-4 mr-2" />
@@ -354,7 +354,7 @@ export function SessionDetailModal({
                   </button>
 
                   <button
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center"
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center"
                     onClick={() => setTransferOpen(true)}
                   >
                     <ArrowRightLeft className="w-4 h-4 mr-2" />

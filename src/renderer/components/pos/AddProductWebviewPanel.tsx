@@ -159,21 +159,21 @@ export default function AddProductWebviewPanel({ open, salonCode, onProductCreat
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-2">
         <div className="min-w-0">
           <span className="font-bold text-brand-600">Tạo sản phẩm</span>
-          <div className="mt-1 text-xs text-gray-500">
+          <div className="mt-1 text-xs text-slate-500">
             {scannedEan ? `EAN: ${scannedEan}` : 'Quét EAN để tự điền vào sản phẩm mới'}
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-1">
+        <div className="flex items-center gap-2 rounded-lg bg-slate-100 p-1">
           <button
             type="button"
             onClick={() => {
               setSellBy('PIECE');
               sendIntentToWebview(scannedEan, 'PIECE');
             }}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${sellBy === 'PIECE' ? 'bg-white text-brand-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${sellBy === 'PIECE' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
           >
             Giá / szt
           </button>
@@ -183,7 +183,7 @@ export default function AddProductWebviewPanel({ open, salonCode, onProductCreat
               setSellBy('WEIGHT');
               sendIntentToWebview(scannedEan, 'WEIGHT');
             }}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${sellBy === 'WEIGHT' ? 'bg-white text-brand-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${sellBy === 'WEIGHT' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
           >
             Giá / kg
           </button>
@@ -207,17 +207,17 @@ export default function AddProductWebviewPanel({ open, salonCode, onProductCreat
               Mở trình duyệt ngoài
             </button>
           )}
-          <button onClick={onClose} className="rounded-lg bg-gray-100 px-4 py-2 font-medium hover:bg-gray-200">
+          <button onClick={onClose} className="rounded-lg bg-slate-100 px-4 py-2 font-medium hover:bg-slate-200">
             Đóng
           </button>
         </div>
       </div>
       {failed ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-center text-gray-500">
+        <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-500">
           Không tải được trang tạo sản phẩm. Kiểm tra mạng rồi thử lại, hoặc mở trình duyệt ngoài.
         </div>
       ) : preloadPath === null ? (
-        <div className="flex flex-1 items-center justify-center text-gray-400">Đang mở…</div>
+        <div className="flex flex-1 items-center justify-center text-slate-400">Đang mở…</div>
       ) : (
         <webview
           ref={webviewRef as any}

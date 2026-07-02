@@ -30,7 +30,7 @@ function MenuItem({
     <button
       type="button"
       className={`
-        w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-100 rounded-sm transition-colors
+        w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-100 rounded-sm transition-colors
         ${variant === 'danger' ? 'text-red-600 hover:bg-red-50' : ''}
       `}
       onClick={onClick}
@@ -80,7 +80,7 @@ export function MenuActionItems({
         label={t('billiard.measureDistance') || 'Measure Distance'}
         onClick={() => { onMeasureStart(tableId); onClose(); }}
       />
-      <div className="my-1 border-t border-gray-200" />
+      <div className="my-1 border-t border-slate-200" />
       <MenuItem
         icon={Trash2}
         label={t('billiard.delete') || 'Delete'}

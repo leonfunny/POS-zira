@@ -30,7 +30,7 @@ export function AssetPickerGrid({
           className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
             activeCategory === null
               ? 'bg-brand-600 text-white'
-              : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-500'
           }`}
         >
           {t('common.all') || 'All'}
@@ -43,7 +43,7 @@ export function AssetPickerGrid({
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               activeCategory === cat.key
                 ? 'bg-brand-600 text-white'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-500'
             }`}
           >
             {cat.label}
@@ -60,7 +60,7 @@ export function AssetPickerGrid({
           className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
             selected === null
               ? 'border-brand-600 bg-brand-50'
-              : 'border-gray-200 bg-white'
+              : 'border-slate-200 bg-white'
           }`}
         >
           {selected === null && (
@@ -68,10 +68,10 @@ export function AssetPickerGrid({
               <Check className="w-2.5 h-2.5 text-white" />
             </span>
           )}
-          <div className="w-full aspect-square flex items-center justify-center bg-gray-50 rounded">
-            <RectangleHorizontal className="w-8 h-8 text-gray-400" />
+          <div className="w-full aspect-square flex items-center justify-center bg-slate-50 rounded">
+            <RectangleHorizontal className="w-8 h-8 text-slate-400" />
           </div>
-          <span className="text-[10px] text-gray-500 leading-tight text-center">
+          <span className="text-[10px] text-slate-500 leading-tight text-center">
             {t('billiard.plainRectangle') || 'Plain Rectangle'}
           </span>
         </button>
@@ -107,7 +107,7 @@ function AssetCard({
       className={`relative flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 transition-all hover:border-brand-400 ${
         isSelected
           ? 'border-brand-600 bg-brand-50'
-          : 'border-gray-200 bg-white'
+          : 'border-slate-200 bg-white'
       }`}
     >
       {isSelected && (
@@ -115,9 +115,9 @@ function AssetCard({
           <Check className="w-2.5 h-2.5 text-white" />
         </span>
       )}
-      <div className="w-full aspect-square flex items-center justify-center bg-gray-50/50 rounded overflow-hidden">
+      <div className="w-full aspect-square flex items-center justify-center bg-slate-50/50 rounded overflow-hidden">
         {imgError ? (
-          <RectangleHorizontal className="w-8 h-8 text-gray-300" />
+          <RectangleHorizontal className="w-8 h-8 text-slate-300" />
         ) : (
           <img
             src={asset.url}
@@ -128,7 +128,7 @@ function AssetCard({
           />
         )}
       </div>
-      <span className="text-[10px] text-gray-500 leading-tight text-center line-clamp-2">
+      <span className="text-[10px] text-slate-500 leading-tight text-center line-clamp-2">
         {asset.name}
       </span>
     </button>

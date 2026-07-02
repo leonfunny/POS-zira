@@ -70,9 +70,9 @@ function statusToneClass(status: string): string {
       return 'bg-emerald-50 text-emerald-800 border-emerald-200';
     case 'CANCELLED':
     case 'NO_SHOW':
-      return 'bg-gray-100 text-gray-700 border-gray-300';
+      return 'bg-slate-100 text-slate-700 border-slate-300';
     default:
-      return 'bg-gray-100 text-gray-700 border-gray-300';
+      return 'bg-slate-100 text-slate-700 border-slate-300';
   }
 }
 
@@ -280,19 +280,19 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
           if (canSubmit) submit();
         }}
       >
-        <header className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200 shrink-0">
+        <header className="flex items-start justify-between gap-3 px-5 py-3 border-b border-slate-200 shrink-0">
           <div className="min-w-0">
-            <h2 id="booking-edit-title" className="text-lg font-semibold text-gray-900">
+            <h2 id="booking-edit-title" className="text-lg font-semibold text-slate-900">
               {label('bookings.edit.title', 'Edit booking')}
             </h2>
             <div className="mt-1 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs">
-              <span className="font-medium text-gray-700 truncate">
+              <span className="font-medium text-slate-700 truncate">
                 {booking.owner_full_name || '—'}
               </span>
               {booking.service_name ? (
                 <>
-                  <span className="text-gray-300">·</span>
-                  <span className="text-gray-600 truncate">{booking.service_name}</span>
+                  <span className="text-slate-300">·</span>
+                  <span className="text-slate-600 truncate">{booking.service_name}</span>
                 </>
               ) : null}
               <span
@@ -306,7 +306,7 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
             type="button"
             onClick={requestClose}
             disabled={submitting}
-            className="inline-flex items-center justify-center h-9 w-9 text-gray-500 rounded-md hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30 shrink-0"
+            className="inline-flex items-center justify-center h-9 w-9 text-slate-500 rounded-md hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30 shrink-0"
             aria-label={label('common.close', 'Close')}
           >
             <CloseIcon className="h-4 w-4" aria-hidden />
@@ -405,13 +405,13 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
           )}
         </div>
 
-        <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3">
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-5 py-3">
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={requestClose}
               disabled={submitting}
-              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {label('common.cancel', 'Cancel')}
             </button>
@@ -447,10 +447,10 @@ export default function BookingEditForm({ t, booking, onClose, onSaved }: Props)
 // ─────────────────────────────────────────────────────────────────────
 
 const inputClassName =
-  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+  'w-full h-11 border border-slate-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 const textareaClassName =
-  'w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+  'w-full border border-slate-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 function SectionHeader({
   icon: Icon,
@@ -460,7 +460,7 @@ function SectionHeader({
   title: string;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
       <Icon className="h-3.5 w-3.5" aria-hidden />
       <span>{title}</span>
     </div>
@@ -476,7 +476,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
+      <span className="block text-sm font-medium text-slate-700 mb-1">{label}</span>
       {children}
     </label>
   );
@@ -499,22 +499,22 @@ function DiscardConfirm({
       aria-labelledby="edit-discard-title"
     >
       <div className="bg-white rounded-md shadow-xl w-full max-w-sm">
-        <header className="px-5 py-3 border-b border-gray-200">
-          <h3 id="edit-discard-title" className="text-base font-semibold text-gray-900">
+        <header className="px-5 py-3 border-b border-slate-200">
+          <h3 id="edit-discard-title" className="text-base font-semibold text-slate-900">
             {label('bookings.edit.discard.title', 'Discard changes?')}
           </h3>
         </header>
-        <div className="px-5 py-4 text-sm text-gray-700">
+        <div className="px-5 py-4 text-sm text-slate-700">
           {label(
             'bookings.edit.discard.body',
             'You have unsaved changes. Closing now will lose them.',
           )}
         </div>
-        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-md">
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50 rounded-b-md">
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
           >
             {label('bookings.edit.discard.keep', 'Keep editing')}
           </button>

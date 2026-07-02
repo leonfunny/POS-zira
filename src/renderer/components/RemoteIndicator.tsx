@@ -32,15 +32,15 @@ export default function RemoteIndicator({
   const getQualityColor = (): string => {
     switch (remoteState.connectionQuality) {
       case 'excellent':
-        return 'bg-green-500';
+        return 'bg-emerald-500';
       case 'good':
-        return 'bg-green-400';
+        return 'bg-emerald-400';
       case 'fair':
         return 'bg-yellow-400';
       case 'poor':
         return 'bg-red-400';
       default:
-        return 'bg-gray-400';
+        return 'bg-slate-400';
     }
   };
 

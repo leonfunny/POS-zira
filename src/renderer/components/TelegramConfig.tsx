@@ -123,7 +123,7 @@ export default function TelegramConfig({ config, onConfigChange, language }: Tel
             {botStatus && (
               <div className={`p-3 rounded-lg text-sm ${
                 botStatus.running
-                  ? 'bg-green-50 text-green-700'
+                  ? 'bg-emerald-50 text-emerald-700'
                   : 'bg-slate-100 text-slate-600'
               }`}>
                 <div className="flex items-center justify-between">
@@ -161,7 +161,7 @@ export default function TelegramConfig({ config, onConfigChange, language }: Tel
               <label className="block text-sm font-medium text-slate-600 mb-1">
                 {t('telegram.token')}
                 {botStatus?.hasToken && !token && (
-                  <span className="ml-2 text-xs text-green-600 font-normal">
+                  <span className="ml-2 text-xs text-emerald-600 font-normal">
                     OK {t('telegram.tokenConfigured') || 'Configured (encrypted)'}
                   </span>
                 )}

@@ -116,7 +116,7 @@ function statusMeta(status: string, label: (k: string, fb: string) => string): S
     case 'PAID':
       return {
         label: label('bookings.status.paid', 'Paid'),
-        className: 'bg-green-50 text-green-800 border-green-200',
+        className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
         Icon: CheckCircle2,
       };
     case 'CANCELLED':
@@ -128,13 +128,13 @@ function statusMeta(status: string, label: (k: string, fb: string) => string): S
     case 'NO_SHOW':
       return {
         label: label('bookings.status.no_show', 'No show'),
-        className: 'bg-gray-100 text-gray-700 border-gray-300',
+        className: 'bg-slate-100 text-slate-700 border-slate-300',
         Icon: XCircle,
       };
     default:
       return {
         label: status,
-        className: 'bg-gray-100 text-gray-700 border-gray-300',
+        className: 'bg-slate-100 text-slate-700 border-slate-300',
         Icon: Clock,
       };
   }
@@ -272,19 +272,19 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
   const counts = useMemo(() => deriveCounts(sorted), [sorted]);
 
   return (
-    <div className="h-full flex flex-col bg-gray-50">
-      <header className="flex flex-col gap-3 px-4 py-3 bg-white border-b border-gray-200 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+    <div className="h-full flex flex-col bg-slate-50">
+      <header className="flex flex-col gap-3 px-4 py-3 bg-white border-b border-slate-200 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             {label('bookings.today.title', 'Bookings')}
           </h1>
-          <span className="hidden sm:inline-flex items-center gap-1.5 text-sm text-gray-500">
+          <span className="hidden sm:inline-flex items-center gap-1.5 text-sm text-slate-500">
             <CalendarDays className="h-4 w-4" aria-hidden />
             {label('bookings.today.context', 'Today')}
-            <span className="text-gray-400">·</span>
-            <span className="font-medium text-gray-600">{formatTodayDate()}</span>
+            <span className="text-slate-400">·</span>
+            <span className="font-medium text-slate-600">{formatTodayDate()}</span>
           </span>
-          <span className="text-sm text-gray-500 tabular-nums">
+          <span className="text-sm text-slate-500 tabular-nums">
             {counts.total} {label('bookings.today.count', 'appointments')}
           </span>
         </div>
@@ -303,7 +303,7 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
             onClick={refresh}
             disabled={loading}
             aria-label={label('common.refresh', 'Refresh')}
-            className="inline-flex items-center justify-center h-11 w-11 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center justify-center h-11 w-11 bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
           >
             <RefreshCw
               className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
@@ -314,7 +314,7 @@ export default function BookingsTodayScreen({ t, onBack }: Props) {
             <button
               type="button"
               onClick={onBack}
-              className="inline-flex items-center gap-2 h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              className="inline-flex items-center gap-2 h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden />
               {label('common.back', 'Back')}
@@ -457,7 +457,7 @@ function SummaryStrip({
     {
       key: label('bookings.summary.total', 'Total'),
       value: counts.total,
-      tone: 'text-gray-700 bg-gray-50 border-gray-200',
+      tone: 'text-slate-700 bg-slate-50 border-slate-200',
       Icon: CalendarDays,
     },
     {
@@ -486,7 +486,7 @@ function SummaryStrip({
     },
   ];
   return (
-    <div className="grid grid-cols-2 gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 sm:px-6 md:grid-cols-5">
+    <div className="grid grid-cols-2 gap-2 px-4 py-3 bg-slate-50 border-b border-slate-200 sm:px-6 md:grid-cols-5">
       {items.map((it) => {
         const Icon = it.Icon;
         return (
@@ -496,10 +496,10 @@ function SummaryStrip({
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden />
             <div className="min-w-0">
-              <div className="truncate text-xs font-medium text-gray-500">
+              <div className="truncate text-xs font-medium text-slate-500">
                 {it.key}
               </div>
-              <div className="text-lg font-semibold tabular-nums text-gray-900">
+              <div className="text-lg font-semibold tabular-nums text-slate-900">
                 {it.value}
               </div>
             </div>
@@ -516,19 +516,19 @@ function ListSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <li
           key={i}
-          className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border border-gray-200 bg-white p-4 sm:grid-cols-[84px_minmax(0,1fr)_96px_220px]"
+          className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border border-slate-200 bg-white p-4 sm:grid-cols-[84px_minmax(0,1fr)_96px_220px]"
         >
           <div className="space-y-2">
-            <div className="h-7 w-16 rounded bg-gray-100 animate-pulse" />
-            <div className="h-3 w-12 rounded bg-gray-100 animate-pulse" />
+            <div className="h-7 w-16 rounded bg-slate-100 animate-pulse" />
+            <div className="h-3 w-12 rounded bg-slate-100 animate-pulse" />
           </div>
           <div className="min-w-0 space-y-2">
-            <div className="h-4 w-44 max-w-full rounded bg-gray-100 animate-pulse" />
-            <div className="h-3 w-72 max-w-full rounded bg-gray-100 animate-pulse" />
-            <div className="h-3 w-56 max-w-full rounded bg-gray-100 animate-pulse" />
+            <div className="h-4 w-44 max-w-full rounded bg-slate-100 animate-pulse" />
+            <div className="h-3 w-72 max-w-full rounded bg-slate-100 animate-pulse" />
+            <div className="h-3 w-56 max-w-full rounded bg-slate-100 animate-pulse" />
           </div>
-          <div className="hidden h-5 w-20 rounded bg-gray-100 animate-pulse sm:block" />
-          <div className="hidden h-10 w-full rounded bg-gray-100 animate-pulse sm:block" />
+          <div className="hidden h-5 w-20 rounded bg-slate-100 animate-pulse sm:block" />
+          <div className="hidden h-10 w-full rounded bg-slate-100 animate-pulse sm:block" />
         </li>
       ))}
     </ul>
@@ -545,14 +545,14 @@ function EmptyState({
   onCreate: () => void;
 }) {
   return (
-    <div className="rounded-md border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500">
+    <div className="rounded-md border border-slate-200 bg-white px-6 py-10 text-center shadow-sm">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500">
         <CalendarDays className="h-6 w-6" aria-hidden />
       </div>
-      <h2 className="mt-4 text-base font-semibold text-gray-900">
+      <h2 className="mt-4 text-base font-semibold text-slate-900">
         {label('bookings.today.empty', 'No appointments today')}
       </h2>
-      <p className="mx-auto mt-1 max-w-sm text-sm text-gray-500">
+      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
         {label('bookings.today.empty_hint', 'Walk-ins can still be added from this screen.')}
       </p>
       <button
@@ -601,16 +601,16 @@ function BookingRow({
 
   return (
     <li
-      className={`grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border bg-white p-3 shadow-sm transition-colors hover:bg-gray-50 sm:grid-cols-[84px_minmax(0,1fr)_96px] sm:p-4 xl:grid-cols-[84px_minmax(0,1fr)_96px_minmax(220px,auto)] ${
-        isTerminal ? 'border-gray-200 opacity-75' : 'border-gray-200'
+      className={`grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border bg-white p-3 shadow-sm transition-colors hover:bg-slate-50 sm:grid-cols-[84px_minmax(0,1fr)_96px] sm:p-4 xl:grid-cols-[84px_minmax(0,1fr)_96px_minmax(220px,auto)] ${
+        isTerminal ? 'border-slate-200 opacity-75' : 'border-slate-200'
       }`}
     >
       {/* Time rail */}
       <div className="flex flex-col items-start min-w-0">
-        <div className="text-2xl font-bold tabular-nums text-gray-900 leading-tight">
+        <div className="text-2xl font-bold tabular-nums text-slate-900 leading-tight">
           {formatTime(row.starts_at)}
         </div>
-        <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-500 tabular-nums">
+        <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-slate-500 tabular-nums">
           <Clock className="h-3 w-3" aria-hidden />
           {row.duration_minutes ? `${row.duration_minutes} min` : formatTime(row.ends_at)}
         </div>
@@ -620,18 +620,18 @@ function BookingRow({
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
           <UserIcon
-            className="h-4 w-4 text-gray-400 shrink-0"
+            className="h-4 w-4 text-slate-400 shrink-0"
             aria-hidden
           />
           <span
-            className="max-w-full truncate font-semibold text-gray-900"
+            className="max-w-full truncate font-semibold text-slate-900"
             title={row.owner_full_name ?? undefined}
           >
             {row.owner_full_name || '—'}
           </span>
           {row.owner_phone ? (
             <span
-              className="inline-flex max-w-full items-center gap-1 truncate text-xs text-gray-500 tabular-nums"
+              className="inline-flex max-w-full items-center gap-1 truncate text-xs text-slate-500 tabular-nums"
               title={row.owner_phone}
             >
               <PhoneIcon className="h-3 w-3" aria-hidden />
@@ -646,22 +646,22 @@ function BookingRow({
           </span>
         </div>
         <div
-          className="mt-1 text-sm text-gray-600 truncate"
+          className="mt-1 text-sm text-slate-600 truncate"
           title={`${row.service_name ?? ''}${row.staff_full_name ? ' · ' + row.staff_full_name : ''}`}
         >
-          <span className="font-medium text-gray-700">
+          <span className="font-medium text-slate-700">
             {row.service_name || '—'}
           </span>
           {row.staff_full_name ? (
             <>
-              <span className="mx-1 text-gray-300">·</span>
+              <span className="mx-1 text-slate-300">·</span>
               <span>{row.staff_full_name}</span>
             </>
           ) : null}
         </div>
         {row.customer_notes ? (
           <div
-            className="mt-0.5 text-xs text-gray-500 truncate"
+            className="mt-0.5 text-xs text-slate-500 truncate"
             title={row.customer_notes}
           >
             {row.customer_notes}
@@ -671,7 +671,7 @@ function BookingRow({
 
       {/* Price */}
       <div className="col-start-2 text-left sm:col-auto sm:text-right">
-        <div className="font-semibold text-gray-900 tabular-nums">
+        <div className="font-semibold text-slate-900 tabular-nums">
           {formatPriceGrosze(row.total_price_pln)} zł
         </div>
       </div>
@@ -686,7 +686,7 @@ function BookingRow({
                 type="button"
                 disabled={busy || !api}
                 onClick={onEdit}
-                className="inline-flex items-center justify-center gap-1.5 h-11 w-[88px] text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-1.5 h-11 w-[88px] text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
               >
                 <Edit2 className="h-4 w-4" aria-hidden />
                 {label('bookings.action.edit', 'Edit')}
@@ -727,7 +727,7 @@ function BookingRow({
             ) : null}
           </>
         ) : (
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-slate-400">
             {label('bookings.action.none', 'No actions')}
           </span>
         )}
@@ -768,36 +768,36 @@ function CancelDialog({
         className="bg-white rounded-md shadow-xl w-full max-w-md"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-          <h3 id="cancel-title" className="text-base font-semibold text-gray-900">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+          <h3 id="cancel-title" className="text-base font-semibold text-slate-900">
             {label('bookings.cancel.title', 'Cancel booking')}
           </h3>
         </header>
         <div className="px-5 py-4 space-y-3">
           <dl className="text-sm space-y-1">
             <div className="flex gap-2">
-              <dt className="w-20 text-gray-500">
+              <dt className="w-20 text-slate-500">
                 {label('bookings.cancel.customer', 'Customer')}
               </dt>
-              <dd className="font-medium text-gray-900 truncate" title={target.name}>
+              <dd className="font-medium text-slate-900 truncate" title={target.name}>
                 {target.name}
               </dd>
             </div>
             {target.serviceName ? (
               <div className="flex gap-2">
-                <dt className="w-20 text-gray-500">
+                <dt className="w-20 text-slate-500">
                   {label('bookings.cancel.service', 'Service')}
                 </dt>
-                <dd className="text-gray-700 truncate" title={target.serviceName}>
+                <dd className="text-slate-700 truncate" title={target.serviceName}>
                   {target.serviceName}
                 </dd>
               </div>
             ) : null}
             <div className="flex gap-2">
-              <dt className="w-20 text-gray-500">
+              <dt className="w-20 text-slate-500">
                 {label('bookings.cancel.starts_at', 'Start')}
               </dt>
-              <dd className="text-gray-700 tabular-nums">
+              <dd className="text-slate-700 tabular-nums">
                 {formatTime(target.startsAt)}
               </dd>
             </div>
@@ -806,7 +806,7 @@ function CancelDialog({
           <div>
             <label
               htmlFor="cancel-reason"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-medium text-slate-700 mb-1"
             >
               {label('bookings.cancel.reason', 'Cancel reason')}
             </label>
@@ -817,7 +817,7 @@ function CancelDialog({
               onChange={(e) => setReason(e.target.value)}
               rows={3}
               disabled={busy}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50"
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50"
               placeholder={label(
                 'bookings.cancel.reason_placeholder',
                 'Optional — leaves "Cancelled at POS" if blank',
@@ -825,12 +825,12 @@ function CancelDialog({
             />
           </div>
         </div>
-        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-md">
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50 rounded-b-md">
           <button
             type="button"
             onClick={onClose}
             disabled={busy}
-            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
           >
             {label('common.close', 'Close')}
           </button>

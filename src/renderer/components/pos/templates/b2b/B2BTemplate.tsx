@@ -211,7 +211,7 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
                 <div className="text-xs text-slate-400">{t('pos.b2b.nip')}: {selectedCustomer.nip}</div>
               )}
               <div className="flex gap-3 text-xs">
-                <span className="text-green-400">
+                <span className="text-emerald-400">
                   {t('pos.b2b.creditLimit')}: {(creditLimit / 100).toFixed(2)} {t('pos.currency')}
                 </span>
                 <span className={selectedCustomer.current_debt > 0 ? 'text-amber-400' : 'text-slate-400'}>
@@ -228,7 +228,7 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
                 </div>
                 <div className="h-2 bg-slate-700 rounded">
                   <div
-                    className={`h-2 rounded ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-500' : 'bg-green-500'}`}
+                    className={`h-2 rounded ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
                     style={{ width: `${usagePercent}%` }}
                   />
                 </div>

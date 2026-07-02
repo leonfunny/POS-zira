@@ -33,7 +33,7 @@ const PLACEHOLDER_COLORS = [
   'bg-brand-100 text-brand-600',
   'bg-brand-100 text-brand-600',
   'bg-blue-100 text-blue-600',
-  'bg-green-100 text-green-600',
+  'bg-emerald-100 text-emerald-600',
   'bg-amber-100 text-amber-600',
   'bg-orange-100 text-orange-600',
   'bg-teal-100 text-teal-600',
@@ -530,7 +530,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                 className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer touch-manipulation border ${
                   activeCategoryId === null
                     ? 'bg-brand-500 text-white border-brand-500 shadow-sm'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-brand-300 hover:text-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300 hover:text-brand-600'
                 }`}
               >
                 {t('pos.allCategories') || 'All'}
@@ -542,7 +542,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                   className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer touch-manipulation border ${
                     activeCategoryId === cat.id
                       ? 'text-white shadow-sm'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-brand-300 hover:text-brand-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300 hover:text-brand-600'
                   }`}
                   style={
                     activeCategoryId === cat.id
@@ -784,7 +784,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
           {/* Service grid */}
           <div ref={productGridRef} className={`flex-1 overflow-y-auto px-4 pb-4 ${activeView === 'sale' ? '' : 'hidden'}`}>
             {products.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+              <div className="h-full flex items-center justify-center text-slate-400 text-sm">
                 {t('pos.noProducts') || 'No services found'}
               </div>
             ) : (
@@ -795,7 +795,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                   return (
                     <div
                       key={product.id}
-                      className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
+                      className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
                     >
                       {/* Image / placeholder */}
                       <div className="relative aspect-[3/2] w-full overflow-hidden bg-slate-50">
@@ -825,7 +825,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
 
                       {/* Name + price */}
                       <div className="px-2.5 py-2">
-                        <div className="text-xs font-medium text-gray-800 leading-snug truncate">
+                        <div className="text-xs font-medium text-slate-800 leading-snug truncate">
                           {displayName}
                         </div>
                         <div className="text-xs font-bold text-brand-500 mt-0.5">
@@ -841,14 +841,14 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
         </div>
 
         {/* ── Right panel: Current Order ── */}
-        <div className="w-80 xl:w-[340px] border-l border-gray-200 flex flex-col bg-white shrink-0">
+        <div className="w-80 xl:w-[340px] border-l border-slate-200 flex flex-col bg-white shrink-0">
 
           {/* Header */}
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
-            <h2 className="font-bold text-gray-900 text-sm">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+            <h2 className="font-bold text-slate-900 text-sm">
               {t('pos.cart') || 'Current Order'}
               {cart.items.length > 0 && (
-                <span className="ml-1.5 text-gray-400 font-normal text-xs">
+                <span className="ml-1.5 text-slate-400 font-normal text-xs">
                   ({cart.items.length})
                 </span>
               )}
@@ -856,7 +856,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
             {cart.items.length > 0 && (
               <button
                 onClick={() => dispatch({ type: 'cart/clear' })}
-                className="text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 px-2 py-1 rounded transition-colors cursor-pointer font-medium"
+                className="text-xs text-slate-400 hover:text-red-500 hover:bg-red-50 px-2 py-1 rounded transition-colors cursor-pointer font-medium"
               >
                 {t('pos.cart.clear') || 'Clear'}
               </button>
@@ -864,9 +864,9 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
           </div>
 
           {/* Cart items */}
-          <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
+          <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
             {cart.items.length === 0 ? (
-              <div className="p-8 text-center text-gray-400 text-sm">
+              <div className="p-8 text-center text-slate-400 text-sm">
                 {t('pos.cart.empty') || 'No items yet'}
               </div>
             ) : (
@@ -888,7 +888,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-800 leading-snug truncate">
+                        <div className="text-sm font-medium text-slate-800 leading-snug truncate">
                           {displayName}
                         </div>
                         {staffList.length > 0 && (
@@ -903,7 +903,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                                 });
                               }
                             }}
-                            className="mt-1 w-full px-2 py-1 text-[11px] bg-slate-50 border border-gray-200 rounded-lg text-gray-500 appearance-none focus:outline-none focus:border-brand-400 cursor-pointer"
+                            className="mt-1 w-full px-2 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-lg text-slate-500 appearance-none focus:outline-none focus:border-brand-400 cursor-pointer"
                           >
                             <option value="">{t('pos.salon.noStaff') || 'No staff'}</option>
                             {staffList.map((s) => (
@@ -913,7 +913,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                         )}
                       </div>
 
-                      <span className="text-sm font-bold text-gray-900 shrink-0">
+                      <span className="text-sm font-bold text-slate-900 shrink-0">
                         {(item.total / 100).toFixed(2)}&nbsp;{currency}
                       </span>
                     </div>
@@ -929,11 +929,11 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                           }
                         }}
                         aria-label="Decrease quantity"
-                        className="w-9 h-9 rounded-full bg-gray-100 hover:bg-red-50 hover:text-red-500 text-gray-600 flex items-center justify-center font-bold text-base leading-none transition-colors touch-manipulation cursor-pointer select-none"
+                        className="w-9 h-9 rounded-full bg-slate-100 hover:bg-red-50 hover:text-red-500 text-slate-600 flex items-center justify-center font-bold text-base leading-none transition-colors touch-manipulation cursor-pointer select-none"
                       >
                         −
                       </button>
-                      <span className="w-6 text-center text-sm font-semibold text-gray-700">
+                      <span className="w-6 text-center text-sm font-semibold text-slate-700">
                         {item.quantity}
                       </span>
                       <button
@@ -953,36 +953,36 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
           </div>
 
           {/* Totals */}
-          <div className="border-t border-gray-100 px-4 pt-3 pb-2 space-y-1.5 shrink-0">
+          <div className="border-t border-slate-100 px-4 pt-3 pb-2 space-y-1.5 shrink-0">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-600">{t('pos.cart.subtotal') || 'Subtotal'}</span>
-              <span className="text-gray-700 font-medium">{(cart.subtotal / 100).toFixed(2)}&nbsp;{currency}</span>
+              <span className="text-slate-600">{t('pos.cart.subtotal') || 'Subtotal'}</span>
+              <span className="text-slate-700 font-medium">{(cart.subtotal / 100).toFixed(2)}&nbsp;{currency}</span>
             </div>
             {cart.discount > 0 && (
               <div className="flex justify-between text-sm">
-                <span className="text-green-600">{t('pos.cart.discount') || 'Discount'}</span>
-                <span className="text-green-600 font-medium">−{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
+                <span className="text-emerald-600">{t('pos.cart.discount') || 'Discount'}</span>
+                <span className="text-emerald-600 font-medium">−{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
               </div>
             )}
             {cart.tax > 0 && (
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Tax</span>
-                <span className="text-gray-700 font-medium">{(cart.tax / 100).toFixed(2)}&nbsp;{currency}</span>
+                <span className="text-slate-500">Tax</span>
+                <span className="text-slate-700 font-medium">{(cart.tax / 100).toFixed(2)}&nbsp;{currency}</span>
               </div>
             )}
             {tip > 0 && (
               <div className="flex justify-between text-sm">
-                <span className="text-green-600">{t('pos.salon.tip') || 'Tip'}</span>
-                <span className="text-green-600 font-medium">+{(tip / 100).toFixed(2)}&nbsp;{currency}</span>
+                <span className="text-emerald-600">{t('pos.salon.tip') || 'Tip'}</span>
+                <span className="text-emerald-600 font-medium">+{(tip / 100).toFixed(2)}&nbsp;{currency}</span>
               </div>
             )}
           </div>
 
           {/* Total */}
           <div className="px-4 shrink-0">
-            <div className="flex justify-between items-baseline py-3 border-t border-gray-200">
-              <span className="text-base font-bold text-gray-900">{t('pos.cart.total') || 'Total'}</span>
-              <span className="text-2xl font-bold text-gray-900">{(grandTotal / 100).toFixed(2)}&nbsp;{currency}</span>
+            <div className="flex justify-between items-baseline py-3 border-t border-slate-200">
+              <span className="text-base font-bold text-slate-900">{t('pos.cart.total') || 'Total'}</span>
+              <span className="text-2xl font-bold text-slate-900">{(grandTotal / 100).toFixed(2)}&nbsp;{currency}</span>
             </div>
           </div>
 

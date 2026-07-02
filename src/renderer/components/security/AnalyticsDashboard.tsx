@@ -133,7 +133,7 @@ export default function AnalyticsDashboard({ cameras, t }: AnalyticsDashboardPro
                   <div key={metric.zoneId} className="flex items-center justify-between text-xs">
                     <span className="text-slate-700 font-medium">{metric.zoneName}</span>
                     <div className="flex items-center gap-3">
-                      <span className="text-green-600">{metric.activeMinutes}{t?.('security.mActive') ?? 'm active'}</span>
+                      <span className="text-emerald-600">{metric.activeMinutes}{t?.('security.mActive') ?? 'm active'}</span>
                       <span className="text-slate-400">{metric.idleMinutes}{t?.('security.mIdle') ?? 'm idle'}</span>
                       <span className="text-brand-600">{metric.estimatedCustomersServed} {t?.('security.served') ?? 'served'}</span>
                     </div>

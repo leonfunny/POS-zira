@@ -184,11 +184,11 @@ export default function QuickInvoice({ sellerSettings, language }: QuickInvoiceP
         </div>
       )}
       {success && (
-        <div className="flex items-center gap-2.5 p-3 bg-green-50 border border-green-100 rounded-lg mb-4">
-          <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="flex items-center gap-2.5 p-3 bg-emerald-50 border border-emerald-100 rounded-lg mb-4">
+          <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span className="text-sm text-green-700">{success}</span>
+          <span className="text-sm text-emerald-700">{success}</span>
         </div>
       )}
 

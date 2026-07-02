@@ -202,11 +202,11 @@ export function TableActionPopover({
               </div>
             </div>
 
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center" onClick={onOpenDetail}>
+            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onOpenDetail}>
               <Eye className="w-3.5 h-3.5 mr-2" /> {t('billiard.sessionDetail') || 'Details'}
             </button>
             {table.status === 'occupied' ? (
-              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center" onClick={onPause} disabled={isPending}>
+              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onPause} disabled={isPending}>
                 <Pause className="w-3.5 h-3.5 mr-2" /> {t('billiard.pauseSession') || 'Pause'}
               </button>
             ) : (
@@ -214,10 +214,10 @@ export function TableActionPopover({
                 <Play className="w-3.5 h-3.5 mr-2" /> {t('billiard.resumeSession') || 'Resume'}
               </button>
             )}
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center" onClick={onAddItem}>
+            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onAddItem}>
               <ShoppingBag className="w-3.5 h-3.5 mr-2" /> {t('billiard.addItem') || 'Add Item'}
             </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center" onClick={onTransfer}>
+            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onTransfer}>
               <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> {t('billiard.transferTable') || 'Transfer'}
             </button>
             <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onPayment}>

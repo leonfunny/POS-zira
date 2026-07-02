@@ -139,15 +139,15 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
   }, {});
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="h-full flex flex-col bg-slate-50 dark:bg-slate-900">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
+      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-sm">
         <div className="flex items-center gap-3">
           <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-          <h1 className="text-lg font-bold text-gray-900 dark:text-white">
+          <h1 className="text-lg font-bold text-slate-900 dark:text-white">
             {t('discount.happyHourConfig') || 'Happy Hour'}
           </h1>
-          <span className="text-xs text-gray-400">({rules.length} {t('discount.rules') || 'rules'})</span>
+          <span className="text-xs text-slate-400">({rules.length} {t('discount.rules') || 'rules'})</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -160,13 +160,13 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
           <button
             onClick={fetchRules}
             disabled={loading}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 text-gray-600 dark:text-gray-300 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 text-slate-600 dark:text-slate-300 ${loading ? 'animate-spin' : ''}`} />
           </button>
           {onClose && (
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-              <X className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              <X className="w-5 h-5 text-slate-600 dark:text-slate-300" />
             </button>
           )}
         </div>
@@ -185,12 +185,12 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder={t('discount.ruleName') || 'e.g. Weekday Evening Deal'}
-            className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+            className="w-full px-3 py-2 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
           />
 
           {/* Days */}
           <div>
-            <label className="text-[10px] text-gray-500 block mb-1">{t('discount.days') || 'Days'}</label>
+            <label className="text-[10px] text-slate-500 block mb-1">{t('discount.days') || 'Days'}</label>
             <div className="flex gap-1">
               {[1, 2, 3, 4, 5, 6, 0].map((day) => (
                 <button
@@ -200,7 +200,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
                   className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                     newDays.includes(day)
                       ? 'bg-amber-600 text-white'
-                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:border-amber-400'
+                      : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-600 hover:border-amber-400'
                   }`}
                 >
                   {dayLabel(day)}
@@ -212,51 +212,51 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
           {/* Time range + discount */}
           <div className="flex items-end gap-2 flex-wrap">
             <div className="w-24">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('discount.startTime') || 'From'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('discount.startTime') || 'From'}</label>
               <input
                 type="time"
                 value={newStartTime}
                 onChange={(e) => setNewStartTime(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               />
             </div>
             <div className="w-24">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('discount.endTime') || 'To'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('discount.endTime') || 'To'}</label>
               <input
                 type="time"
                 value={newEndTime}
                 onChange={(e) => setNewEndTime(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               />
             </div>
             <div className="w-24">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('discount.type') || 'Type'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('discount.type') || 'Type'}</label>
               <select
                 value={newDiscountType}
                 onChange={(e) => setNewDiscountType(e.target.value as 'percent' | 'fixed')}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               >
                 <option value="percent">%</option>
                 <option value="fixed">PLN</option>
               </select>
             </div>
             <div className="w-20">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('discount.value') || 'Value'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('discount.value') || 'Value'}</label>
               <input
                 type="number"
                 value={newDiscountValue}
                 onChange={(e) => setNewDiscountValue(e.target.value)}
                 min="0"
                 max={newDiscountType === 'percent' ? '100' : undefined}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 tabular-nums text-right"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 tabular-nums text-right"
               />
             </div>
             <div className="w-20">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('discount.scope') || 'Scope'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('discount.scope') || 'Scope'}</label>
               <select
                 value={newScope}
                 onChange={(e) => setNewScope(e.target.value as 'time' | 'fnb' | 'all')}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               >
                 <option value="all">{t('discount.scopeAll') || 'All'}</option>
                 <option value="time">{t('discount.scopeTime') || 'Time'}</option>
@@ -290,7 +290,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
         )}
 
         {!loading && rules.length === 0 && !error && (
-          <div className="text-center py-12 text-gray-400 dark:text-gray-500">
+          <div className="text-center py-12 text-slate-400 dark:text-slate-500">
             <Clock className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm">{t('discount.noRules') || 'No happy hour rules yet'}</p>
             <p className="text-xs mt-1">{t('discount.noRulesHint') || 'Add rules to auto-apply discounts at specific times'}</p>
@@ -298,7 +298,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
         )}
 
         {Object.entries(grouped).length > 0 && (
-          <div className="divide-y divide-gray-100 dark:divide-gray-800">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {Object.entries(grouped).map(([key, group]) => {
               const first = group[0];
               const days = group.map((r) => r.day_of_week).sort();
@@ -308,7 +308,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
                 <div
                   key={key}
                   className={`px-4 py-3 flex items-center gap-3 ${
-                    allActive ? 'bg-white dark:bg-gray-800/50' : 'bg-gray-50 dark:bg-gray-900 opacity-60'
+                    allActive ? 'bg-white dark:bg-slate-800/50' : 'bg-slate-50 dark:bg-slate-900 opacity-60'
                   }`}
                 >
                   {/* Status indicator */}
@@ -317,7 +317,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
                     className={`shrink-0 p-1.5 rounded-md transition-colors ${
                       allActive
                         ? 'text-amber-600 hover:bg-amber-50'
-                        : 'text-gray-400 hover:bg-gray-100'
+                        : 'text-slate-400 hover:bg-slate-100'
                     }`}
                     title={allActive ? (t('discount.disable') || 'Disable') : (t('discount.enable') || 'Enable')}
                   >
@@ -326,18 +326,18 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
 
                   {/* Info */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{first.name}</p>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{first.name}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       {/* Days */}
-                      <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
                         {days.map((d) => dayLabel(d)).join(', ')}
                       </span>
                       {/* Time */}
-                      <span className="text-[10px] text-gray-500 tabular-nums">
+                      <span className="text-[10px] text-slate-500 tabular-nums">
                         {first.start_time} – {first.end_time}
                       </span>
                       {/* Scope badge */}
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                         {first.scope === 'all' ? (t('discount.scopeAll') || 'All')
                           : first.scope === 'time' ? (t('discount.scopeTime') || 'Time')
                           : (t('discount.scopeFnb') || 'F&B')}
@@ -353,7 +353,7 @@ export function HappyHourConfig({ language, onClose }: HappyHourConfigProps) {
                   {/* Delete */}
                   <button
                     onClick={async () => { for (const r of group) await handleDelete(r.id); fetchRules(); }}
-                    className="shrink-0 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="shrink-0 p-1.5 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                     title={t('common.delete') || 'Delete'}
                   >
                     <Trash2 className="w-3.5 h-3.5" />

@@ -479,7 +479,7 @@ export default function BooksySync() {
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2.5 h-2.5 rounded-full ${
               status?.running ? 'bg-brand-500 animate-pulse' :
-              status?.enabled ? 'bg-green-500' :
+              status?.enabled ? 'bg-emerald-500' :
               'bg-slate-300'
             }`} />
             <span className="text-xs font-medium text-slate-600">Status</span>
@@ -495,7 +495,7 @@ export default function BooksySync() {
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2.5 h-2.5 rounded-full ${
               status?.sessionExpired ? 'bg-red-500' :
-              status?.hasToken ? 'bg-green-500' :
+              status?.hasToken ? 'bg-emerald-500' :
               'bg-yellow-500'
             }`} />
             <span className="text-xs font-medium text-slate-600">Session</span>
@@ -510,7 +510,7 @@ export default function BooksySync() {
         <div className="panel p-3">
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2.5 h-2.5 rounded-full ${
-              status?.chromeConnected ? 'bg-green-500' : 'bg-slate-300'
+              status?.chromeConnected ? 'bg-emerald-500' : 'bg-slate-300'
             }`} />
             <span className="text-xs font-medium text-slate-600">Chrome CDP</span>
           </div>
@@ -522,7 +522,7 @@ export default function BooksySync() {
         <div className="panel p-3">
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2.5 h-2.5 rounded-full ${
-              status?.isBusinessHours ? 'bg-green-500' : 'bg-slate-300'
+              status?.isBusinessHours ? 'bg-emerald-500' : 'bg-slate-300'
             }`} />
             <span className="text-xs font-medium text-slate-600">Business hours</span>
           </div>
@@ -570,7 +570,7 @@ export default function BooksySync() {
             </div>
             <div className="flex items-center gap-2">
               {status.lastSyncReport.pushed && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                   Sent
                 </span>
               )}
@@ -690,7 +690,7 @@ export default function BooksySync() {
             <span>|</span>
             <span>{status.lastCustomerSyncReport.totalFetched} fetched, {status.lastCustomerSyncReport.newCustomers} new</span>
             {status.lastCustomerSyncReport.pushed && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                 Sent
               </span>
             )}
@@ -725,7 +725,7 @@ export default function BooksySync() {
             <span>|</span>
             <span>{status.lastStaffSyncReport.totalFetched} fetched</span>
             {status.lastStaffSyncReport.pushed && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                 Sent
               </span>
             )}
@@ -760,7 +760,7 @@ export default function BooksySync() {
             <span>|</span>
             <span>{status.lastResourceSyncReport.totalFetched} fetched</span>
             {status.lastResourceSyncReport.pushed && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                 Sent
               </span>
             )}
@@ -795,7 +795,7 @@ export default function BooksySync() {
             <span>|</span>
             <span>{status.lastServiceSyncReport.categoriesFetched} categories, {status.lastServiceSyncReport.servicesFetched} services</span>
             {status.lastServiceSyncReport.pushed && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                 Sent
               </span>
             )}
@@ -830,7 +830,7 @@ export default function BooksySync() {
             <span>|</span>
             <span>{status.lastAddonSyncReport.totalFetched} fetched</span>
             {status.lastAddonSyncReport.pushed && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
                 Sent
               </span>
             )}
@@ -912,8 +912,8 @@ export default function BooksySync() {
                 {t('booksy.setup.openChrome')}
               </Button>
 
-              <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
-                <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold flex-shrink-0">2</div>
+              <div className="flex items-start gap-3 p-3 bg-emerald-50 rounded-lg">
+                <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold flex-shrink-0">2</div>
                 <div>
                   <p className="text-sm font-medium text-slate-800">{t('booksy.setup.step2Title')}</p>
                   <p className="text-xs text-slate-500 mt-1">{t('booksy.setup.step2Desc')}</p>

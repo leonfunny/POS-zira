@@ -263,7 +263,7 @@ export default function CustomerPicker({ value, onChange, language }: CustomerPi
           )}
 
           {lookupResult?.valid && (
-            <div className="mb-3 p-2 bg-green-50 text-green-700 text-sm rounded flex items-center gap-2">
+            <div className="mb-3 p-2 bg-emerald-50 text-emerald-700 text-sm rounded flex items-center gap-2">
               <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>

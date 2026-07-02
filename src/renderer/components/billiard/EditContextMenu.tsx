@@ -82,7 +82,7 @@ export function EditContextMenu({
       {/* Menu popup */}
       <div
         ref={menuRef}
-        className="fixed z-[61] w-52 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden"
+        className="fixed z-[61] w-52 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
         style={{ left: menuPosition.x, top: menuPosition.y }}
       >
         <MenuHeader

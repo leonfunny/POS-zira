@@ -484,12 +484,12 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
         }}
         className="bg-white shadow-xl flex flex-col w-full h-full sm:h-[760px] sm:max-h-[88vh] sm:max-w-[720px] sm:rounded-md"
       >
-        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200 shrink-0">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-slate-200 shrink-0">
           <div>
-            <h2 id="booking-create-title" className="text-lg font-semibold text-gray-900">
+            <h2 id="booking-create-title" className="text-lg font-semibold text-slate-900">
               {label('bookings.create.title', 'New walk-in booking')}
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">
+            <p className="mt-0.5 text-xs text-slate-500">
               {formatLocalDisplay(startsAtLocal)}
             </p>
           </div>
@@ -497,7 +497,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
             type="button"
             onClick={requestClose}
             disabled={submitting}
-            className="inline-flex items-center justify-center h-9 w-9 text-gray-500 rounded-md hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30"
+            className="inline-flex items-center justify-center h-9 w-9 text-slate-500 rounded-md hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-30"
             aria-label={label('common.close', 'Close')}
           >
             <CloseIcon className="h-4 w-4" aria-hidden />
@@ -567,16 +567,16 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               )}
 
               {effectiveDurationMin != null && effectivePricePln != null && (
-                <div className="md:col-span-2 flex items-baseline justify-between rounded-md bg-gray-50 border border-gray-200 px-3 py-2 text-sm">
-                  <span className="text-gray-600 tabular-nums">
+                <div className="md:col-span-2 flex items-baseline justify-between rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-sm">
+                  <span className="text-slate-600 tabular-nums">
                     {effectiveDurationMin} {label('common.minutes', 'min')}
                     {noRulesAvailable ? (
-                      <span className="ml-2 text-xs text-gray-500">
+                      <span className="ml-2 text-xs text-slate-500">
                         {label('bookings.create.no_rules', '(service default)')}
                       </span>
                     ) : null}
                   </span>
-                  <span className="font-semibold text-gray-900 tabular-nums">
+                  <span className="font-semibold text-slate-900 tabular-nums">
                     {formatGrosze(effectivePricePln)} zł
                   </span>
                 </div>
@@ -692,7 +692,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
                 onFocus={handleTextFocus}
                 onBlur={handleTextBlur}
                 rows={3}
-                className="w-full min-h-[96px] border border-gray-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full min-h-[96px] border border-slate-300 rounded-md px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </Field>
           </Section>
@@ -715,12 +715,12 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
           ) : null}
         </div>
 
-        <footer className="shrink-0 border-t border-gray-200 bg-white px-5 py-3 space-y-2">
+        <footer className="shrink-0 border-t border-slate-200 bg-white px-5 py-3 space-y-2">
           <div className="min-h-[1.25rem]">
             {!canSubmit && missingFields.length > 0 && !submitting ? (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-500">
                 {label('bookings.create.required_hint', 'Fill in')}{' '}
-                <span className="font-medium text-gray-700">
+                <span className="font-medium text-slate-700">
                   {missingFields.join(', ')}
                 </span>{' '}
                 {label('bookings.create.required_hint_suffix', 'to enable Create.')}
@@ -732,7 +732,7 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
               type="button"
               onClick={requestClose}
               disabled={submitting}
-              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
+              className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {label('common.cancel', 'Cancel')}
             </button>
@@ -764,10 +764,10 @@ export default function BookingCreateForm({ t, onClose, onCreated }: Props) {
 }
 
 const inputClassName =
-  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+  'w-full h-11 border border-slate-300 rounded-md px-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 const pickerButtonClassName =
-  'w-full h-11 border border-gray-300 rounded-md px-3 bg-white text-sm text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
+  'w-full h-11 border border-slate-300 rounded-md px-3 bg-white text-sm text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500';
 
 function Section({
   icon: Icon,
@@ -780,7 +780,7 @@ function Section({
 }) {
   return (
     <section className="space-y-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
         <Icon className="h-3.5 w-3.5" aria-hidden />
         <span>{title}</span>
       </div>
@@ -802,7 +802,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <div className="block text-sm font-medium text-gray-700 mb-1">
+      <div className="block text-sm font-medium text-slate-700 mb-1">
         {label}
         {required ? (
           <span className="text-rose-600" aria-hidden>
@@ -897,33 +897,33 @@ function PickerField({
         className={`${pickerButtonClassName} flex items-center justify-between gap-2`}
       >
         <span className="min-w-0 flex-1">
-          <span className={selected ? 'block truncate text-gray-900' : 'block truncate text-gray-400'}>
+          <span className={selected ? 'block truncate text-slate-900' : 'block truncate text-slate-400'}>
             {selected?.label ?? placeholder}
           </span>
           {selected?.description ? (
-            <span className="block truncate text-xs text-gray-500">
+            <span className="block truncate text-xs text-slate-500">
               {selected.description}
             </span>
           ) : null}
         </span>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
           aria-hidden
         />
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
           {searchable && (
-            <div className="border-b border-gray-200 p-2">
+            <div className="border-b border-slate-200 p-2">
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden />
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
                 <input
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search"
-                  className="h-10 w-full rounded-md border border-gray-300 bg-white pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="h-10 w-full rounded-md border border-slate-300 bg-white pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -935,7 +935,7 @@ function PickerField({
             className="max-h-72 overflow-y-auto py-1"
           >
             {filteredOptions.length === 0 ? (
-              <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
+              <div className="px-3 py-3 text-sm text-slate-500">{emptyLabel}</div>
             ) : (
               filteredOptions.map((option) => {
                 const isSelected = option.value === value;
@@ -949,7 +949,7 @@ function PickerField({
                       onChange(option.value);
                       close();
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                       {isSelected ? (
@@ -957,11 +957,11 @@ function PickerField({
                       ) : null}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-gray-900">
+                      <span className="block truncate font-medium text-slate-900">
                         {option.label}
                       </span>
                       {option.description ? (
-                        <span className="block truncate text-xs text-gray-500">
+                        <span className="block truncate text-xs text-slate-500">
                           {option.description}
                         </span>
                       ) : null}
@@ -1033,18 +1033,18 @@ function StartTimeControl({
         className={`${pickerButtonClassName} flex items-center justify-between gap-2 tabular-nums`}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Clock3 className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
-          <span className="truncate text-gray-900">{formatLocalDisplay(value)}</span>
+          <Clock3 className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+          <span className="truncate text-slate-900">{formatLocalDisplay(value)}</span>
         </span>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
           aria-hidden
         />
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
-          <div className="mb-3 text-sm font-medium text-gray-900 tabular-nums">
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-slate-200 bg-white p-3 shadow-lg">
+          <div className="mb-3 text-sm font-medium text-slate-900 tabular-nums">
             {formatLocalDisplay(value)}
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -1055,8 +1055,8 @@ function StartTimeControl({
             <QuickTimeButton onClick={() => shiftMinutes(-5)}>-5 min</QuickTimeButton>
             <QuickTimeButton onClick={() => shiftMinutes(5)}>+5 min</QuickTimeButton>
           </div>
-          <div className="mt-3 border-t border-gray-200 pt-3">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+          <div className="mt-3 border-t border-slate-200 pt-3">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
               Quick slots
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -1090,7 +1090,7 @@ function QuickTimeButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
+      className="inline-flex h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
     >
       {children}
     </button>
@@ -1114,22 +1114,22 @@ function DiscardConfirm({
       aria-labelledby="discard-title"
     >
       <div className="bg-white rounded-md shadow-xl w-full max-w-sm">
-        <header className="px-5 py-3 border-b border-gray-200">
-          <h3 id="discard-title" className="text-base font-semibold text-gray-900">
+        <header className="px-5 py-3 border-b border-slate-200">
+          <h3 id="discard-title" className="text-base font-semibold text-slate-900">
             {label('bookings.create.discard.title', 'Discard booking?')}
           </h3>
         </header>
-        <div className="px-5 py-4 text-sm text-gray-700">
+        <div className="px-5 py-4 text-sm text-slate-700">
           {label(
             'bookings.create.discard.body',
             'You have unsaved input. Closing now will lose it.',
           )}
         </div>
-        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-md">
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50 rounded-b-md">
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            className="inline-flex items-center justify-center h-11 px-4 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
           >
             {label('bookings.create.discard.keep', 'Keep editing')}
           </button>

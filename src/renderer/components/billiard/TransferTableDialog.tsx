@@ -78,17 +78,17 @@ export function TransferTableDialog({
         {/* Body */}
         <div className="p-4 overflow-y-auto flex-1">
           <div className="space-y-4">
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-slate-500">
               {t('billiard.transferDescription') ||
                 'Select a free table to transfer this session to.'}
             </p>
 
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
               </div>
             ) : freeTables.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
+              <div className="text-center py-8 text-slate-500">
                 <p className="text-sm">
                   {t('billiard.noFreeTables') || 'No free tables available'}
                 </p>
@@ -107,7 +107,7 @@ export function TransferTableDialog({
                         ${
                           isSelected
                             ? 'border-blue-600 bg-blue-50 text-blue-600'
-                            : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+                            : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'
                         }
                       `}
                     >
@@ -118,7 +118,7 @@ export function TransferTableDialog({
                         {table.name || `Table ${table.number || table.id}`}
                       </span>
                       {table.capacity && (
-                        <span className="text-xs text-gray-500 mt-1">
+                        <span className="text-xs text-slate-500 mt-1">
                           {t('billiard.capacity') || 'Capacity'}: {table.capacity}
                         </span>
                       )}
@@ -133,7 +133,7 @@ export function TransferTableDialog({
         {/* Footer */}
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button
-            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50"
             onClick={() => handleOpenChange(false)}
             disabled={transferTable.isPending}
           >

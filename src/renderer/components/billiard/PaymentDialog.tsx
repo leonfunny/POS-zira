@@ -165,14 +165,14 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
             <CreditCard className="w-5 h-5" />
             {t('billiard.payment') || 'Payment'}
           </h3>
-          <button onClick={handleCancel} className="p-1 rounded hover:bg-gray-100" disabled={step === 'processing'}>
+          <button onClick={handleCancel} className="p-1 rounded hover:bg-slate-100" disabled={step === 'processing'}>
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="p-4 space-y-4">
-          <div className="text-center py-4 bg-gray-50 rounded-lg">
+          <div className="text-center py-4 bg-slate-50 rounded-lg">
             <p className="text-3xl font-bold tabular-nums">{formatCurrency(total)}</p>
-            <p className="text-sm text-gray-500 mt-1">{t('billiard.total') || 'Total'}</p>
+            <p className="text-sm text-slate-500 mt-1">{t('billiard.total') || 'Total'}</p>
           </div>
 
           {/* Elavon waiting state */}
@@ -205,7 +205,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
                   type="button"
                   onClick={() => { setMethod(m.key); setElavonError(null); }}
                   className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border-2 transition-colors ${
-                    method === m.key ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-gray-200 hover:border-blue-300'
+                    method === m.key ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-slate-200 hover:border-blue-300'
                   }`}
                 >
                   {m.icon}
@@ -217,7 +217,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
         </div>
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button
-            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
             onClick={handleCancel}
             disabled={step === 'processing'}
           >

@@ -723,7 +723,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
                       dangerouslySetInnerHTML={{ __html: qrSvg }}
                     />
                     {qrStatus === 'polling' && (
-                      <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-green-500 border-2 border-white flex items-center justify-center">
+                      <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center">
                         <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
                       </div>
                     )}
@@ -731,11 +731,11 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
                 )}
 
                 {qrStatus === 'verified' && (
-                  <div className="w-[210px] h-[210px] flex flex-col items-center justify-center bg-green-50 rounded-xl">
-                    <svg className="w-16 h-16 text-green-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className="w-[210px] h-[210px] flex flex-col items-center justify-center bg-emerald-50 rounded-xl">
+                    <svg className="w-16 h-16 text-emerald-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <p className="text-sm font-medium text-green-700">{t('auth.telegram.verified')}</p>
+                    <p className="text-sm font-medium text-emerald-700">{t('auth.telegram.verified')}</p>
                   </div>
                 )}
 
@@ -771,7 +771,7 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
                     <div className="mt-2 flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${
                         serverStatus === 'checking' ? 'bg-yellow-400 animate-pulse' :
-                        serverStatus === 'online' ? 'bg-green-500' :
+                        serverStatus === 'online' ? 'bg-emerald-500' :
                         serverStatus === 'offline' ? 'bg-red-500' :
                         'bg-slate-300'
                       }`} />

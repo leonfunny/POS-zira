@@ -197,7 +197,7 @@ export function AddItemToTabModal({
           </h3>
           <button
             onClick={() => handleOpenChange(false)}
-            className="p-1 rounded hover:bg-gray-100"
+            className="p-1 rounded hover:bg-slate-100"
           >
             <X className="w-4 h-4" />
           </button>
@@ -211,7 +211,7 @@ export function AddItemToTabModal({
               className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                 mode === 'catalog'
                   ? 'bg-brand-600 text-white hover:bg-brand-700'
-                  : 'border border-gray-300 hover:bg-gray-50'
+                  : 'border border-slate-300 hover:bg-slate-50'
               }`}
               onClick={() => setMode('catalog')}
             >
@@ -223,7 +223,7 @@ export function AddItemToTabModal({
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                   mode === 'combos'
                     ? 'bg-brand-600 text-white hover:bg-brand-700'
-                    : 'border border-gray-300 hover:bg-gray-50'
+                    : 'border border-slate-300 hover:bg-slate-50'
                 }`}
                 onClick={() => setMode('combos')}
               >
@@ -235,7 +235,7 @@ export function AddItemToTabModal({
               className={`px-3 py-1.5 text-sm font-medium rounded-lg flex items-center justify-center ${
                 mode === 'custom'
                   ? 'bg-brand-600 text-white hover:bg-brand-700'
-                  : 'border border-gray-300 hover:bg-gray-50'
+                  : 'border border-slate-300 hover:bg-slate-50'
               }`}
               onClick={() => setMode('custom')}
             >
@@ -248,13 +248,13 @@ export function AddItemToTabModal({
             <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
               {/* Search */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   ref={searchRef}
                   placeholder={t('billiard.searchProducts') || 'Search products...'}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
@@ -265,7 +265,7 @@ export function AddItemToTabModal({
                   className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                     selectedCategory === null
                       ? 'bg-brand-600 text-white border-brand-600'
-                      : 'border-gray-300 hover:bg-gray-50'
+                      : 'border-slate-300 hover:bg-slate-50'
                   }`}
                     onClick={() => setSelectedCategory(null)}
                   >
@@ -277,7 +277,7 @@ export function AddItemToTabModal({
                       className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                         selectedCategory === cat.id
                           ? 'bg-brand-600 text-white border-brand-600'
-                          : 'border-gray-300 hover:bg-gray-50'
+                          : 'border-slate-300 hover:bg-slate-50'
                       }`}
                       onClick={() => setSelectedCategory(cat.id)}
                     >
@@ -291,10 +291,10 @@ export function AddItemToTabModal({
               <div className="flex-1 overflow-y-auto min-h-0">
                 {productsLoading ? (
                   <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
                   </div>
                 ) : products.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-gray-400 text-sm">
+                  <div className="flex flex-col items-center justify-center py-12 text-slate-400 text-sm">
                     <Package className="w-8 h-8 mb-2 opacity-40" />
                     {t('billiard.noProducts') || 'No products found'}
                   </div>
@@ -324,7 +324,7 @@ export function AddItemToTabModal({
                         <button
                           key={product.id}
                           type="button"
-                          className={`text-left rounded-lg border p-3 transition-colors hover:bg-gray-50 active:scale-[0.98] ${
+                          className={`text-left rounded-lg border p-3 transition-colors hover:bg-slate-50 active:scale-[0.98] ${
                             !hasStock ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                           }`}
                           disabled={!hasStock || addItem.isPending}
@@ -338,7 +338,7 @@ export function AddItemToTabModal({
                               <span
                                 className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
                                   hasStock
-                                    ? 'bg-gray-100 text-gray-700'
+                                    ? 'bg-slate-100 text-slate-700'
                                     : 'bg-red-100 text-red-700'
                                 }`}
                               >
@@ -362,7 +362,7 @@ export function AddItemToTabModal({
             /* Combos grid */
             <div className="flex-1 overflow-y-auto min-h-0">
               {combos.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-400 text-sm">
+                <div className="flex flex-col items-center justify-center py-12 text-slate-400 text-sm">
                   <Layers className="w-8 h-8 mb-2 opacity-40" />
                   {t('billiard.noCombos') || 'No combos available'}
                 </div>
@@ -375,7 +375,7 @@ export function AddItemToTabModal({
                       <button
                         key={`${combo._source}-${combo.id}`}
                         type="button"
-                        className="text-left rounded-lg border p-3 transition-colors hover:bg-gray-50 active:scale-[0.98] cursor-pointer"
+                        className="text-left rounded-lg border p-3 transition-colors hover:bg-slate-50 active:scale-[0.98] cursor-pointer"
                         disabled={addItem.isPending}
                         onClick={() => handleComboSelect(combo)}
                       >
@@ -396,12 +396,12 @@ export function AddItemToTabModal({
                               </span>
                             </div>
                             {combo.description && (
-                              <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
+                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
                                 {combo.description}
                               </p>
                             )}
                             {comboItems.length > 0 && (
-                              <p className="text-[10px] text-gray-500 mt-1">
+                              <p className="text-[10px] text-slate-500 mt-1">
                                 {comboItems
                                   .map((i: any) => i.name || i.productName)
                                   .filter(Boolean)
@@ -414,12 +414,12 @@ export function AddItemToTabModal({
                               {formatPrice(Number(combo.comboPrice || 0))}
                             </p>
                             {combo.playMinutes && (
-                              <span className="text-[10px] text-gray-500">
+                              <span className="text-[10px] text-slate-500">
                                 {combo.playMinutes} min
                               </span>
                             )}
                             {combo.menuNumber && (
-                              <span className="text-[10px] text-gray-500">
+                              <span className="text-[10px] text-slate-500">
                                 #{combo.menuNumber}
                               </span>
                             )}
@@ -437,7 +437,7 @@ export function AddItemToTabModal({
               <TextInput
                 id="item-name"
                 label={`${t('billiard.itemName') || 'Item Name'} *`}
-                labelClassName="text-sm font-medium text-gray-900"
+                labelClassName="text-sm font-medium text-slate-900"
                 placeholder={
                   t('billiard.itemNamePlaceholder') || 'e.g., Beer, Coffee, Snacks'
                 }
@@ -449,7 +449,7 @@ export function AddItemToTabModal({
                 <TextInput
                   id="item-quantity"
                   label={`${t('billiard.quantity') || 'Quantity'} *`}
-                  labelClassName="text-sm font-medium text-gray-900"
+                  labelClassName="text-sm font-medium text-slate-900"
                   type="number"
                   min={1}
                   value={quantity}
@@ -460,7 +460,7 @@ export function AddItemToTabModal({
                 <TextInput
                   id="item-price"
                   label={`${t('billiard.unitPrice') || 'Unit Price'} *`}
-                  labelClassName="text-sm font-medium text-gray-900"
+                  labelClassName="text-sm font-medium text-slate-900"
                   type="number"
                   min={0.01}
                   step={0.01}
@@ -477,7 +477,7 @@ export function AddItemToTabModal({
         {mode === 'custom' ? (
           <div className="px-4 py-3 border-t flex justify-end gap-2">
             <button
-              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 flex items-center justify-center"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center"
               onClick={() => handleOpenChange(false)}
               disabled={addItem.isPending}
             >
@@ -500,7 +500,7 @@ export function AddItemToTabModal({
           </div>
         ) : (
           <div className="px-4 py-3 border-t">
-            <p className="text-xs text-gray-400 text-center">
+            <p className="text-xs text-slate-400 text-center">
               {t('billiard.tapToAdd') || 'Tap a product to add it to the tab'}
             </p>
           </div>

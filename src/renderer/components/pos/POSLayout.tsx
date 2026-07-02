@@ -1271,7 +1271,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   if (!state) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-gray-600">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
         {/* Hidden barcode input must exist even during loading so scanner keystrokes are captured */}
         <input
           ref={barcodeRef}
@@ -1294,7 +1294,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
-    <div className="h-screen bg-slate-50 text-gray-900 flex flex-col overflow-hidden">
+    <div className="h-screen bg-slate-50 text-slate-900 flex flex-col overflow-hidden">
       {/* Hidden barcode capture input for USB HID scanners */}
       <input
         ref={barcodeRef}
@@ -1373,7 +1373,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {/* Header - shared across all modes */}
-      <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -1385,11 +1385,11 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             <Home size={17} aria-hidden="true" />
             <span>Zira POS</span>
           </button>
-          <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">
+          <span className="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">
             {t(MODE_LABELS[posMode])}
           </span>
           {session.staffName && (
-            <span className="text-xs text-gray-600 font-medium">
+            <span className="text-xs text-slate-600 font-medium">
               {session.staffName}
             </span>
           )}

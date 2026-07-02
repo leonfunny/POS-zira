@@ -39,17 +39,17 @@ export function MenuResizeControls({
   };
 
   return (
-    <div className="px-3 py-2 border-t border-gray-200 space-y-1.5">
+    <div className="px-3 py-2 border-t border-slate-200 space-y-1.5">
       {/* Width row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1 text-xs text-gray-500">
+        <div className="flex items-center gap-1 text-xs text-slate-500">
           <ArrowLeftRight className="w-3 h-3" />
           <span>{t('billiard.width') || 'Width'}</span>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className={`p-0.5 rounded hover:bg-gray-100 ${canShrinkW ? '' : 'opacity-30 cursor-not-allowed'}`}
+            className={`p-0.5 rounded hover:bg-slate-100 ${canShrinkW ? '' : 'opacity-30 cursor-not-allowed'}`}
             disabled={!canShrinkW}
             onClick={(e) => {
               e.stopPropagation();
@@ -62,7 +62,7 @@ export function MenuResizeControls({
           <span className="text-xs font-medium tabular-nums w-10 text-center">{widthM}m</span>
           <button
             type="button"
-            className={`p-0.5 rounded hover:bg-gray-100 ${canGrowW ? '' : 'opacity-30 cursor-not-allowed'}`}
+            className={`p-0.5 rounded hover:bg-slate-100 ${canGrowW ? '' : 'opacity-30 cursor-not-allowed'}`}
             disabled={!canGrowW}
             onClick={(e) => {
               e.stopPropagation();
@@ -76,14 +76,14 @@ export function MenuResizeControls({
       </div>
       {/* Height row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1 text-xs text-gray-500">
+        <div className="flex items-center gap-1 text-xs text-slate-500">
           <ArrowUpDown className="w-3 h-3" />
           <span>{t('billiard.height') || 'Height'}</span>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className={`p-0.5 rounded hover:bg-gray-100 ${canShrinkH ? '' : 'opacity-30 cursor-not-allowed'}`}
+            className={`p-0.5 rounded hover:bg-slate-100 ${canShrinkH ? '' : 'opacity-30 cursor-not-allowed'}`}
             disabled={!canShrinkH}
             onClick={(e) => {
               e.stopPropagation();
@@ -96,7 +96,7 @@ export function MenuResizeControls({
           <span className="text-xs font-medium tabular-nums w-10 text-center">{heightM}m</span>
           <button
             type="button"
-            className={`p-0.5 rounded hover:bg-gray-100 ${canGrowH ? '' : 'opacity-30 cursor-not-allowed'}`}
+            className={`p-0.5 rounded hover:bg-slate-100 ${canGrowH ? '' : 'opacity-30 cursor-not-allowed'}`}
             disabled={!canGrowH}
             onClick={(e) => {
               e.stopPropagation();

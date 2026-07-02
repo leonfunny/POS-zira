@@ -43,12 +43,12 @@ export function FloorTabs({
               transition-all border
               ${isActive
                 ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
-                : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-900'
+                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-900'
               }
             `}
           >
             <span>{floor.name}</span>
-            <span className={`text-xs ${isActive ? 'text-white/80' : 'text-gray-400'}`}>
+            <span className={`text-xs ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
               ({counts.total})
             </span>
             {/* Status dots */}
@@ -71,7 +71,7 @@ export function FloorTabs({
           type="button"
           onClick={onAddFloor}
           className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium
-            border border-dashed border-gray-300 text-gray-500
+            border border-dashed border-slate-300 text-slate-500
             hover:border-blue-400 hover:text-blue-600 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />

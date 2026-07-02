@@ -159,12 +159,12 @@ export function StockManager({ language, onClose }: StockManagerProps) {
   const lowCount = items.filter((i) => i.quantity <= i.low_threshold).length;
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="h-full flex flex-col bg-slate-50 dark:bg-slate-900">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
+      <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-sm">
         <div className="flex items-center gap-3">
           <Package className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-          <h1 className="text-lg font-bold text-gray-900 dark:text-white">
+          <h1 className="text-lg font-bold text-slate-900 dark:text-white">
             {t('stock.title') || 'Stock Management'}
           </h1>
           {lowCount > 0 && (
@@ -185,28 +185,28 @@ export function StockManager({ language, onClose }: StockManagerProps) {
           <button
             onClick={fetchStock}
             disabled={loading}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 text-gray-600 dark:text-gray-300 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 text-slate-600 dark:text-slate-300 ${loading ? 'animate-spin' : ''}`} />
           </button>
           {onClose && (
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-              <X className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              <X className="w-5 h-5 text-slate-600 dark:text-slate-300" />
             </button>
           )}
         </div>
       </div>
 
       {/* Search bar */}
-      <div className="px-4 py-2 bg-white dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-700/50">
+      <div className="px-4 py-2 bg-white dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700/50">
         <div className="relative max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('stock.searchItem') || 'Search items...'}
-            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 placeholder:text-gray-400"
+            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 placeholder:text-slate-400"
           />
         </div>
       </div>
@@ -219,42 +219,42 @@ export function StockManager({ language, onClose }: StockManagerProps) {
           </p>
           <div className="flex items-end gap-2 flex-wrap">
             <div className="flex-1 min-w-[150px]">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('stock.itemName') || 'Name'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('stock.itemName') || 'Name'}</label>
               <input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. Cola 0.5L"
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               />
             </div>
             <div className="w-20">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('stock.qty') || 'Qty'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('stock.qty') || 'Qty'}</label>
               <input
                 type="number"
                 value={newQty}
                 onChange={(e) => setNewQty(e.target.value)}
                 min="0"
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 tabular-nums text-right"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 tabular-nums text-right"
               />
             </div>
             <div className="w-20">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('stock.threshold') || 'Alert at'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('stock.threshold') || 'Alert at'}</label>
               <input
                 type="number"
                 value={newThreshold}
                 onChange={(e) => setNewThreshold(e.target.value)}
                 min="0"
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 tabular-nums text-right"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 tabular-nums text-right"
               />
             </div>
             <div className="w-16">
-              <label className="text-[10px] text-gray-500 block mb-0.5">{t('stock.unit') || 'Unit'}</label>
+              <label className="text-[10px] text-slate-500 block mb-0.5">{t('stock.unit') || 'Unit'}</label>
               <input
                 type="text"
                 value={newUnit}
                 onChange={(e) => setNewUnit(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100"
               />
             </div>
             <button
@@ -284,7 +284,7 @@ export function StockManager({ language, onClose }: StockManagerProps) {
         )}
 
         {!loading && items.length === 0 && !error && (
-          <div className="text-center py-12 text-gray-400 dark:text-gray-500">
+          <div className="text-center py-12 text-slate-400 dark:text-slate-500">
             <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm">{t('stock.noItems') || 'No stock items yet'}</p>
             <p className="text-xs mt-1">{t('stock.noItemsHint') || 'Items appear automatically when sold, or add manually above'}</p>
@@ -293,8 +293,8 @@ export function StockManager({ language, onClose }: StockManagerProps) {
 
         {filtered.length > 0 && (
           <table className="w-full">
-            <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
-              <tr className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
+              <tr className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 <th className="text-left px-4 py-2 cursor-pointer select-none" onClick={() => toggleSort('name')}>
                   {t('stock.itemName') || 'Item'} <SortIcon field="name" />
                 </th>
@@ -309,7 +309,7 @@ export function StockManager({ language, onClose }: StockManagerProps) {
                 <th className="text-right px-4 py-2 w-20"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filtered.map((row) => {
                 const isLow = row.quantity <= row.low_threshold;
                 const isEditing = editingId === row.variant_id;
@@ -317,11 +317,11 @@ export function StockManager({ language, onClose }: StockManagerProps) {
                 return (
                   <tr
                     key={row.variant_id}
-                    className={`transition-colors ${isLow ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'bg-white dark:bg-gray-800/50'} hover:bg-gray-50 dark:hover:bg-gray-800`}
+                    className={`transition-colors ${isLow ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'bg-white dark:bg-slate-800/50'} hover:bg-slate-50 dark:hover:bg-slate-800`}
                   >
                     {/* Name */}
                     <td className="px-4 py-2.5">
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{row.variant_name}</span>
+                      <span className="text-sm font-medium text-slate-900 dark:text-white">{row.variant_name}</span>
                     </td>
 
                     {/* Quantity */}
@@ -333,11 +333,11 @@ export function StockManager({ language, onClose }: StockManagerProps) {
                           onChange={(e) => setEditQty(e.target.value)}
                           min="0"
                           step="1"
-                          className="w-20 px-2 py-1 text-sm text-right rounded-md border border-teal-400 bg-white dark:bg-gray-700 tabular-nums focus:outline-none focus:ring-1 focus:ring-teal-500"
+                          className="w-20 px-2 py-1 text-sm text-right rounded-md border border-teal-400 bg-white dark:bg-slate-700 tabular-nums focus:outline-none focus:ring-1 focus:ring-teal-500"
                           autoFocus
                         />
                       ) : (
-                        <span className={`text-sm font-bold tabular-nums ${isLow ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-white'}`}>
+                        <span className={`text-sm font-bold tabular-nums ${isLow ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>
                           {row.quantity}
                         </span>
                       )}
@@ -345,7 +345,7 @@ export function StockManager({ language, onClose }: StockManagerProps) {
 
                     {/* Unit */}
                     <td className="px-4 py-2.5 text-center">
-                      <span className="text-xs text-gray-500">{row.unit}</span>
+                      <span className="text-xs text-slate-500">{row.unit}</span>
                     </td>
 
                     {/* Threshold */}
@@ -357,10 +357,10 @@ export function StockManager({ language, onClose }: StockManagerProps) {
                           onChange={(e) => setEditThreshold(e.target.value)}
                           min="0"
                           step="1"
-                          className="w-20 px-2 py-1 text-sm text-right rounded-md border border-gray-300 bg-white dark:bg-gray-700 tabular-nums"
+                          className="w-20 px-2 py-1 text-sm text-right rounded-md border border-slate-300 bg-white dark:bg-slate-700 tabular-nums"
                         />
                       ) : (
-                        <span className="text-xs text-gray-500 tabular-nums">{row.low_threshold}</span>
+                        <span className="text-xs text-slate-500 tabular-nums">{row.low_threshold}</span>
                       )}
                     </td>
 
@@ -384,7 +384,7 @@ export function StockManager({ language, onClose }: StockManagerProps) {
                         <div className="flex items-center gap-1 justify-end">
                           <button
                             onClick={cancelEdit}
-                            className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                            className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                             title={t('common.cancel') || 'Cancel'}
                           >
                             <X className="w-3.5 h-3.5" />

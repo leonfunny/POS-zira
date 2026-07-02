@@ -147,7 +147,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
       DRAFT:          'bg-slate-100 text-slate-600 border border-slate-200',
       ISSUED:         'bg-blue-50 text-blue-700 border border-blue-100',
       SENT:           'bg-brand-50 text-brand-700 border border-brand-100',
-      PAID:           'bg-green-50 text-green-700 border border-green-100',
+      PAID:           'bg-emerald-50 text-emerald-700 border border-emerald-100',
       PARTIALLY_PAID: 'bg-amber-50 text-amber-700 border border-amber-100',
       OVERDUE:        'bg-red-50 text-red-700 border border-red-100',
       CANCELLED:      'bg-slate-100 text-slate-400 border border-slate-200',
@@ -161,7 +161,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
     }
     if (invoice.ksef_number) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full" title={invoice.ksef_number}>
+        <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full" title={invoice.ksef_number}>
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
@@ -423,7 +423,7 @@ export default function InvoiceList({ onEdit, onCreate, language }: InvoiceListP
                         <button
                           onClick={() => handleMarkPaid(invoice.id)}
                           title={t('invoice.markPaid')} aria-label={t('invoice.markPaid')}
-                          className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors cursor-pointer"
+                          className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

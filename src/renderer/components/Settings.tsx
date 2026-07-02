@@ -394,7 +394,7 @@ function getSalonPrinterRouteState(printer: SalonPrinterMapping): { label: strin
   if (!hasServerPrinterTarget(printer)) return { label: 'No target', className: 'bg-amber-50 text-amber-700' };
   if (!printer.agentIsOnline) return { label: 'POS offline', className: 'bg-red-50 text-red-700' };
   if (!printer.isOnline) return { label: 'Printer offline', className: 'bg-slate-100 text-slate-500' };
-  return { label: 'Ready', className: 'bg-green-50 text-green-700' };
+  return { label: 'Ready', className: 'bg-emerald-50 text-emerald-700' };
 }
 
 function deriveMultiPrinterMode(config: AgentConfig | null | undefined): boolean {
@@ -2574,7 +2574,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       {dev.connectionType}
                     </span>
                   </div>
-                  <div className={dev.driverInstalled ? 'text-green-600' : 'text-amber-600'}>
+                  <div className={dev.driverInstalled ? 'text-emerald-600' : 'text-amber-600'}>
                     {dev.driverInstalled ? '● Driver installed' : '○ Driver not installed'}
                   </div>
                   {dev.windowsPrinterName && dev.windowsPrinterName !== dev.model && (
@@ -2584,7 +2584,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     <div className="text-slate-600">Port: <strong>{dev.portName}</strong></div>
                   )}
                   {dev.comPort && (
-                    <div className="text-green-600">● COM port: <strong>{dev.comPort}</strong></div>
+                    <div className="text-emerald-600">● COM port: <strong>{dev.comPort}</strong></div>
                   )}
 
                   {dev.autoSetupEligible === false && (
@@ -2604,7 +2604,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   <>
                   {isAlreadyConfigured ? (
                     <div className="flex items-center justify-between pt-1">
-                      <div className="text-green-600 font-medium">
+                      <div className="text-emerald-600 font-medium">
                         ✓ Configured as {printerTypeLabel(t, targetType)} printer
                       </div>
                       {/* P6.1: Per-device refresh button — re-runs targeted recovery */}
@@ -2711,7 +2711,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     </div>
                   )}
                   {refreshMsg && (
-                    <div className={`mt-1 text-[11px] ${refreshMsg.success ? 'text-green-600' : 'text-amber-600'}`}>
+                    <div className={`mt-1 text-[11px] ${refreshMsg.success ? 'text-emerald-600' : 'text-amber-600'}`}>
                       {refreshMsg.message}
                     </div>
                   )}
@@ -2719,7 +2719,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     const r = diagnoseResult.result;
                     const step = (ok: boolean | undefined, label: string) => (
                       <div className="flex items-start gap-1.5">
-                        <span className={ok ? 'text-green-600' : 'text-amber-600'}>{ok ? '✓' : '✗'}</span>
+                        <span className={ok ? 'text-emerald-600' : 'text-amber-600'}>{ok ? '✓' : '✗'}</span>
                         <span className="text-slate-600">{label}</span>
                       </div>
                     );
@@ -2741,7 +2741,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           </div>
                         )}
                         {r.posnetResponse && (
-                          <div className="mt-2 pt-2 border-t border-slate-200 text-green-600 font-medium">
+                          <div className="mt-2 pt-2 border-t border-slate-200 text-emerald-600 font-medium">
                             Ready — click Test Print or Auto Setup to finish.
                           </div>
                         )}
@@ -2764,7 +2764,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
         {posnetInstallResult && (
           <div className={`mb-3 px-3 py-2 rounded-lg text-xs ${
-            posnetInstallResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+            posnetInstallResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
           }`}>
             {posnetInstallResult.message}
             {posnetInstallResult.success && (posnetInstallResult as any).rebootRequired && (
@@ -2775,7 +2775,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
         {autoSetupResult && (
           <div className={`mb-3 px-3 py-2 rounded-lg text-xs ${
-            autoSetupResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+            autoSetupResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
           }`}>
             {autoSetupResult.success
               ? autoSetupResult.message || `Configured on ${autoSetupResult.port || (autoSetupResult as any).windowsPrinter}`
@@ -3186,7 +3186,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         {testResult && testResult.printerType === printerType && (
                           <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
                             testResult.success
-                              ? 'bg-green-50 text-green-700'
+                              ? 'bg-emerald-50 text-emerald-700'
                               : 'bg-red-50 text-red-700'
                           }`}>
                             <div className="font-medium">
@@ -3409,7 +3409,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 fiscalDailyReportResult.success && fiscalDailyReportResult.data?.confirmationUnknown
                                   ? 'bg-amber-50 text-amber-700'
                                   : fiscalDailyReportResult.success
-                                  ? 'bg-green-50 text-green-700'
+                                  ? 'bg-emerald-50 text-emerald-700'
                                   : 'bg-red-50 text-red-700'
                               }`}>
                                 <div className="font-semibold">
@@ -3463,7 +3463,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                             {calibrateResult && calibrateResult.printerType === printerType && (
                               <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
                                 calibrateResult.success
-                                  ? 'bg-green-50 text-green-700'
+                                  ? 'bg-emerald-50 text-emerald-700'
                                   : 'bg-red-50 text-red-700'
                               }`}>
                                 {calibrateResult.success
@@ -3485,7 +3485,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex items-start gap-3">
                   <span className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg ${
-                    sharedReceiptRouteReady ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                    sharedReceiptRouteReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                   }`}>
                     {sharedReceiptRouteReady ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
                   </span>
@@ -3550,10 +3550,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       </details>
                     </div>
                     <div className="flex flex-wrap gap-1.5 text-[11px] md:justify-end">
-                      <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.agentIsOnline ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                      <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.agentIsOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
                         {sharedReceiptPrinter.agentIsOnline ? 'POS app online' : 'POS app offline'}
                       </span>
-                      <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.isOnline ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                      <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.isOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                         {sharedReceiptPrinter.isOnline ? 'Printer online' : 'Printer offline'}
                       </span>
                       <span className={`px-2 py-1 rounded-full ${sharedReceiptPrinter.isEnabled !== false ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -3743,7 +3743,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
-                    <span className={`rounded-full px-2 py-1 ${lanKitchenNetworkInfo?.running ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    <span className={`rounded-full px-2 py-1 ${lanKitchenNetworkInfo?.running ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                       {lanKitchenNetworkInfo?.running ? 'Receiver running' : 'Receiver stopped'}
                     </span>
                     <span className={`rounded-full px-2 py-1 ${lanKitchenPairingStatus?.receiverHasPairingCode ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
@@ -3848,7 +3848,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               </div>
 
               {lanKitchenResult && (
-                <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${lanKitchenResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${lanKitchenResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
                   {lanKitchenResult.message}
                 </div>
               )}
@@ -3890,7 +3890,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           <div className="text-sm font-medium text-slate-800">{route.title}</div>
                           <div className="text-xs text-slate-500 mt-0.5">{route.description}</div>
                         </div>
-                        <span className="shrink-0 rounded-full bg-green-50 px-2 py-1 text-[11px] font-medium text-green-700">
+                        <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
                           Live
                         </span>
                       </div>
@@ -4037,7 +4037,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                               {printer.printerType} · {printer.windowsPrinterName || printer.address || 'no target'}
                             </div>
                           </div>
-                          <span className={`text-[11px] px-2 py-1 rounded-full ${printer.isEnabled ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          <span className={`text-[11px] px-2 py-1 rounded-full ${printer.isEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                             {printer.isEnabled ? 'Enabled' : 'Disabled'}
                           </span>
                         </div>
@@ -4298,7 +4298,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-1.5 text-[11px]">
-                        <span className={`px-2 py-1 rounded-full ${printer.is_online === 1 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                        <span className={`px-2 py-1 rounded-full ${printer.is_online === 1 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                           {printer.is_online === 1 ? 'Online' : 'Offline'}
                         </span>
                         <span className={`px-2 py-1 rounded-full ${printer.is_enabled === 1 ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -4497,7 +4497,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               {testResult && testResult.printerType === 'legacy' && (
                 <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
                   testResult.success
-                    ? 'bg-green-50 text-green-700'
+                    ? 'bg-emerald-50 text-emerald-700'
                     : 'bg-red-50 text-red-700'
                 }`}>
                   <div className="font-medium">
@@ -4541,7 +4541,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               <span className="text-xs text-slate-500">Saving printer settings...</span>
             )}
             {!savingPrinterChanges && printerSaveResult && (
-              <span className={`text-xs ${printerSaveResult.success ? 'text-green-600' : 'text-red-600'}`}>
+              <span className={`text-xs ${printerSaveResult.success ? 'text-emerald-600' : 'text-red-600'}`}>
                 {printerSaveResult.message}
               </span>
             )}
@@ -5437,7 +5437,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             <div className="text-xs text-slate-500">
               {t('settings.tvAd.status')}:{' '}
               {tvAdStatus?.running ? (
-                <span className="text-green-600 font-medium">
+                <span className="text-emerald-600 font-medium">
                   {t('settings.tvAd.running')}
                   {` — ${t('settings.tvAd.connectedTvs')}: ${tvAdStatus.connectedClients}`}
                 </span>
@@ -5462,30 +5462,30 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
         {config?.isPaired ? (
           <div className="space-y-3">
-            <div className="p-3 bg-green-50 rounded-lg">
+            <div className="p-3 bg-emerald-50 rounded-lg">
               <div className="flex items-center gap-3">
-                <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-green-800">
+                  <p className="text-sm font-medium text-emerald-800">
                     {t('pairing.paired')}: {config.salonName}
                   </p>
-                  <p className="text-xs text-green-600">
+                  <p className="text-xs text-emerald-600">
                     {t('pairing.id')}: {config.agentId?.substring(0, 8)}...
                   </p>
                 </div>
               </div>
               {config.apiKey && (
-                <div className="mt-2 pt-2 border-t border-green-200">
-                  <p className="text-xs text-green-600">
+                <div className="mt-2 pt-2 border-t border-emerald-200">
+                  <p className="text-xs text-emerald-600">
                     {t('pairing.apiKey')}: {config.apiKey.length > 11
                       ? `${config.apiKey.substring(0, 7)}...${config.apiKey.substring(config.apiKey.length - 4)}`
                       : '••••••••'}
                   </p>
                 </div>
               )}
-              <div className="mt-2 pt-2 border-t border-green-200 flex items-center justify-between gap-2">
+              <div className="mt-2 pt-2 border-t border-emerald-200 flex items-center justify-between gap-2">
                 <button
                   type="button"
                   disabled={isResyncingProducts}
@@ -5501,14 +5501,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       setIsResyncingProducts(false);
                     }
                   }}
-                  className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="text-xs text-emerald-700 underline underline-offset-2 hover:text-emerald-900 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isResyncingProducts
                     ? t('pairing.resyncProductsBusy')
                     : t('pairing.resyncProducts')}
                 </button>
                 {resyncResult === 'success' && (
-                  <span className="text-xs text-green-600">{t('pairing.resyncProductsOk')}</span>
+                  <span className="text-xs text-emerald-600">{t('pairing.resyncProductsOk')}</span>
                 )}
                 {resyncResult === 'error' && (
                   <span className="text-xs text-red-600">{t('pairing.resyncProductsFail')}</span>
@@ -5687,7 +5687,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     title="Copy"
                   >
                     {copied ? (
-                      <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     ) : (
@@ -5698,7 +5698,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   </button>
                 </div>
                 {copied && (
-                  <p className="text-xs text-green-600 mt-1">{t('pairing.copied')}</p>
+                  <p className="text-xs text-emerald-600 mt-1">{t('pairing.copied')}</p>
                 )}
               </div>
             </div>
@@ -5793,10 +5793,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           {/* Status display */}
           {updateStatus && (
             <div className={`px-3 py-2 rounded-lg text-sm ${
-              updateStatus.status === 'up-to-date' ? 'bg-green-50 text-green-700' :
+              updateStatus.status === 'up-to-date' ? 'bg-emerald-50 text-emerald-700' :
               updateStatus.status === 'available' ? 'bg-blue-50 text-blue-700' :
               updateStatus.status === 'downloading' ? 'bg-blue-50 text-blue-700' :
-              updateStatus.status === 'downloaded' ? 'bg-green-50 text-green-700' :
+              updateStatus.status === 'downloaded' ? 'bg-emerald-50 text-emerald-700' :
               updateStatus.status === 'error' ? 'bg-red-50 text-red-700' :
               'bg-slate-50 text-slate-600'
             }`}>
@@ -5827,7 +5827,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             {updateStatus?.status === 'downloaded' ? (
               <button
                 onClick={() => window.electronAPI.update.install()}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors cursor-pointer"
+                className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors cursor-pointer"
               >
                 {t('update.installBtn')}
               </button>
@@ -5857,7 +5857,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           {/* Status indicator */}
           <div className="flex items-center gap-2 mb-3">
             <span className={`w-2.5 h-2.5 rounded-full ${
-              sshStatus.state === 'connected' ? 'bg-green-500' :
+              sshStatus.state === 'connected' ? 'bg-emerald-500' :
               sshStatus.state === 'connecting' || sshStatus.state === 'reconnecting' ? 'bg-yellow-500 animate-pulse' :
               sshStatus.state === 'error' ? 'bg-red-500' :
               'bg-slate-300'
@@ -5875,19 +5875,19 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           {/* SSH availability info */}
           <div className="space-y-1 mb-3">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className={sshStatus.sshAvailable ? 'text-green-600' : 'text-slate-400'}>
+              <span className={sshStatus.sshAvailable ? 'text-emerald-600' : 'text-slate-400'}>
                 {sshStatus.sshAvailable ? '\u2713' : '\u2717'}
               </span>
               {t('ssh.clientAvailable')}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className={sshStatus.sshServerAvailable ? 'text-green-600' : 'text-slate-400'}>
+              <span className={sshStatus.sshServerAvailable ? 'text-emerald-600' : 'text-slate-400'}>
                 {sshStatus.sshServerAvailable ? '\u2713' : '\u2717'}
               </span>
               {t('ssh.serverAvailable')}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className={sshStatus.keyGenerated ? 'text-green-600' : 'text-slate-400'}>
+              <span className={sshStatus.keyGenerated ? 'text-emerald-600' : 'text-slate-400'}>
                 {sshStatus.keyGenerated ? '\u2713' : '\u2717'}
               </span>
               {t('ssh.keyGenerated')}
@@ -5896,8 +5896,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
           {/* Connected info */}
           {sshStatus.state === 'connected' && sshStatus.assignedPort && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-2 mb-3">
-              <p className="text-xs text-green-700">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 mb-3">
+              <p className="text-xs text-emerald-700">
                 {t('ssh.connectedOn')} {sshStatus.assignedPort}
               </p>
             </div>

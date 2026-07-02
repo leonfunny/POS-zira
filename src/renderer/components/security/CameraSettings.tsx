@@ -88,7 +88,7 @@ export default function CameraSettings({ cameras, onSave, t }: CameraSettingsPro
           </button>
           <button
             onClick={handleSave}
-            className="px-3 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors touch-manipulation"
+            className="px-3 py-2 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors touch-manipulation"
           >
             {tl('security.saveAll', 'Save All')}
           </button>
@@ -113,7 +113,7 @@ export default function CameraSettings({ cameras, onSave, t }: CameraSettingsPro
                   onClick={() => setExpandedId(isExpanded ? null : cam.id)}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${cam.enabled ? 'bg-green-500' : 'bg-slate-300'}`} />
+                    <span className={`w-2 h-2 rounded-full ${cam.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                     <span className="text-sm font-medium text-slate-700">{cam.name || tl('security.unnamed', 'Unnamed')}</span>
                     <span className="text-[10px] text-slate-400 uppercase bg-slate-200 px-1.5 py-0.5 rounded">{cam.zone}</span>
                   </div>

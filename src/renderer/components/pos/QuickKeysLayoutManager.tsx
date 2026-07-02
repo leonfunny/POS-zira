@@ -185,7 +185,7 @@ export default function QuickKeysLayoutManager({ isOpen, onClose, registerId, t,
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-white">{l.name}</span>
                     {activeLayoutId === l.id && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/50 text-green-300">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300">
                         {t('pos.active')}
                       </span>
                     )}
@@ -313,7 +313,7 @@ export default function QuickKeysLayoutManager({ isOpen, onClose, registerId, t,
                   <button onClick={handleSave} className="px-3 py-2 text-sm rounded bg-brand-600 text-white hover:bg-brand-500">
                     {t('settings.save')}
                   </button>
-                  <button onClick={handleSetActive} className="px-3 py-2 text-sm rounded bg-green-700 text-white hover:bg-green-600">
+                  <button onClick={handleSetActive} className="px-3 py-2 text-sm rounded bg-emerald-700 text-white hover:bg-emerald-600">
                     {t('pos.setActive')}
                   </button>
                   <button onClick={handleDelete} className="px-3 py-2 text-sm rounded bg-red-700 text-white hover:bg-red-600">

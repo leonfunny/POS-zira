@@ -17,7 +17,7 @@ interface TableMapProps {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  free: 'bg-green-600/20 border-green-500/40 text-green-400 hover:bg-green-600/30',
+  free: 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30',
   occupied: 'bg-amber-600/20 border-amber-500/40 text-amber-400 hover:bg-amber-600/30',
   reserved: 'bg-brand-600/20 border-brand-500/40 text-brand-400 hover:bg-brand-600/30',
   bill: 'bg-red-600/20 border-red-500/40 text-red-400 hover:bg-red-600/30',

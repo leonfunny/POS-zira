@@ -415,10 +415,10 @@ function StatusRow({
       <span className="text-xs text-slate-500">{label}</span>
       <span
         className={`inline-flex items-center gap-1 text-xs font-medium ${
-          status ? 'text-green-600' : 'text-slate-400'
+          status ? 'text-emerald-600' : 'text-slate-400'
         }`}
       >
-        <span className={`w-1.5 h-1.5 rounded-full ${status ? 'bg-green-500' : 'bg-slate-300'}`}></span>
+        <span className={`w-1.5 h-1.5 rounded-full ${status ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
         {status ? trueText : falseText}
       </span>
     </div>
