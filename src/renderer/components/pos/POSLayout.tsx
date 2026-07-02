@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Home } from 'lucide-react';
+import { Home, Languages, Maximize2, MoreVertical, ReceiptText, ShoppingCart } from 'lucide-react';
 import { usePosStore } from '../../hooks/usePosStore';
 import type { CartItem } from '../../hooks/usePosStore';
 import type { Product } from '../../hooks/usePosDb';
@@ -295,6 +295,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const [showShiftModal, setShowShiftModal] = useState<'open' | 'close' | null>(null);
   const [shiftReport, setShiftReport] = useState<any>(null);
   const [langOpen, setLangOpen] = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [scanToast, setScanToast] = useState<{ text: string; type: ScanToastType } | null>(null);
   const [manualWeightPrompt, setManualWeightPrompt] = useState<ManualWeightPrompt | null>(null);
   const [scanImport, setScanImport] = useState<{
@@ -425,6 +426,15 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     const translated = t(key);
     return translated && translated !== key ? translated : fallback;
   }, [t]);
+
+  useEffect(() => {
+    if (!headerMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHeaderMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [headerMenuOpen]);
 
   const rememberLastLabelVariant = useCallback((variantId: string | null | undefined) => {
     if (variantId) lastLabelVariantIdRef.current = variantId;
@@ -1419,36 +1429,87 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             </span>
           </div>
 
-          {/* Debt ledger (so no) */}
-          <button
-            onClick={() => setShowDebt(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors touch-manipulation"
-            title="So no"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
-            </svg>
-            <span>So no</span>
-          </button>
-
-          {/* Kitchen self-order pickup queue */}
+          {/* Secondary header controls */}
           <div className="relative">
             <button
               type="button"
-              onClick={() => setPickupPanelOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors touch-manipulation"
-              title="Đơn bếp"
+              onClick={() => {
+                setHeaderMenuOpen((v) => !v);
+                setPickupPanelOpen(false);
+                setLangOpen(false);
+              }}
+              aria-label={tOr('pos.cart.more', 'More')}
+              title={tOr('pos.cart.more', 'More')}
+              aria-haspopup="menu"
+              aria-expanded={headerMenuOpen}
+              className="relative inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-              <span>Đơn bếp</span>
+              <MoreVertical size={20} aria-hidden="true" />
               {visiblePickups.length > 0 && (
-                <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold tabular-nums">
+                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-orange-600 px-1 text-xs font-bold text-white tabular-nums">
                   {visiblePickups.length}
                 </span>
               )}
             </button>
+            {headerMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setHeaderMenuOpen(false)} aria-hidden="true" />
+                <div
+                  role="menu"
+                  onClick={() => setHeaderMenuOpen(false)}
+                  className="absolute right-0 top-full z-40 mt-1 min-w-[230px] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setShowDebt(true)}
+                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50 active:bg-amber-100 cursor-pointer touch-manipulation"
+                    title={tOr('pos.header.debt', 'So no')}
+                  >
+                    <ReceiptText size={17} aria-hidden="true" className="shrink-0" />
+                    <span>{tOr('pos.header.debt', 'So no')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setPickupPanelOpen((v) => !v)}
+                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-orange-700 hover:bg-orange-50 active:bg-orange-100 cursor-pointer touch-manipulation"
+                    title={tOr('pos.header.pickupQueue', 'Đơn bếp')}
+                  >
+                    <ShoppingCart size={17} aria-hidden="true" className="shrink-0" />
+                    <span className="flex-1">{tOr('pos.header.pickupQueue', 'Đơn bếp')}</span>
+                    {visiblePickups.length > 0 && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-orange-600 px-1 text-xs font-bold text-white tabular-nums">
+                        {visiblePickups.length}
+                      </span>
+                    )}
+                  </button>
+                  {onFullscreen && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={onFullscreen}
+                      className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
+                      title={tOr('pos.header.fullscreen', 'Enter fullscreen mode')}
+                    >
+                      <Maximize2 size={17} aria-hidden="true" className="shrink-0" />
+                      <span>{tOr('pos.header.fullscreen', 'Enter fullscreen mode')}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setLangOpen(!langOpen)}
+                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
+                    title={tOr('pos.header.language', 'Change language')}
+                  >
+                    <Languages size={17} aria-hidden="true" className="shrink-0" />
+                    <span className="flex-1">{tOr('pos.header.language', 'Change language')}</span>
+                    <span className="text-xs font-bold text-slate-500">{languageNames[language]}</span>
+                  </button>
+                </div>
+              </>
+            )}
             {pickupPanelOpen && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
@@ -1502,50 +1563,6 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
                 </div>
               </>
             )}
-          </div>
-
-          {/* Active pickup banner — đơn bếp đang xử lý ở máy này */}
-          {activePickup && (
-            <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
-              <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
-              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).className}`}>
-                {getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).text}
-              </span>
-              <button
-                type="button"
-                onClick={releaseActivePickup}
-                className="inline-flex min-h-11 items-center justify-center px-3 text-[11px] font-bold text-orange-700 bg-white/70 rounded-md hover:bg-white"
-                title="Trả đơn về danh sách"
-              >
-                Trả lại
-              </button>
-            </div>
-          )}
-
-          {/* Fullscreen icon button */}
-          {onFullscreen && (
-            <button
-              onClick={onFullscreen}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
-              title="Enter fullscreen mode"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9M20.25 20.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-              </svg>
-            </button>
-          )}
-
-          {/* Language — globe icon with dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setLangOpen(!langOpen)}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
-              title="Change language"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 003 12c0-1.605.42-3.113 1.157-4.418" />
-              </svg>
-            </button>
             {langOpen && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setLangOpen(false)} />
@@ -1566,6 +1583,24 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
               </>
             )}
           </div>
+
+          {/* Active pickup banner — đơn bếp đang xử lý ở máy này */}
+          {activePickup && (
+            <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
+              <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
+              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).className}`}>
+                {getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).text}
+              </span>
+              <button
+                type="button"
+                onClick={releaseActivePickup}
+                className="inline-flex min-h-11 items-center justify-center px-3 text-[11px] font-bold text-orange-700 bg-white/70 rounded-md hover:bg-white"
+                title="Trả đơn về danh sách"
+              >
+                Trả lại
+              </button>
+            </div>
+          )}
 
           {/* Connection status */}
           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
