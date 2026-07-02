@@ -72,6 +72,14 @@ export class ProductSync {
     database.transaction(() => {
       if (data.categories.length > 0) {
         productRepo.upsertCategories(data.categories);
+        const keepCategoryIds = new Set(data.categories.map((c: any) => c.id));
+        const pruned = productRepo.deleteCategoriesExcept(keepCategoryIds);
+        if (pruned.removed > 0) {
+          const names = pruned.categories
+            .map((category) => `${category.name} (${category.id})`)
+            .join(', ');
+          logger.info(`[ProductSync] Pruned ${pruned.removed} categories deleted on backend: ${names}`);
+        }
       }
       if (data.products.length > 0) {
         productRepo.upsertMany(data.products);

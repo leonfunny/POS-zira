@@ -1,4 +1,5 @@
 import { database } from '../database';
+import logger from '../../logger';
 
 /** Strip diacritics/accents for search matching (bánh → banh, łódź → lodz) */
 function normalizeSearch(str: string): string {
@@ -167,6 +168,11 @@ export interface CategoryRow {
   kiosk_modifier_groups_json?: string | null;
 }
 
+export interface CategoryPruneResult {
+  removed: number;
+  categories: Array<Pick<CategoryRow, 'id' | 'name'>>;
+}
+
 // Hide template rows that have variant children. The sync layer mirrors
 // both the product (template) and its variants into product_variants —
 // for a 1-product/1-variant tạp hóa item that surfaces as two rows
@@ -180,6 +186,16 @@ const HIDE_TEMPLATES_WITH_VARIANTS = `
     WHERE template_id IS NOT NULL AND is_active = 1
   )
 `;
+
+const CATEGORY_PRUNE_BELT_CHECK_TABLES = [
+  'services',
+  'kitchen_self_order_category_prefs',
+  'forecast_recommendations',
+] as const;
+
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => '?').join(', ');
+}
 
 function scoreSearchMatch(product: ProductVariantRow, query: string, normalizedQuery: string, tokens: string[]): number {
   const name = normalizeSearch(product.name || '');
@@ -461,6 +477,54 @@ export const productRepo = {
     for (const id of ids) {
       database.run('UPDATE product_variants SET is_active = 0 WHERE id = ?', [id]);
     }
+  },
+
+  deleteCategoriesExcept(keepIds: Set<string>): CategoryPruneResult {
+    const keep = [...keepIds].filter(Boolean);
+    if (keep.length === 0) return { removed: 0, categories: [] };
+
+    const categories = database.all<Pick<CategoryRow, 'id' | 'name'>>(
+      `SELECT id, name
+       FROM categories
+       WHERE id NOT IN (${placeholders(keep.length)})
+       ORDER BY name, id`,
+      keep,
+    );
+    if (categories.length === 0) return { removed: 0, categories: [] };
+
+    const ids = categories.map((category) => category.id);
+    const idPlaceholders = placeholders(ids.length);
+
+    database.run(
+      `UPDATE product_variants
+       SET category_id = NULL
+       WHERE category_id IN (${idPlaceholders})`,
+      ids,
+    );
+
+    for (const table of CATEGORY_PRUNE_BELT_CHECK_TABLES) {
+      const row = database.get<{ count: number }>(
+        `SELECT COUNT(*) as count
+         FROM ${table}
+         WHERE category_id IN (${idPlaceholders})`,
+        ids,
+      );
+      const rows = row?.count ?? 0;
+      if (rows > 0) {
+        logger.warn(
+          `[ProductRepo] ${table} has ${rows} row(s) referencing categories deleted on backend`,
+          { rows, categories },
+        );
+      }
+    }
+
+    database.run(
+      `DELETE FROM categories
+       WHERE id IN (${idPlaceholders})`,
+      ids,
+    );
+
+    return { removed: categories.length, categories };
   },
 
   upsertCategories(cats: CategoryRow[]): void {
