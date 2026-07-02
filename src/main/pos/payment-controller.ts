@@ -372,7 +372,28 @@ export class PaymentController {
 
   private buildSaleReceiptData(orderId: string): ReceiptData | null {
     const order = orderRepo.getById(orderId);
-    if (!order) return null;
+    if (!order) {
+      const snap = fiscalAttemptRepo.getReceiptSnapshot(orderId);
+      if (!snap) return null;
+      return {
+        orderId,
+        orderNumber: snap.orderNumber || orderId.substring(0, 8),
+        salonName: this.getSalonName?.(),
+        sellerName: this.getSellerName?.(),
+        sellerAddress: this.getSellerAddress?.(),
+        sellerNip: this.getSellerNip?.(),
+        items: Array.isArray(snap.items) ? snap.items : [],
+        payment: snap.payment || { method: 'CASH', amount: snap.total || 0 },
+        subtotal: typeof snap.subtotal === 'number' ? snap.subtotal : (snap.total || 0),
+        discount: snap.discount && snap.discount > 0 ? snap.discount : undefined,
+        total: snap.total || 0,
+        cashierName: snap.cashierName || undefined,
+        customerName: snap.customerName || undefined,
+        customerNip: snap.customerNip || undefined,
+        tenders: Array.isArray(snap.tenders) && snap.tenders.length > 1 ? snap.tenders : undefined,
+        isReprint: true,
+      };
+    }
     const items = orderRepo.getItemsByOrderId(orderId);
     const itemsLookNetPriced = this.orderItemsLookNetPriced(order, items);
     const subtotal = itemsLookNetPriced

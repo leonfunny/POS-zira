@@ -24,6 +24,9 @@ export interface FiscalAttemptRow {
   created_at: string | null;
   sent_at: string | null;
   resolved_at: string | null;
+  fiskal_number?: string | null;
+  gross_total?: number | null;
+  fiscalized_at?: string | null;
 }
 
 export interface CreateFiscalAttemptInput {
@@ -63,6 +66,17 @@ function serialize(value: unknown): string | null {
   }
 }
 
+function projectFromPayload(payloadJson: string): { fiskalNumber: string | null; grossTotal: number | null } {
+  try {
+    const payload = JSON.parse(payloadJson);
+    const fiskalNumber = typeof payload?.orderNumber === 'string' ? payload.orderNumber : null;
+    const grossTotal = Number.isFinite(Number(payload?.total)) ? Math.round(Number(payload.total)) : null;
+    return { fiskalNumber, grossTotal };
+  } catch {
+    return { fiskalNumber: null, grossTotal: null };
+  }
+}
+
 function paymentPredicate(paymentId?: string | null): { sql: string; params: Array<string | null> } {
   if (paymentId) return { sql: 'payment_id = ?', params: [paymentId] };
   return { sql: '1 = 1', params: [] };
@@ -82,6 +96,8 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
   markOpenSentAsUnknownOnStartup(): number;
   findLatestByOrder(orderId: string): FiscalAttemptRow | null;
   getConfirmedOrderIds(orderIds: string[]): string[];
+  getReceiptSnapshot(orderId: string): any | null;
+  backfillFiskalColumns(): number;
   recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void;
 } = {
   /**
@@ -214,11 +230,12 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
 
   createPending(input: CreateFiscalAttemptInput): FiscalAttemptRow {
     const id = randomUUID();
+    const { fiskalNumber, grossTotal } = projectFromPayload(input.payloadJson);
     database.run(
       `INSERT INTO fiscal_attempts (
         id, order_id, payment_id, attempt_no, idempotency_key, printer_type,
-        payload_json, payload_hash, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        payload_json, payload_hash, status, fiskal_number, gross_total, fiscalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       [
         id,
         input.orderId,
@@ -229,10 +246,48 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
         input.payloadJson,
         input.payloadHash,
         'PENDING',
+        fiskalNumber,
+        grossTotal,
       ],
     );
     database.markDirty();
     return database.get<FiscalAttemptRow>('SELECT * FROM fiscal_attempts WHERE id = ?', [id])!;
+  },
+
+  getReceiptSnapshot(orderId: string): any | null {
+    const row = database.get<{ payload_json: string }>(
+      `SELECT payload_json FROM fiscal_attempts
+       WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED'
+       ORDER BY attempt_no DESC
+       LIMIT 1`,
+      [orderId],
+    );
+    if (!row?.payload_json) return null;
+    try {
+      return JSON.parse(row.payload_json);
+    } catch {
+      return null;
+    }
+  },
+
+  backfillFiskalColumns(): number {
+    const rows = database.all<{ id: string; payload_json: string; resolved_at: string | null; created_at: string | null }>(
+      `SELECT id, payload_json, resolved_at, created_at FROM fiscal_attempts
+       WHERE fiskal_number IS NULL AND payload_json LIKE '{%'`,
+    );
+    let updated = 0;
+    for (const row of rows) {
+      const { fiskalNumber, grossTotal } = projectFromPayload(row.payload_json);
+      database.run(
+        `UPDATE fiscal_attempts
+         SET fiskal_number = ?, gross_total = ?, fiscalized_at = ?
+         WHERE id = ?`,
+        [fiskalNumber, grossTotal, row.resolved_at ?? row.created_at ?? null, row.id],
+      );
+      updated++;
+    }
+    if (updated > 0) database.markDirty();
+    return updated;
   },
 
   markSent(id: string): void {

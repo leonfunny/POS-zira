@@ -1545,4 +1545,18 @@ export const migrations: Migration[] = [
       WHERE kitchen_print = 1;
     `,
   },
+  {
+    version: 50,
+    name: 'fiskal_projection_columns_and_view',
+    up: `
+      ALTER TABLE fiscal_attempts ADD COLUMN fiskal_number TEXT;
+      ALTER TABLE fiscal_attempts ADD COLUMN gross_total INTEGER;
+      ALTER TABLE fiscal_attempts ADD COLUMN fiscalized_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_fiscalized_at ON fiscal_attempts(fiscalized_at);
+      CREATE VIEW IF NOT EXISTS fiskal AS
+        SELECT id, order_id, fiskal_number, gross_total, fiscalized_at, printer_type, payload_json
+        FROM fiscal_attempts
+        WHERE status = 'SUCCESS_CONFIRMED';
+    `,
+  },
 ];

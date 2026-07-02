@@ -4127,6 +4127,14 @@ export class PosModule extends BaseModule {
 
   async start(): Promise<void> {
     this.setState(ModuleState.RUNNING);
+    try {
+      const backfilled = fiscalAttemptRepo.backfillFiskalColumns();
+      if (backfilled > 0) {
+        logger.info(`[Fiskal] backfilled ${backfilled} projections`);
+      }
+    } catch (err: any) {
+      logger.warn(`[Fiskal] backfill failed: ${err?.message || err}`);
+    }
     this.startFiscalReceiptSyncTimer();
     // Set salon display info from config
     const config = getConfig();
