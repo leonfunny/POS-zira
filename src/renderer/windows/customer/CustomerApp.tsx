@@ -66,7 +66,7 @@ class ErrorBoundary extends React.Component<
 
 function CustomerAppContent() {
   const [state, setState] = useState<PosState | null>(null);
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language | null>(null);
   const [displayProfile, setDisplayProfile] = useState<LiveCustomerDisplayProfile | null>(null);
   const [retailCatalogEnabled, setRetailCatalogEnabled] = useState(true);
   const [foodMenuEnabled, setFoodMenuEnabled] = useState(false);
@@ -176,7 +176,6 @@ function CustomerAppContent() {
     };
   }, [loadCustomerDisplayConfig]);
 
-  const t = getTranslation(lang);
   const displayMode = state?.display?.mode || 'idle';
   const display = state?.display;
   const promoImages = display?.promoImages || [];
@@ -215,9 +214,11 @@ function CustomerAppContent() {
     }
   }, []);
 
-  if (!displayProfile) {
+  if (!displayProfile || !lang) {
     return <div className="h-screen bg-slate-50" aria-label="Loading customer display" />;
   }
+
+  const t = getTranslation(lang);
 
   if (displayProfile === 'promo_only') {
     const promoOnlyIdleView = (

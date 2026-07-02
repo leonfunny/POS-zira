@@ -2715,7 +2715,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           <div className="panel p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-sm font-semibold text-slate-700">Printer Detection</h2>
+            <h2 className="text-sm font-semibold text-slate-700">{tOr('settings.printerDetection', 'Printer Detection')}</h2>
             <p className="text-xs text-slate-500 mt-0.5">Auto-detect and auto-recover all connected printers</p>
           </div>
           <div className="flex items-center gap-2">
@@ -3470,12 +3470,12 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   <Clock className="h-4 w-4 shrink-0 text-slate-600" />
                                   <div className="min-w-0">
                                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                                      Fiscal daily report timer
+                                      {tOr('settings.fiscalDailyReportTimer', 'Fiscal daily report timer')}
                                     </div>
                                     <div className="text-xs text-slate-500">
                                       {fiscalDailyReport.enabled
                                         ? `${fiscalDailyReportTimeValue(fiscalDailyReport)} ${fiscalDailyReport.timezone}`
-                                        : 'Disabled'}
+                                        : tOr('settings.disabled', 'Disabled')}
                                     </div>
                                   </div>
                                 </div>
@@ -3496,7 +3496,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                               <div className="mt-3 grid grid-cols-2 gap-3">
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Hour (24h)</span>
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.hour24h', 'Hour (24h)')}</span>
                                   <select
                                     value={fiscalDailyReport.hour}
                                     onChange={(e) => updateFiscalDailyReport({ hour: Number(e.target.value) })}
@@ -3510,7 +3510,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   </select>
                                 </label>
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Minute</span>
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.minute', 'Minute')}</span>
                                   <select
                                     value={fiscalDailyReport.minute}
                                     onChange={(e) => updateFiscalDailyReport({ minute: Number(e.target.value) })}
@@ -3524,7 +3524,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   </select>
                                 </label>
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retries</span>
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.retries', 'Retries')}</span>
                                   <select
                                     value={fiscalDailyReportRetries}
                                     onChange={(e) => updateFiscalDailyReport({ maxAttempts: Number(e.target.value) + 1 })}
@@ -3538,7 +3538,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   </select>
                                 </label>
                                 <label className="block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Retry every</span>
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.retryEvery', 'Retry every')}</span>
                                   <select
                                     disabled={fiscalDailyReportRetries === 0}
                                     value={fiscalDailyReport.retryMinutes}
@@ -3553,7 +3553,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   </select>
                                 </label>
                                 <label className="col-span-2 block">
-                                  <span className="mb-1 block text-xs font-medium text-slate-600">Timezone</span>
+                                  <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.timezone', 'Timezone')}</span>
                                   <select
                                     disabled
                                     value={FISCAL_DAILY_REPORT_TIMEZONE}
@@ -3567,7 +3567,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                               <div className="mt-3 flex flex-wrap items-center gap-2">
                                 <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                  <span className="text-xs font-medium text-slate-700">This POS is master</span>
+                                  <span className="text-xs font-medium text-slate-700">{tOr('settings.thisPosIsMaster', 'This POS is master')}</span>
                                   <input
                                     type="checkbox"
                                     checked={fiscalDailyReport.master}
@@ -3581,13 +3581,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   onClick={() => setShowFiscalDailyReportAdvanced((open) => !open)}
                                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                                 >
-                                  Advanced
+                                  {tOr('settings.advanced', 'Advanced')}
                                 </button>
                               </div>
                               {showFiscalDailyReportAdvanced && (
                                 <div className="mt-2">
                                   <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                    <span className="text-xs font-medium text-slate-700">Force auto report</span>
+                                    <span className="text-xs font-medium text-slate-700">{tOr('settings.forceAutoReport', 'Force auto report')}</span>
                                     <input
                                       type="checkbox"
                                       checked={fiscalDailyReport.unconditionally}
@@ -3602,7 +3602,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-                                  Fiscal daily report
+                                  {tOr('settings.fiscalDailyReport', 'Fiscal daily report')}
                                 </div>
                                 <p className="mt-1 text-xs leading-5 text-amber-800">
                                   This closes the current ELZAB fiscal period. Use only while standing beside POS1 and the fiscal printer.
@@ -3630,7 +3630,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                               ) : (
                                 <>
                                   <Shield className="h-4 w-4" />
-                                  Print fiscal daily report now
+                                  {tOr('settings.printFiscalDailyReportNow', 'Print fiscal daily report now')}
                                 </>
                               )}
                             </button>
@@ -3725,7 +3725,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     {sharedReceiptRouteReady ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
                   </span>
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-800">Self-checkout receipt printing</h3>
+                    <h3 className="text-sm font-semibold text-slate-800">{tOr('settings.selfCheckoutReceiptPrinting', 'Self-checkout receipt printing')}</h3>
                     <p className="text-sm text-slate-700 mt-1">{sharedReceiptStatusTitle}</p>
                     <p className="text-xs text-slate-500 mt-1">{sharedReceiptStatusDescription}</p>
                   </div>
@@ -3807,7 +3807,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
               <div className="mt-4 space-y-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Available receipt printers
+                  {tOr('settings.availableReceiptPrinters', 'Available receipt printers')}
                 </div>
                 {sharedReceiptPrinters.length === 0 && (
                   <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
@@ -3894,7 +3894,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             <div className="border border-slate-200 rounded-lg p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-800">Kitchen Wi-Fi Direct</h3>
+                  <h3 className="text-sm font-semibold text-slate-800">{tOr('settings.kitchenWifiDirect', 'Kitchen Wi-Fi Direct')}</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     LAN-first is used only for KITCHEN_TICKET jobs. Backend routing stays as fallback.
                   </p>
@@ -3922,7 +3922,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <div className="rounded-lg border border-slate-200 px-3 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-medium text-slate-800">Receive kitchen orders over Wi-Fi</div>
+                      <div className="text-sm font-medium text-slate-800">{tOr('settings.receiveKitchenOrdersOverWifi', 'Receive kitchen orders over Wi-Fi')}</div>
                       <div className="mt-0.5 text-xs text-slate-500">
                         Local IP: {lanKitchenNetworkInfo?.suggestedHost || 'detecting'} - Port {lanKitchenNetworkInfo?.port || lanKitchenReceivePort || DEFAULT_LAN_FIRST_KITCHEN_PORT}
                       </div>
@@ -3944,7 +3944,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-600">Port</span>
+                      <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.port', 'Port')}</span>
                       <input
                         type="number"
                         min={1}
@@ -3955,7 +3955,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       />
                     </label>
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-600">Pairing code</span>
+                      <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.pairingCode', 'Pairing code')}</span>
                       <div className="flex gap-2">
                         <input
                           type="text"
@@ -3993,7 +3993,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <div className="rounded-lg border border-slate-200 px-3 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-medium text-slate-800">Use Wi-Fi first for kitchen tickets</div>
+                      <div className="text-sm font-medium text-slate-800">{tOr('settings.useWifiFirstForKitchenTickets', 'Use Wi-Fi first for kitchen tickets')}</div>
                       <div className="mt-0.5 text-xs text-slate-500">
                         Select a ready KITCHEN printer; Settings saves the machine/printer target internally.
                       </div>
@@ -4015,7 +4015,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                   <div className="mt-3 space-y-3">
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-600">Kitchen printer</span>
+                      <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.kitchenPrinter', 'Kitchen printer')}</span>
                       <select
                         value={lanKitchenSelectedPrinterId}
                         onChange={(e) => setLanKitchenSelectedPrinterId(e.target.value)}
@@ -4035,7 +4035,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-slate-600">Kitchen POS host/IP</span>
+                        <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.kitchenPosHostIp', 'Kitchen POS host/IP')}</span>
                         <input
                           type="text"
                           value={lanKitchenTargetHost}
@@ -4045,7 +4045,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         />
                       </label>
                       <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-slate-600">Port</span>
+                        <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.port', 'Port')}</span>
                         <input
                           type="number"
                           min={1}
@@ -4058,7 +4058,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     </div>
 
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-600">Sender pairing code</span>
+                      <span className="mb-1 block text-xs font-medium text-slate-600">{tOr('settings.senderPairingCode', 'Sender pairing code')}</span>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -4092,7 +4092,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             <div className="border border-slate-200 rounded-lg p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-800">Salon online printers</h3>
+                  <h3 className="text-sm font-semibold text-slate-800">{tOr('settings.salonOnlinePrinters', 'Salon online printers')}</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Read-only salon inventory. A printer is ready only when its owner POS app is online, the device is connected, and a target is configured.
                   </p>
@@ -4194,7 +4194,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 })}
 
                 <div className="rounded-lg border border-slate-200 px-3 py-3">
-                  <div className="text-sm font-medium text-slate-800">Planned printer routes</div>
+                  <div className="text-sm font-medium text-slate-800">{tOr('settings.plannedPrinterRoutes', 'Planned printer routes')}</div>
                   <div className="mt-0.5 text-xs text-slate-500">
                     These roles are visible here so the Settings model can grow without changing local hardware setup.
                   </div>
@@ -4221,7 +4221,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             <div className="border border-slate-200 rounded-lg p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-sm font-medium text-slate-700">Local printer config (this POS)</h3>
+                  <h3 className="text-sm font-medium text-slate-700">{tOr('settings.localPrinterConfigThisPos', 'Local printer config (this POS)')}</h3>
                   <p className="text-xs text-slate-500 mt-0.5 break-all">Agent ID: {currentAgentId || 'not paired'}</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     Edit these rows only on the POS that owns the connected printer. If two POS devices show the same agent ID, re-pair one device before editing.
@@ -4256,7 +4256,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
               <div className="mt-4 grid gap-3 lg:grid-cols-2">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Predefined</div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{tOr('settings.predefined', 'Predefined')}</div>
                   <div className="space-y-2">
                     {predefinedServerPrinters.length === 0 && (
                       <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
@@ -4287,7 +4287,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Custom printers</div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{tOr('settings.customPrinters', 'Custom printers')}</div>
                   <div className="space-y-2">
                     {customServerPrinters.length === 0 && (
                       <div className="text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg px-3 py-2">
@@ -4340,7 +4340,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
                     <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                       <h3 className="text-sm font-semibold text-slate-800">
-                        {customPrinterForm.id ? 'Edit custom printer' : 'Add custom printer'}
+                        {customPrinterForm.id ? tOr('settings.editCustomPrinter', 'Edit custom printer') : tOr('settings.addCustomPrinter', 'Add custom printer')}
                       </h3>
                       <button
                         type="button"
@@ -4352,7 +4352,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     </div>
                     <div className="space-y-3 px-4 py-4">
                       <div>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">Display name</label>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.displayName', 'Display name')}</label>
                         <input
                           type="text"
                           value={customPrinterForm.displayName}
@@ -4363,7 +4363,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-medium text-slate-600 mb-1">Type</label>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.type', 'Type')}</label>
                           <select
                             value={customPrinterForm.printerType}
                             onChange={(e) => updateCustomPrinterForm({ printerType: e.target.value as PrinterTypeValue })}
@@ -4375,7 +4375,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-slate-600 mb-1">Protocol</label>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.protocol', 'Protocol')}</label>
                           <select
                             value={customPrinterForm.protocol}
                             onChange={(e) => updateCustomPrinterForm({ protocol: e.target.value as PrinterProtocol })}
@@ -4390,7 +4390,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                       {customFormUsesWindowsPrinter ? (
                         <div>
-                          <label className="block text-xs font-medium text-slate-600 mb-1">Windows printer</label>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.windowsPrinter', 'Windows printer')}</label>
                           <select
                             value={customPrinterForm.windowsPrinterName}
                             onChange={(e) => updateCustomPrinterForm({ windowsPrinterName: e.target.value })}
@@ -4404,7 +4404,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         </div>
                       ) : (
                         <div>
-                          <label className="block text-xs font-medium text-slate-600 mb-1">COM port / address</label>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.comPortAddress', 'COM port / address')}</label>
                           <input
                             type="text"
                             value={customPrinterForm.address}
@@ -4417,7 +4417,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-medium text-slate-600 mb-1">Paper width (mm)</label>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.paperWidthMm', 'Paper width (mm)')}</label>
                           <input
                             type="number"
                             min={5}
@@ -4429,7 +4429,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         </div>
                         {customPrinterForm.printerType === 'LABEL' && (
                           <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Paper height (mm)</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{tOr('settings.paperHeightMm', 'Paper height (mm)')}</label>
                             <input
                               type="number"
                               min={5}
@@ -4449,7 +4449,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           onChange={(e) => updateCustomPrinterForm({ isEnabled: e.target.checked })}
                           className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
                         />
-                        Enabled
+                        {tOr('settings.enabled', 'Enabled')}
                       </label>
                     </div>
                     <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
@@ -4478,7 +4478,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               <summary className="cursor-pointer select-none list-none">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-slate-700">Advanced diagnostics: SQLite mirror</h3>
+                    <h3 className="text-sm font-medium text-slate-700">{tOr('settings.advancedDiagnosticsSqliteMirror', 'Advanced diagnostics: SQLite mirror')}</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       {localOnlinePrinterCount} online / {localPrinterRows.length} mirrored rows
                     </p>
@@ -4924,7 +4924,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               <div className="min-w-0">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                   <Scale size={16} />
-                  Scale
+                  {tOr('settings.scale', 'Scale')}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
                   Use a local USB/COM scale, or read a scale shared by another POS over Wi-Fi.
@@ -4933,9 +4933,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
               <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
                 {([
-                  ['none', 'No scale'],
-                  ['local', 'This POS has scale'],
-                  ['remote', 'Wi-Fi scale from POS'],
+                  ['none', tOr('settings.noScale', 'No scale')],
+                  ['local', tOr('settings.thisPosHasScale', 'This POS has scale')],
+                  ['remote', tOr('settings.wifiScaleFromPos', 'Wi-Fi scale from POS')],
                 ] as Array<[ScaleConnectionMode, string]>).map(([mode, label]) => (
                   <button
                     key={mode}
@@ -4960,7 +4960,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-medium text-slate-600 mb-1">
-                        Scale port
+                        {tOr('settings.scalePort', 'Scale port')}
                       </label>
                       <select
                         value={scalePort}
@@ -4981,7 +4981,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-600 mb-1">
-                        Protocol
+                        {tOr('settings.protocol', 'Protocol')}
                       </label>
                       <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
                         DIBAL_GDPOS - 9600 8N1
@@ -4992,7 +4992,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-slate-700">Share this scale over Wi-Fi</p>
+                        <p className="text-sm font-semibold text-slate-700">{tOr('settings.shareThisScaleOverWifi', 'Share this scale over Wi-Fi')}</p>
                         <p className="text-xs text-slate-500">Turn this on only on the machine physically connected to the scale.</p>
                       </div>
                       <button
@@ -5019,7 +5019,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                           <label className="block text-sm font-medium text-slate-600 mb-1">
-                            This machine IP
+                            {tOr('settings.thisMachineIp', 'This machine IP')}
                           </label>
                           <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700">
                             {scaleNetworkInfo?.suggestedHost || 'Detecting...'}
@@ -5027,7 +5027,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-600 mb-1">
-                            Share port
+                            {tOr('settings.sharePort', 'Share port')}
                           </label>
                           <input
                             type="number"
@@ -5040,7 +5040,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-600 mb-1">
-                            Pairing code
+                            {tOr('settings.pairingCode', 'Pairing code')}
                           </label>
                           <div className="flex gap-2">
                             <input
@@ -5077,7 +5077,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-slate-600 mb-1">
-                      Host/IP of scale POS
+                      {tOr('settings.hostIpOfScalePos', 'Host/IP of scale POS')}
                     </label>
                     <input
                       value={scaleRemoteHost}
@@ -5091,7 +5091,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-600 mb-1">
-                      Remote port
+                      {tOr('settings.remotePort', 'Remote port')}
                     </label>
                     <input
                       type="number"
@@ -5107,7 +5107,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-600 mb-1">
-                      Pairing code
+                      {tOr('settings.pairingCode', 'Pairing code')}
                     </label>
                     <input
                       value={scaleRemoteToken}
@@ -6210,12 +6210,20 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       {/* Check-in Display */}
       <SettingsSection searchQuery={settingsSearch} keywords={checkinDisplayKeywords}>
       <div className="panel p-4">
-        <h2 className="text-sm font-semibold text-slate-700 mb-1">Check-in Display</h2>
+        <h2 className="text-sm font-semibold text-slate-700 mb-1">{tOr('settings.checkinDisplay', 'Check-in Display')}</h2>
         <p className="text-xs text-slate-400 mb-4">Control which elements are visible on the Check-in tab. Hide staff-only panels for customer-facing setups.</p>
         <div className="space-y-1">
           {[
-            { key: 'checkinShowStatsBar' as const, label: 'Stats bar', desc: 'Total · Waiting · In Service · Completed counts' },
-            { key: 'checkinShowQueue' as const, label: 'Active queue panel', desc: 'Right-side list of waiting and in-service customers' },
+            {
+              key: 'checkinShowStatsBar' as const,
+              label: tOr('settings.checkinStatsBar', 'Stats bar'),
+              desc: tOr('settings.checkinStatsBarDesc', 'Total · Waiting · In Service · Completed counts'),
+            },
+            {
+              key: 'checkinShowQueue' as const,
+              label: tOr('settings.checkinActiveQueuePanel', 'Active queue panel'),
+              desc: tOr('settings.checkinActiveQueuePanelDesc', 'Right-side list of waiting and in-service customers'),
+            },
           ].map(({ key, label, desc }) => {
             const enabled = (config?.[key] ?? true) as boolean;
             return (
