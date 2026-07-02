@@ -159,7 +159,7 @@ export default function HoldOrdersModal({ isOpen, orders, onClose, onSelect, onD
                       <span className="text-xs text-slate-500">{new Date(o.createdAt).toLocaleString()}</span>
                       <button
                         onClick={() => setPendingDelete(o)}
-                        className="min-h-11 rounded-lg border border-red-300 bg-red-50 px-3 text-sm font-extrabold text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
+                        className="min-h-11 rounded-lg border border-red-300 bg-red-50 px-3 text-sm font-extrabold text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
                       >
                         {t('pos.delete')}
                       </button>

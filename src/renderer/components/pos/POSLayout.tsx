@@ -1378,7 +1378,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
           <button
             type="button"
             onClick={handleHomeReset}
-            className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-base font-bold tracking-wide text-brand-600 hover:bg-brand-50 active:bg-brand-100 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-base font-bold tracking-wide text-brand-600 hover:bg-brand-50 active:bg-brand-100 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             aria-label={tOr('pos.homeReset', 'Reset POS home')}
             title={tOr('pos.homeReset', 'Reset POS home')}
           >

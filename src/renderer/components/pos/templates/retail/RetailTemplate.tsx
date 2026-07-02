@@ -1109,7 +1109,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                 }}
                 aria-pressed={autoCameraEnabled}
                 title={tOr('pos.autoCamera.toggle', 'Auto camera search')}
-                className={`shrink-0 min-h-11 px-3 rounded-lg border inline-flex items-center gap-2 text-xs font-extrabold transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                className={`shrink-0 min-h-11 px-3 rounded-lg border inline-flex items-center gap-2 text-xs font-extrabold transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                   autoCameraEnabled
                     ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                     : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
@@ -1165,7 +1165,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                       type="button"
                       onClick={() => handleUnitFilterChange(filter.id)}
                       aria-disabled={searchQuery ? true : undefined}
-                      className={`min-w-14 px-3 rounded-md text-xs font-extrabold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                      className={`min-w-14 px-3 rounded-md text-xs font-extrabold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                         isActive
                           ? 'bg-brand-600 text-white shadow-sm'
                           : 'text-slate-600 hover:bg-brand-50 hover:text-brand-700'
@@ -1183,7 +1183,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   onClick={() => scrollCategories('left')}
                   aria-label={tOr('pos.scrollCategoriesLeft', 'Scroll categories left')}
                   tabIndex={canScrollLeft ? 0 : -1}
-                  className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                     canScrollLeft ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
                   }`}
                 >
@@ -1201,7 +1201,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                     disabled={isSyncing}
                     title={tOr('pos.syncProducts', 'Sync products from server')}
                     aria-label={tOr('pos.syncProducts', 'Sync products from server')}
-                    className={`shrink-0 min-h-11 w-11 rounded-lg border flex items-center justify-center transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                    className={`shrink-0 min-h-11 w-11 rounded-lg border flex items-center justify-center transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                       isSyncing
                         ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-wait'
                         : syncError
@@ -1238,7 +1238,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                       if (searchQuery) return;
                       setActiveCategoryId(null);
                     }}
-                    className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                    className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                       !searchQuery && browseActiveCategoryId === null
                         ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                         : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
@@ -1257,7 +1257,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                           if (searchQuery) return;
                           setActiveCategoryId(isActive ? null : cat.id);
                         }}
-                        className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                        className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                           isActive
                             ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                             : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
@@ -1285,7 +1285,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   onClick={() => scrollCategories('right')}
                   aria-label={tOr('pos.scrollCategoriesRight', 'Scroll categories right')}
                   tabIndex={canScrollRight ? 0 : -1}
-                  className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+                  className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-white/95 backdrop-blur-sm shadow-sm flex items-center justify-center text-slate-700 hover:bg-brand-50 hover:text-brand-700 transition-opacity duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                     canScrollRight ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
                   }`}
                 >
@@ -1345,7 +1345,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                         key={cat.id}
                         type="button"
                         onClick={() => setActiveCategoryId(cat.id)}
-                        className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus:ring-2 focus:ring-brand-300"
+                        className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100 aspect-[4/3]">
                           {catImg ? (

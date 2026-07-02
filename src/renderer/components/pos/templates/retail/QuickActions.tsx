@@ -48,7 +48,7 @@ function ActionButton({ icon, label, onClick, disabled, active, tone = 'neutral'
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`h-10 flex-none px-2.5 rounded-lg border text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 ${
+      className={`h-10 flex-none px-2.5 rounded-lg border text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
         active
           ? activeClasses
           : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'

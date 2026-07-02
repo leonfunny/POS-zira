@@ -63,10 +63,10 @@ export default function ConfirmActionDialog({
   };
 
   const cancelClasses =
-    'min-h-11 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50';
+    'min-h-11 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50';
   const confirmClasses = danger
-    ? 'min-h-11 rounded-lg border border-red-600 bg-red-600 px-4 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-50'
-    : 'min-h-11 rounded-lg border border-slate-900 bg-slate-900 px-4 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50';
+    ? 'min-h-11 rounded-lg border border-red-600 bg-red-600 px-4 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 disabled:cursor-not-allowed disabled:opacity-50'
+    : 'min-h-11 rounded-lg border border-slate-900 bg-slate-900 px-4 text-sm font-extrabold text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50';
 
   const itemBlock = itemName ? (
     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-extrabold text-slate-900">

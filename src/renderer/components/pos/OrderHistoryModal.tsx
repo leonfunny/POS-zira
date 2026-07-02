@@ -377,7 +377,7 @@ function CloseButton({ onClose }: { onClose: () => void }) {
     <button
       onClick={onClose}
       aria-label="Close"
-      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-200"
+      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
     >
       <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
@@ -659,21 +659,21 @@ function RefundPanel({
           <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(remainingTotal, currency)}</p>
         </div>
         <button onClick={() => { resetRefundRequestId(); onCancel(); }} disabled={loading}
-          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200">
+          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200">
           Cancel
         </button>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button onClick={() => setType('FULL')}
-          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
+          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
             refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
           <span className="mt-0.5 block text-xs opacity-85">{formatMoney(remainingTotal, currency)}</span>
         </button>
         <button onClick={() => setType('PARTIAL')}
-          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-200 ${
+          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 ${
             refundType === 'PARTIAL' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.partial', 'Partial Refund')}</span>
@@ -788,7 +788,7 @@ function RefundPanel({
       )}
 
       <button onClick={handleConfirm} disabled={!isValid || loading}
-        className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 ${
+        className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
           loading ? 'cursor-not-allowed bg-slate-200 text-slate-500'
             : confirmStep ? 'bg-red-700 text-white hover:bg-red-800'
             : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
@@ -967,7 +967,7 @@ function ServerActionsPanel({
       <button
         onClick={handleDownload}
         disabled={busy !== null || isMirroring}
-        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
       >
         {busy === 'download' ? '...' : tOr(t, hasInvoice ? 'pos.history.server.downloadInvoice' : 'pos.history.server.downloadReceipt', hasInvoice ? 'Download Invoice PDF' : 'Download Receipt PDF')}
       </button>
@@ -1005,7 +1005,7 @@ function ServerActionsPanel({
           <button
             onClick={handleAddInvoice}
             disabled={!nipValid || busy !== null || isMirroring}
-            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           >
             {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
           </button>
@@ -1015,7 +1015,7 @@ function ServerActionsPanel({
       <button
         onClick={handleProforma}
         disabled={busy !== null || isMirroring}
-        className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+        className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
       >
         {busy === 'proforma' ? '...' : tOr(t, 'pos.history.server.proforma', 'Generate Proforma')}
       </button>
@@ -1804,7 +1804,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
           <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); setCancelStatus(null); }}
-              className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
@@ -2067,7 +2067,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
                   disabled={reprinting || printingFiscal || isMirroring}
-                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
                 >
                   {(reprinting || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
@@ -2105,7 +2105,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handlePrintFiscal(order.id); }}
                   disabled={printingFiscal || reprinting || isMirroring || refundStatus !== 'none' || !!reconcilable}
-                  className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
                 >
                   {(printingFiscal || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-800" aria-hidden="true" />
@@ -2158,7 +2158,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) setShowRefund(true); }}
                   disabled={isMirroring}
-                  className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
+                  className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
                 >
                   {tOr(t, 'pos.refund.title', 'Refund Order')}
                 </button>
@@ -2190,7 +2190,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   <button
                     disabled={cancelling || isMirroring}
                     onClick={requestCancelOrder}
-                    className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
+                    className="flex min-h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 disabled:opacity-50"
                   >
                     {cancelling ? 'Cancelling...' : tOr(t, 'pos.history.cancelOrder', 'Cancel Order')}
                   </button>
@@ -2217,7 +2217,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   <button
                     onClick={() => requestDeleteLocalOrder(order)}
                     disabled={deleting || isMirroring}
-                    className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-red-300 bg-white px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-200"
+                    className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-red-300 bg-white px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
                   >
                     {deleting ? tOr(t, 'pos.history.deleting', 'Deleting...') : tOr(t, 'pos.history.deleteOrder', 'Delete Order')}
                   </button>
@@ -2325,7 +2325,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
           <button
             onClick={resetFilters}
             disabled={!hasActiveFilters}
-            className="h-11 min-w-[112px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="h-11 min-w-[112px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           >
             Clear
           </button>
@@ -2372,7 +2372,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   <button
                     key={order.id}
                     onClick={() => handleSelectOrder(order.id)}
-                    className="grid min-h-[64px] w-full grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-300"
+                    className="grid min-h-[64px] w-full grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300"
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-extrabold text-slate-950" title={hideNonFiscalOrders ? `Real order number: ${realOrderNumber}` : undefined}>
@@ -2421,7 +2421,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
               Prev
             </button>
@@ -2431,7 +2431,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              className="h-11 min-w-[84px] rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
               Next
             </button>

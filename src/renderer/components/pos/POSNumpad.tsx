@@ -50,13 +50,13 @@ interface KeyBtnProps {
 }
 
 const KeyBtn: React.FC<KeyBtnProps> = ({ onClick, disabled, variant = 'digit', children, ariaLabel }) => {
-  const base = 'flex items-center justify-center font-extrabold text-xl rounded-lg select-none touch-manipulation transition-all duration-75 active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-1';
+  const base = 'flex items-center justify-center font-extrabold text-xl rounded-lg select-none touch-manipulation transition-all duration-75 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
   const styles: Record<NonNullable<KeyBtnProps['variant']>, string> = {
-    digit: 'h-14 bg-white border border-slate-300 text-slate-900 hover:bg-slate-50 active:bg-slate-100 focus:ring-brand-300',
-    util: 'h-14 bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 active:bg-slate-300 focus:ring-slate-400',
-    danger: 'h-14 bg-amber-50 border border-amber-300 text-amber-800 hover:bg-amber-100 active:bg-amber-200 focus:ring-amber-400',
-    primary: 'h-14 bg-brand-600 border border-brand-600 text-white hover:bg-brand-700 active:bg-brand-800 focus:ring-brand-400',
-    preset: 'h-11 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 active:bg-emerald-200 text-sm focus:ring-emerald-400',
+    digit: 'h-14 bg-white border border-slate-300 text-slate-900 hover:bg-slate-50 active:bg-slate-100 focus-visible:ring-brand-300',
+    util: 'h-14 bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 active:bg-slate-300 focus-visible:ring-slate-400',
+    danger: 'h-14 bg-amber-50 border border-amber-300 text-amber-800 hover:bg-amber-100 active:bg-amber-200 focus-visible:ring-amber-400',
+    primary: 'h-14 bg-brand-600 border border-brand-600 text-white hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-brand-400',
+    preset: 'h-11 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 active:bg-emerald-200 text-sm focus-visible:ring-emerald-400',
   };
   return (
     <button

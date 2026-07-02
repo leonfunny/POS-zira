@@ -166,7 +166,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       onContextMenu={(event) => event.preventDefault()}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
-      className={`group bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[196px] select-none ${
+      className={`group bg-white rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[196px] select-none ${
         soldOut
           ? 'opacity-60 cursor-not-allowed'
           : 'hover:shadow-md cursor-pointer touch-manipulation'

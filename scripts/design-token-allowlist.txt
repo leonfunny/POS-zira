@@ -1,0 +1,165 @@
+# Design token guard allowlist
+# Format: path:extended-regex matching an allowed source line.
+# Keep entries exact and remove them when the source is migrated.
+
+# tiny text token: Legacy tiny text tokens outside the current focus-visible chunk. Replace with text-xs or approved tokens when touching these files.
+src/renderer/components/Settings.tsx:<span className=\{`px-1\.5 py-0\.5 rounded text-\[10px\] font-medium \$\{
+src/renderer/components/Settings.tsx:<div className="mt-2 pt-2 border-t border-slate-200 text-slate-500 text-\[10px\]">
+src/renderer/components/ZiraChat.tsx:<span className="text-\[9px\] font-medium text-brand-700">
+src/renderer/components/ZiraChat.tsx:<span className="text-\[10px\] text-brand-700 font-medium max-w-\[80px\] truncate">
+src/renderer/components/ZiraChat.tsx:className=\{`text-\[10px\] mt-1 \$\{
+src/renderer/components/AuthScreen.tsx:<span className="text-\[10px\] text-slate-500">
+src/renderer/components/AuthScreen.tsx:className="text-\[10px\] text-brand-600 hover:text-brand-700 underline disabled:opacity-50"
+src/renderer/components/AuthScreen.tsx:<p className="text-\[10px\] text-slate-400 text-center mt-2">
+src/renderer/components/AuthScreen.tsx:<p className="text-center text-\[10px\] text-slate-300 mt-4">v1\.0\.1</p>
+src/renderer/components/Sidebar.tsx:<div className="text-\[10px\] uppercase tracking-\[0\.15em\] text-slate-400 px-4 pt-4 pb-1 select-none">
+src/renderer/components/Sidebar.tsx:<div className="px-3 pb-2 text-\[10px\] text-slate-400">
+src/renderer/components/security/AlertsList.tsx:<span className="text-\[10px\] opacity-70">
+src/renderer/components/security/AlertsList.tsx:<p className="text-\[10px\] opacity-60">\{alert\.cameraName\}</p>
+src/renderer/components/security/CameraSettings.tsx:<span className="text-\[10px\] text-slate-400 uppercase bg-slate-200 px-1\.5 py-0\.5 rounded">\{cam\.zone\}</span>
+src/renderer/components/security/AnalyticsDashboard.tsx:<div className="text-\[10px\] text-slate-400 uppercase">\{t\?\.\('security\.totalVisitors'\) \?\? 'Total Visitors'\}</div>
+src/renderer/components/security/AnalyticsDashboard.tsx:<div className="text-\[10px\] text-slate-400 uppercase">\{t\?\.\('security\.peakHour'\) \?\? 'Peak Hour'\}</div>
+src/renderer/components/security/AnalyticsDashboard.tsx:<div className="text-\[10px\] text-slate-400 uppercase">\{t\?\.\('security\.avgWait'\) \?\? 'Avg Wait'\}</div>
+src/renderer/components/label/LabelModule.tsx:<span className="absolute right-2 top-2 z-\[1\] rounded-md bg-emerald-600 px-2 py-1 text-\[10px\] font-extrabold uppercase text-white shadow-sm">
+src/renderer/components/security/LiveView.tsx:<span className="text-\[10px\] text-white/70 bg-black/50 px-1\.5 py-0\.5 rounded uppercase">
+src/renderer/components/security/LiveView.tsx:<span className="text-\[10px\] text-emerald-400 bg-black/50 px-1\.5 py-0\.5 rounded">
+src/renderer/components/billiard/AddTableDialog.tsx:<span className="text-\[10px\] text-slate-500 leading-tight text-center line-clamp-2">
+src/renderer/components/billiard/AddTableDialog.tsx:<span className="text-\[10px\] text-slate-500 leading-tight text-center">
+src/renderer/components/security/SecurityTab.tsx:<span className=\{`inline-flex items-center gap-1\.5 px-2 py-1 rounded-full text-\[10px\] font-medium \$\{
+src/renderer/components/billiard/DraggableTable.tsx:<span className="absolute -top-1\.5 -left-1\.5 flex items-center gap-0\.5 bg-blue-500 text-white text-\[9px\] font-bold rounded-full px-1\.5 py-0\.5 z-20">
+src/renderer/components/billiard/DraggableTable.tsx:<div className="flex items-center gap-0\.5 text-\[9px\] text-black/70 truncate max-w-full">
+src/renderer/components/billiard/DraggableTable.tsx:<div className=\{`flex items-center gap-1 text-\[10px\] font-mono tabular-nums \$\{lowTime \? 'text-orange-600 font-semibold' : 'text-black/80'\}`\}>
+src/renderer/components/billiard/DraggableTable.tsx:<div className="flex items-center gap-1 text-\[10px\] text-black/80 font-mono tabular-nums">
+src/renderer/components/billiard/DraggableTable.tsx:<div className="flex items-center gap-0\.5 text-\[9px\] text-black/70">
+src/renderer/components/billiard/DraggableTable.tsx:: <span className="text-\[10px\] text-emerald-700 font-medium uppercase tracking-wide">\{t\('billiard\.free'\) \|\| 'Free'\}</span>\}
+src/renderer/components/billiard/SessionHistory.tsx:<p className="text-\[10px\] text-slate-500 truncate max-w-\[100px\]">\{session\.customer_name\}</p>
+src/renderer/components/billiard/SessionHistory.tsx:<p className="text-\[10px\] text-slate-400">
+src/renderer/components/billiard/SessionHistory.tsx:<span className=\{`shrink-0 text-\[10px\] font-medium px-2 py-0\.5 rounded-full capitalize \$\{statusColor\}`\}>
+src/renderer/components/billiard/SessionHistory.tsx:<p className="text-\[10px\] text-slate-400 tabular-nums">
+src/renderer/components/billiard/SessionHistory.tsx:: <span className="text-\[10px\] text-slate-300">—</span>
+src/renderer/components/billiard/SessionHistory.tsx:<p className="text-\[10px\] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+src/renderer/components/billiard/SessionHistory.tsx:<p className="text-\[10px\] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+src/renderer/components/billiard/SessionHistory.tsx:<div className="flex gap-4 text-\[10px\] text-slate-500">
+src/renderer/components/billiard/TableActionPopover.tsx:<span className="text-\[9px\] font-medium px-1\.5 py-0\.5 rounded-full bg-muted text-muted-foreground">
+src/renderer/components/billiard/TableActionPopover.tsx:<span className="inline-block text-\[9px\] bg-brand-100 text-brand-700 px-1\.5 py-0\.5 rounded-full">
+src/renderer/components/billiard/TableActionPopover.tsx:<p className="text-\[10px\] text-center text-orange-600 font-medium">
+src/renderer/components/billiard/TableActionPopover.tsx:<div className="flex items-center justify-center gap-3 text-\[10px\] text-muted-foreground">
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.table'\) \|\| 'Table'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.date'\) \|\| 'Date'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.startTime'\) \|\| 'From'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.endTime'\) \|\| 'To'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="text-\[10px\] text-slate-500">\{t\('reservation\.until'\) \|\| 'Until'\}</span>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.customerName'\) \|\| 'Name'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="text-\[10px\] text-slate-400 tabular-nums ml-2 shrink-0">
+src/renderer/components/billiard/ReservationPanel.tsx:<div className="text-\[10px\] text-slate-400">\{g\.phone\}</div>
+src/renderer/components/billiard/ReservationPanel.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('reservation\.notes'\) \|\| 'Notes'\}</label>
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="text-\[10px\] text-slate-400 tabular-nums">\{date\}</span>
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="ml-auto text-\[10px\] text-slate-400">\{items\.length\}</span>
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="text-\[10px\] text-slate-400 mx-0\.5">–</span>
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="shrink-0 text-\[10px\] font-bold px-2 py-0\.5 rounded bg-rose-100 text-rose-700">
+src/renderer/components/billiard/ReservationPanel.tsx:<span className="shrink-0 text-\[10px\] font-medium px-1\.5 py-0\.5 rounded bg-indigo-100 text-indigo-700 flex items-center gap-0\.5">
+src/renderer/components/billiard/ReservationPanel.tsx:<div className="flex items-center gap-2 text-\[10px\] text-slate-400">
+src/renderer/components/billiard/AddItemToTabModal.tsx:className=\{`shrink-0 text-\[10px\] px-1\.5 py-0\.5 rounded-full font-medium \$\{
+src/renderer/components/billiard/AddItemToTabModal.tsx:className=\{`shrink-0 text-\[9px\] px-1 py-0 rounded-full border font-medium \$\{
+src/renderer/components/billiard/AddItemToTabModal.tsx:<p className="text-\[10px\] text-slate-500 mt-1">
+src/renderer/components/billiard/AddItemToTabModal.tsx:<span className="text-\[10px\] text-slate-500">
+src/renderer/components/billiard/AddItemToTabModal.tsx:<span className="text-\[10px\] text-slate-500">
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-1">\{t\('discount\.days'\) \|\| 'Days'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('discount\.startTime'\) \|\| 'From'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('discount\.endTime'\) \|\| 'To'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('discount\.type'\) \|\| 'Type'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('discount\.value'\) \|\| 'Value'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('discount\.scope'\) \|\| 'Scope'\}</label>
+src/renderer/components/billiard/HappyHourConfig.tsx:<span className="text-\[10px\] text-slate-500">
+src/renderer/components/billiard/HappyHourConfig.tsx:<span className="text-\[10px\] text-slate-500 tabular-nums">
+src/renderer/components/billiard/HappyHourConfig.tsx:<span className="text-\[10px\] font-medium px-1\.5 py-0\.5 rounded bg-slate-100 text-slate-600">
+src/renderer/components/billiard/AssetPickerGrid.tsx:<span className="text-\[10px\] text-slate-500 leading-tight text-center">
+src/renderer/components/billiard/AssetPickerGrid.tsx:<span className="text-\[10px\] text-slate-500 leading-tight text-center line-clamp-2">
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.tables'\) \|\| 'Tables'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.free'\) \|\| 'Free'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.active'\) \|\| 'Active'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.paused'\) \|\| 'Paused'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.guests'\) \|\| 'Guests'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<p className="text-\[10px\] text-slate-500 uppercase tracking-wide">\{t\('billiard\.running'\) \|\| 'Running'\}</p>
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<span className="absolute bottom-2 right-3 text-\[10px\] font-mono tabular-nums text-emerald-400/30 pointer-events-none z-\[2\] tracking-wider">
+src/renderer/components/billiard/BilliardFloorPlan.tsx:<span className="absolute top-2\.5 left-8 text-\[10px\] font-medium text-emerald-400/25 pointer-events-none z-\[2\] uppercase tracking-widest">
+src/renderer/components/pos/POSLayout.tsx:<span className="ml-0\.5 inline-flex items-center justify-center min-w-\[18px\] h-\[18px\] px-1 rounded-full bg-orange-600 text-white text-\[10px\] font-bold tabular-nums">
+src/renderer/components/pos/POSLayout.tsx:<div className=\{`mt-1 inline-flex items-center rounded-full border px-2 py-0\.5 text-\[10px\] font-bold \$\{kitchenBadge\.className\}`\}>
+src/renderer/components/pos/POSLayout.tsx:<span className=\{`inline-flex items-center rounded-full border px-2 py-0\.5 text-\[10px\] font-bold \$\{getPickupKitchenPrintBadge\(activePickup\.kitchenPrintStatus\)\.className\}`\}>
+src/renderer/components/pos/POSLayout.tsx:<span className="text-\[10px\] font-bold text-slate-600 uppercase">\{l\}</span>
+src/renderer/components/billiard/KitchenDisplay.tsx:<span className="text-\[10px\] text-slate-500 bg-white/60 px-1\.5 py-0\.5 rounded">
+src/renderer/components/billiard/StockManager.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('stock\.itemName'\) \|\| 'Name'\}</label>
+src/renderer/components/billiard/StockManager.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('stock\.qty'\) \|\| 'Qty'\}</label>
+src/renderer/components/billiard/StockManager.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('stock\.threshold'\) \|\| 'Alert at'\}</label>
+src/renderer/components/billiard/StockManager.tsx:<label className="text-\[10px\] text-slate-500 block mb-0\.5">\{t\('stock\.unit'\) \|\| 'Unit'\}</label>
+src/renderer/components/billiard/StockManager.tsx:<tr className="text-\[10px\] font-semibold text-slate-500 uppercase tracking-wider">
+src/renderer/components/billiard/StockManager.tsx:<span className="inline-flex items-center gap-1 text-\[10px\] font-medium px-2 py-0\.5 rounded-full bg-amber-100 text-amber-700">
+src/renderer/components/billiard/StockManager.tsx:<span className="text-\[10px\] font-medium px-2 py-0\.5 rounded-full bg-emerald-100 text-emerald-700">
+src/renderer/components/pos/QuickKeysLayoutManager.tsx:<span className="text-\[10px\] px-1\.5 py-0\.5 rounded bg-emerald-900/50 text-emerald-300">
+src/renderer/components/pos/ScanImportModal.tsx:<div className="mt-2 inline-flex px-2 py-0\.5 rounded-md bg-brand-900/40 border border-brand-500/30 text-\[10px\] uppercase tracking-wide text-brand-300">
+src/renderer/components/billiard/DailyReport.tsx:<span className="text-\[9px\] text-slate-400 tabular-nums">
+src/renderer/components/billiard/DailyReport.tsx:\{sub && <p className="text-\[10px\] text-slate-500 mt-0\.5">\{sub\}</p>\}
+src/renderer/components/pos/templates/salon/SalonTemplate.tsx:className=\{`min-h-\[38px\] rounded-md border px-1 text-\[10px\] font-black uppercase \$\{
+src/renderer/components/pos/templates/salon/SalonTemplate.tsx:<div className="mt-2 inline-flex rounded-full border border-current px-2 py-0\.5 text-\[10px\] font-black uppercase">
+src/renderer/components/pos/templates/retail/QuickActions.tsx:<span className="ml-0\.5 min-w-4 h-4 px-1 rounded-full bg-slate-900 text-white text-\[10px\] leading-4 text-center">
+src/renderer/components/pos/templates/retail/RetailTemplate.tsx:<span className="absolute top-2 left-2 text-\[10px\] font-extrabold leading-none px-2 py-1 rounded-md bg-amber-500 text-white shadow-sm tabular-nums">
+src/renderer/components/checkin/CustomerProfileScreen.tsx:<div className="text-\[10px\] text-slate-500 uppercase">\{t\('wizard\.visits'\)\}</div>
+src/renderer/components/checkin/CustomerProfileScreen.tsx:<div className="text-\[10px\] text-slate-500 uppercase">\{t\('wizard\.preferredStaff'\)\}</div>
+src/renderer/components/checkin/CustomerProfileScreen.tsx:<div className="text-\[10px\] text-slate-500 uppercase">\{t\('wizard\.lastService'\)\}</div>
+src/renderer/components/checkin/ServiceSelectionScreen.tsx:<div className="text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-2">
+src/renderer/components/checkin/ServiceSelectionScreen.tsx:<div className="text-\[10px\] text-brand-500 font-bold mt-0\.5">\{formatPrice\(svc\.price\)\} zł</div>
+src/renderer/components/checkin/ServiceSelectionScreen.tsx:<label className="text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-1\.5 block">\{t\('wizard\.staff'\)\}</label>
+src/renderer/components/checkin/ServiceSelectionScreen.tsx:<div className="text-\[10px\] text-stone-400 mt-1">
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="block text-\[9px\] font-semibold uppercase tracking-\[0\.15em\] text-slate-400">\{t\('wizard\.currentTime'\)\}</span>
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="text-\[10px\] font-bold text-slate-400 uppercase">\{l\}</span>
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="text-\[10px\] font-bold text-slate-300">0</span>
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="inline-flex items-center gap-1 px-1\.5 py-0\.5 bg-amber-100 text-amber-700 rounded-full text-\[10px\] font-semibold">
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="inline-flex items-center gap-1 px-1\.5 py-0\.5 bg-blue-100 text-blue-700 rounded-full text-\[10px\] font-semibold">
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="inline-flex items-center gap-1 px-1\.5 py-0\.5 bg-emerald-100 text-emerald-700 rounded-full text-\[10px\] font-semibold">
+src/renderer/components/checkin/CheckinWizard.tsx:<span className=\{`inline-flex items-center gap-1 px-1\.5 py-0\.5 text-\[10px\] font-semibold rounded-full \$\{STATUS_COLORS\[c\.status\] \|\| 'bg-slate-100 text-slate-600'\}`\}>
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="text-\[10px\] bg-brand-100 text-brand-600 font-semibold px-1\.5 py-0\.5 rounded-full">\{t\('wizard\.walkIn'\)\}</span>
+src/renderer/components/checkin/CheckinWizard.tsx:<div className="text-\[10px\] text-slate-400 truncate mt-0\.5">\{c\.service_name\}</div>
+src/renderer/components/checkin/CheckinWizard.tsx:<div className="text-\[10px\] text-slate-400 mt-0\.5">
+src/renderer/components/checkin/CheckinWizard.tsx:className="px-2\.5 py-1 text-\[10px\] font-bold bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+src/renderer/components/checkin/CheckinWizard.tsx:className="px-2\.5 py-1 text-\[10px\] font-bold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+src/renderer/components/checkin/CheckinWizard.tsx:<span className="text-\[10px\] text-red-600 font-medium">Sure\?</span>
+src/renderer/components/checkin/CheckinWizard.tsx:className="px-2 py-1 text-\[10px\] font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-150 disabled:opacity-50"
+src/renderer/components/checkin/CheckinWizard.tsx:className="px-2 py-1 text-\[10px\] font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+src/renderer/components/checkin/CheckinWizard.tsx:className="px-2\.5 py-1 text-\[10px\] font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+src/renderer/components/checkin/NewCustomerScreen.tsx:<label className="block text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-2">
+src/renderer/components/checkin/NewCustomerScreen.tsx:<label htmlFor="nc-name" className="block text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-2">
+src/renderer/components/checkin/NewCustomerScreen.tsx:<label htmlFor="nc-birthday" className="block text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-2">
+src/renderer/components/checkin/NewCustomerScreen.tsx:<p className="text-\[10px\] text-brand-500 mt-1\.5 flex items-center gap-1">
+src/renderer/components/checkin/NewCustomerScreen.tsx:<label htmlFor="nc-notes" className="block text-\[10px\] font-bold text-stone-400 uppercase tracking-wider mb-2">
+src/renderer/components/checkin/EntryScreen.tsx:<span className="text-\[10px\] uppercase tracking-widest">\{t\('wizard\.findMyBooking'\)\}</span>
+src/renderer/components/checkin/BookingListScreen.tsx:<span className="px-1\.5 py-0\.5 text-\[10px\] font-bold bg-red-100 text-red-600 rounded">
+src/renderer/components/checkin/BookingListScreen.tsx:<span className="px-1\.5 py-0\.5 text-\[10px\] font-medium bg-emerald-100 text-emerald-600 rounded">
+src/renderer/components/pos/templates/restaurant/TableMap.tsx:<div className="text-\[10px\] opacity-70">
+src/renderer/windows/customer/components/CustomerDisplayShell.tsx:<div className="text-\[10px\] font-semibold uppercase tracking-\[0\.18em\] text-slate-400">
+src/renderer/windows/customer/components/CustomerDisplayShell.tsx:<span className="text-\[10px\] uppercase tracking-\[0\.18em\] text-slate-400">
+src/renderer/windows/self-checkout/LanguageSwitch.tsx:className=\{`mt-0\.5 font-bold \$\{compact \? 'text-\[10px\]' : 'text-xs'\} text-\[var\(--sc-muted\)\]`\}
+
+# native confirm: Legacy native confirm calls awaiting modal migration. New renderer confirms must use app dialogs.
+src/renderer/components/Settings.tsx:const confirmed = window\.confirm\(
+src/renderer/components/Debug.tsx:const confirmed = window\.confirm\(
+src/renderer/components/label/LabelModule.tsx:const confirmed = window\.confirm\(copy\.highCopyConfirm\(quantity\)\);
+src/renderer/components/pos/QuickAddCameraModal.tsx:!window\.confirm\(tOr\(
+src/renderer/components/products/ProductEditForm.tsx:if \(dirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
+src/renderer/components/products/ProductDetailDrawer.tsx:if \(editing && editDirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
+src/renderer/components/products/ProductEditView.tsx:if \(editing && editDirty && !window\.confirm\(tOr\(t, 'products\.edit\.discardConfirm', 'Discard unsaved changes\?'\)\)\) return;
+
+# native alert: Legacy native alert calls awaiting inline/modal error handling. New renderer alerts are banned.
+src/renderer/components/BooksySync.tsx:alert\(t\('booksy\.chromeOpenError'\) \+ result\.error\);
+src/renderer/components/BooksySync.tsx:alert\(t\('booksy\.error'\) \+ err\.message\);
+src/renderer/components/pos/KitchenSelfOrderPanel.tsx:alert\(categoryLoadError \|\| 'Kitchen menu source is still resolving\.'\);
+src/renderer/components/pos/KitchenSelfOrderPanel.tsx:alert\(`\$\{t\('selfCheckout\.openError'\)\}: \$\{result\?\.error \|\| t\('selfCheckout\.unknownError'\)\}`\);
+src/renderer/components/pos/KitchenSelfOrderPanel.tsx:alert\(`\$\{t\('selfCheckout\.openError'\)\}: \$\{err\?\.message \|\| err\}`\);
+src/renderer/components/pos/GrocerySelfCheckoutPanel.tsx:alert\(`\$\{t\('selfCheckout\.openError'\)\}: \$\{result\?\.error \|\| t\('selfCheckout\.unknownError'\)\}`\);
+src/renderer/components/pos/GrocerySelfCheckoutPanel.tsx:alert\(`\$\{t\('selfCheckout\.openError'\)\}: \$\{err\?\.message \|\| err\}`\);
+src/renderer/components/Status.tsx:alert\('Test print sent successfully!'\);
+src/renderer/components/Status.tsx:alert\(`Error: \$\{result\.error\}`\);
+
+# blue primary: Justified existing info/progress uses; bg-blue-600 remains banned for action-primary buttons.
+src/renderer/components/Settings.tsx:className="bg-blue-600 h-1\.5 rounded-full transition-all"
+src/renderer/components/billiard/DailyReport.tsx:\? 'bg-blue-500 group-hover:bg-blue-600'

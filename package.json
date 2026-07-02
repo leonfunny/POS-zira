@@ -24,7 +24,8 @@
     "scrape:fb:stealth": "node scripts/facebook-scraper-stealth.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose"
+    "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose",
+    "check:design": "bash scripts/check-design-tokens.sh"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",

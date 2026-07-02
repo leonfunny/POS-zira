@@ -921,7 +921,7 @@ export default function PaymentModal({
             key={key}
             type="button"
             onClick={() => handleKeypadPress(key)}
-            className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+            className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
               key === 'backspace' || key === 'clear'
                 ? 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 active:bg-slate-200'
                 : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50 active:bg-slate-100'
@@ -937,18 +937,18 @@ export default function PaymentModal({
         <button
           type="button"
           onClick={() => handleKeypadPress('0')}
-          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
         >0</button>
         <button
           type="button"
           onClick={() => handleKeypadPress('00')}
-          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
         >00</button>
         <button
           type="button"
           onClick={() => handleKeypadPress(quickAction)}
           disabled={quickDisabled}
-          className="col-span-2 flex min-h-[44px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="col-span-2 flex min-h-[44px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {quickLabel}
         </button>
@@ -980,7 +980,7 @@ export default function PaymentModal({
             type="button"
             onClick={() => handleFiscalPromptChoice(false)}
             disabled={fiscalBusy}
-            className="min-h-[52px] rounded-md border border-slate-300 bg-white px-4 text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[52px] rounded-md border border-slate-300 bg-white px-4 text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {tOr('pos.payment.fiscalSkip', 'Bỏ qua')}
           </button>
@@ -988,7 +988,7 @@ export default function PaymentModal({
             type="button"
             onClick={() => handleFiscalPromptChoice(true)}
             disabled={fiscalBusy}
-            className="min-h-[52px] rounded-md border border-emerald-600 bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[52px] rounded-md border border-emerald-600 bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {fiscalBusy
               ? tOr('pos.payment.fiscalPrinting', 'Đang in...')
@@ -1023,7 +1023,7 @@ export default function PaymentModal({
               onClick={() => { setSplitMode(!splitMode); setTenders([]); setSplitAmount(''); }}
               disabled={saving || !!receiptRecovery}
               aria-pressed={splitMode}
-              className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
                   ? 'border-brand-600 bg-brand-600 text-white'
                   : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
@@ -1036,7 +1036,7 @@ export default function PaymentModal({
               onClick={onClose}
               disabled={saving || !!receiptRecovery}
               aria-label="Close"
-              className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
@@ -1082,7 +1082,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={() => setNipOpen(open => (open && !nipForcedOpen ? false : true))}
                   aria-expanded={nipOpen}
-                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${
+                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                     nipOpen
                       ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
                       : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
@@ -1100,7 +1100,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={() => setLoyaltyOpen(open => !open)}
                   aria-expanded={loyaltyOpen}
-                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${
+                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                     loyaltyOpen
                       ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
                       : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
@@ -1128,7 +1128,7 @@ export default function PaymentModal({
                         type="button"
                         onClick={() => !disabled && setMethod(pm)}
                         disabled={saving || disabled}
-                        className={`flex min-h-[60px] min-w-0 items-center gap-2 rounded-md border p-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed ${
+                        className={`flex min-h-[60px] min-w-0 items-center gap-2 rounded-md border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed ${
                           selected
                             ? 'border-brand-700 bg-brand-50 text-brand-900 shadow-sm'
                             : disabled
@@ -1195,7 +1195,7 @@ export default function PaymentModal({
                     type="button"
                     onClick={() => void handleLoyaltyLookup()}
                     disabled={saving || loyaltyStatus === 'loading'}
-                    className="h-11 rounded-md border border-brand-700 bg-brand-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-11 rounded-md border border-brand-700 bg-brand-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {loyaltyStatus === 'loading'
                       ? tOr('pos.loyalty.loadingShort', '...')
@@ -1354,7 +1354,7 @@ export default function PaymentModal({
                           key={k}
                           type="button"
                           onClick={() => appendNipDigit(k)}
-                          className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                         >
                           {k}
                         </button>
@@ -1363,7 +1363,7 @@ export default function PaymentModal({
                         type="button"
                         onClick={backspaceNip}
                         aria-label={tOr('pos.payment.nipBackspace', 'Delete')}
-                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200 active:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200 active:bg-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33z" />
@@ -1372,14 +1372,14 @@ export default function PaymentModal({
                       <button
                         type="button"
                         onClick={() => appendNipDigit('0')}
-                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         0
                       </button>
                       <button
                         type="button"
                         onClick={() => setNipPadOpen(false)}
-                        className="flex min-h-[48px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        className="flex min-h-[48px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         {tOr('pos.payment.nipDone', 'Done')}
                       </button>
@@ -1477,7 +1477,7 @@ export default function PaymentModal({
                       onClick={addTender}
                       disabled={!splitAmount || parseFloat(splitAmount) <= 0}
                       aria-label="Add tender"
-                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
+                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
                     >
                       +
                     </button>
@@ -1486,7 +1486,7 @@ export default function PaymentModal({
                     <button
                       type="button"
                       onClick={addRemaining}
-                      className="mt-3 min-h-[44px] w-full rounded-md border border-brand-300 bg-white px-4 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                      className="mt-3 min-h-[44px] w-full rounded-md border border-brand-300 bg-white px-4 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                     >
                       {tOr('pos.split.addRemaining', 'Add remaining')} ({money(remaining)})
                     </button>
@@ -1522,7 +1522,7 @@ export default function PaymentModal({
                             type="button"
                             onClick={() => removeTender(idx)}
                             aria-label="Remove tender"
-                            className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                            className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
                           >
                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
@@ -1614,7 +1614,7 @@ export default function PaymentModal({
                     type="button"
                     onClick={selectBlikPayment}
                     aria-label="Pay by BLIK"
-                    className="min-h-[52px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-300"
+                    className="min-h-[52px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                   >
                     <span className="block text-sm font-extrabold leading-none">BLIK</span>
                     <span className="mt-1 block text-[11px] font-bold leading-none tabular-nums text-slate-200">
@@ -1630,7 +1630,7 @@ export default function PaymentModal({
                           type="button"
                           onClick={() => updateDenom(denom, +1)}
                           aria-label={`Add ${denom / 100} ${currency} bill`}
-                          className={`w-full min-h-[52px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-300 ${
+                          className={`w-full min-h-[52px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 ${
                             active
                               ? 'border-brand-500 bg-brand-50 text-brand-900'
                               : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
@@ -1650,7 +1650,7 @@ export default function PaymentModal({
                             type="button"
                             onClick={() => updateDenom(denom, -1)}
                             aria-label={`Remove one ${denom / 100} ${currency} bill`}
-                            className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
                           >
                             −
                           </button>
@@ -1782,7 +1782,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={handleRetryReceipt}
                   disabled={receiptRetrying}
-                  className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
+                  className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
                 >
                   {receiptRetrying ? (savingLabel || tOr('test.printing', 'Printing...')) : tOr('pos.payment.retryReceipt', 'Retry order print')}
                 </button>
@@ -1790,7 +1790,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={handleContinueWithoutReceipt}
                   disabled={receiptRetrying}
-                  className="min-h-[56px] flex-1 rounded-md border border-amber-300 bg-amber-50 px-5 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-[56px] flex-1 rounded-md border border-amber-300 bg-amber-50 px-5 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {tOr('pos.payment.continueWithoutReceipt', 'Continue without print')}
                 </button>
@@ -1800,7 +1800,7 @@ export default function PaymentModal({
                 type="button"
                 onClick={handleComplete}
                 disabled={!canComplete}
-                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-600 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
+                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-600 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
               >
                 {completeButtonText}
               </button>

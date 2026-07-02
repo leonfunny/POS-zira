@@ -149,7 +149,7 @@ export default function CartItemRow({
               disabled={scaleBusy}
               title={scaleBusy ? tOr('pos.scale.reading', 'Reading scale') : tOr('pos.scale.read', 'Read scale')}
               aria-label={tOr('pos.scale.read', 'Read scale')}
-              className="w-11 h-11 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              className="w-11 h-11 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
             >
               <Scale size={18} strokeWidth={2.4} />
             </button>
@@ -202,7 +202,7 @@ export default function CartItemRow({
                 disabled={labelState === 'printing'}
                 aria-label={tOr('pos.cart.printLabel', 'Print label')}
                 title={tOr('pos.cart.printLabel', 'Print label')}
-                className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+                className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center gap-1.5 ${
                   labelState === 'printing'
                     ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-wait'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -217,7 +217,7 @@ export default function CartItemRow({
               type="button"
               onClick={() => setEditingNotes(true)}
               aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
-              className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus:ring-2 focus:ring-brand-200 inline-flex items-center gap-1.5 ${
+              className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center gap-1.5 ${
                 item.notes
                   ? 'border-brand-300 text-brand-800 bg-brand-50 hover:bg-brand-100'
                   : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -231,7 +231,7 @@ export default function CartItemRow({
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
-            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus:ring-2 focus:ring-red-200 inline-flex items-center gap-1.5"
+            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 inline-flex items-center gap-1.5"
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>

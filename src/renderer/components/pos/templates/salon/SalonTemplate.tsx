@@ -575,7 +575,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
                 <button
                   type="button"
                   onClick={loadNailTurnBoard}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                   aria-label="Refresh nail turn board"
                   title={tOr('pos.salon.refreshTurns', 'Làm mới lượt thợ')}
                 >

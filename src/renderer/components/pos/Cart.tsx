@@ -58,7 +58,7 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
         title={tOr('pos.cart.more', 'More')}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200"
+        className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M12 5v.01M12 12v.01M12 19v.01" />
@@ -902,7 +902,7 @@ export default function Cart({
               setDiscountPopupOpen(true);
             }}
             aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
-            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-brand-200 flex items-center gap-1.5 ${
+            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 flex items-center gap-1.5 ${
               discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
@@ -943,7 +943,7 @@ export default function Cart({
             <button
               type="button"
               onClick={onHold}
-              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus:ring-2 focus:ring-amber-200 flex items-center gap-1.5"
+              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 flex items-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1041,7 +1041,7 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
           >
             {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>

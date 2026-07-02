@@ -103,7 +103,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
         onClick={handleKeyboardToggle}
         aria-label="Toggle on-screen keyboard"
         title="Toggle on-screen keyboard"
-        className="shrink-0 h-12 w-12 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
+        className="shrink-0 h-12 w-12 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <rect x="3" y="6" width="18" height="12" rx="2" strokeWidth={1.8} />
@@ -155,7 +155,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
               onChange('');
               inputRef.current?.focus();
             }}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-200 cursor-pointer"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 cursor-pointer"
             aria-label="Clear search"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
