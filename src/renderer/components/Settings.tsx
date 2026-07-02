@@ -10,6 +10,8 @@ import rlog from '../utils/logger';
 import QRCode from 'qrcode';
 import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 import ModuleManager from './ModuleManager';
+import TextInput from './shared/TextInput';
+import { matchesSettingSection } from './settings-search';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -537,6 +539,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     return value !== key ? value : fallback;
   };
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsSearch, setSettingsSearch] = useState('');
 
   // Test print state
   const [testingPrinter, setTestingPrinter] = useState<string | null>(null);
@@ -2358,6 +2361,201 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     selectedLanKitchenTarget?.port,
   ]);
 
+  const generalSettingsKeywords = settingsSearchKeywords(
+    t('settings.general'), 'General',
+    t('settings.language'), 'Language',
+    t('settings.agentName'), 'Agent name',
+    t('settings.serverUrl'), 'Server URL',
+    t('settings.autoStart'), 'Auto start',
+    t('settings.autoStartDesc'), 'Launch with Windows',
+  );
+  const printerDetectionKeywords = settingsSearchKeywords(
+    'Printer Detection',
+    'Auto-detect and auto-recover all connected printers',
+    'Smart assign',
+    'Detect Printers',
+    'POSNET',
+    'Zebra',
+    'DYMO',
+    'driver',
+    'COM port',
+    'Windows name',
+    'refresh',
+    'diagnose',
+  );
+  const printerSettingsKeywords = settingsSearchKeywords(
+    t('settings.printers'), 'Printers',
+    t('settings.multiPrinter'), 'Multi-printer',
+    t('settings.protocol'), 'Protocol',
+    t('settings.comPort'), 'COM port',
+    t('settings.baudRate'), 'Baud rate',
+    t('settings.windowsPrinter'), 'Windows printer',
+    t('settings.selectPort'), 'Select port',
+    t('settings.selectPrinter'), 'Select printer',
+    t('settings.labelWidth'), 'Label width',
+    t('settings.labelHeight'), 'Label height',
+    t('settings.popularSizes'), 'Popular sizes',
+    'Receipt printer',
+    'Fiscal printer',
+    'Label printer',
+    'A4 printer',
+    'Ticket printer',
+    'Kitchen printer',
+    'Self-checkout receipt printing',
+    'Kitchen Wi-Fi Direct',
+    'Salon online printers',
+    'Local printer config',
+    'Advanced diagnostics',
+    'SQLite mirror',
+    'test print',
+    'calibrate',
+    'server mapping',
+    'local printer mirror',
+  );
+  const posSettingsKeywords = settingsSearchKeywords(
+    t('settings.pos'), 'POS',
+    t('settings.posMode'), 'POS mode',
+    t('settings.posLanguage'), 'POS language',
+    t('settings.allowOversell'), 'Allow oversell',
+    tOr('settings.fiscalOnCashSale', 'Fiscal receipt on cash/BLIK sale'),
+    ...FISCAL_ON_CASH_SALE_OPTIONS.map(option => tOr(option.labelKey, option.fallback)),
+    'Category priority ranking',
+    'Staff Management',
+    'Scale',
+    'Wi-Fi scale',
+    'Receipt header',
+    t('settings.receiptHeader'), 'Receipt header',
+    t('settings.receiptSellerName'), 'Seller name',
+    t('settings.receiptSellerAddress'), 'Seller address',
+    t('settings.receiptSellerNip'), 'Seller NIP',
+    t('settings.customerDisplay'), 'Customer display',
+    t('settings.customerDisplayProfile'), 'Customer display profile',
+    t('settings.customerDisplayMenuSections'), 'Menu sections',
+    t('settings.customerDisplayMonitor'), 'Monitor',
+    t('settings.customerDisplayForceKiosk'), 'Kiosk',
+    t('settings.promoFolder'), 'Promo folder',
+    t('settings.promoInterval'), 'Promo interval',
+    t('settings.idleTimeout'), 'Idle timeout',
+  );
+  const tvAdKeywords = settingsSearchKeywords(
+    t('settings.tvAd.title'), 'TV ad',
+    t('settings.tvAd.addVideo'), 'Add video',
+    t('settings.tvAd.playbackMode'), 'Playback mode',
+    t('settings.tvAd.muted'), 'Muted',
+    t('settings.tvAd.volume'), 'Volume',
+    t('settings.tvAd.status'), 'Status',
+    t('settings.tvAd.connectAddress'), 'Connect address',
+    t('settings.tvAd.connectedTvs'), 'Connected TVs',
+    'playlist',
+    'image',
+    'video',
+    'repeat',
+  );
+  const pairingKeywords = settingsSearchKeywords(
+    t('pairing.title'), 'Pairing',
+    t('pairing.apiKey'), 'API key',
+    t('pairing.machineId'), 'Machine ID',
+    t('pairing.changeSalon'), 'Change salon',
+    t('pairing.resyncProducts'), 'Resync products',
+    t('ssh.enableRemoteSupport'), 'Remote support',
+    t('remote.unattendedAccess'), 'Unattended remote access',
+    t('remote.pin'), 'PIN',
+  );
+  const telegramKeywords = settingsSearchKeywords(
+    'Telegram Remote Control',
+    'Telegram',
+    'bot',
+    'chat',
+    'notifications',
+    'remote commands',
+  );
+  const aiToolsKeywords = settingsSearchKeywords(
+    'Zira AI Tools',
+    t('ai.apiKey'), 'AI API key',
+    t('ai.localModeDesc'), 'Local mode',
+    'OpenRouter',
+    'screenshots',
+    'mouse',
+    'keyboard',
+    'Booksy calendar',
+  );
+  const appUpdatesKeywords = settingsSearchKeywords(
+    t('update.title'), 'App updates',
+    t('update.currentVersion'), 'Current version',
+    t('update.checkBtn'), 'Check updates',
+    t('update.installBtn'), 'Install update',
+    'download',
+    'version',
+  );
+  const sshTunnelKeywords = settingsSearchKeywords(
+    t('ssh.title'), 'SSH tunnel',
+    t('ssh.clientAvailable'), 'SSH client',
+    t('ssh.serverAvailable'), 'SSH server',
+    t('ssh.keyGenerated'), 'SSH key',
+    t('ssh.disconnect'), 'Disconnect',
+    'Remote support',
+  );
+  const fiscalHistoryKeywords = settingsSearchKeywords(
+    t('settings.fiscalHistory'), 'Fiscal history',
+    t('settings.fiscalHistoryDesc'), 'Fiscal history visibility',
+    t('settings.showNonFiscalOrders'), 'Show non-fiscal orders',
+    t('settings.showNonFiscalOrdersDesc'), 'Non-fiscal orders',
+  );
+  const checkinDisplayKeywords = settingsSearchKeywords(
+    'Check-in Display',
+    'Stats bar',
+    'Active queue panel',
+    'Waiting',
+    'In Service',
+    'Completed',
+    'customer-facing',
+    'staff-only',
+  );
+  const modulesKeywords = settingsSearchKeywords(
+    t('settings.modules'), 'Modules',
+    'Module Manager',
+    'POS',
+    'Self checkout',
+    'Billiard',
+    'Orders',
+    'Products',
+    'Warehouse',
+    'Forecast',
+    'Invoicing',
+    'Booksy',
+    'Bookings',
+    'Check-in',
+    'Chat',
+    'Status',
+    'Security',
+    'Debug',
+  );
+  const settingsSearchKeywordsByTab: Record<SettingsTab, string[]> = {
+    general: [
+      generalSettingsKeywords,
+      pairingKeywords,
+      telegramKeywords,
+      aiToolsKeywords,
+      appUpdatesKeywords,
+      ...(sshStatus ? [sshTunnelKeywords] : []),
+      fiscalHistoryKeywords,
+      checkinDisplayKeywords,
+    ],
+    pos: [posSettingsKeywords, tvAdKeywords],
+    printers: [printerDetectionKeywords, printerSettingsKeywords],
+    modules: [modulesKeywords],
+  };
+  const settingsSearchHasResults = settingsSearchKeywordsByTab[settingsTab].some(keywords =>
+    matchesSettingSection(settingsSearch, keywords),
+  );
+  const settingsSearchNoResults = tOr(
+    'settings.search.noResults',
+    `No settings match '${settingsSearch.trim()}'`,
+  ).replace('{query}', settingsSearch.trim());
+  const settingsSearchPlaceholder = tOr('settings.search.placeholder', 'Search settings');
+  const settingsSearchClearLabel = tOr('settings.search.clear', 'Clear settings search');
+  const showSettingsSearchEmptyState = settingsSearch.trim().length > 0 && !settingsSearchHasResults;
+
   return (
     <div className="space-y-4">
       <div role="tablist" aria-label="Settings sections" className="flex gap-2 rounded-lg border border-slate-200 bg-white p-1">
@@ -2388,18 +2586,45 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         })}
       </div>
 
+      <div className="sticky top-0 z-20 rounded-lg border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+        <div className="relative">
+          <TextInput
+            id="settings-search"
+            value={settingsSearch}
+            onChange={(event) => setSettingsSearch(event.target.value)}
+            placeholder={settingsSearchPlaceholder}
+            aria-label={settingsSearchPlaceholder}
+            inputClassName="pr-10"
+          />
+          {settingsSearch && (
+            <button
+              type="button"
+              onClick={() => setSettingsSearch('')}
+              aria-label={settingsSearchClearLabel}
+              title={settingsSearchClearLabel}
+              className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-300"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {settingsTab === 'modules' && (
-        <ModuleManager
-          config={config}
-          onConfigChange={onConfigChange}
-          isModuleEntitled={isModuleEntitled}
-          t={t}
-        />
+        <SettingsSection searchQuery={settingsSearch} keywords={modulesKeywords}>
+          <ModuleManager
+            config={config}
+            onConfigChange={onConfigChange}
+            isModuleEntitled={isModuleEntitled}
+            t={t}
+          />
+        </SettingsSection>
       )}
 
       {settingsTab === 'general' && (
         <>
           {/* General Settings */}
+          <SettingsSection searchQuery={settingsSearch} keywords={generalSettingsKeywords}>
           <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">
           {t('settings.general')}
@@ -2473,12 +2698,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         </div>
           </div>
+          </SettingsSection>
         </>
       )}
 
       {settingsTab === 'printers' && (
         <>
           {/* Printer Detection */}
+          <SettingsSection searchQuery={settingsSearch} keywords={printerDetectionKeywords}>
           <div className="panel p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -2783,8 +3010,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         )}
           </div>
+          </SettingsSection>
 
           {/* Printer Settings */}
+          <SettingsSection searchQuery={settingsSearch} keywords={printerSettingsKeywords}>
           <div className="panel p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
@@ -4548,12 +4777,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         </div>
           </div>
+          </SettingsSection>
         </>
       )}
 
       {settingsTab === 'pos' && (
         <>
           {/* POS Settings */}
+          <SettingsSection searchQuery={settingsSearch} keywords={posSettingsKeywords}>
           <div className="panel p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
@@ -5254,8 +5485,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         )}
       </div>
+          </SettingsSection>
 
       {/* TV Ad Panel */}
+      <SettingsSection searchQuery={settingsSearch} keywords={tvAdKeywords}>
       <div className="panel p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
@@ -5448,6 +5681,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         )}
       </div>
+      </SettingsSection>
 
         </>
       )}
@@ -5455,6 +5689,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       {settingsTab === 'general' && (
         <>
           {/* Pairing Card */}
+          <SettingsSection searchQuery={settingsSearch} keywords={pairingKeywords}>
           <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">
           {t('pairing.title')}
@@ -5705,15 +5940,19 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         )}
           </div>
+          </SettingsSection>
 
       {/* Telegram Remote Control */}
+      <SettingsSection searchQuery={settingsSearch} keywords={telegramKeywords}>
       <TelegramConfig
         config={config}
         onConfigChange={onConfigChange}
         language={language}
       />
+      </SettingsSection>
 
       {/* AI Settings (Local Mode with Tools) */}
+      <SettingsSection searchQuery={settingsSearch} keywords={aiToolsKeywords}>
       <div className="panel p-4">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-slate-700">
@@ -5776,8 +6015,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         )}
       </div>
+      </SettingsSection>
 
       {/* App Updates */}
+      <SettingsSection searchQuery={settingsSearch} keywords={appUpdatesKeywords}>
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">
           {t('update.title')}
@@ -5846,9 +6087,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           </div>
         </div>
       </div>
+      </SettingsSection>
 
       {/* SSH Tunnel Status */}
       {sshStatus && (
+        <SettingsSection searchQuery={settingsSearch} keywords={sshTunnelKeywords}>
         <div className="panel p-4">
           <h2 className="text-sm font-semibold text-slate-700 mb-3">
             {t('ssh.title')}
@@ -5927,9 +6170,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             </p>
           )}
         </div>
+        </SettingsSection>
       )}
 
       {/* POS Fiscal Visibility */}
+      <SettingsSection searchQuery={settingsSearch} keywords={fiscalHistoryKeywords}>
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-1">{t('settings.fiscalHistory')}</h2>
         <p className="text-xs text-slate-400 mb-4">{t('settings.fiscalHistoryDesc')}</p>
@@ -5954,8 +6199,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           })()}
         </label>
       </div>
+      </SettingsSection>
 
       {/* Check-in Display */}
+      <SettingsSection searchQuery={settingsSearch} keywords={checkinDisplayKeywords}>
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-1">Check-in Display</h2>
         <p className="text-xs text-slate-400 mb-4">Control which elements are visible on the Check-in tab. Hide staff-only panels for customer-facing setups.</p>
@@ -5985,12 +6232,36 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           })}
         </div>
           </div>
+      </SettingsSection>
 
         </>
+      )}
+
+      {showSettingsSearchEmptyState && (
+        <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-xs text-slate-500">
+          {settingsSearchNoResults}
+        </div>
       )}
 
       {/* Auto-save indicator */}
       <p className="text-center text-xs text-slate-400">{t('settings.autoSaveHint')}</p>
     </div>
   );
+}
+
+function settingsSearchKeywords(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter((part): part is string => typeof part === 'string' && part.length > 0).join(' ');
+}
+
+function SettingsSection({
+  searchQuery,
+  keywords,
+  children,
+}: {
+  searchQuery: string;
+  keywords: string;
+  children: React.ReactNode;
+}) {
+  if (!matchesSettingSection(searchQuery, keywords)) return null;
+  return <>{children}</>;
 }
