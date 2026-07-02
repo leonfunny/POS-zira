@@ -935,7 +935,7 @@ interface ElectronAPI {
         message?: string;
         error?: string;
       }>;
-        importDraft: (payload: { ean: string; retailPriceGrosze?: number }) => Promise<{
+        importDraft: (payload: { ean: string; retailPriceGrosze?: number; categoryId?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
         variant?: any;

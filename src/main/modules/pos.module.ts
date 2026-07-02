@@ -1621,13 +1621,18 @@ export class PosModule extends BaseModule {
     // master-catalog endpoint is down. A `local_variant_imports` marker
     // tracks the row so ProductSync.deactivateExcept keeps it alive and
     // OrderSync defers pushing orders that depend on it.
-    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string; retailPriceGrosze?: number }) => {
+    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string; retailPriceGrosze?: number; categoryId?: string }) => {
       const ean = String(payload?.ean ?? '').trim();
       if (!ean) return { ok: false, error: 'missing-ean' };
       const requestedRetailPrice = Number(payload?.retailPriceGrosze);
       const retailPriceGrosze = Number.isFinite(requestedRetailPrice)
         ? Math.round(requestedRetailPrice)
         : null;
+      const requestedCategoryId = String(payload?.categoryId ?? '').trim();
+      const categoryId = requestedCategoryId || null;
+      if (categoryId && !productRepo.getAllCategories().some((category) => category.id === categoryId)) {
+        return { ok: false, error: 'invalid-category' };
+      }
 
       const existing = productRepo.getByBarcode(ean);
       if (existing) {
@@ -1679,7 +1684,7 @@ export class PosModule extends BaseModule {
             sku: draft.sku,
             barcode: draft.barcode,
             retail_price: importRetailPrice,
-            category_id: draft.category_id,
+            category_id: categoryId,
             image_url: draft.image_url,
             in_stock: draft.in_stock,
             vat_rate: draft.vat_rate,
@@ -1695,7 +1700,7 @@ export class PosModule extends BaseModule {
             sell_by: 'PIECE',
             name_translations: null,
           }]);
-          localVariantImportsRepo.create(variantId, draft.id, ean);
+          localVariantImportsRepo.create(variantId, draft.id, ean, categoryId);
         });
         database.markDirty();
 

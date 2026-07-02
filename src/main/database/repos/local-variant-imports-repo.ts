@@ -21,16 +21,18 @@ export interface LocalVariantImportRow {
   created_at: string;
   synced_at: string | null;
   server_variant_id: string | null;
+  category_id: string | null;
 }
 
 export const localVariantImportsRepo = {
   /** Upsert a local-import marker for a freshly-created variant. */
-  create(variantId: string, draftId: string, ean: string): void {
+  create(variantId: string, draftId: string, ean: string, categoryId?: string | null): void {
+    const normalizedCategoryId = String(categoryId ?? '').trim() || null;
     database.run(
       `INSERT OR REPLACE INTO local_variant_imports
-         (variant_id, draft_id, ean, status, attempts, last_error, created_at, synced_at, server_variant_id)
-       VALUES (?, ?, ?, 'PENDING', 0, NULL, datetime('now'), NULL, NULL)`,
-      [variantId, draftId, ean],
+         (variant_id, draft_id, ean, status, attempts, last_error, created_at, synced_at, server_variant_id, category_id)
+       VALUES (?, ?, ?, 'PENDING', 0, NULL, datetime('now'), NULL, NULL, ?)`,
+      [variantId, draftId, ean, normalizedCategoryId],
     );
   },
 

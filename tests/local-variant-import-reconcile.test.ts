@@ -72,6 +72,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
         created_at: '2026-05-17 10:00:00',
         synced_at: null,
         server_variant_id: null,
+        category_id: 'cat-drinks',
       },
     ]);
     vi.mocked(productRepo.getById).mockReturnValueOnce({
@@ -81,7 +82,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       sku: null,
       barcode: '8935039500400',
       retail_price: 1764,
-      category_id: null,
+      category_id: 'cat-drinks',
       image_url: null,
       in_stock: 24,
       vat_rate: 5,
@@ -110,6 +111,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       retailPrice: 17.64,
       stockQty: 24,
       taxRate: 5,
+      categoryId: 'cat-drinks',
       idempotencyKey: 'local-import-local-variant-1',
     });
     expect(localVariantImportsRepo.markSynced).toHaveBeenCalledWith(
@@ -130,6 +132,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
         created_at: '2026-05-17 10:00:00',
         synced_at: null,
         server_variant_id: null,
+        category_id: null,
       },
     ]);
     vi.mocked(productRepo.getById).mockReturnValueOnce({
@@ -177,6 +180,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
         created_at: '2026-05-17 10:00:00',
         synced_at: '2026-05-17 10:01:00',
         server_variant_id: 'server-variant-9',
+        category_id: null,
       },
     ]);
     vi.mocked(productRepo.getById).mockReturnValueOnce({ id: 'server-variant-9' } as any);
@@ -199,6 +203,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
         created_at: '2026-05-17 10:00:00',
         synced_at: '2026-05-17 10:01:00',
         server_variant_id: 'server-variant-9',
+        category_id: null,
       },
     ]);
     vi.mocked(productRepo.getById).mockReturnValueOnce({ id: 'server-variant-9' } as any);

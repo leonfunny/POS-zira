@@ -3126,6 +3126,7 @@ export class ApiClient {
       stockQty?: number;
       taxRate?: number;
       warehouseId?: string;
+      categoryId?: string | null;
       idempotencyKey?: string;
     },
   ): Promise<{
@@ -3160,6 +3161,8 @@ export class ApiClient {
     if (typeof payload.stockQty === 'number') body.stockQty = payload.stockQty;
     if (typeof payload.taxRate === 'number') body.taxRate = payload.taxRate;
     if (payload.warehouseId) body.warehouseId = payload.warehouseId;
+    const categoryId = String(payload.categoryId ?? '').trim();
+    if (categoryId) body.categoryId = categoryId;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',

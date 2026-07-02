@@ -1559,4 +1559,12 @@ export const migrations: Migration[] = [
         WHERE status = 'SUCCESS_CONFIRMED';
     `,
   },
+  {
+    version: 51,
+    name: 'local_variant_import_category_id',
+    up: `
+      ALTER TABLE local_variant_imports ADD COLUMN category_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_lvi_category_id ON local_variant_imports(category_id);
+    `,
+  },
 ];

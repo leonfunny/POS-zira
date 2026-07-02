@@ -32,7 +32,7 @@ import SalonTemplate from './templates/salon/SalonTemplate';
 import B2BTemplate from './templates/b2b/B2BTemplate';
 import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
 import SyncConflictBanner from './SyncConflictBanner';
-import ScanImportModal, { ScanImportDraftPreview } from './ScanImportModal';
+import ScanImportModal, { type ScanImportCategoryOption, type ScanImportDraftPreview } from './ScanImportModal';
 import QuickAddCameraModal, {
   QuickAddCapturedImage,
   QuickAddFinalizeInput,
@@ -80,6 +80,7 @@ function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
     image_url: draft.image_url,
     status: draft.status,
     source: 'draft',
+    suggestedCategoryId: draft.suggestedCategoryId ?? draft.suggested_category_id ?? null,
   };
 }
 
@@ -101,7 +102,24 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
     image_url: image ?? null,
     status: response?.mode ?? source.status,
     source: previewSource,
+    suggestedCategoryId: source.suggestedCategoryId ?? source.suggested_category_id ?? response?.suggestedCategoryId ?? response?.suggested_category_id ?? null,
   };
+}
+
+function scanImportCategoryOptions(rows: any[]): ScanImportCategoryOption[] {
+  return Array.isArray(rows)
+    ? rows
+      .filter((row) => row?.id && row?.name)
+      .map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        icon: row.icon ?? null,
+        color: row.color ?? null,
+        sort_order: Number(row.sort_order) || 0,
+        updated_at: row.updated_at ?? null,
+        name_translations: row.name_translations ?? null,
+      }))
+    : [];
 }
 
 function isExternalScanImportSource(source: string | undefined): boolean {
@@ -286,6 +304,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     loading: boolean;
     error: string | null;
   }>({ open: false, ean: '', preview: null, loading: false, error: null });
+  const [scanImportCategories, setScanImportCategories] = useState<ScanImportCategoryOption[]>([]);
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showDebt, setShowDebt] = useState(false);
@@ -500,8 +519,14 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
   const openScanImport = useCallback(async (ean: string) => {
     const code = ean.trim();
     if (!code) return;
+    setScanImportCategories([]);
     setScanImport({ open: true, ean: code, preview: null, loading: true, error: null });
     try {
+      const categoryRowsPromise = window.electronAPI.pos.categories.getAll()
+        .catch((err: any) => {
+          rlog.warn('[POSLayout] scan-import category load failed', err?.message);
+          return [];
+        });
       const local = await window.electronAPI.pos.draftProducts.getByBarcode(code);
       let preview: ScanImportDraftPreview | null = local ? draftPreviewFromLocal(local) : null;
 
@@ -521,9 +546,34 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         return;
       }
 
+      const categoryRows = await categoryRowsPromise;
+      setScanImportCategories(scanImportCategoryOptions(categoryRows));
       setScanImport({ open: true, ean: code, preview, loading: false, error: null });
+      if (local && !preview.suggestedCategoryId) {
+        void window.electronAPI.pos.masterCatalog.lookupByEan(code)
+          .then((remote: any) => {
+            if (!remote?.ok) return;
+            const remotePreview = draftPreviewFromLookup(remote.draft, code);
+            if (!remotePreview?.suggestedCategoryId) return;
+            setScanImport((current) => (
+              current.open && current.ean === code && current.preview
+                ? {
+                  ...current,
+                  preview: {
+                    ...current.preview,
+                    suggestedCategoryId: remotePreview.suggestedCategoryId,
+                  },
+                }
+                : current
+            ));
+          })
+          .catch((err: any) => {
+            rlog.debug('[POSLayout] scan-import suggested category lookup skipped', err?.message);
+          });
+      }
     } catch (err: any) {
       rlog.warn('[POSLayout] scan-import lookup failed', err?.message);
+      setScanImportCategories([]);
       setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
       showScanToast(`Barcode not found: ${code}`, 'err');
     }
@@ -531,6 +581,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
 
   const closeScanImport = useCallback(() => {
     setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
+    setScanImportCategories([]);
     // Return focus to the search bar so the cashier can scan the next item
     // immediately. Without this, focus stays on the modal backdrop and the
     // next scanner wedge input gets eaten by document.body.
@@ -613,17 +664,18 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
     setShowQuickAddCamera(false);
   }, [dispatch, language, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
-  const confirmScanImport = useCallback(async (retailPriceGrosze: number) => {
+  const confirmScanImport = useCallback(async (retailPriceGrosze: number, categoryId?: string) => {
     const ean = scanImport.ean;
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
       const isExternal = isExternalScanImportSource(scanImport.preview?.source);
+      const draftPayload = categoryId ? { ean, retailPriceGrosze, categoryId } : { ean, retailPriceGrosze };
       // Drafts keep their existing local-first path. External EAN hits go
       // through backend quick-add so the new product exists online too.
       const result = isExternal
         ? await window.electronAPI.pos.masterCatalog.importExternal({ ean, retailPriceGrosze, quantity: 1 })
-        : await window.electronAPI.pos.masterCatalog.importDraft({ ean, retailPriceGrosze });
+        : await window.electronAPI.pos.masterCatalog.importDraft(draftPayload);
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
@@ -1285,6 +1337,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
         open={scanImport.open}
         preview={scanImport.preview}
         ean={scanImport.ean}
+        categoryOptions={scanImportCategories}
         onConfirm={confirmScanImport}
         onCancel={closeScanImport}
         loading={scanImport.loading}

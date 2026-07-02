@@ -11,13 +11,25 @@ export interface ScanImportDraftPreview {
   image_url: string | null;
   status?: string;
   source?: string;
+  suggestedCategoryId?: string | null;
+}
+
+export interface ScanImportCategoryOption {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  sort_order?: number;
+  updated_at?: string | null;
+  name_translations?: string | null;
 }
 
 interface ScanImportModalProps {
   open: boolean;
   preview: ScanImportDraftPreview | null;
   ean: string;
-  onConfirm: (retailPriceGrosze: number) => void | Promise<void>;
+  categoryOptions?: ScanImportCategoryOption[];
+  onConfirm: (retailPriceGrosze: number, categoryId?: string) => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
   error?: string | null;
@@ -35,10 +47,30 @@ function parsePriceInput(value: string): number | null {
   return Math.round(n * 100);
 }
 
+export function hasScanImportCategoryOptions(categoryOptions: ScanImportCategoryOption[]): boolean {
+  return categoryOptions.length > 0;
+}
+
+export function resolveInitialScanImportCategoryId(
+  preview: ScanImportDraftPreview | null,
+  categoryOptions: ScanImportCategoryOption[],
+): string {
+  const suggestedCategoryId = String(preview?.suggestedCategoryId ?? '').trim();
+  if (!suggestedCategoryId) return '';
+  return categoryOptions.some((category) => category.id === suggestedCategoryId)
+    ? suggestedCategoryId
+    : '';
+}
+
+function isDraftCategorySelectionSource(source: string | undefined): boolean {
+  return source !== 'open_food_facts' && source !== 'google_custom_search';
+}
+
 export default function ScanImportModal({
   open,
   preview,
   ean,
+  categoryOptions = [],
   onConfirm,
   onCancel,
   loading,
@@ -47,12 +79,14 @@ export default function ScanImportModal({
 }: ScanImportModalProps) {
   const [closing, setClosing] = useState(false);
   const [priceInput, setPriceInput] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setClosing(false);
     setPriceInput(priceInputFromGrosze(preview?.retail_price));
-  }, [open, preview?.id, preview?.barcode, preview?.retail_price]);
+    setSelectedCategoryId(resolveInitialScanImportCategoryId(preview, categoryOptions));
+  }, [open, preview?.id, preview?.barcode, preview?.retail_price, preview?.suggestedCategoryId, categoryOptions]);
 
   if (!open) return null;
 
@@ -70,6 +104,10 @@ export default function ScanImportModal({
   const retailPriceGrosze = parsePriceInput(priceInput);
   const priceText = preview ? (preview.retail_price / 100).toFixed(2) : '—';
   const vatText = preview ? `VAT ${preview.vat_rate}%` : '';
+  const showCategorySelect =
+    !!preview
+    && isDraftCategorySelectionSource(preview.source)
+    && hasScanImportCategoryOptions(categoryOptions);
 
   return (
     <div
@@ -132,6 +170,25 @@ export default function ScanImportModal({
                 {tOr('pos.scanImport.salePriceHint', 'This price will be saved to the product and used for this cart line.')}
               </div>
             </label>
+            {showCategorySelect ? (
+              <label className="mt-4 block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  {tOr('pos.scanImport.category', 'Danh mục')}
+                </span>
+                <select
+                  value={selectedCategoryId}
+                  onChange={(event) => setSelectedCategoryId(event.target.value)}
+                  className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-base font-semibold text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/30"
+                >
+                  <option value="">{tOr('pos.scanImport.defaultCategory', 'Chưa phân loại (mặc định)')}</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         ) : (
           <div className="p-8 text-center text-sm text-slate-400">
@@ -158,7 +215,7 @@ export default function ScanImportModal({
             type="button"
             onClick={() => {
               if (retailPriceGrosze == null) return;
-              onConfirm(retailPriceGrosze);
+              onConfirm(retailPriceGrosze, selectedCategoryId || undefined);
             }}
             disabled={loading || !preview || retailPriceGrosze == null}
             className="flex-2 h-12 px-6 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"

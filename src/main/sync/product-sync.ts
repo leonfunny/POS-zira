@@ -233,12 +233,14 @@ export class ProductSync {
           continue;
         }
 
+        const categoryId = row.category_id ?? localVariant.category_id ?? null;
         const result = await apiClient.scanCreate(token, {
           ean: row.ean,
           purchasePrice: 0,
           retailPrice,
           stockQty,
           taxRate: localVariant.vat_rate,
+          categoryId,
           idempotencyKey: `local-import-${row.variant_id}`,
         });
         const serverVariantId = extractServerVariantId(result);
