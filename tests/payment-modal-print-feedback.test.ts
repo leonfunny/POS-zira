@@ -238,6 +238,6 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
     );
     expect(fiscalBranch).toContain('if (!hasFiscalPrinter)');
     expect(fiscalBranch).toContain('printFiscalReceiptForOrder(orderId)');
-    expect(paymentModalSource).toContain('window.electronAPI.pos.payment.printFiscalReceipt(orderId)');
+    expect(source).toContain('window.electronAPI.pos.payment.printFiscalReceipt(orderId)');
   });
 });

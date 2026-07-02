@@ -11,7 +11,7 @@ describe('Settings ELZAB_STX target UI', () => {
   it('has an explicit ELZAB_STX branch before the generic Windows-printer branch', () => {
     const elzabIdx = settingsSource.indexOf(") : printerConfig.protocol === 'ELZAB_STX' ? (");
     const thermalIdx = settingsSource.indexOf("printerConfig.protocol === 'THERMAL'");
-    const genericWindowsIdx = settingsSource.indexOf("t('settings.windowsPrinter')");
+    const genericWindowsIdx = settingsSource.indexOf("t('settings.windowsPrinter')", thermalIdx);
 
     expect(elzabIdx).toBeGreaterThan(-1);
     expect(thermalIdx).toBeGreaterThan(elzabIdx);

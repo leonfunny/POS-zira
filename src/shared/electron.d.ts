@@ -783,7 +783,6 @@ interface ElectronAPI {
       settle: (id: string, body: { posOrderId: string; posOrderNumber?: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
       cancel: (id: string, body: { reason: string; machineId?: string }) => Promise<{ ok: boolean; status: number; data?: any; error?: string }>;
     };
-
     products: {
       getAll: () => Promise<PosProduct[]>;
       getByCategory: (catId: string) => Promise<PosProduct[]>;

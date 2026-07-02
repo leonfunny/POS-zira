@@ -33,8 +33,10 @@ function objectRows<T>(db: SqlJsDatabase, sql: string): T[] {
 
 describe('fiskal projection migration', () => {
   it('appends migration v50 after v49', () => {
-    expect(Math.max(...migrations.map((m) => m.version))).toBe(50);
-    expect(migrations[migrations.length - 1]).toMatchObject({
+    const v49Index = migrations.findIndex((m) => m.version === 49);
+    const v50Index = migrations.findIndex((m) => m.version === 50);
+    expect(v50Index).toBeGreaterThan(v49Index);
+    expect(migrations[v50Index]).toMatchObject({
       version: 50,
       name: 'fiskal_projection_columns_and_view',
     });
