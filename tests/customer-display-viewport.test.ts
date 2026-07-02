@@ -78,8 +78,8 @@ describe('Customer display viewport contract', () => {
     expect(appSource).toContain("displayProfile === 'promo_only'");
     expect(appSource).toContain("displayProfile === 'retail_assisted'");
     expect(appSource).toContain('useState<LiveCustomerDisplayProfile | null>(null)');
-    expect(appSource).toContain('if (!displayProfile)');
-    expect(appSource.indexOf('if (!displayProfile)')).toBeLessThan(appSource.indexOf("displayProfile === 'promo_only'"));
+    expect(appSource).toContain('if (!displayProfile || !lang)');
+    expect(appSource.indexOf('if (!displayProfile || !lang)')).toBeLessThan(appSource.indexOf("displayProfile === 'promo_only'"));
     expect(appSource.indexOf("displayProfile === 'retail_assisted'")).toBeLessThan(appSource.indexOf("displayMode === 'checkin'"));
     expect(appSource.indexOf("displayProfile === 'promo_only'")).toBeLessThan(appSource.indexOf("displayMode === 'checkin'"));
   });

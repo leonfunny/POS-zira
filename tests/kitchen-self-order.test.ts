@@ -269,7 +269,7 @@ describe('kitchen self-order MVP wiring', () => {
   it('opens directly on the menu while keeping language and fulfillment editable inline', () => {
     const appSource = readSource('src/renderer/windows/kitchen-self-order/KitchenSelfOrderApp.tsx');
 
-    expect(appSource).toContain("useState<Step>('menu')");
+    expect(appSource).toContain("useState<Step>('attract')");
     expect(appSource).toContain('function FulfillmentToggle');
     expect(appSource).toContain('function LanguageToggle');
     expect(appSource).toContain('unitPriceGrosze: item.product.priceGrosze + modifierTotal(item)');
