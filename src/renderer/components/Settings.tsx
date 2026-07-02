@@ -791,7 +791,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       QRCode.toCanvas(tvAdQrRef.current, tvAdStatus.remoteUrl || `http://${ip}:${tvAdStatus.port}/remote`, {
         width: 96,
         margin: 1,
-        color: { dark: '#0f172a', light: '#ffffff' },
+        color: { 'dark': '#0f172a', light: '#ffffff' },
       }).catch((err: Error) => rlog.error('[Settings] tvAd QR failed:', err));
     }
   }, [tvAdStatus?.running, tvAdStatus?.primaryIp, tvAdStatus?.ips?.[0], tvAdStatus?.port, tvAdStatus?.remoteUrl]);

@@ -16,7 +16,7 @@ export default function ThankYouView({ lastOrderTotal, t, bookingUrl }: ThankYou
       QRCode.toCanvas(canvasRef.current, bookingUrl, {
         width: 160,
         margin: 1,
-        color: { dark: '#0f172a', light: '#ffffff' },
+        color: { 'dark': '#0f172a', light: '#ffffff' },
       }).catch((err: Error) => {
         rlog.error('[ThankYouView] QR code generation failed:', err);
       });
