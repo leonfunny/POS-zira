@@ -1,6 +1,7 @@
 import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
 import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
+import { APP_USER_DATA_DIR } from '../app-identity';
 
 // Default Telegram configuration (moltbot-style)
 const defaultTelegramConfig: TelegramConfig = {
@@ -24,7 +25,7 @@ const defaultTelegramConfig: TelegramConfig = {
 
 // Default configuration
 const defaultConfig: AgentConfig = {
-  name: 'Zira AI',
+  name: 'Zira',
   printerProtocol: 'THERMAL',
   printerBaudRate: 9600,
   multiPrinterMode: false,
@@ -274,6 +275,7 @@ function parseConfigJson(value: string): AgentConfig {
 }
 
 const store = new Store<AgentConfig>({
+  cwd: APP_USER_DATA_DIR,
   name: 'config',
   defaults: defaultConfig,
   deserialize: parseConfigJson,
@@ -285,7 +287,7 @@ const store = new Store<AgentConfig>({
     salonCode: { type: 'string' },
     machineId: { type: 'string' },
     registerCode: { type: 'string' },
-    name: { type: 'string', default: 'Zira AI' },
+    name: { type: 'string', default: 'Zira' },
     language: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'], default: 'en' },
     apiKey: { type: 'string' },
     // Multi-printer dictionary config (NEW)

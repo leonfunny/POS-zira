@@ -10,6 +10,7 @@
 
 import { app, dialog, clipboard, shell } from 'electron';
 import { join } from 'path';
+import { APP_DISPLAY_NAME } from './app-identity';
 import { AgentOrchestrator } from './core/orchestrator';
 import { initAutoUpdater } from './updates/auto-updater';
 import logger from './logger';
@@ -88,7 +89,7 @@ function showErrorDialog(title: string, error: Error | string): Promise<void> {
 
   return dialog.showMessageBox({
     type: 'error',
-    title: `Zira AI - ${title}`,
+    title: `${APP_DISPLAY_NAME} - ${title}`,
     message: title,
     detail: fullMessage,
     buttons: ['Copy Error', 'Open Logs Folder', 'Close'],
@@ -96,7 +97,7 @@ function showErrorDialog(title: string, error: Error | string): Promise<void> {
     cancelId: 2,
   }).then((result) => {
     if (result.response === 0) {
-      clipboard.writeText(`Zira AI Error Report\n\n${title}\n\n${fullMessage}`);
+      clipboard.writeText(`${APP_DISPLAY_NAME} Error Report\n\n${title}\n\n${fullMessage}`);
       dialog.showMessageBox({
         type: 'info',
         title: 'Copied',
@@ -120,7 +121,7 @@ function showStartupDiagnostics(): void {
 
   dialog.showMessageBox({
     type: 'info',
-    title: 'Zira AI - Debug Mode',
+    title: `${APP_DISPLAY_NAME} - Debug Mode`,
     message: 'Startup Diagnostics',
     detail: diagnostics,
     buttons: ['Continue', 'Copy & Continue'],
@@ -226,12 +227,12 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Log startup info
 safeConsoleLog('='.repeat(60));
-safeConsoleLog('Zira AI starting...');
+safeConsoleLog(`${APP_DISPLAY_NAME} starting...`);
 safeConsoleLog('Debug mode:', isDebugMode);
 safeConsoleLog('='.repeat(60));
 
 logger.info('='.repeat(60));
-logger.info('Zira AI starting...');
+logger.info(`${APP_DISPLAY_NAME} starting...`);
 logger.info(`Debug Mode: ${isDebugMode}`);
 logger.info(getDiagnostics());
 logger.info('='.repeat(60));

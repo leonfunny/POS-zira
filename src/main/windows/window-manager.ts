@@ -365,7 +365,7 @@ export class WindowManager {
       autoHideMenuBar: true,
       title:
         id === 'pos'
-          ? 'Zira AI POS'
+          ? 'Zira POS'
           : id === 'selfCheckout'
             ? 'Self Checkout'
             : id === 'kitchenSelfOrder'

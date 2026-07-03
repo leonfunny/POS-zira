@@ -313,7 +313,7 @@ export class AgentOrchestrator implements TrayManagerHost {
 
       this.logStep('Initialization complete!');
       logger.info('='.repeat(50));
-      logger.info('Zira AI initialized successfully');
+      logger.info('Zira initialized successfully');
       logger.info(`Modules: ${this.modules.map(m => m.name).join(', ')}`);
       logger.info(`Tools: ${this.toolRegistry.size}`);
       logger.info('='.repeat(50));
@@ -397,7 +397,7 @@ export class AgentOrchestrator implements TrayManagerHost {
         devTools: shouldUseRendererDevServer() || isDebugMode, // SECURITY: Gate DevTools behind debug mode
       },
       icon: getIconPath('icon.png'),
-      title: isDebugMode ? 'Zira AI [DEBUG]' : 'Zira AI',
+      title: isDebugMode ? 'Zira [DEBUG]' : 'Zira',
       show: false,
       autoHideMenuBar: !isDebugMode,
     });

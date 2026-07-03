@@ -41,7 +41,7 @@ export default class TrayManager {
     const resizedIcon = icon.resize({ width: 16, height: 16 });
 
     this.tray = new Tray(resizedIcon);
-    this.tray.setToolTip('Zira AI - Rozłączony');
+    this.tray.setToolTip('Zira - Rozłączony');
 
     // Create context menu
     this.updateContextMenu();
@@ -69,9 +69,9 @@ export default class TrayManager {
     };
 
     const tooltips: Record<TrayStatus, string> = {
-      connected: 'Zira AI - Połączony',
-      disconnected: 'Zira AI - Rozłączony',
-      error: 'Zira AI - Błąd',
+      connected: 'Zira - Połączony',
+      disconnected: 'Zira - Rozłączony',
+      error: 'Zira - Błąd',
     };
 
     const iconPath = getIconPath(icons[status]);
@@ -92,7 +92,7 @@ export default class TrayManager {
    */
   private getDiagnostics(): string {
     const info = [
-      `Zira AI Diagnostics`,
+      `Zira Diagnostics`,
       `=============================`,
       `Time: ${new Date().toISOString()}`,
       ``,
