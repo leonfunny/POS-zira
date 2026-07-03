@@ -84,6 +84,8 @@ export class SyncModule extends BaseModule {
   // before any other sync has run.
   private _draftPollTimer: ReturnType<typeof setInterval> | null = null;
   private _draftSyncInFlight: Promise<void> | null = null;
+  private _shiftRetryTimer: ReturnType<typeof setInterval> | null = null;
+  private _shiftRetryInFlight = false;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -122,6 +124,7 @@ export class SyncModule extends BaseModule {
     // socket events handle real-time updates, this is the backstop so a
     // long-running kiosk doesn't drift from the master catalog.
     this.startPeriodicDraftProductSync();
+    this.startPeriodicShiftRetry();
 
     this.setState(ModuleState.READY);
   }
@@ -819,6 +822,31 @@ export class SyncModule extends BaseModule {
     }
   }
 
+  startPeriodicShiftRetry(intervalMs = 300_000): void {
+    if (this._shiftRetryTimer) return;
+    this._shiftRetryTimer = setInterval(() => {
+      if (this._shiftRetryInFlight) return;
+      this._shiftRetryInFlight = true;
+      const shiftCtrl = this.container.getOptional<ShiftController>(SERVICE_TOKENS.SHIFT_CONTROLLER);
+      Promise.resolve(shiftCtrl?.retryUnsyncedShifts())
+        .catch((err: any) => {
+          logger.debug('[SyncModule] periodic shift retry failed:', err?.message);
+        })
+        .finally(() => {
+          this._shiftRetryInFlight = false;
+        });
+    }, intervalMs);
+    logger.info(`[SyncModule] Started periodic shift retry (${intervalMs / 1000}s interval)`);
+  }
+
+  stopPeriodicShiftRetry(): void {
+    if (this._shiftRetryTimer) {
+      clearInterval(this._shiftRetryTimer);
+      this._shiftRetryTimer = null;
+    }
+    this._shiftRetryInFlight = false;
+  }
+
   async start(): Promise<void> { this.setState(ModuleState.RUNNING); }
 
   async stop(): Promise<void> {
@@ -827,6 +855,7 @@ export class SyncModule extends BaseModule {
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.stopPeriodicProductSync();
     this.stopPeriodicDraftProductSync();
+    this.stopPeriodicShiftRetry();
     this.setState(ModuleState.STOPPED);
   }
 
@@ -836,6 +865,7 @@ export class SyncModule extends BaseModule {
     this.billiardSync?.stopPeriodicDashboardRefresh();
     this.stopPeriodicProductSync();
     this.stopPeriodicDraftProductSync();
+    this.stopPeriodicShiftRetry();
     this.setState(ModuleState.STOPPED);
   }
 }

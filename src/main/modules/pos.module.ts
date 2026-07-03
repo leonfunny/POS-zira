@@ -154,6 +154,26 @@ function getExternalProductLookupOptions(): ExternalProductLookupOptions {
   };
 }
 
+const BACKEND_CATEGORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeScanCreateEan(value: unknown): string | null {
+  const code = String(value ?? '').trim().replace(/[\s-]+/g, '');
+  return /^\d{4,14}$/.test(code) ? code : null;
+}
+
+function resolveBackendScanCategoryId(requestedCategoryId: string | null): { ok: boolean; categoryId: string | null } {
+  const categoryId = String(requestedCategoryId ?? '').trim();
+  if (!categoryId) return { ok: true, categoryId: null };
+
+  const categoryExists = productRepo.getAllCategories().some((category) => category.id === categoryId);
+  if (!categoryExists) return { ok: false, categoryId: null };
+
+  return {
+    ok: true,
+    categoryId: BACKEND_CATEGORY_ID_RE.test(categoryId) ? categoryId : null,
+  };
+}
+
 type NailTurnCheckoutGroup = {
   staffId: string;
   staffName: string | null;
@@ -1131,6 +1151,56 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
     ipcMain.handle(IPC_CHANNELS.POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY, () => productRepo.getAllCategories());
+    ipcMain.handle('pos:local-variant-imports:listFailed', () => ({
+      ok: true,
+      count: localVariantImportsRepo.getFailedCount(),
+      imports: localVariantImportsRepo.getFailed(),
+    }));
+    ipcMain.handle(
+      'pos:local-variant-imports:requeue',
+      async (_e, payload: { variantId?: string; ean?: string; categoryId?: string | null }) => {
+        const variantId = String(payload?.variantId ?? '').trim();
+        const ean = normalizeScanCreateEan(payload?.ean);
+        if (!variantId) return { ok: false, error: 'missing-variant-id' };
+        if (!ean) return { ok: false, error: 'invalid-ean' };
+
+        const importRow = localVariantImportsRepo.getByVariantId(variantId);
+        if (!importRow || importRow.status !== 'FAILED') return { ok: false, error: 'failed-import-not-found' };
+
+        const categoryResolution = resolveBackendScanCategoryId(String(payload?.categoryId ?? '').trim() || null);
+        if (!categoryResolution.ok) return { ok: false, error: 'invalid-category' };
+
+        database.transaction(() => {
+          productRepo.updateLocalImportIdentity(variantId, {
+            ean,
+            previousEan: importRow.ean,
+            categoryId: categoryResolution.categoryId,
+          });
+          localVariantImportsRepo.requeue(variantId, ean, categoryResolution.categoryId);
+        });
+        database.markDirty();
+        notifyPosRenderers(this.container, 'pos:products-synced');
+
+        let syncPending = true;
+        try {
+          const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+          const reconciled = await syncMod?.reconcileLocalVariantImports?.(1);
+          if (reconciled > 0) {
+            syncPending = false;
+            await syncMod?.deltaSync?.();
+            notifyPosRenderers(this.container, 'pos:products-synced');
+          }
+        } catch (syncErr: any) {
+          logger.debug(`[PosModule] requeued local variant import sync skipped: ${syncErr?.message ?? syncErr}`);
+        }
+
+        return {
+          ok: true,
+          syncPending,
+          variant: productRepo.getById(variantId),
+        };
+      },
+    );
 
     const getKitchenSelfOrderCategories = () =>
       kitchenSelfOrderCategoryPrefsRepo.applyToCategories(productRepo.getCategories());
@@ -1622,17 +1692,17 @@ export class PosModule extends BaseModule {
     // tracks the row so ProductSync.deactivateExcept keeps it alive and
     // OrderSync defers pushing orders that depend on it.
     ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string; retailPriceGrosze?: number; categoryId?: string }) => {
-      const ean = String(payload?.ean ?? '').trim();
+      const ean = normalizeScanCreateEan(payload?.ean);
       if (!ean) return { ok: false, error: 'missing-ean' };
       const requestedRetailPrice = Number(payload?.retailPriceGrosze);
       const retailPriceGrosze = Number.isFinite(requestedRetailPrice)
         ? Math.round(requestedRetailPrice)
         : null;
-      const requestedCategoryId = String(payload?.categoryId ?? '').trim();
-      const categoryId = requestedCategoryId || null;
-      if (categoryId && !productRepo.getAllCategories().some((category) => category.id === categoryId)) {
+      const categoryResolution = resolveBackendScanCategoryId(String(payload?.categoryId ?? '').trim() || null);
+      if (!categoryResolution.ok) {
         return { ok: false, error: 'invalid-category' };
       }
+      const categoryId = categoryResolution.categoryId;
 
       const existing = productRepo.getByBarcode(ean);
       if (existing) {
@@ -1867,12 +1937,17 @@ export class PosModule extends BaseModule {
         stockQty?: number;
         taxRate?: number;
         warehouseId?: string;
+        categoryId?: string | null;
         idempotencyKey?: string;
       }) => {
         const token = getSecureAuthToken();
         logger.info(`[PosModule] scan-create requested ean=${payload?.ean} stockQty=${payload?.stockQty ?? 'n/a'} idk=${payload?.idempotencyKey ?? 'n/a'}`);
         try {
-          const result = await apiClient.scanCreate(token, payload);
+          const categoryResolution = resolveBackendScanCategoryId(String(payload?.categoryId ?? '').trim() || null);
+          const result = await apiClient.scanCreate(token, {
+            ...payload,
+            categoryId: categoryResolution.ok ? categoryResolution.categoryId : null,
+          });
           logger.info(`[PosModule] scan-create OK outcome=${result?.outcome} productId=${result?.productId ?? result?.product?.id ?? 'n/a'} variantId=${result?.variantId ?? result?.variant?.id ?? 'n/a'}`);
           // Pull fresh products + drafts so renderer can see the new variant.
           try {

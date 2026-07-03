@@ -133,7 +133,7 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
 
   it('lets a cashier close a server ghost shift before reopening cleanly', () => {
     expect(POS_MODULE).toContain('Closed server ghost shift');
-    expect(SHIFT_CONTROLLER).toContain('getActiveShift(token)');
+    expect(SHIFT_CONTROLLER).toContain('getActiveShift(token, this.getMachineId())');
     expect(SHIFT_CONTROLLER).toContain('closing unsynced local shift');
     expect(SHIFT_CONTROLLER).toContain('Skipped closing server active shift');
   });

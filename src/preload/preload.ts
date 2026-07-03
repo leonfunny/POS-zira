@@ -649,6 +649,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getByBarcode: (barcode: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_BARCODE, barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:products:getById', id),
     },
+    localVariantImports: {
+      listFailed: () => ipcRenderer.invoke('pos:local-variant-imports:listFailed'),
+      requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) =>
+        ipcRenderer.invoke('pos:local-variant-imports:requeue', payload),
+    },
     categories: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL),
       getAllIncludingEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY),
@@ -798,7 +803,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
       lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),
-      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) =>
+      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
         importDraft: (payload: { ean: string; retailPriceGrosze?: number; categoryId?: string }) =>
           ipcRenderer.invoke('pos:master-catalog:import-draft', payload),

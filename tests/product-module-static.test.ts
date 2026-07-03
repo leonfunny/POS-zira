@@ -309,6 +309,19 @@ describe('Product module implementation contract', () => {
     expect(addFlow).toContain('products.add.serverRequired');
   });
 
+  it('surfaces failed local scan imports for operator retry instead of hiding them', () => {
+    expect(moduleSource).toContain('FailedLocalVariantImportsDialog');
+    expect(moduleSource).toContain('products.importFailures.badge');
+    expect(moduleSource).toContain('Cần xử lý');
+    expect(moduleSource).toContain('pos.localVariantImports.listFailed');
+    expect(moduleSource).toContain('pos.localVariantImports.requeue');
+    expect(preload).toContain('localVariantImports');
+    expect(preload).toContain('pos:local-variant-imports:listFailed');
+    expect(preload).toContain('pos:local-variant-imports:requeue');
+    expect(electronDts).toContain('LocalVariantImportFailure');
+    expect(electronDts).toContain('requeue: (payload: { variantId: string; ean: string; categoryId?: string | null })');
+  });
+
   it('exposes label printing through the existing hardware printLabel path', () => {
     expect(sharedTypes).toContain("PRINT_LABEL: 'print-label'");
     expect(preload).toContain('printLabel: (barcode: string, text?: string, options?:');

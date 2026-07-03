@@ -147,6 +147,25 @@ interface PosCategory {
   kitchen_print?: number | null;
 }
 
+interface LocalVariantImportFailure {
+  variant_id: string;
+  draft_id: string;
+  ean: string;
+  status: 'FAILED';
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  synced_at: string | null;
+  server_variant_id: string | null;
+  category_id: string | null;
+  product_name: string | null;
+  product_barcode: string | null;
+  product_category_id: string | null;
+  retail_price: number | null;
+  in_stock: number | null;
+  available_qty: number | null;
+}
+
 interface PosDailyStats {
   order_count: number;
   total_sales: number;
@@ -773,6 +792,10 @@ interface ElectronAPI {
       getByBarcode: (barcode: string) => Promise<PosProduct | null>;
       getById: (id: string) => Promise<PosProduct | null>;
     };
+    localVariantImports: {
+      listFailed: () => Promise<{ ok: boolean; count: number; imports: LocalVariantImportFailure[]; error?: string }>;
+      requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) => Promise<{ ok: boolean; syncPending?: boolean; variant?: PosProduct | null; error?: string }>;
+    };
     categories: {
       getAll: () => Promise<PosCategory[]>;
       getAllIncludingEmpty: () => Promise<PosCategory[]>;
@@ -918,7 +941,7 @@ interface ElectronAPI {
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
       lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;
-      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; idempotencyKey?: string }) => Promise<{
+      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
         mode?: string;

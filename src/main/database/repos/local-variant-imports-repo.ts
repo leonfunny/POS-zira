@@ -24,6 +24,15 @@ export interface LocalVariantImportRow {
   category_id: string | null;
 }
 
+export interface FailedLocalVariantImportRow extends LocalVariantImportRow {
+  product_name: string | null;
+  product_barcode: string | null;
+  product_category_id: string | null;
+  retail_price: number | null;
+  in_stock: number | null;
+  available_qty: number | null;
+}
+
 export const localVariantImportsRepo = {
   /** Upsert a local-import marker for a freshly-created variant. */
   create(variantId: string, draftId: string, ean: string, categoryId?: string | null): void {
@@ -55,6 +64,29 @@ export const localVariantImportsRepo = {
     return database.all<LocalVariantImportRow>(
       "SELECT * FROM local_variant_imports WHERE status = 'PENDING' ORDER BY created_at",
     );
+  },
+
+  getFailed(): FailedLocalVariantImportRow[] {
+    return database.all<FailedLocalVariantImportRow>(
+      `SELECT lvi.*,
+              pv.name AS product_name,
+              pv.barcode AS product_barcode,
+              pv.category_id AS product_category_id,
+              pv.retail_price AS retail_price,
+              pv.in_stock AS in_stock,
+              pv.available_qty AS available_qty
+       FROM local_variant_imports lvi
+       LEFT JOIN product_variants pv ON pv.id = lvi.variant_id
+       WHERE lvi.status = 'FAILED'
+       ORDER BY lvi.created_at`,
+    );
+  },
+
+  getFailedCount(): number {
+    const row = database.get<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM local_variant_imports WHERE status = 'FAILED'",
+    );
+    return row?.c ?? 0;
   },
 
   getSyncedAliases(): LocalVariantImportRow[] {
@@ -118,6 +150,24 @@ export const localVariantImportsRepo = {
     database.run(
       "UPDATE local_variant_imports SET status = 'FAILED', attempts = attempts + 1, last_error = ? WHERE variant_id = ?",
       [error, variantId],
+    );
+  },
+
+  requeue(variantId: string, ean: string, categoryId?: string | null): void {
+    const normalizedEan = String(ean ?? '').trim();
+    const normalizedCategoryId = String(categoryId ?? '').trim() || null;
+    database.run(
+      `UPDATE local_variant_imports
+       SET ean = ?,
+           category_id = ?,
+           status = 'PENDING',
+           attempts = 0,
+           last_error = NULL,
+           synced_at = NULL,
+           server_variant_id = NULL
+       WHERE variant_id = ?
+         AND status = 'FAILED'`,
+      [normalizedEan, normalizedCategoryId, variantId],
     );
   },
 };

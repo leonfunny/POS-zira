@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, MoreHorizontal, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import type { ProductAdminCapabilities, ProductAdminVariant } from '../../../shared/types';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Language } from '../../i18n/translations';
@@ -26,8 +26,26 @@ type BrowseView =
 type ProductView = BrowseView | { name: 'edit'; productId: string; returnTo: BrowseView };
 
 type ProductModuleToast = { kind: 'success' | 'error'; text: string };
+type FailedLocalVariantImport = {
+  variant_id: string;
+  ean: string;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  category_id: string | null;
+  product_name: string | null;
+  product_barcode: string | null;
+  product_category_id: string | null;
+};
+
+type ProductCategoryOption = {
+  id: string;
+  name: string;
+  name_translations?: string | null;
+};
 
 const PRODUCT_KIND_FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts'];
+const BACKEND_CATEGORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -71,6 +89,19 @@ function saleUnitImpliesWeight(value: unknown): boolean {
   return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
 }
 
+function isBackendCategoryId(value: unknown): value is string {
+  return BACKEND_CATEGORY_ID_RE.test(String(value ?? '').trim());
+}
+
+function initialFailedImportCategoryId(
+  item: FailedLocalVariantImport,
+  categories: ProductCategoryOption[],
+): string {
+  const candidate = String(item.category_id ?? item.product_category_id ?? '').trim();
+  if (!isBackendCategoryId(candidate)) return '';
+  return categories.some((category) => category.id === candidate) ? candidate : '';
+}
+
 function productAdminVariantToProduct(variant: ProductAdminVariant): ProductListItem {
   const saleUnit = variant.saleUnit ?? null;
   return {
@@ -91,6 +122,189 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
     sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',
     name_translations: variant.nameTranslations ? JSON.stringify(variant.nameTranslations) : null,
   };
+}
+
+function FailedImportRow({
+  item,
+  categories,
+  language,
+  t,
+  onChanged,
+}: {
+  item: FailedLocalVariantImport;
+  categories: ProductCategoryOption[];
+  language: Language;
+  t: (key: string) => string;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [ean, setEan] = useState(item.ean || item.product_barcode || '');
+  const [categoryId, setCategoryId] = useState(() => initialFailedImportCategoryId(item, categories));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEan(item.ean || item.product_barcode || '');
+    setCategoryId(initialFailedImportCategoryId(item, categories));
+    setError(null);
+  }, [categories, item]);
+
+  const submit = async () => {
+    const normalizedEan = ean.trim().replace(/[\s-]+/g, '');
+    if (!/^\d{4,14}$/.test(normalizedEan)) {
+      setError(tOr(t, 'products.importFailures.invalidEan', 'EAN must be 4-14 digits'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.electronAPI.pos.localVariantImports.requeue({
+        variantId: item.variant_id,
+        ean: normalizedEan,
+        categoryId: categoryId || null,
+      });
+      if (!result?.ok) {
+        setError(result?.error || tOr(t, 'products.importFailures.requeueFailed', 'Could not retry import'));
+        return;
+      }
+      await onChanged();
+    } catch (err: any) {
+      setError(err?.message || tOr(t, 'products.importFailures.requeueFailed', 'Could not retry import'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-slate-950">
+            {item.product_name || item.ean || item.variant_id}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {tOr(t, 'products.importFailures.attempts', 'Attempts')}: {item.attempts}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={busy}
+          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-amber-600 px-3 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RotateCcw size={15} />
+          {busy ? tOr(t, 'products.importFailures.retrying', 'Retrying...') : tOr(t, 'products.importFailures.retry', 'Retry')}
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.2fr]">
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+            {tOr(t, 'products.importFailures.ean', 'EAN')}
+          </span>
+          <input
+            value={ean}
+            onChange={(event) => setEan(event.target.value)}
+            inputMode="numeric"
+            className="h-10 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+            {tOr(t, 'products.importFailures.category', 'Category')}
+          </span>
+          <select
+            value={categoryId}
+            onChange={(event) => setCategoryId(event.target.value)}
+            className="h-10 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+          >
+            <option value="">{tOr(t, 'products.importFailures.defaultCategory', 'Uncategorised')}</option>
+            {categories.filter((category) => isBackendCategoryId(category.id)).map((category) => (
+              <option key={category.id} value={category.id}>
+                {resolveName(category, language) || category.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {item.last_error ? (
+        <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {item.last_error}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FailedLocalVariantImportsDialog({
+  open,
+  imports,
+  categories,
+  language,
+  t,
+  onClose,
+  onChanged,
+}: {
+  open: boolean;
+  imports: FailedLocalVariantImport[];
+  categories: ProductCategoryOption[];
+  language: Language;
+  t: (key: string) => string;
+  onClose: () => void;
+  onChanged: () => Promise<void> | void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-md bg-slate-50 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-950">
+              {tOr(t, 'products.importFailures.title', 'Cần xử lý')} ({imports.length})
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {tOr(t, 'products.importFailures.subtitle', 'Local imports that stopped after repeated backend rejection.')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            aria-label={tOr(t, 'products.close', 'Close')}
+          >
+            <X size={20} />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+          {imports.length === 0 ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {tOr(t, 'products.importFailures.empty', 'No failed local imports.')}
+            </div>
+          ) : (
+            imports.map((item) => (
+              <FailedImportRow
+                key={item.variant_id}
+                item={item}
+                categories={categories}
+                language={language}
+                t={t}
+                onChanged={onChanged}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function matchesProductKind(product: ProductListItem, filter: ProductKindFilter): boolean {
@@ -146,6 +360,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const [adminCapabilityError, setAdminCapabilityError] = useState<string | null>(null);
   const [adminCapabilitiesLoading, setAdminCapabilitiesLoading] = useState(true);
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
+  const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
+  const [failedImportsOpen, setFailedImportsOpen] = useState(false);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
@@ -154,6 +370,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
     () => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length,
     [allProducts],
   );
+  const failedImportCount = failedImports.length;
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
   const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
   const canEditDisplayName = !!adminCapabilities && adminCapabilities.version >= 2 && adminCapabilities.canEditDisplayName === true;
@@ -214,6 +431,29 @@ export default function ProductModule({ language }: ProductModuleProps) {
   useEffect(() => {
     setActionsOpen(false);
   }, [view.name]);
+
+  const refreshFailedImports = useCallback(async () => {
+    try {
+      const response = await window.electronAPI.pos.localVariantImports.listFailed();
+      setFailedImports(response?.ok ? (response.imports || []) : []);
+    } catch {
+      setFailedImports([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFailedImports();
+  }, [refreshFailedImports]);
+
+  useEffect(() => {
+    const reload = () => { void refreshFailedImports(); };
+    const unsubProducts = window.electronAPI.pos.sync.onProductsSynced(reload);
+    const unsubCatalog = window.electronAPI.pos.sync.onCatalogUpdated(reload);
+    return () => {
+      unsubProducts?.();
+      unsubCatalog?.();
+    };
+  }, [refreshFailedImports]);
 
   useEffect(() => {
     let cancelled = false;
@@ -304,6 +544,12 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const handleRefreshLocal = () => {
     setActionsOpen(false);
     void refresh();
+    void refreshFailedImports();
+  };
+
+  const handleSyncProducts = async () => {
+    await syncProducts();
+    await refreshFailedImports();
   };
 
   const syncMessage = syncErrorCode
@@ -340,6 +586,15 @@ export default function ProductModule({ language }: ProductModuleProps) {
               <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700">
                 <span className="font-semibold">{noPriceCount}</span> {tOr(t, 'products.filters.noPrice', 'No price')}
               </span>
+              {failedImportCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setFailedImportsOpen(true)}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
+                >
+                  {tOr(t, 'products.importFailures.badge', 'Cần xử lý')} ({failedImportCount})
+                </button>
+              ) : null}
             </div>
           </header>
 
@@ -370,7 +625,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => void syncProducts()}
+                onClick={() => void handleSyncProducts()}
                 disabled={syncing}
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
@@ -541,6 +796,19 @@ export default function ProductModule({ language }: ProductModuleProps) {
         onClose={() => setAddOpen(false)}
         onImported={refresh}
         onOpenProduct={handleOpenProduct}
+      />
+
+      <FailedLocalVariantImportsDialog
+        open={failedImportsOpen}
+        imports={failedImports}
+        categories={categories}
+        language={language}
+        t={t}
+        onClose={() => setFailedImportsOpen(false)}
+        onChanged={async () => {
+          await refresh();
+          await refreshFailedImports();
+        }}
       />
 
       {categoryManagerOpen ? (

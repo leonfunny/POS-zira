@@ -16,11 +16,13 @@ vi.mock('../src/main/config/store', () => ({
 }));
 
 import { ApiClient } from '../src/main/network/api-client';
+import { getConfigValue } from '../src/main/config/store';
 
 const fetchMock = vi.fn();
 
 beforeEach(() => {
   fetchMock.mockReset();
+  vi.mocked(getConfigValue).mockImplementation((key: string) => key === 'salonSlug' ? 'test-salon' : undefined);
   fetchMock.mockResolvedValue(new Response(JSON.stringify({
     outcome: 'IMPORT_DRAFT',
     variantId: 'server-variant-1',
@@ -85,5 +87,61 @@ describe('ApiClient master-catalog scan-create categoryId', () => {
       taxRate: 23,
     });
     expect(body).not.toHaveProperty('categoryId');
+  });
+});
+
+describe('ApiClient POS shift machineId', () => {
+  it('adds the configured machineId when opening a shift', async () => {
+    vi.mocked(getConfigValue).mockImplementation((key: string) => {
+      if (key === 'machineId') return 'POS-2';
+      if (key === 'salonSlug') return 'test-salon';
+      return undefined;
+    });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ shiftId: 'server-shift-1' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await new ApiClient('https://api.test').openPosShift('token-1', {
+      staffId: 'staff-1',
+      openingCash: 12345,
+    });
+
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(request.body));
+    expect(url).toBe('https://api.test/api/v1/pos/shifts/open');
+    expect(body).toMatchObject({
+      staffId: 'staff-1',
+      openingCash: 12345,
+      machineId: 'POS-2',
+    });
+  });
+
+  it('scopes active shift lookup by the configured machineId', async () => {
+    vi.mocked(getConfigValue).mockImplementation((key: string) => {
+      if (key === 'machineId') return 'POS 2';
+      if (key === 'salonSlug') return 'test-salon';
+      return undefined;
+    });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      id: 'server-shift-1',
+      staffId: 'staff-1',
+      staffName: 'Cashier',
+      openingCash: 100,
+      openedAt: '2026-07-04T08:00:00.000Z',
+      status: 'OPEN',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await new ApiClient('https://api.test').getActiveShift('token-1');
+
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/v1/pos/shifts/active?machineId=POS%202');
+    expect(request.headers).toMatchObject({
+      Authorization: 'Bearer token-1',
+      'Content-Type': 'application/json',
+    });
   });
 });

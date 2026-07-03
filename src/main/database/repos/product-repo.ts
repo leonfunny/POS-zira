@@ -479,6 +479,35 @@ export const productRepo = {
     }
   },
 
+  updateLocalImportIdentity(
+    variantId: string,
+    input: { ean: string; previousEan?: string | null; categoryId?: string | null },
+  ): void {
+    const ean = String(input.ean ?? '').trim();
+    if (!ean) return;
+
+    const current = this.getById(variantId);
+    if (!current) return;
+
+    const previousEan = String(input.previousEan ?? '').trim();
+    const previousEanSku = previousEan ? `EAN-${previousEan}` : null;
+    const nextSku = !current.sku || current.sku === previousEanSku || current.sku === current.barcode
+      ? `EAN-${ean}`
+      : current.sku;
+    const categoryId = String(input.categoryId ?? '').trim() || null;
+
+    database.run(
+      `UPDATE product_variants
+       SET barcode = ?,
+           sku = ?,
+           category_id = ?,
+           is_active = 1,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      [ean, nextSku, categoryId, variantId],
+    );
+  },
+
   deleteCategoriesExcept(keepIds: Set<string>): CategoryPruneResult {
     const keep = [...keepIds].filter(Boolean);
     if (keep.length === 0) return { removed: 0, categories: [] };

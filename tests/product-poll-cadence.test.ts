@@ -172,6 +172,7 @@ async function freshModule() {
   // init() now also starts the draft-product backstop timer. Stop that too
   // so these product-sync unit tests do not inherit an unrelated 60s timer.
   (m as any).stopPeriodicDraftProductSync();
+  (m as any).stopPeriodicShiftRetry();
   return m as any;
 }
 

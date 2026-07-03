@@ -2512,9 +2512,11 @@ export class ApiClient {
    */
   async openPosShift(
     token: string,
-    data: { staffId: string; openingCash: number },
+    data: { staffId: string; openingCash: number; machineId?: string | null },
   ): Promise<{ shiftId: string }> {
     const url = `${this.baseUrl}/api/v1/pos/shifts/open`;
+    const machineId = String(data.machineId ?? getConfigValue('machineId') ?? '').trim();
+    const body = machineId ? { ...data, machineId } : data;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',
@@ -2522,7 +2524,7 @@ export class ApiClient {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -2566,10 +2568,12 @@ export class ApiClient {
    * GET /api/v1/pos/shifts/active
    * Returns null if no active shift or endpoint not deployed.
    */
-  async getActiveShift(token: string): Promise<{
+  async getActiveShift(token: string, machineIdOverride?: string | null): Promise<{
     id: string; staffId: string; staffName: string; openingCash: number; openedAt: string; status: string;
   } | null> {
-    const url = `${this.baseUrl}/api/v1/pos/shifts/active`;
+    const machineId = String(machineIdOverride ?? getConfigValue('machineId') ?? '').trim();
+    const query = machineId ? `?machineId=${encodeURIComponent(machineId)}` : '';
+    const url = `${this.baseUrl}/api/v1/pos/shifts/active${query}`;
     const response = await fetchWithTimeout(url, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });

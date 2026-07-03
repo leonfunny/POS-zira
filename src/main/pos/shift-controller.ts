@@ -41,6 +41,10 @@ export class ShiftController {
     private isOnline: () => boolean,
   ) {}
 
+  private getMachineId(): string | undefined {
+    return String(getConfigValue('machineId') ?? '').trim() || undefined;
+  }
+
   /**
    * Open a new shift
    */
@@ -247,6 +251,7 @@ export class ShiftController {
         const result = await apiClient.openPosShift(token, {
           staffId: shift.staff_id,
           openingCash: shift.opening_cash,
+          machineId: this.getMachineId(),
         });
         database.run('UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ?', [
           result.shiftId,
@@ -287,7 +292,7 @@ export class ShiftController {
     if (!token) return;
 
     try {
-      const result = await apiClient.openPosShift(token, { staffId, openingCash });
+      const result = await apiClient.openPosShift(token, { staffId, openingCash, machineId: this.getMachineId() });
       database.run('UPDATE shifts SET backend_id = ?, synced = 1 WHERE id = ?', [
         result.shiftId,
         shiftId,
@@ -313,7 +318,7 @@ export class ShiftController {
     if (!shift?.backend_id) {
       if (!shift) return;
       try {
-        const activeShift = await apiClient.getActiveShift(token);
+        const activeShift = await apiClient.getActiveShift(token, this.getMachineId());
         const sameShiftId = activeShift?.id === shiftId;
         const sameStaffId = !!activeShift?.staffId && !!shift.staff_id && activeShift.staffId === shift.staff_id;
         if (activeShift?.id && (sameShiftId || sameStaffId)) {

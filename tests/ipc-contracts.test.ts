@@ -86,7 +86,7 @@ describe('IPC channel contracts - main preload', () => {
 describe('IPC channel contracts - POS preload', () => {
   const posGroups = [
     'pos.getState', 'pos.dispatch', 'pos.onStateChanged',
-    'products', 'categories', 'orders', 'tables', 'customers', 'staff',
+    'products', 'localVariantImports', 'categories', 'orders', 'tables', 'customers', 'staff',
     'hold', 'quickKeys', 'shift', 'payment',
     'setConfig', 'saveConfig',
   ];
@@ -113,6 +113,8 @@ describe('IPC channel contracts - POS methods must be in BOTH preloads', () => {
     { scope: 'shift', method: 'getActive', ipc: 'pos:shift:getActive' },
     { scope: 'products', method: 'getById', ipc: 'pos:products:getById' },
     { scope: 'products', method: 'searchByCode', ipc: 'pos:products:searchByCode' },
+    { scope: 'localVariantImports', method: 'listFailed', ipc: 'pos:local-variant-imports:listFailed' },
+    { scope: 'localVariantImports', method: 'requeue', ipc: 'pos:local-variant-imports:requeue' },
     { scope: 'draftProducts', method: 'getByBarcode', ipc: 'pos:draft-products:getByBarcode' },
     { scope: 'masterCatalog', method: 'scanCreate', ipc: 'pos:master-catalog:scan-create' },
     { scope: 'masterCatalog', method: 'lookupExternalByEan', ipc: 'pos:master-catalog:lookup-external-by-ean' },

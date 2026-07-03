@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const draftDeltaSyncMock = vi.fn();
+const shiftRetryMock = vi.fn();
 const posWindowSendMock = vi.fn();
 const isDestroyedMock = vi.fn(() => false);
 const getWindowMock = vi.fn(() => ({
@@ -154,6 +155,7 @@ async function freshModule() {
   // init() auto-starts both periodic timers; stop them so the test controls cadence.
   (m as any).stopPeriodicProductSync();
   (m as any).stopPeriodicDraftProductSync();
+  (m as any).stopPeriodicShiftRetry();
   return m as any;
 }
 
@@ -162,6 +164,7 @@ describe('SyncModule.runDraftSync', () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     draftDeltaSyncMock.mockReset();
+    shiftRetryMock.mockReset();
     posWindowSendMock.mockReset();
     isDestroyedMock.mockReturnValue(false);
   });
@@ -261,6 +264,28 @@ describe('SyncModule.runDraftSync', () => {
     // The internal timer must exist after init — proves the auto-start wiring.
     expect(m._draftPollTimer).not.toBeNull();
     m.stopPeriodicDraftProductSync();
+    m.stopPeriodicShiftRetry();
     expect(m._draftPollTimer).toBeNull();
+  });
+
+  it('startPeriodicShiftRetry retries unsynced shifts on the configured interval', async () => {
+    shiftRetryMock.mockResolvedValue(undefined);
+    const m = await freshModule();
+    containerStore.set(SERVICE_TOKENS_MOCK.SHIFT_CONTROLLER, {
+      retryUnsyncedShifts: shiftRetryMock,
+    });
+
+    m.startPeriodicShiftRetry(300_000);
+
+    expect(shiftRetryMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(shiftRetryMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(shiftRetryMock).toHaveBeenCalledTimes(2);
+
+    m.stopPeriodicShiftRetry();
+    shiftRetryMock.mockClear();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(shiftRetryMock).not.toHaveBeenCalled();
   });
 });

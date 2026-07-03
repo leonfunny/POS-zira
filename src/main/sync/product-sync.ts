@@ -1,6 +1,6 @@
 import { apiClient } from '../network/api-client';
 import { productRepo } from '../database/repos/product-repo';
-import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
+import { localVariantImportsRepo, type LocalVariantImportRow } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
@@ -17,6 +17,9 @@ import {
 interface ProductSyncDeps {
   createRestorePoint?: (reason: BackupRunReason) => Promise<void>;
 }
+
+const LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS = 50;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Retry an async fn with exponential backoff (1s, 3s, 9s). */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
@@ -208,14 +211,28 @@ export class ProductSync {
     const token = getSecureAuthToken();
 
     const pending = localVariantImportsRepo.getPending().slice(0, maxRows);
+    const backendCategoryIds = new Set(
+      productRepo.getAllCategories()
+        .map((category) => String(category.id ?? '').trim())
+        .filter((id) => UUID_RE.test(id)),
+    );
     let reconciled = 0;
     let changed = false;
 
     for (const row of pending) {
       try {
+        if (row.attempts >= LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS) {
+          localVariantImportsRepo.markFailed(
+            row.variant_id,
+            `Max retry exceeded (${row.attempts}/${LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS}): ${row.last_error ?? 'scan-create did not complete'}`,
+          );
+          changed = true;
+          continue;
+        }
+
         const localVariant = productRepo.getById(row.variant_id);
         if (!localVariant) {
-          localVariantImportsRepo.markAttempt(row.variant_id, 'local variant row not found');
+          markLocalVariantImportRetryOrFailed(row, 'local variant row not found');
           changed = true;
           continue;
         }
@@ -233,7 +250,8 @@ export class ProductSync {
           continue;
         }
 
-        const categoryId = row.category_id ?? localVariant.category_id ?? null;
+        const rawCategoryId = row.category_id ?? localVariant.category_id ?? null;
+        const categoryId = resolveBackendCategoryId(rawCategoryId, backendCategoryIds);
         const result = await apiClient.scanCreate(token, {
           ean: row.ean,
           purchasePrice: 0,
@@ -245,7 +263,7 @@ export class ProductSync {
         });
         const serverVariantId = extractServerVariantId(result);
         if (!serverVariantId) {
-          localVariantImportsRepo.markAttempt(row.variant_id, 'scan-create returned no server variant id');
+          markLocalVariantImportRetryOrFailed(row, 'scan-create returned no server variant id');
           changed = true;
           continue;
         }
@@ -258,7 +276,35 @@ export class ProductSync {
         );
       } catch (err: any) {
         const message = err?.message ?? String(err);
-        localVariantImportsRepo.markAttempt(row.variant_id, message);
+        if (isVariantExistsConflict(err)) {
+          try {
+            const lookup = await apiClient.lookupByEan(token, row.ean);
+            const serverVariantId = extractActiveLookupVariantId(lookup, row.ean);
+            if (serverVariantId) {
+              localVariantImportsRepo.markSynced(row.variant_id, serverVariantId);
+              changed = true;
+              reconciled++;
+              logger.info(
+                `[ProductSync] Mapped local draft variant ${row.variant_id} -> existing server variant ${serverVariantId} after VARIANT_EXISTS (ean=${row.ean})`,
+              );
+              continue;
+            }
+          } catch (lookupErr: any) {
+            logger.warn(
+              `[ProductSync] lookup-by-ean after VARIANT_EXISTS failed for ${row.variant_id}: ${lookupErr?.message ?? lookupErr}`,
+            );
+          }
+
+          localVariantImportsRepo.markFailed(
+            row.variant_id,
+            `scan-create conflict VARIANT_EXISTS and lookup-by-ean found no active variant: ${message}`,
+          );
+          changed = true;
+          logger.warn(`[ProductSync] Local variant reconcile blocked for ${row.variant_id}: ${message}`);
+          continue;
+        }
+
+        markLocalVariantImportRetryOrFailed(row, message);
         changed = true;
         logger.warn(`[ProductSync] Local variant reconcile failed for ${row.variant_id}: ${message}`);
       }
@@ -315,6 +361,24 @@ export class ProductSync {
   }
 }
 
+function resolveBackendCategoryId(categoryId: string | null, backendCategoryIds: Set<string>): string | null {
+  const normalized = String(categoryId ?? '').trim();
+  if (!normalized || !UUID_RE.test(normalized)) return null;
+  return backendCategoryIds.has(normalized) ? normalized : null;
+}
+
+function markLocalVariantImportRetryOrFailed(row: LocalVariantImportRow, error: string): void {
+  const nextAttempts = (Number(row.attempts) || 0) + 1;
+  if (nextAttempts >= LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS) {
+    localVariantImportsRepo.markFailed(
+      row.variant_id,
+      `Max retry exceeded (${nextAttempts}/${LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS}): ${error}`,
+    );
+    return;
+  }
+  localVariantImportsRepo.markAttempt(row.variant_id, error);
+}
+
 function extractServerVariantId(result: any): string | null {
   const direct = result?.variantId ?? result?.variant_id;
   if (direct) return String(direct);
@@ -337,6 +401,59 @@ function extractServerVariantId(result: any): string | null {
       candidate.totalStockQty != null ||
       candidate.availableQty != null;
     if (id && looksLikeVariant) return String(id);
+  }
+
+  return null;
+}
+
+function isVariantExistsConflict(err: any): boolean {
+  if (Number(err?.status) !== 409) return false;
+  const body = err?.serverBody;
+  const text = [
+    err?.message,
+    typeof body === 'string' ? body : '',
+    body?.code,
+    body?.error,
+    body?.message,
+  ].filter(Boolean).join(' ');
+  return /VARIANT_EXISTS/i.test(text);
+}
+
+function extractActiveLookupVariantId(result: any, ean: string): string | null {
+  const candidates = [
+    result?.variant,
+    result?.existingVariant,
+    result?.existing_variant,
+    result?.existingProduct?.variant,
+    result?.existing_product?.variant,
+    result?.product?.variant,
+    result?.existingProduct,
+    result?.existing_product,
+    result?.product,
+    ...(Array.isArray(result?.variants) ? result.variants : []),
+    ...(Array.isArray(result?.product?.variants) ? result.product.variants : []),
+  ];
+
+  const normalizedEan = String(ean ?? '').trim();
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const id = candidate.variantId ?? candidate.variant_id ?? candidate.id;
+    if (!id) continue;
+    const active = candidate.isActive ?? candidate.is_active;
+    if (active === false || active === 0) continue;
+    if (candidate.deletedAt || candidate.deleted_at) continue;
+    if (String(candidate.status ?? '').toUpperCase() === 'DELETED') continue;
+    const code = String(candidate.ean ?? candidate.barcode ?? '').trim();
+    if (code && normalizedEan && code !== normalizedEan) continue;
+    const looksLikeVariant =
+      candidate.barcode != null ||
+      candidate.ean != null ||
+      candidate.sku != null ||
+      candidate.templateId != null ||
+      candidate.template_id != null ||
+      candidate.totalStockQty != null ||
+      candidate.availableQty != null;
+    if (looksLikeVariant) return String(id);
   }
 
   return null;

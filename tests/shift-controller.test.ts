@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/main/database/database', () => ({
   database: {
+    all: vi.fn(),
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
@@ -39,6 +40,8 @@ vi.mock('../src/main/logger', () => ({
 
 import { database } from '../src/main/database/database';
 import { orderRepo } from '../src/main/database/repos/order-repo';
+import { apiClient } from '../src/main/network/api-client';
+import { getConfigValue, getSecureAuthToken } from '../src/main/config/store';
 import { ShiftController } from '../src/main/pos/shift-controller';
 
 function order(overrides: Record<string, unknown>) {
@@ -56,6 +59,7 @@ function order(overrides: Record<string, unknown>) {
 describe('ShiftController transfer totals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(database.all).mockReturnValue([]);
     vi.mocked(database.get).mockReturnValue({
       id: 'shift-1',
       staff_id: 'staff-1',
@@ -65,6 +69,8 @@ describe('ShiftController transfer totals', () => {
       backend_id: null,
     } as any);
     vi.mocked(orderRepo.getUnsyncedCountByShift).mockReturnValue(0);
+    vi.mocked(getConfigValue).mockReturnValue(undefined);
+    vi.mocked(getSecureAuthToken).mockReturnValue(null);
   });
 
   it('counts BANK_TRANSFER as transfer for single payment orders', () => {
@@ -142,5 +148,39 @@ describe('ShiftController transfer totals', () => {
     expect(report.difference).toBe(5000);
     expect(report.fiscalOnlySales).toBe(true);
     expect(vi.mocked(database.run).mock.calls[0][1]).toEqual([15000, 10000, 1, 'shift-1']);
+  });
+
+  it('sends machineId when retrying unsynced shift opens', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(getConfigValue).mockImplementation((key: string) => key === 'machineId' ? 'POS-2' : undefined);
+    vi.mocked(database.all)
+      .mockReturnValueOnce([
+        { id: 'shift-2', staff_id: 'staff-2', opening_cash: 25000, sync_attempts: 0 },
+      ] as any)
+      .mockReturnValueOnce([]);
+    vi.mocked(apiClient.openPosShift).mockResolvedValueOnce({ shiftId: 'server-shift-2' });
+
+    await new ShiftController(() => null, () => true).retryUnsyncedShifts();
+
+    expect(apiClient.openPosShift).toHaveBeenCalledWith('token-1', {
+      staffId: 'staff-2',
+      openingCash: 25000,
+      machineId: 'POS-2',
+    });
+  });
+
+  it('scopes active-shift close fallback by machineId', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(getConfigValue).mockImplementation((key: string) => key === 'machineId' ? 'POS-2' : undefined);
+    vi.mocked(database.get).mockReturnValueOnce({
+      backend_id: null,
+      staff_id: 'staff-2',
+      staff_name: 'Cashier',
+    } as any);
+    vi.mocked(apiClient.getActiveShift).mockResolvedValueOnce(null);
+
+    await (new ShiftController(() => null, () => true) as any).syncShiftClose('shift-2', 12000);
+
+    expect(apiClient.getActiveShift).toHaveBeenCalledWith('token-1', 'POS-2');
   });
 });
