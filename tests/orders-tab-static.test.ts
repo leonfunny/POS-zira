@@ -83,8 +83,8 @@ describe('Orders tab localization and contract', () => {
 
   it('adapts inline server order item quantities from weighted-aware fields', () => {
     expect(orderAdapter).toContain('item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1');
-    expect(orderAdapter).toContain('item.variantSku ?? item.productSku ?? null');
-    expect(orderAdapter).toContain('calculateLineTotalGrosze(price, quantity, sellBy)');
+    expect(orderAdapter).toContain('item.variantSku ?? item.variant_sku ?? item.productSku ?? item.product_sku ?? item.product?.sku ?? null');
+    expect(orderAdapter).toContain('calculateLineTotalGrosze(rawUnitPrice, quantity, sellBy)');
     expect(orderAdapter).toContain('requires_invoice: Boolean(s.requiresInvoice)');
   });
 });

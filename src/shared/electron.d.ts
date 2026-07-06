@@ -1009,6 +1009,16 @@ interface ElectronAPI {
         [key: string]: any;
       }>;
     };
+    voice: {
+      transcribe: (payload: { audioBase64: string; mimeType?: string; model?: string; timestamps?: boolean; chunkSeconds?: number }) => Promise<{
+        ok: boolean;
+        text?: string;
+        model?: string;
+        filename?: string;
+        processingSeconds?: number;
+        error?: string;
+      }>;
+    };
     tables: {
       getAll: () => Promise<PosTable[]>;
       getActive: () => Promise<PosTable[]>;

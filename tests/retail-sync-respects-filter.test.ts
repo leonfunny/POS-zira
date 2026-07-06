@@ -130,8 +130,9 @@ describe('RetailTemplate - category switching uses renderer-side filtering', () 
   });
 
   it('keeps draft product search/import behavior on the async search path', () => {
-    expect(source).toMatch(/pos\.products\.search\(searchQuery\)/);
-    expect(source).toMatch(/draftProducts\s*\.\s*searchByCode\(searchQuery\)/);
+    expect(source).toContain('const trimmedQuery = query.trim();');
+    expect(source).toMatch(/pos\.products\.search\(trimmedQuery\)/);
+    expect(source).toMatch(/draftProducts\s*\.\s*searchByCode\(trimmedQuery\)/);
     expect(source).toMatch(/_isDraft:\s*true/);
     expect(source).not.toMatch(/setSearchResults\(visibleCategoryProducts\)/);
     expect(source).not.toMatch(/setSearchResults\(allProducts\)/);

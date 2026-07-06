@@ -26,8 +26,8 @@ describe('POS SearchBar keyboard-wedge scan handoff', () => {
     expect(helper).toContain('onScan(barcode);');
   });
 
-  it('reads Enter submissions from the live input instead of the React value prop', () => {
-    expect(SEARCH_BAR).toContain("if (e.key !== 'Enter') return;");
+  it('reads Enter and Tab submissions from the live input instead of the React value prop', () => {
+    expect(SEARCH_BAR).toContain("if (e.key !== 'Enter' && e.key !== 'Tab') return;");
     expect(SEARCH_BAR).toContain('submitBarcode(e.currentTarget.value, e.currentTarget)');
     expect(SEARCH_BAR).not.toContain('const barcode = value.trim();');
     expect(SEARCH_BAR).not.toContain('onBarcodeScanned(barcode);');

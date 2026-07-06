@@ -822,6 +822,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       scanMatch: (payload: { images: Array<{ dataUrl?: string; url?: string; mimeType?: string }>; language?: string; limit?: number }) =>
         ipcRenderer.invoke('pos:recognition:scan-match', payload),
     },
+    voice: {
+      transcribe: (payload: { audioBase64: string; mimeType?: string; model?: string; timestamps?: boolean; chunkSeconds?: number }) =>
+        ipcRenderer.invoke('pos:voice:transcribe', payload),
+    },
     tables: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ALL),
       getActive: () => ipcRenderer.invoke(IPC_CHANNELS.POS_TABLES_GET_ACTIVE),
