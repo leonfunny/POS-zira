@@ -24,6 +24,7 @@ import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
 import {
   buildRefundMutationError,
   getRefundBackendResponseSummary,
+  allocateRefundTenders,
   mergeRefundLines,
   toRefundBackendPayload,
   validateRefundBackendResponse,
@@ -2974,7 +2975,6 @@ export class PosModule extends BaseModule {
           vatRate: l.vatRate,
         }));
 
-        const backendPayload = toRefundBackendPayload(data);
         const alreadyRefundedGrosze = order.refund_amount ?? 0;
         const requestedAmountGrosze = data.type === 'FULL'
           ? order.total - alreadyRefundedGrosze
@@ -2985,6 +2985,13 @@ export class PosModule extends BaseModule {
         if (alreadyRefundedGrosze + requestedAmountGrosze > order.total) {
           return { success: false, error: `Refund would exceed order total (${order.total} grosze). Already refunded: ${alreadyRefundedGrosze}` };
         }
+        const refundPayload: RefundIpcPayload = {
+          ...data,
+          tenderAllocations: data.tenderAllocations?.length
+            ? data.tenderAllocations
+            : allocateRefundTenders(order.payment_tenders, requestedAmountGrosze, order.payment_method),
+        };
+        const backendPayload = toRefundBackendPayload(refundPayload);
         const hasLineRefund = (data.lines ?? []).length > 0;
         const hasRestock = (data.lines ?? []).some(l => l.restock);
 

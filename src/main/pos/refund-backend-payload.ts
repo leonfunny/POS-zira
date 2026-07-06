@@ -12,12 +12,18 @@ export interface RefundIpcLine {
   vatRate?: number;
 }
 
+export interface RefundTenderAllocation {
+  method: string;
+  amount: number;
+}
+
 export interface RefundIpcPayload {
   type: RefundType;
   refundRequestId?: string;
   reason?: string;
   amount?: number;
   lines?: RefundIpcLine[];
+  tenderAllocations?: RefundTenderAllocation[];
   manualAdjustmentAmount?: number;
 }
 
@@ -258,6 +264,74 @@ export function buildRefundMutationError(result: RefundBackendValidationResult):
   return result.error || 'Refund failed';
 }
 
+function normalizeRefundTenderMethod(method: unknown): string | null {
+  const raw = typeof method === 'string' ? method.trim().toUpperCase() : '';
+  if (!raw || raw === 'SPLIT' || raw === 'MIXED') return null;
+  if (raw === 'TRANSFER' || raw === 'INVOICE') return 'BANK_TRANSFER';
+  return raw;
+}
+
+function normalizeMinorAmount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n);
+}
+
+export function normalizeRefundTenderAllocations(
+  tenders: RefundTenderAllocation[] | null | undefined,
+): RefundTenderAllocation[] {
+  if (!Array.isArray(tenders)) return [];
+  return tenders
+    .map((t) => {
+      const method = normalizeRefundTenderMethod((t as any)?.method);
+      const amount = normalizeMinorAmount((t as any)?.amount);
+      return method && amount > 0 ? { method, amount } : null;
+    })
+    .filter((t): t is RefundTenderAllocation => t !== null);
+}
+
+function fallbackRefundTender(refundAmountGrosze: number, fallbackMethod?: string | null): RefundTenderAllocation[] {
+  const method = normalizeRefundTenderMethod(fallbackMethod);
+  const amount = normalizeMinorAmount(refundAmountGrosze);
+  return method && amount > 0 ? [{ method, amount }] : [];
+}
+
+export function allocateRefundTenders(
+  paymentTendersJson: string | null | undefined,
+  refundAmountGrosze: number,
+  fallbackMethod?: string | null,
+): RefundTenderAllocation[] {
+  const refundAmount = normalizeMinorAmount(refundAmountGrosze);
+  if (refundAmount <= 0) return [];
+
+  let source: RefundTenderAllocation[] = [];
+  if (paymentTendersJson) {
+    try {
+      const parsed = JSON.parse(paymentTendersJson);
+      source = normalizeRefundTenderAllocations(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      source = [];
+    }
+  }
+
+  if (source.length === 0) return fallbackRefundTender(refundAmount, fallbackMethod);
+
+  const tenderTotal = source.reduce((sum, t) => sum + t.amount, 0);
+  if (tenderTotal <= 0) return fallbackRefundTender(refundAmount, fallbackMethod);
+
+  let distributed = 0;
+  return source
+    .map((t, index) => {
+      const isLast = index === source.length - 1;
+      const amount = isLast
+        ? refundAmount - distributed
+        : Math.round(refundAmount * (t.amount / tenderTotal));
+      distributed += amount;
+      return amount > 0 ? { method: t.method, amount } : null;
+    })
+    .filter((t): t is RefundTenderAllocation => t !== null);
+}
+
 export function toRefundBackendPayload(data: RefundIpcPayload): Record<string, any> {
   const lines = (data.lines ?? []).map(l => ({
     variantId: l.variantId,
@@ -290,6 +364,14 @@ export function toRefundBackendPayload(data: RefundIpcPayload): Record<string, a
 
   if (data.manualAdjustmentAmount != null) {
     backendPayload.manualAdjustmentAmount = data.manualAdjustmentAmount / 100;
+  }
+
+  const tenderAllocations = normalizeRefundTenderAllocations(data.tenderAllocations);
+  if (tenderAllocations.length > 0) {
+    backendPayload.tenderAllocations = tenderAllocations.map((t) => ({
+      method: t.method,
+      amount: t.amount / 100,
+    }));
   }
 
   return backendPayload;

@@ -135,6 +135,21 @@ describe('applyOrder refund normalisation', () => {
     }
   });
 
+  it('maps backend DELIVERED into local COMPLETED status for the UI status column', () => {
+    applyEntry(entry({ status: 'DELIVERED' }));
+
+    const localStatusUpdate = vi
+      .mocked(database.run)
+      .mock.calls.find(
+        (c) =>
+          typeof c[0] === 'string' &&
+          /UPDATE orders SET status\s*=/i.test(c[0] as string),
+      );
+
+    expect(localStatusUpdate).toBeDefined();
+    expect((localStatusUpdate![1] as unknown[])[0]).toBe('COMPLETED');
+  });
+
   it('does NOT mirror non-terminal statuses (CHECKED_IN, IN_SERVICE) into local status', () => {
     applyEntry(entry({ status: 'CHECKED_IN' }));
     const localStatusUpdate = vi

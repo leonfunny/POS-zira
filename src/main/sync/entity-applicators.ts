@@ -225,18 +225,17 @@ function applyOrder(entry: SyncLogEntry): boolean {
   // doesn't double-refund a row.
   const isRefundStatus = p.status === 'REFUNDED' || p.status === 'PARTIAL_REFUND';
   const refundAmountGroszeForStatus = p.refundAmount == null ? null : toGrosze(p.refundAmount);
+  const localStatus = p.status === 'DELIVERED' ? 'COMPLETED' : p.status;
+  const shouldMirrorLocalStatus = isRefundStatus || p.status === 'CANCELLED' || p.status === 'DELIVERED' || p.status === 'COMPLETED';
   if (p.status) {
     database.run(
       'UPDATE orders SET server_status = ?, server_updated_at = ? WHERE id = ?',
       [p.status, p.updatedAt ?? entry.created_at, localId],
     );
-    if (
-      isRefundStatus ||
-      p.status === 'CANCELLED'
-    ) {
+    if (shouldMirrorLocalStatus) {
       database.run(
         'UPDATE orders SET status = ? WHERE id = ?',
-        [p.status, localId],
+        [localStatus, localId],
       );
     }
   }

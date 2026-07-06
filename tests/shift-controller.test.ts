@@ -56,6 +56,12 @@ function order(overrides: Record<string, unknown>) {
   } as any;
 }
 
+function findRunCall(matcher: RegExp) {
+  return vi
+    .mocked(database.run)
+    .mock.calls.find((c) => typeof c[0] === 'string' && matcher.test(c[0] as string));
+}
+
 describe('ShiftController transfer totals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -182,5 +188,74 @@ describe('ShiftController transfer totals', () => {
     await (new ShiftController(() => null, () => true) as any).syncShiftClose('shift-2', 12000);
 
     expect(apiClient.getActiveShift).toHaveBeenCalledWith('token-1', 'POS-2');
+  });
+
+  it('marks a retried shift close as synced after backend success', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(database.all)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { id: 'shift-close-1', backend_id: 'server-shift-1', closing_cash: 12000, close_sync_attempts: 0 },
+      ] as any);
+    vi.mocked(apiClient.closePosShift).mockResolvedValueOnce({} as any);
+
+    await new ShiftController(() => null, () => true).retryUnsyncedShifts();
+
+    expect(apiClient.closePosShift).toHaveBeenCalledWith('token-1', 'server-shift-1', { closingCash: 12000 });
+    expect(findRunCall(/close_sync_attempts = COALESCE\(close_sync_attempts, 0\) \+ 1/i)).toBeDefined();
+    const successUpdate = findRunCall(/UPDATE shifts SET close_synced = 1/i);
+    expect(successUpdate).toBeDefined();
+    expect(successUpdate![1]).toEqual(['shift-close-1']);
+  });
+
+  it('records transient shift close retry failures without shelving before the cap', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(database.all)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { id: 'shift-close-2', backend_id: 'server-shift-2', closing_cash: 13000, close_sync_attempts: 1 },
+      ] as any);
+    vi.mocked(apiClient.closePosShift).mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    await new ShiftController(() => null, () => true).retryUnsyncedShifts();
+
+    expect(apiClient.closePosShift).toHaveBeenCalledTimes(1);
+    expect(findRunCall(/UPDATE shifts SET close_synced = -1/i)).toBeUndefined();
+    const errorUpdate = findRunCall(/UPDATE shifts SET close_sync_error = \?/i);
+    expect(errorUpdate).toBeDefined();
+    expect(errorUpdate![1]).toEqual(['ECONNRESET', 'shift-close-2']);
+  });
+
+  it('shelves terminal 404 shift close retry failures', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(database.all)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { id: 'shift-close-3', backend_id: 'server-shift-3', closing_cash: 14000, close_sync_attempts: 2 },
+      ] as any);
+    vi.mocked(apiClient.closePosShift).mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }));
+
+    await new ShiftController(() => null, () => true).retryUnsyncedShifts();
+
+    const terminalUpdate = findRunCall(/UPDATE shifts SET close_synced = -1/i);
+    expect(terminalUpdate).toBeDefined();
+    expect((terminalUpdate![1] as unknown[])[0]).toContain('Not Found');
+    expect((terminalUpdate![1] as unknown[])[1]).toBe('shift-close-3');
+  });
+
+  it('does not retry shift close after the retry cap is exhausted', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(database.all)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { id: 'shift-close-4', backend_id: 'server-shift-4', closing_cash: 15000, close_sync_attempts: 5 },
+      ] as any);
+
+    await new ShiftController(() => null, () => true).retryUnsyncedShifts();
+
+    expect(apiClient.closePosShift).not.toHaveBeenCalled();
+    const exhaustedUpdate = findRunCall(/UPDATE shifts SET close_synced = -1/i);
+    expect(exhaustedUpdate).toBeDefined();
+    expect(exhaustedUpdate![1]).toEqual(['shift-close-4']);
   });
 });

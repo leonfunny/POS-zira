@@ -1567,4 +1567,18 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_lvi_category_id ON local_variant_imports(category_id);
     `,
   },
+  {
+    version: 52,
+    name: 'shift_close_sync_state',
+    up: `
+      ALTER TABLE shifts ADD COLUMN close_synced INTEGER DEFAULT 0;
+      ALTER TABLE shifts ADD COLUMN close_sync_attempts INTEGER DEFAULT 0;
+      ALTER TABLE shifts ADD COLUMN close_sync_error TEXT;
+
+      -- Existing closed backend shifts have no close retry metadata. Treat
+      -- them as already handled so the upgrade does not re-close historical
+      -- shifts on the next reconnect.
+      UPDATE shifts SET close_synced = 1 WHERE closed_at IS NOT NULL AND backend_id IS NOT NULL;
+    `,
+  },
 ];

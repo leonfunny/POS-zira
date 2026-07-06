@@ -1163,7 +1163,8 @@ export class AuthModule extends BaseModule {
         logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, staged restore of ${newSalonId} — relaunching`);
         return { ok: true, willRestart: true };
       }
-      logger.warn(`[AuthModule] ${context}: stage restore for ${newSalonId} failed (${staged.error}); starting fresh + full sync`);
+      logger.error(`[AuthModule] ${context}: stage restore for ${newSalonId} failed (${staged.error}); aborting switch to avoid wiping archived salon data`);
+      return { ok: false, willRestart: false, error: `Khong the khoi phuc du lieu salon dich: ${staged.error}` };
     }
     database.clearSalonData();
     logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, no usable archive for ${newSalonId} — fresh + full sync`);

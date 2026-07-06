@@ -100,6 +100,7 @@ vi.mock('../src/main/logger', () => ({
 }));
 
 import { AuthModule } from '../src/main/modules/auth.module';
+import { database } from '../src/main/database/database';
 
 function baseConfig(): AgentConfig {
   return {
@@ -134,6 +135,59 @@ function registerAuthHandlers() {
   const module = new AuthModule({ getOptional: vi.fn() } as any);
   module.registerIpcHandlers();
 }
+
+function authModuleWithBackup(backup: any) {
+  return new AuthModule({ getOptional: vi.fn(() => backup) } as any) as any;
+}
+
+describe('AuthModule salon restore orchestration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fails closed when target salon archive exists but staging fails', async () => {
+    const backup = {
+      archiveSalon: vi.fn().mockResolvedValue({ success: true }),
+      hasSalonArchive: vi.fn().mockReturnValue(true),
+      stageSalonRestore: vi.fn().mockResolvedValue({ success: false, error: 'stage failed' }),
+    };
+
+    const result = await authModuleWithBackup(backup).switchSalonForLogin('old-salon', 'new-salon', 'login-test');
+
+    expect(result).toMatchObject({ ok: false, willRestart: false });
+    expect(result.error).toContain('stage failed');
+    expect(backup.archiveSalon).toHaveBeenCalledWith('old-salon');
+    expect(backup.stageSalonRestore).toHaveBeenCalledWith('new-salon');
+    expect(database.clearSalonData).not.toHaveBeenCalled();
+  });
+
+  it('clears local salon data only when the target salon has no archive', async () => {
+    const backup = {
+      archiveSalon: vi.fn().mockResolvedValue({ success: true }),
+      hasSalonArchive: vi.fn().mockReturnValue(false),
+      stageSalonRestore: vi.fn(),
+    };
+
+    const result = await authModuleWithBackup(backup).switchSalonForLogin('old-salon', 'new-salon', 'login-test');
+
+    expect(result).toEqual({ ok: true, willRestart: false });
+    expect(backup.stageSalonRestore).not.toHaveBeenCalled();
+    expect(database.clearSalonData).toHaveBeenCalledTimes(1);
+  });
+
+  it('stages a target archive without clearing current local data', async () => {
+    const backup = {
+      archiveSalon: vi.fn().mockResolvedValue({ success: true }),
+      hasSalonArchive: vi.fn().mockReturnValue(true),
+      stageSalonRestore: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    const result = await authModuleWithBackup(backup).switchSalonForLogin('old-salon', 'new-salon', 'login-test');
+
+    expect(result).toEqual({ ok: true, willRestart: true });
+    expect(database.clearSalonData).not.toHaveBeenCalled();
+  });
+});
 
 describe('AuthModule LAN_FIRST config sanitization', () => {
   beforeEach(() => {

@@ -31,6 +31,30 @@ type PrinterDriver = {
   printZReport(data: DailyReportData): Promise<void>;
 };
 
+const SHIFT_SYNC_MAX_ATTEMPTS = 5;
+
+function shiftSyncErrorMessage(err: unknown): string {
+  const value = err as any;
+  return (value?.message || value?.code || String(err)).substring(0, 500);
+}
+
+function shiftSyncErrorStatus(err: unknown): number | null {
+  const value = err as any;
+  const candidates = [value?.status, value?.statusCode, value?.response?.status, value?.response?.statusCode];
+  for (const candidate of candidates) {
+    const status = Number(candidate);
+    if (Number.isFinite(status) && status > 0) return status;
+  }
+  return null;
+}
+
+function isTerminalShiftCloseError(err: unknown): boolean {
+  const status = shiftSyncErrorStatus(err);
+  if (status === 404 || status === 409 || status === 410) return true;
+  const message = shiftSyncErrorMessage(err).toLowerCase();
+  return message.includes('not found') || message.includes('already closed') || message.includes('already been closed') || message.includes('no active shift');
+}
+
 function isTransferMethod(method: string | null | undefined): boolean {
   return method === 'TRANSFER' || method === 'BANK_TRANSFER';
 }
@@ -154,7 +178,7 @@ export class ShiftController {
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
     database.run(
-      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ? WHERE id = ?",
+      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ?, close_synced = 0, close_sync_attempts = 0, close_sync_error = NULL WHERE id = ?",
       [closingCash, totalSales, salesOrders.length, shiftId],
     );
     database.markDirty();
@@ -233,14 +257,12 @@ export class ShiftController {
     const token = getSecureAuthToken();
     if (!token || !this.isOnline()) return;
 
-    const MAX_ATTEMPTS = 5;
-
     // Retry unsynced shift opens
     const unsyncedOpen = database.all<{ id: string; staff_id: string; opening_cash: number; sync_attempts: number }>(
       'SELECT id, staff_id, opening_cash, COALESCE(sync_attempts, 0) as sync_attempts FROM shifts WHERE synced = 0 AND backend_id IS NULL',
     );
     for (const shift of unsyncedOpen) {
-      if (shift.sync_attempts >= MAX_ATTEMPTS) {
+      if (shift.sync_attempts >= SHIFT_SYNC_MAX_ATTEMPTS) {
         database.run("UPDATE shifts SET synced = -1, sync_error = 'Max retry exceeded' WHERE id = ?", [shift.id]);
         logger.warn(`[Shift] Shift open ${shift.id} shelved after ${shift.sync_attempts} failed attempts`);
         continue;
@@ -263,24 +285,68 @@ export class ShiftController {
         const errMsg = (err.message || String(err)).substring(0, 500);
         database.run('UPDATE shifts SET sync_error = ? WHERE id = ?', [errMsg, shift.id]);
         database.markDirty();
-        logger.warn(`[Shift] Retry failed for shift open ${shift.id} (attempt ${shift.sync_attempts + 1}/${MAX_ATTEMPTS}): ${errMsg}`);
+        logger.warn(`[Shift] Retry failed for shift open ${shift.id} (attempt ${shift.sync_attempts + 1}/${SHIFT_SYNC_MAX_ATTEMPTS}): ${errMsg}`);
       }
     }
 
     // Retry unsynced shift closes (have backend_id but closed_at set and not synced)
-    const unsyncedClose = database.all<{ id: string; backend_id: string; closing_cash: number }>(
-      'SELECT id, backend_id, closing_cash FROM shifts WHERE synced = 1 AND backend_id IS NOT NULL AND closed_at IS NOT NULL AND closing_cash IS NOT NULL',
+    const unsyncedClose = database.all<{ id: string; backend_id: string; closing_cash: number; close_sync_attempts: number }>(
+      `SELECT id, backend_id, closing_cash, COALESCE(close_sync_attempts, 0) as close_sync_attempts
+       FROM shifts
+       WHERE synced = 1
+         AND backend_id IS NOT NULL
+         AND closed_at IS NOT NULL
+         AND closing_cash IS NOT NULL
+         AND COALESCE(close_synced, 0) = 0`,
     );
     for (const shift of unsyncedClose) {
+      if (shift.close_sync_attempts >= SHIFT_SYNC_MAX_ATTEMPTS) {
+        this.markShiftCloseExhausted(shift.id, shift.close_sync_attempts);
+        continue;
+      }
+
       try {
-        await apiClient.closePosShift(token, shift.backend_id, {
-          closingCash: shift.closing_cash,
-        });
+        await this.submitBackendShiftClose(token, shift.id, shift.backend_id, shift.closing_cash);
         logger.info(`[Shift] Retry: synced shift close ${shift.id}`);
       } catch (err: any) {
-        logger.warn(`[Shift] Retry failed for shift close ${shift.id}: ${err.message}`);
+        this.markShiftCloseFailed(
+          shift.id,
+          err,
+          `Retry failed for shift close ${shift.id} (attempt ${shift.close_sync_attempts + 1}/${SHIFT_SYNC_MAX_ATTEMPTS})`,
+        );
       }
     }
+  }
+
+  private async submitBackendShiftClose(token: string, shiftId: string, backendShiftId: string, closingCash: number): Promise<void> {
+    database.run('UPDATE shifts SET close_sync_attempts = COALESCE(close_sync_attempts, 0) + 1 WHERE id = ?', [shiftId]);
+    database.markDirty();
+    await apiClient.closePosShift(token, backendShiftId, { closingCash });
+    this.markShiftCloseSynced(shiftId);
+  }
+
+  private markShiftCloseSynced(shiftId: string): void {
+    database.run('UPDATE shifts SET close_synced = 1, close_sync_error = NULL WHERE id = ?', [shiftId]);
+    database.markDirty();
+  }
+
+  private markShiftCloseFailed(shiftId: string, err: unknown, context: string): void {
+    const errMsg = shiftSyncErrorMessage(err);
+    if (isTerminalShiftCloseError(err)) {
+      database.run('UPDATE shifts SET close_synced = -1, close_sync_error = ? WHERE id = ?', [`Terminal close sync error: ${errMsg}`, shiftId]);
+      database.markDirty();
+      logger.warn(`[Shift] ${context}; terminal, shelved: ${errMsg}`);
+      return;
+    }
+    database.run('UPDATE shifts SET close_sync_error = ? WHERE id = ?', [errMsg, shiftId]);
+    database.markDirty();
+    logger.warn(`[Shift] ${context}: ${errMsg}`);
+  }
+
+  private markShiftCloseExhausted(shiftId: string, attempts: number): void {
+    database.run("UPDATE shifts SET close_synced = -1, close_sync_error = 'Max retry exceeded' WHERE id = ?", [shiftId]);
+    database.markDirty();
+    logger.warn(`[Shift] Shift close ${shiftId} shelved after ${attempts} failed attempts`);
   }
 
   private async syncShiftOpen(shiftId: string, staffId: string, openingCash: number): Promise<void> {
@@ -323,6 +389,7 @@ export class ShiftController {
         const sameStaffId = !!activeShift?.staffId && !!shift.staff_id && activeShift.staffId === shift.staff_id;
         if (activeShift?.id && (sameShiftId || sameStaffId)) {
           await apiClient.closePosShift(token, activeShift.id, { closingCash });
+          this.markShiftCloseSynced(shiftId);
           logger.info(`[Shift] Closed server active shift ${activeShift.id} while closing unsynced local shift ${shiftId}`);
         } else if (activeShift?.id) {
           logger.warn(`[Shift] Skipped closing server active shift ${activeShift.id} while closing unsynced local shift ${shiftId}: no shift id/staff id match`);
@@ -334,9 +401,9 @@ export class ShiftController {
     }
 
     try {
-      await apiClient.closePosShift(token, shift.backend_id, { closingCash });
+      await this.submitBackendShiftClose(token, shiftId, shift.backend_id, closingCash);
     } catch (err) {
-      logger.warn(`[Shift] Failed to sync shift close ${shiftId}, will retry on reconnect: ${err}`);
+      this.markShiftCloseFailed(shiftId, err, `Failed to sync shift close ${shiftId}, will retry on reconnect`);
     }
   }
 }

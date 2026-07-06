@@ -17,6 +17,7 @@ function readSource(relativePath: string): string {
 }
 import { toCashDrawerIpcResult } from '../src/main/pos/cash-drawer-ipc-result';
 import {
+  allocateRefundTenders,
   buildRefundMutationError,
   getRefundBackendResponseSummary,
   mergeRefundLines,
@@ -294,7 +295,7 @@ describe('Refund payload passes lines[] end-to-end', () => {
   });
 
   it('main IPC handler forwards lines to apiClient', () => {
-    expect(posModule).toContain('toRefundBackendPayload(data)');
+    expect(posModule).toContain('toRefundBackendPayload(refundPayload)');
   });
 
   it('main IPC handler maps lines explicitly without orderItemId', () => {
@@ -439,6 +440,36 @@ describe('Refund payload passes lines[] end-to-end', () => {
         { variantId: 'variant-17-99', sku: 'SKU-1799', name: 'Refunded item', quantity: 2, unitPrice: 17.99, refundAmount: 35.98, restock: true },
       ],
     });
+  });
+
+  it('main payload sends tender allocations converted from grosze to PLN', () => {
+    expect(toRefundBackendPayload({
+      type: 'PARTIAL',
+      reason: 'Split refund',
+      amount: 5000,
+      tenderAllocations: [
+        { method: 'cash', amount: 2000 },
+        { method: 'blik', amount: 3000 },
+      ],
+    })).toMatchObject({
+      type: 'PARTIAL',
+      reason: 'Split refund',
+      amount: 50,
+      tenderAllocations: [
+        { method: 'CASH', amount: 20 },
+        { method: 'BLIK', amount: 30 },
+      ],
+    });
+  });
+
+  it('allocates refund amounts proportionally over stored split tenders', () => {
+    expect(allocateRefundTenders(JSON.stringify([
+      { method: 'CASH', amount: 3333 },
+      { method: 'CARD', amount: 6667 },
+    ]), 1001, 'CASH')).toEqual([
+      { method: 'CASH', amount: 334 },
+      { method: 'CARD', amount: 667 },
+    ]);
   });
 
   it('accepts only a backend response that confirms refund amount, refund lines, and restock movement', () => {
