@@ -1,5 +1,6 @@
 import { database } from '../database';
 import logger from '../../logger';
+import { parseTranslations } from '../../../shared/catalog-names';
 
 /** Strip diacritics/accents for search matching (bánh → banh, łódź → lodz) */
 function normalizeSearch(str: string): string {
@@ -11,6 +12,25 @@ function normalizeSearch(str: string): string {
     .toLowerCase()
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+function normalizeLiteralSearch(str: string): string {
+  return str
+    .normalize('NFC')
+    .toLocaleLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeCodeSearch(str: string): string {
+  return String(str || '')
+    .toLocaleLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function isCodeLikeSearch(query: string): boolean {
+  return /\d|[-_./\\]/.test(query);
 }
 
 function searchTokens(query: string): string[] {
@@ -197,25 +217,82 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ');
 }
 
+function productSearchNames(product: ProductVariantRow): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    const trimmed = (value ?? '').trim();
+    if (!trimmed) return;
+    const key = normalizeLiteralSearch(trimmed);
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(trimmed);
+  };
+
+  add(product.name);
+  for (const translated of Object.values(parseTranslations(product.name_translations))) {
+    add(translated);
+  }
+  return names;
+}
+
+function literalNameMatchScore(name: string, literalQuery: string): number {
+  if (!literalQuery) return 0;
+  const literalName = normalizeLiteralSearch(name);
+  if (literalName === literalQuery) return 8300;
+  if (literalName.startsWith(literalQuery)) return 7900;
+  const phraseIndex = literalName.indexOf(literalQuery);
+  if (phraseIndex >= 0) return 7600 - Math.min(phraseIndex, 500);
+  return 0;
+}
+
+function nameMatchScore(name: string, normalizedQuery: string, tokens: string[], literalQuery: string): number {
+  const literalScore = literalNameMatchScore(name, literalQuery);
+  const normalizedName = normalizeSearch(name);
+
+  if (normalizedName === normalizedQuery) return Math.max(literalScore, 8000);
+  if (normalizedName.startsWith(normalizedQuery)) return Math.max(literalScore, 7400);
+  const phraseIndex = normalizedName.indexOf(normalizedQuery);
+  if (phraseIndex >= 0) return Math.max(literalScore, 6800 - Math.min(phraseIndex, 500));
+
+  const tokenScore = tokenMatchScore(normalizedName, tokens);
+  if (tokenScore != null) return Math.max(literalScore, 5600 + tokenScore);
+
+  return literalScore;
+}
+
+function codeMatchScore(codeFields: string[], codeQuery: string, highPriority: boolean): number {
+  if (!codeQuery) return 0;
+  if (codeFields.some((field) => field === codeQuery)) return highPriority ? 10000 : 6200;
+  if (codeFields.some((field) => field.startsWith(codeQuery))) return highPriority ? 9200 : 5400;
+  if (codeFields.some((field) => field.includes(codeQuery))) return highPriority ? 8600 : 5000;
+  return 0;
+}
+
 function scoreSearchMatch(product: ProductVariantRow, query: string, normalizedQuery: string, tokens: string[]): number {
-  const name = normalizeSearch(product.name || '');
-  const sku = normalizeSearch(product.sku || '');
-  const barcode = normalizeSearch(product.barcode || '');
+  const names = productSearchNames(product);
+  const sku = normalizeCodeSearch(product.sku || '');
+  const barcode = normalizeCodeSearch(product.barcode || '');
   const codeFields = [barcode, sku].filter(Boolean);
+  const literalQuery = normalizeLiteralSearch(query);
+  const codeQuery = normalizeCodeSearch(query);
+  const codeLike = isCodeLikeSearch(codeQuery);
 
-  if (codeFields.some((field) => field === normalizedQuery)) return 10000;
-  if (codeFields.some((field) => field.startsWith(normalizedQuery))) return 9200;
-  if (codeFields.some((field) => field.includes(normalizedQuery))) return 8600;
+  const highPriorityCodeScore = codeMatchScore(codeFields, codeQuery, true);
+  if (codeLike && highPriorityCodeScore > 0) return highPriorityCodeScore;
 
-  if (name === normalizedQuery) return 8000;
-  if (name.startsWith(normalizedQuery)) return 7400;
-  const phraseIndex = name.indexOf(normalizedQuery);
-  if (phraseIndex >= 0) return 6800 - Math.min(phraseIndex, 500);
+  const bestNameScore = names.reduce(
+    (best, name) => Math.max(best, nameMatchScore(name, normalizedQuery, tokens, literalQuery)),
+    0,
+  );
+  if (bestNameScore > 0) return bestNameScore;
 
-  const nameTokenScore = tokenMatchScore(name, tokens);
-  if (nameTokenScore != null) return 5600 + nameTokenScore;
+  if (!codeLike) {
+    const fallbackCodeScore = codeMatchScore(codeFields, codeQuery, false);
+    if (fallbackCodeScore > 0) return fallbackCodeScore;
+  }
 
-  const haystack = normalizeSearch([product.name, product.sku, product.barcode].filter(Boolean).join(' '));
+  const haystack = normalizeSearch([...names, product.sku, product.barcode].filter(Boolean).join(' '));
   const haystackTokenScore = tokenMatchScore(haystack, tokens);
   if (haystackTokenScore != null) return 3600 + haystackTokenScore;
 

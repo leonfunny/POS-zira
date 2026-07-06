@@ -106,6 +106,121 @@ describe('POS product category contamination guards', () => {
     expect(productRepo.search('c chua').map((row) => row.id)[0]).toBe('tomato');
   });
 
+  it('ranks exact Vietnamese-accent product names before accentless lookalikes', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'coffee', name: 'Trung Nguy\u00ean C\u00e0 ph\u00ea' }),
+      product({ id: 'egg-cake', name: 'B\u00e1nh tr\u1ee9ng 240g' }),
+      product({ id: 'eggs', name: 'Tr\u1ee9ng g\u00e0 th\u01b0\u1eddng' }),
+    ]);
+
+    expect(productRepo.search('tr\u1ee9ng').map((row) => row.id)).toEqual([
+      'eggs',
+      'egg-cake',
+      'coffee',
+    ]);
+  });
+
+  it('does not let ASCII SKU slugs outrank exact Vietnamese-accent name matches', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({
+        id: 'egg-white',
+        name: 'Tr\u1ee9ng g\u00e0 tr\u1eafng 30 qu\u1ea3 38zl',
+        sku: 'trung-ga-trang-30-qua-38zl',
+      }),
+      product({
+        id: 'coffee',
+        name: 'C\u00e0 ph\u00ea rang xay Trung Nguy\u00ean CHE PHIN 4 500g',
+        sku: 'ca-phe-rang-xay-trung-nguyen-che-phin-4-500g',
+      }),
+      product({
+        id: 'egg-regular',
+        name: 'Tr\u1ee9ng g\u00e0 th\u01b0\u1eddng',
+        sku: 'jaja-kurze',
+      }),
+    ]);
+
+    expect(productRepo.search('tr\u1ee9ng').map((row) => row.id)).toEqual([
+      'egg-regular',
+      'egg-white',
+      'coffee',
+    ]);
+  });
+
+  it('ranks literal unaccented Vietnamese names before text-only SKU slugs', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({
+        id: 'egg-white',
+        name: 'Tr\u1ee9ng g\u00e0 tr\u1eafng 30 qu\u1ea3 38zl',
+        sku: 'trung-ga-38',
+      }),
+      product({
+        id: 'coffee',
+        name: 'C\u00e0 ph\u00ea Trung Nguy\u00ean Creative 4',
+        sku: 'kawa-mielona-trung-nguyen-creative-4',
+      }),
+    ]);
+
+    expect(productRepo.search('trung').map((row) => row.id)).toEqual([
+      'coffee',
+      'egg-white',
+    ]);
+  });
+
+  it('keeps accentless multi-word Vietnamese searches useful for eggs', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'coffee', name: 'C\u00e0 ph\u00ea Trung Nguy\u00ean Creative 4' }),
+      product({ id: 'egg-white', name: 'Tr\u1ee9ng g\u00e0 tr\u1eafng 30 qu\u1ea3 38zl' }),
+      product({ id: 'egg-regular', name: 'Tr\u1ee9ng g\u00e0 th\u01b0\u1eddng' }),
+    ]);
+
+    expect(productRepo.search('trung ga').map((row) => row.id)).toEqual([
+      'egg-regular',
+      'egg-white',
+    ]);
+  });
+
+  it('ranks accentless Vietnamese brand phrases before fuzzy food lookalikes', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'coffee', name: 'C\u00e0 ph\u00ea Trung Nguy\u00ean Creative 4' }),
+      product({ id: 'squid', name: 'M\u1ef1c \u1ed1ng tr\u1ee9ng Julia Alex nguy\u00ean con' }),
+    ]);
+
+    expect(productRepo.search('trung nguyen').map((row) => row.id)).toEqual([
+      'coffee',
+      'squid',
+    ]);
+  });
+
+  it('keeps numeric barcode and SKU searches above name-only matches', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'name-only', name: '590 sauce', barcode: null, sku: null }),
+      product({ id: 'barcode', name: 'Rice paper', barcode: '5901234567890', sku: null }),
+      product({ id: 'sku', name: 'Tempura flour', barcode: null, sku: 'EAN-590999' }),
+    ]);
+
+    expect(productRepo.search('590').map((row) => row.id)).toEqual([
+      'barcode',
+      'sku',
+      'name-only',
+    ]);
+  });
+
+  it('searches localized display names as product names', () => {
+    vi.mocked(database.all).mockReturnValue([
+      product({ id: 'coffee', name: 'Trung Nguy\u00ean C\u00e0 ph\u00ea' }),
+      product({
+        id: 'eggs',
+        name: 'Jaja kurze',
+        name_translations: JSON.stringify({ vi: 'Tr\u1ee9ng g\u00e0 th\u01b0\u1eddng' }),
+      }),
+    ]);
+
+    expect(productRepo.search('tr\u1ee9ng').map((row) => row.id)).toEqual([
+      'eggs',
+      'coffee',
+    ]);
+  });
+
   it('does not flood POS search results for one-letter typo input', () => {
     vi.mocked(database.all).mockReturnValue([
       product({ id: 'tomato', name: 'C\u00e0 chua', sku: 'tomato' }),
