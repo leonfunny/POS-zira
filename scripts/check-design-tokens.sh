@@ -50,6 +50,7 @@ for check in "${CHECKS[@]}"; do
 
   for hit in "${hits[@]}"; do
     file="${hit%%:*}"
+    file="${file//\\//}"
     rest="${hit#*:}"
     line="${rest%%:*}"
     content="${rest#*:}"
