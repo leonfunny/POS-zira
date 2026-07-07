@@ -245,7 +245,14 @@ export class AgentOrchestrator implements TrayManagerHost {
         }
       }
 
-      // 6b. Wire socket handlers for modules that need direct socket events
+      // 6b. Show main window once local IPC/event handlers are ready. Socket
+      // wiring, tool collection, tray creation, and module start can continue
+      // after first paint instead of blocking the renderer.
+      this.logStep('Showing main window...');
+      this.showWindow();
+      this.logStep('Window shown');
+
+      // 6c. Wire socket handlers for modules that need direct socket events
       if (this.socket) {
         this.logStep('Wiring socket handlers...');
         for (const mod of this.modules) {
@@ -274,11 +281,6 @@ export class AgentOrchestrator implements TrayManagerHost {
         }
       }
       logger.info(`[Orchestrator] ToolRegistry total: ${this.toolRegistry.size} tools`);
-
-      // 8. Show main window
-      this.logStep('Showing main window...');
-      this.showWindow();
-      this.logStep('Window shown');
 
       // 9. Create system tray
       this.logStep('Creating system tray...');
