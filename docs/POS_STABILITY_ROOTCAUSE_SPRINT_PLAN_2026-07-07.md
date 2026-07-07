@@ -43,17 +43,40 @@ Client stores/passes the cursor opaquely (`draft-product-sync.ts` `sync_metadata
 
 **Symptom (POS1 logs 2026-07-06):** `Init Step 13 (hardware)` holds boot ~30 s (12 s Zebra connect timeout even when USBPRINT reports present, plus serial port/WMI scans), RemoteModule SSH probing ~9 s; IPC registers at Step 31 and the window shows at Step 35 — 40+ s with nothing on screen. This is the soil the boot IPC race grew from; the preload shield (`b074f0e`) makes early windows safe, so boot can now be re-ordered without risk.
 
-**Design intent:** boot critical path = config + DB + IPC + window. Hardware talks to the world in the background; the 90 s health check and connect-on-demand (`ensurePrinterReady`) already recover printers that come up late.
+**App-code investigation corrections (2026-07-07):**
+
+- The first B plan was too loose. Current orchestrator order is `all module init()` → `register IPC` → `event/socket handlers` → `showWindow()` → `start()`. Therefore "show window before module init" is not a safe B3 step; it would require a lifecycle redesign. The safe target is: make slow `init()` work cheap first, then move `showWindow()` earlier **after IPC handlers and EventBus handlers are ready**.
+- `ensurePrinterReady()` is only in `PaymentController`; backend/shared `HardwareModule.handlePrintJob()` does not call `driver.connect()` on demand. It only checks `isConnected()`, waits/retries, and runs health recovery. B2 must add a HardwareModule readiness/single-flight connect path or early backend jobs can false-fail while startup connect is still running.
+- `connectPrinterWithTimeout()` uses one 12 s constant today. A naive B1 change to `3_000` would silently weaken runtime config reinitialize, label reconnect, and manual/on-demand reconnect behavior. Boot timeout must be explicit and scoped.
+- `RemoteModule.setupSocketHandlers()` captures `MAIN_WINDOW` once. If the window is created later, remote status/dialog events can keep a stale `null`. B3/B4 must use lazy window lookup or ensure the window exists before those closures are created.
+- `SshTunnelManager.initialize()` and `autoStart()` use synchronous shell probes (`where ssh`, `sc query sshd`, `Start-Service sshd`). Calling an async function without `await` is not enough if it executes `execSync` before its first await; B4 must make the probes truly off the main boot path.
+
+**Corrected design intent:** boot critical path = app ready + config + DB + cheap module construction + IPC/event handler registration + first window. Hardware/remote capability checks are eventual state: drivers/managers are registered quickly, then external I/O runs in background. Print safety remains conservative: fiscal and shared jobs must not pretend success if the assigned printer is truly unavailable, and ambiguous print outcomes stay fail-closed.
+
+**Success criteria:** after B2+B3+B4, `Zira starting...` → `[Window] Page loaded successfully` should be <5 s on dev/source and materially below the old 40 s on POS1-class hardware. `Zira starting...` → `Initialization complete` should target ~10 s, excluding optional slow background hardware/SSH completion logs.
 
 **Steps (each independently shippable):**
-- [ ] B1. Cap per-printer connect wait at boot to 3 s (from 12 s) and run printer connects **in parallel**, not serially. Keep full timeout for on-demand/reconnect paths.
-- [ ] B2. Move printer connects out of `HardwareModule.init()` into `start()` as fire-and-forget with health-check registration; `init()` keeps only cheap config/driver construction. Verify: a print job arriving before connects finish still prints (connect-on-demand path).
-- [ ] B3. Orchestrator: show the main window right after IPC registration (move Step 35 before module `init()` loop, or split init into pre-window/post-window phases). Preload shield covers any residual gap. Target: window in <5 s, spinner while modules finish.
-- [ ] B4. RemoteModule: make SSH client/sshd detection async off the init path (~9 s today).
 
-**Verification per step:** boot POS-zira from source, measure `Zira starting...` → `Page loaded successfully` and → `Initialization complete`; full suite + e2e smoke; manual double-click-during-boot smoke.
+- [x] B1. Make printer connect timeout explicit and boot-safe. `connectPrinterWithTimeout(driver, label, timeoutMs = PRINTER_CONNECT_TIMEOUT_MS)` now accepts an explicit timeout and is single-flight per driver. The final implementation does not spend even 3 s on printer connect during `init()`; startup driver connect tasks are registered after the driver maps are populated, then executed in parallel outside the boot-critical init path. Runtime config reinitialize, label reconnect, and print-time reconnect keep the full 12 s default.
+- [x] B2. Split `HardwareModule.init()` into cheap driver registration and background startup connect. `init()` marks orphan fiscal attempts, creates/registers printer drivers and supporting hardware services, exposes container entries, and starts health checks without waiting for printer connect probes. `start()` fire-and-forgets full-timeout parallel startup connects. `handlePrintJob()` and `printLanFirstKitchenTicket()` now use a HardwareModule single-flight readiness helper so early backend jobs connect once before declaring `SAFE_BEFORE_PRINT`.
+- [x] B3. Move main window creation earlier, but not before IPC exists. `AgentOrchestrator.initialize()` now calls `showWindow()` after module `init()` and IPC/event-handler registration, before socket-handler wiring, tool collection, tray creation, and module `start()`. The preload boot-invoke shield stays in place.
+- [x] B4. Move RemoteModule slow capability probes off the boot path. `RemoteModule.init()` constructs/registers `RemoteSessionManager` and `SshTunnelManager` without awaiting SSH probes. SSH client/sshd discovery is lazy async capability hydration using `execFile`/Promise wrappers instead of startup-path `execSync`. RemoteModule window sends/dialog parents resolve `MAIN_WINDOW` lazily inside handlers, and auto/manual SSH tunnel start awaits async setup instead of blocking main-process startup.
 
-**Risks:** hidden dependencies on "hardware ready before X" — mitigated by shipping B1 (pure timing) before B2/B3 (ordering), and by the existing health-check/on-demand recovery.
+**Verification commands:**
+
+- Focused B1/B2: `npx vitest run tests/hardware-print-job-runtime.test.ts tests/lan-first-kitchen-ticket-receiver.test.ts`
+- Focused B3: `npx vitest run tests/orchestrator-startup-order.test.ts tests/preload-boot-invoke-retry.test.ts tests/renderer-health.test.ts`
+- Focused B4: `npx vitest run tests/remote-module-startup.test.ts tests/ssh-tunnel-startup.test.ts`
+- Build gate for each commit: `npm run build:main`; final gate: `npm run build && npm test`
+- Existing Electron smoke command is not in `package.json`; run directly if needed: `npx vitest run --config vitest.e2e.config.ts tests/e2e/smoke.test.ts`
+- Manual timing: start from source/packaged build, measure log deltas `Zira starting...` → `[Window] Page loaded successfully` and `Zira starting...` → `Initialization complete`; repeat with a double-click during boot.
+
+**Risks and guards:**
+
+- Early window can expose "printer disconnected" before background connect finishes. Acceptable if status later updates; not acceptable if print jobs false-fail while connect is in flight, hence B2 readiness helper.
+- Parallel printer probes can increase PnP/serial pressure. Guard with existing POSNET port mutex, shared detection snapshots, and focused tests around routed print jobs.
+- Fiscal safety must not be relaxed. If a fiscal driver cannot be proven connected before send, fail before print with `SAFE_BEFORE_PRINT`; never retry or mark success after an uncertain send boundary.
+- Optional modules outside the observed root cause (for example enabled Telegram polling) may still add boot latency later. Do not broaden this workstream unless fresh timing shows they are on the critical path.
 
 ---
 

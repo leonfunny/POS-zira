@@ -16,7 +16,7 @@
 
 import { EventEmitter } from 'events';
 import { BrowserWindow, dialog } from 'electron';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, execFile, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -39,6 +39,18 @@ const SSH_SERVER_USER = 'paul';
 const MIN_RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
 
+function execFileText(command: string, args: string[], timeout: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: 'utf8', timeout, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(stdout || '');
+    });
+  });
+}
+
 export interface SshTunnelManagerEvents {
   statusChanged: (status: SshTunnelStatus) => void;
 }
@@ -60,6 +72,8 @@ export class SshTunnelManager extends EventEmitter {
   private currentRequestId: string | null = null;
   private autoReconnect = true;
   private username: string | null = null;
+  private capabilitiesHydrated = false;
+  private capabilitiesProbePromise: Promise<void> | null = null;
 
   constructor() {
     super();
@@ -70,73 +84,67 @@ export class SshTunnelManager extends EventEmitter {
   }
 
   /**
-   * Initialize - check SSH client + server availability
+   * Initialize without probing the OS. SSH capability checks are lazy because
+   * Windows service/where probes can be slow on cold boot.
    */
   async initialize(): Promise<void> {
     logger.info('[SSH Tunnel] Initializing...');
-
-    this.sshExePath = this.findSshExe();
-    if (this.sshExePath) {
-      logger.info(`[SSH Tunnel] SSH client found: ${this.sshExePath}`);
-    } else {
-      logger.warn('[SSH Tunnel] SSH client NOT found (OpenSSH not installed)');
-    }
-
-    this.sshServerAvailable = this.checkSshServer();
-    if (this.sshServerAvailable) {
-      logger.info('[SSH Tunnel] OpenSSH Server (sshd) is available');
-    } else {
-      logger.info('[SSH Tunnel] OpenSSH Server (sshd) not detected');
-    }
 
     logger.info(`[SSH Tunnel] Key exists: ${this.isKeyGenerated()}`);
     logger.info('[SSH Tunnel] Initialization complete');
   }
 
+  private async hydrateCapabilities(): Promise<void> {
+    if (this.capabilitiesHydrated) return;
+    if (this.capabilitiesProbePromise) return this.capabilitiesProbePromise;
+
+    this.capabilitiesProbePromise = (async () => {
+      logger.info('[SSH Tunnel] Probing SSH capabilities...');
+      const [sshExePath, sshServerAvailable] = await Promise.all([
+        this.findSshExe(),
+        this.checkSshServer(),
+      ]);
+
+      this.sshExePath = sshExePath;
+      this.sshServerAvailable = sshServerAvailable;
+      this.capabilitiesHydrated = true;
+
+      if (this.sshExePath) {
+        logger.info(`[SSH Tunnel] SSH client found: ${this.sshExePath}`);
+      } else {
+        logger.warn('[SSH Tunnel] SSH client NOT found (OpenSSH not installed)');
+      }
+      logger.info(`[SSH Tunnel] OpenSSH Server (sshd) ${this.sshServerAvailable ? 'is available' : 'not detected'}`);
+      this.emit('statusChanged', this.getStatus({ refreshCapabilities: false }));
+    })();
+
+    try {
+      await this.capabilitiesProbePromise;
+    } finally {
+      this.capabilitiesProbePromise = null;
+    }
+  }
+
   /**
    * Find ssh.exe on the system
    */
-  private findSshExe(): string | null {
+  private async findSshExe(): Promise<string | null> {
     // Windows standard path
     const winSshPath = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
     if (fs.existsSync(winSshPath)) {
       return winSshPath;
     }
 
-    // Try `where ssh` fallback
-    try {
-      const result = execSync('where ssh', { encoding: 'utf8', timeout: 5000 });
-      const firstLine = result.trim().split('\n')[0]?.trim();
-      if (firstLine && fs.existsSync(firstLine)) {
-        return firstLine;
-      }
-    } catch {
-      // Not found
-    }
-
-    // macOS/Linux
-    if (process.platform !== 'win32') {
-      try {
-        const result = execSync('which ssh', { encoding: 'utf8', timeout: 5000 });
-        const sshPath = result.trim();
-        if (sshPath && fs.existsSync(sshPath)) {
-          return sshPath;
-        }
-      } catch {
-        // Not found
-      }
-    }
-
-    return null;
+    return this.findExecutable('ssh');
   }
 
   /**
    * Check if OpenSSH Server (sshd) is available on this machine
    */
-  private checkSshServer(): boolean {
+  private async checkSshServer(): Promise<boolean> {
     if (process.platform === 'win32') {
       try {
-        const result = execSync('sc query sshd', { encoding: 'utf8', timeout: 5000 });
+        const result = await execFileText('sc', ['query', 'sshd'], 5000);
         return result.includes('SERVICE_NAME: sshd');
       } catch {
         return false;
@@ -145,10 +153,23 @@ export class SshTunnelManager extends EventEmitter {
 
     // Linux/macOS - check if sshd is running or available
     try {
-      execSync('which sshd', { encoding: 'utf8', timeout: 5000 });
+      await execFileText('which', ['sshd'], 5000);
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private async findExecutable(name: string, windowsKnownPath?: string): Promise<string | null> {
+    if (windowsKnownPath && fs.existsSync(windowsKnownPath)) {
+      return windowsKnownPath;
+    }
+
+    try {
+      const result = await execFileText(process.platform === 'win32' ? 'where' : 'which', [name], 5000);
+      return result.trim().split(/\r?\n/)[0]?.trim() || null;
+    } catch {
+      return null;
     }
   }
 
@@ -175,6 +196,7 @@ export class SshTunnelManager extends EventEmitter {
    * Generate SSH key pair (ed25519)
    */
   async generateKeyPair(): Promise<{ success: boolean; publicKey?: string; error?: string }> {
+    await this.hydrateCapabilities();
     if (!this.sshExePath) {
       return { success: false, error: 'SSH client not installed' };
     }
@@ -192,19 +214,10 @@ export class SshTunnelManager extends EventEmitter {
     }
 
     // Find ssh-keygen
-    let keygenPath: string | null = null;
-    const winKeygenPath = 'C:\\Windows\\System32\\OpenSSH\\ssh-keygen.exe';
-    if (fs.existsSync(winKeygenPath)) {
-      keygenPath = winKeygenPath;
-    } else {
-      try {
-        const cmd = process.platform === 'win32' ? 'where ssh-keygen' : 'which ssh-keygen';
-        const result = execSync(cmd, { encoding: 'utf8', timeout: 5000 });
-        keygenPath = result.trim().split('\n')[0]?.trim() || null;
-      } catch {
-        // Not found
-      }
-    }
+    const keygenPath = await this.findExecutable(
+      'ssh-keygen',
+      process.platform === 'win32' ? 'C:\\Windows\\System32\\OpenSSH\\ssh-keygen.exe' : undefined,
+    );
 
     if (!keygenPath) {
       return { success: false, error: 'ssh-keygen not found' };
@@ -249,7 +262,7 @@ export class SshTunnelManager extends EventEmitter {
    * Setup SSH server (start sshd on Windows)
    * Non-fatal: logs warnings if it fails (no admin rights, etc.)
    */
-  setupSshServer(): void {
+  async setupSshServer(): Promise<void> {
     if (process.platform !== 'win32') {
       logger.info('[SSH Tunnel] Non-Windows OS, skipping sshd setup');
       return;
@@ -257,7 +270,7 @@ export class SshTunnelManager extends EventEmitter {
 
     try {
       // Check if sshd service exists
-      const queryResult = execSync('sc query sshd', { encoding: 'utf8', timeout: 5000 });
+      const queryResult = await execFileText('sc', ['query', 'sshd'], 5000);
 
       if (queryResult.includes('RUNNING')) {
         logger.info('[SSH Tunnel] sshd already running');
@@ -267,12 +280,12 @@ export class SshTunnelManager extends EventEmitter {
 
       // Try to start sshd
       logger.info('[SSH Tunnel] Starting sshd service...');
-      execSync('powershell -Command "Start-Service sshd"', { encoding: 'utf8', timeout: 15000 });
+      await execFileText('powershell', ['-NoProfile', '-Command', 'Start-Service sshd'], 15000);
       logger.info('[SSH Tunnel] sshd started successfully');
 
       // Set auto-start
       try {
-        execSync('powershell -Command "Set-Service sshd -StartupType Automatic"', { encoding: 'utf8', timeout: 10000 });
+        await execFileText('powershell', ['-NoProfile', '-Command', 'Set-Service sshd -StartupType Automatic'], 10000);
         logger.info('[SSH Tunnel] sshd set to auto-start');
       } catch (e) {
         logger.warn('[SSH Tunnel] Failed to set sshd auto-start (may need admin rights)');
@@ -288,7 +301,7 @@ export class SshTunnelManager extends EventEmitter {
    * Setup authorized_keys for admin SSH access
    * Adds the admin public key so they can SSH in without password
    */
-  setupAuthorizedKeys(adminPubKey: string): void {
+  async setupAuthorizedKeys(adminPubKey: string): Promise<void> {
     if (!adminPubKey) return;
 
     try {
@@ -324,7 +337,14 @@ export class SshTunnelManager extends EventEmitter {
       if (process.platform === 'win32') {
         try {
           const username = os.userInfo().username;
-          execSync(`icacls "${authorizedKeysPath}" /inheritance:r /grant "${username}:F" /grant "SYSTEM:F"`, { encoding: 'utf8', timeout: 10000 });
+          await execFileText('icacls', [
+            authorizedKeysPath,
+            '/inheritance:r',
+            '/grant',
+            `${username}:F`,
+            '/grant',
+            'SYSTEM:F',
+          ], 10000);
           logger.info('[SSH Tunnel] Fixed authorized_keys permissions');
         } catch (e) {
           logger.warn('[SSH Tunnel] Failed to fix authorized_keys permissions (may need admin rights)');
@@ -342,12 +362,14 @@ export class SshTunnelManager extends EventEmitter {
   async autoStart(port: number, adminPubKey?: string): Promise<{ port: number; username: string; publicKey?: string } | null> {
     logger.info(`[SSH Tunnel] Auto-starting tunnel on port ${port}...`);
 
+    await this.hydrateCapabilities();
+
     // Try to setup sshd (non-fatal)
-    this.setupSshServer();
+    await this.setupSshServer();
 
     // Setup admin key if provided
     if (adminPubKey) {
-      this.setupAuthorizedKeys(adminPubKey);
+      await this.setupAuthorizedKeys(adminPubKey);
     }
 
     // Generate key pair if needed
@@ -421,6 +443,8 @@ export class SshTunnelManager extends EventEmitter {
     parentWindow?: BrowserWindow
   ): Promise<SshTunnelResponse> {
     logger.info(`[SSH Tunnel] Request from ${request.userName} (${request.userId})`);
+
+    await this.hydrateCapabilities();
 
     // Check prerequisites
     if (!this.sshExePath) {
@@ -698,7 +722,13 @@ export class SshTunnelManager extends EventEmitter {
   /**
    * Get current status
    */
-  getStatus(): SshTunnelStatus {
+  getStatus(options: { refreshCapabilities?: boolean } = {}): SshTunnelStatus {
+    if (options.refreshCapabilities !== false) {
+      void this.hydrateCapabilities().catch((err: any) => {
+        logger.warn('[SSH Tunnel] Capability probe failed:', err?.message || err);
+      });
+    }
+
     return {
       state: this.state,
       sshAvailable: !!this.sshExePath,

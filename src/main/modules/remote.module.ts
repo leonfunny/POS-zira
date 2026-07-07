@@ -44,7 +44,6 @@ export class RemoteModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.REMOTE_SESSION_MANAGER, this.remoteSessionManager);
 
     this.sshTunnelManager = new SshTunnelManager();
-    await this.sshTunnelManager.initialize();
     this.container.set(SERVICE_TOKENS.SSH_TUNNEL_MANAGER, this.sshTunnelManager);
 
     this.setState(ModuleState.READY);
@@ -123,7 +122,7 @@ export class RemoteModule extends BaseModule {
    * Called after socket is available.
    */
   setupSocketHandlers(socket: SocketClient): void {
-    const mainWindow = this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW);
+    const getMainWindow = () => this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW) || undefined;
 
     // Remote session requests
     socket.on('remote:session-request', async (request: RemoteSessionRequest) => {
@@ -152,7 +151,7 @@ export class RemoteModule extends BaseModule {
           socket.sendSshTunnelResponse({ requestId: request.requestId, accepted: false, reason: 'SSH tunnel manager not initialized' });
           return;
         }
-        const response = await this.sshTunnelManager.handleTunnelRequest(request, mainWindow || undefined);
+        const response = await this.sshTunnelManager.handleTunnelRequest(request, getMainWindow());
         socket.sendSshTunnelResponse(response);
       } catch (e: any) {
         socket.sendSshTunnelResponse({ requestId: request.requestId, accepted: false, reason: `Error: ${e.message}` });
@@ -184,7 +183,7 @@ export class RemoteModule extends BaseModule {
           }
 
           // Attended mode (default): show native dialog
-          const accepted = await this.remoteSessionManager?.showSessionRequestDialog(request, mainWindow || undefined);
+          const accepted = await this.remoteSessionManager?.showSessionRequestDialog(request, getMainWindow());
           if (accepted) await this.remoteSessionManager?.acceptSession();
           else this.remoteSessionManager?.rejectSession('User declined');
         } catch { this.remoteSessionManager?.rejectSession('Error processing request'); }
@@ -198,7 +197,7 @@ export class RemoteModule extends BaseModule {
       });
 
       this.remoteSessionManager.on('stateChanged', (state: RemoteControlState) => {
-        mainWindow?.webContents.send(IPC_CHANNELS.REMOTE_STATE_CHANGED, state);
+        getMainWindow()?.webContents.send(IPC_CHANNELS.REMOTE_STATE_CHANGED, state);
       });
 
       this.remoteSessionManager.on('sessionEnded', (session) => {
@@ -209,7 +208,7 @@ export class RemoteModule extends BaseModule {
     // SSH tunnel status
     if (this.sshTunnelManager) {
       this.sshTunnelManager.on('statusChanged', (status: SshTunnelStatus) => {
-        mainWindow?.webContents.send(IPC_CHANNELS.SSH_TUNNEL_STATUS_CHANGED, status);
+        getMainWindow()?.webContents.send(IPC_CHANNELS.SSH_TUNNEL_STATUS_CHANGED, status);
       });
     }
   }
