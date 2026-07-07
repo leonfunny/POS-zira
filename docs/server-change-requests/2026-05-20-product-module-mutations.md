@@ -248,13 +248,14 @@ Recommended behavior:
 
 Headers include `Idempotency-Key`.
 
+`reason` is an optional operator note for all modes. When omitted, the backend must store a stable mode-based audit reason; when present, the backend stores and returns the trimmed note.
+
 Request variants:
 
 ```json
 {
   "mode": "receive",
   "quantity": 10,
-  "reason": "Delivery",
   "expectedUpdatedAt": "2026-05-20T11:30:00.000Z",
   "expectedVersion": 3
 }
@@ -274,7 +275,6 @@ Request variants:
 {
   "mode": "damage",
   "quantity": 2,
-  "reason": "Broken package",
   "expectedUpdatedAt": "2026-05-20T11:30:00.000Z",
   "expectedVersion": 3
 }
@@ -286,7 +286,7 @@ Supported modes:
 - `recount`: set exact stock to non-negative `newQuantity`.
 - `damage`: decrement by positive `quantity`.
 - `loss`: decrement by positive `quantity`.
-- `return`: increment or decrement according to backend policy, documented explicitly.
+- `return`: increment stock by positive `quantity` for customer returns restored to sellable stock.
 
 Response includes updated variant row, previous quantity, new quantity, adjustment id, and serverTime.
 

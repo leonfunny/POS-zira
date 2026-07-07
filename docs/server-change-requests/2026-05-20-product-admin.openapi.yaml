@@ -480,7 +480,7 @@ components:
 
     StockAdjustmentRequest:
       type: object
-      required: [mode, reason]
+      required: [mode]
       properties:
         mode:
           type: string
@@ -496,6 +496,7 @@ components:
         reason:
           type: string
           minLength: 1
+          description: Optional operator note. When omitted, backend fills a mode-based audit reason.
         expectedUpdatedAt:
           type: string
           format: date-time

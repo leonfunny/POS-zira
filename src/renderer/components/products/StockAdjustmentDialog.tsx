@@ -33,7 +33,7 @@ export default function StockAdjustmentDialog({
   const [mode, setMode] = useState<ProductStockAdjustmentMode>('receive');
   const [quantity, setQuantity] = useState('1');
   const [newQuantity, setNewQuantity] = useState(String(currentStock(product)));
-  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -43,12 +43,11 @@ export default function StockAdjustmentDialog({
     const next = Number(newQuantity);
     if (mode === 'recount') return Number.isFinite(next) ? next : stockBefore;
     if (!Number.isFinite(qty)) return stockBefore;
-    if (mode === 'receive') return stockBefore + qty;
+    if (mode === 'receive' || mode === 'return') return stockBefore + qty;
     return stockBefore - qty;
   }, [mode, newQuantity, quantity, stockBefore]);
 
   const validate = (): string | null => {
-    if (mode !== 'recount' && !reason.trim()) return tOr(t, 'products.stock.reasonRequired', 'Enter a reason');
     if (mode === 'recount') {
       const next = Number(newQuantity);
       if (!Number.isFinite(next) || next < 0) {
@@ -74,11 +73,12 @@ export default function StockAdjustmentDialog({
     setBusy(true);
     setMessage(null);
     try {
+      const trimmedNote = note.trim();
       const result = await window.electronAPI.pos.productAdmin.adjustStock(product.id, {
         mode,
         quantity: mode === 'recount' ? undefined : Number(quantity),
         newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
-        reason: mode === 'recount' ? reason.trim() || undefined : reason.trim(),
+        reason: trimmedNote || undefined,
         expectedUpdatedAt: product.updated_at || undefined,
         idempotencyKey: makeIdempotencyKey(),
       });
@@ -106,6 +106,7 @@ export default function StockAdjustmentDialog({
     { value: 'recount', label: tOr(t, 'products.stock.mode.recount', 'Recount') },
     { value: 'damage', label: tOr(t, 'products.stock.mode.damage', 'Damaged') },
     { value: 'loss', label: tOr(t, 'products.stock.mode.loss', 'Lost') },
+    { value: 'return', label: tOr(t, 'products.stock.mode.return', 'Customer return') },
   ];
 
   return (
@@ -195,14 +196,12 @@ export default function StockAdjustmentDialog({
 
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {mode === 'recount'
-                ? tOr(t, 'products.stock.reasonOptional', 'Reason (optional)')
-                : tOr(t, 'products.stock.reason', 'Reason')}
+              {tOr(t, 'products.stock.noteOptional', 'Note (optional)')}
             </span>
             <textarea
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder={tOr(t, 'products.stock.reasonPlaceholder', 'Delivery, recount, damaged package...')}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder={tOr(t, 'products.stock.notePlaceholder', 'Delivery, recount, damaged package...')}
               className="min-h-[84px] w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
             />
           </label>
