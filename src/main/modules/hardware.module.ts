@@ -77,6 +77,17 @@ type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
+type PrinterReinitializeOptions = {
+  connect?: boolean;
+  timeoutMs?: number;
+  parallel?: boolean;
+};
+type PrinterConnectTask = {
+  label: string;
+  driver: PrinterDriver;
+  markOnline?: (online: boolean) => void;
+  onConnected?: () => void;
+};
 
 function isDriverInstance<T>(driver: unknown, constructorFn: unknown): driver is T {
   return typeof constructorFn === 'function' && driver instanceof (constructorFn as new (...args: any[]) => T);
@@ -152,6 +163,9 @@ export class HardwareModule extends BaseModule {
   private lastPrinterRuntimeSignature: string = '';
   private printerReinitializeInFlight: Promise<void> | null = null;
   private printerReinitializeQueued = false;
+  private printerReinitializeQueuedOptions: PrinterReinitializeOptions | null = null;
+  private pendingStartupPrinterConnectTasks: PrinterConnectTask[] = [];
+  private printerConnectInFlight = new WeakMap<PrinterDriver, Promise<boolean>>();
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
   private handleAgentConnected = () => {
@@ -168,7 +182,7 @@ export class HardwareModule extends BaseModule {
     if (unknownFiscalAttempts > 0) {
       logger.warn(`[HardwareModule] Marked ${unknownFiscalAttempts} SENT fiscal attempt(s) as UNKNOWN_NEEDS_RECONCILIATION after startup`);
     }
-    await this.reinitializePrinter();
+    await this.reinitializePrinter({ connect: false });
 
     logger.info('[HardwareModule] Initializing barcode scanner...');
     try {
@@ -946,8 +960,7 @@ export class HardwareModule extends BaseModule {
       throw new LanFirstSafeBeforePrintError(`Printer ${request.printerId} is not initialized`);
     }
 
-    if (!targetPrinter.isConnected()) {
-      await this.runHealthCheck();
+    if (!(await this.ensurePrinterReadyForPrint(targetPrinter, request.printerId, request.printerId))) {
       targetPrinter = this.printersById[request.printerId];
     }
 
@@ -1681,33 +1694,132 @@ export class HardwareModule extends BaseModule {
     });
   }
 
-  private async connectPrinterWithTimeout(driver: PrinterDriver, label: string): Promise<boolean> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+  private async connectPrinterWithTimeout(
+    driver: PrinterDriver,
+    label: string,
+    timeoutMs = PRINTER_CONNECT_TIMEOUT_MS,
+  ): Promise<boolean> {
+    const inFlight = this.printerConnectInFlight.get(driver);
+    if (inFlight) return inFlight;
+
+    const connectPromise = (async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timedOut = new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => {
+            logger.warn(`[HardwareModule] ${label}: connect timed out after ${timeoutMs}ms; continuing with other printers`);
+            resolve(false);
+          }, timeoutMs);
+        });
+        return await Promise.race([driver.connect(), timedOut]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    })();
+
+    this.printerConnectInFlight.set(driver, connectPromise);
     try {
-      const timedOut = new Promise<boolean>((resolve) => {
-        timeout = setTimeout(() => {
-          logger.warn(`[HardwareModule] ${label}: connect timed out after ${PRINTER_CONNECT_TIMEOUT_MS}ms; continuing with other printers`);
-          resolve(false);
-        }, PRINTER_CONNECT_TIMEOUT_MS);
-      });
-      return await Promise.race([driver.connect(), timedOut]);
+      return await connectPromise;
     } finally {
-      if (timeout) clearTimeout(timeout);
+      if (this.printerConnectInFlight.get(driver) === connectPromise) {
+        this.printerConnectInFlight.delete(driver);
+      }
     }
   }
 
-  async reinitializePrinter(): Promise<void> {
+  private async runPrinterConnectTask(task: PrinterConnectTask, timeoutMs: number): Promise<string | null> {
+    try {
+      const ok = await this.connectPrinterWithTimeout(task.driver, task.label, timeoutMs);
+      task.markOnline?.(ok);
+      if (ok) {
+        task.onConnected?.();
+        return null;
+      }
+      logger.warn(`[HardwareModule] ${task.label}: connect failed — driver registered for health-check recovery`);
+      return `${task.label}: failed to connect`;
+    } catch (e: any) {
+      task.markOnline?.(false);
+      logger.error(`[HardwareModule] ${task.label} connect failed:`, e);
+      return `${task.label}: ${e.message || e}`;
+    }
+  }
+
+  private async runPrinterConnectTasks(
+    tasks: PrinterConnectTask[],
+    options: Pick<PrinterReinitializeOptions, 'timeoutMs' | 'parallel'> = {},
+  ): Promise<string[]> {
+    if (tasks.length === 0) return [];
+
+    const timeoutMs = options.timeoutMs ?? PRINTER_CONNECT_TIMEOUT_MS;
+    const runTask = (task: PrinterConnectTask) => this.runPrinterConnectTask(task, timeoutMs);
+    const results = options.parallel
+      ? await Promise.all(tasks.map(runTask))
+      : await tasks.reduce<Promise<Array<string | null>>>(async (previous, task) => {
+          const errors = await previous;
+          errors.push(await runTask(task));
+          return errors;
+        }, Promise.resolve([]));
+
+    return results.filter((error): error is string => !!error);
+  }
+
+  private startPendingPrinterConnects(): void {
+    const tasks = this.pendingStartupPrinterConnectTasks;
+    this.pendingStartupPrinterConnectTasks = [];
+    if (tasks.length === 0) return;
+
+    void this.runPrinterConnectTasks(tasks, { parallel: true, timeoutMs: PRINTER_CONNECT_TIMEOUT_MS })
+      .then((errors) => {
+        if (errors.length > 0) {
+          logger.warn(`[HardwareModule] Startup printer connect issues: ${errors.join('; ')}`);
+          this.bus?.emit('hardware:printer-errors', { errors });
+        }
+        this.notifyStatusChange();
+        this.lastPrinterRuntimeSignature = this.buildPrinterRuntimeSignature();
+      })
+      .catch((err: any) => {
+        logger.error('[HardwareModule] Startup printer connect failed:', err);
+      });
+  }
+
+  private async ensurePrinterReadyForPrint(driver: PrinterDriver, label: string, printerId?: string): Promise<boolean> {
+    if (driver.isConnected()) return true;
+
+    const connected = await this.connectPrinterWithTimeout(driver, label);
+    if (printerId) localPrinterRepo.markOnline(printerId, connected);
+    if (connected && driver.isConnected()) {
+      this.notifyStatusChange();
+      return true;
+    }
+
+    try {
+      await this.runHealthCheck();
+    } catch (err: any) {
+      logger.warn(`[HardwareModule] ${label}: health check before print failed:`, err?.message || err);
+    }
+
+    const recovered = driver.isConnected();
+    if (printerId) localPrinterRepo.markOnline(printerId, recovered);
+    if (recovered) this.notifyStatusChange();
+    return recovered;
+  }
+
+  async reinitializePrinter(options: PrinterReinitializeOptions = {}): Promise<void> {
     if (this.printerReinitializeInFlight) {
       this.printerReinitializeQueued = true;
+      this.printerReinitializeQueuedOptions = options;
       logger.info('[HardwareModule] Printer reinitialize already running; queued latest config');
       await this.printerReinitializeInFlight;
       return;
     }
 
     this.printerReinitializeInFlight = (async () => {
+      let currentOptions = options;
       do {
         this.printerReinitializeQueued = false;
-        await this.reinitializePrinterNow();
+        this.printerReinitializeQueuedOptions = null;
+        await this.reinitializePrinterNow(currentOptions);
+        currentOptions = this.printerReinitializeQueuedOptions ?? {};
       } while (this.printerReinitializeQueued);
     })();
 
@@ -1716,10 +1828,15 @@ export class HardwareModule extends BaseModule {
     } finally {
       this.printerReinitializeInFlight = null;
       this.printerReinitializeQueued = false;
+      this.printerReinitializeQueuedOptions = null;
     }
   }
 
-  private async reinitializePrinterNow(): Promise<void> {
+  private async reinitializePrinterNow(options: PrinterReinitializeOptions = {}): Promise<void> {
+    const shouldConnect = options.connect !== false;
+    const connectTimeoutMs = options.timeoutMs ?? PRINTER_CONNECT_TIMEOUT_MS;
+    const connectTasks: PrinterConnectTask[] = [];
+    this.pendingStartupPrinterConnectTasks = [];
     // One-time migration: split merged RECEIPT config into FISCAL + RECEIPT
     const preConfig = getConfig();
     const receiptCfg = preConfig.printers?.RECEIPT;
@@ -1801,17 +1918,25 @@ export class HardwareModule extends BaseModule {
         if (!this.printers[pt]) this.printers[pt] = driver;
         registeredPrinterIds.add(row.id);
 
-        try {
-          const ok = await this.connectPrinterWithTimeout(driver, row.display_name || row.id);
-          localPrinterRepo.markOnline(row.id, ok);
-          if (!ok) {
-            initErrors.push(`${row.display_name || row.id}: failed to connect`);
+        if (shouldConnect) {
+          try {
+            const ok = await this.connectPrinterWithTimeout(driver, row.display_name || row.id, connectTimeoutMs);
+            localPrinterRepo.markOnline(row.id, ok);
+            if (!ok) {
+              initErrors.push(`${row.display_name || row.id}: failed to connect`);
             logger.warn(`[HardwareModule] ${row.display_name || row.id}: connect failed — driver registered for health-check recovery`);
+            }
+          } catch (e: any) {
+            localPrinterRepo.markOnline(row.id, false);
+            logger.error(`[HardwareModule] ${row.display_name || row.id} connect failed:`, e);
+            initErrors.push(`${row.display_name || row.id}: ${e.message}`);
           }
-        } catch (e: any) {
-          localPrinterRepo.markOnline(row.id, false);
-          logger.error(`[HardwareModule] ${row.display_name || row.id} connect failed:`, e);
-          initErrors.push(`${row.display_name || row.id}: ${e.message}`);
+        } else {
+          connectTasks.push({
+            label: row.display_name || row.id,
+            driver,
+            markOnline: (online) => localPrinterRepo.markOnline(row.id, online),
+          });
         }
       }
 
@@ -1828,8 +1953,9 @@ export class HardwareModule extends BaseModule {
           // was briefly unavailable permanently lost the driver until restart.
           this.printers[pt] = driver;
           if (pc.serverPrinterId) this.printersById[pc.serverPrinterId] = driver;
-          try {
-            const ok = await this.connectPrinterWithTimeout(driver, pt);
+          if (shouldConnect) {
+            try {
+              const ok = await this.connectPrinterWithTimeout(driver, pt, connectTimeoutMs);
             if (ok) {
               // P4.2: If connect() auto-migrated to a different identifier
               // (e.g. POSNET found on a different COM port), persist the change
@@ -1843,9 +1969,22 @@ export class HardwareModule extends BaseModule {
               initErrors.push(`${pt}: failed to connect`);
               logger.warn(`[HardwareModule] ${pt}: connect failed — driver registered for health-check recovery`);
             }
-          } catch (e: any) {
-            logger.error(`[HardwareModule] ${pt} connect failed:`, e);
-            initErrors.push(`${pt}: ${e.message}`);
+            } catch (e: any) {
+              logger.error(`[HardwareModule] ${pt} connect failed:`, e);
+              initErrors.push(`${pt}: ${e.message}`);
+            }
+          } else {
+            connectTasks.push({
+              label: pt,
+              driver,
+              onConnected: () => {
+                try {
+                  this.persistDriverPortMigration(pt, driver, pc);
+                } catch (persistErr: any) {
+                  logger.warn(`[HardwareModule] Persist port migration failed for ${pt}:`, persistErr?.message);
+                }
+              },
+            });
           }
         }
       }
@@ -1853,28 +1992,44 @@ export class HardwareModule extends BaseModule {
     } else if (config.receiptPrinter?.enabled || config.labelPrinter?.enabled) {
       this.receiptPrinter = this.createPrinterFromConfig(config.receiptPrinter, 'Receipt Printer' as any);
       if (this.receiptPrinter) {
-        try {
-          const ok = await this.connectPrinterWithTimeout(this.receiptPrinter, 'Receipt');
-          if (!ok) initErrors.push('Receipt: failed to connect');
-        } catch (e: any) { initErrors.push(`Receipt: ${e.message}`); }
+        if (shouldConnect) {
+          try {
+            const ok = await this.connectPrinterWithTimeout(this.receiptPrinter, 'Receipt', connectTimeoutMs);
+            if (!ok) initErrors.push('Receipt: failed to connect');
+          } catch (e: any) { initErrors.push(`Receipt: ${e.message}`); }
+        } else {
+          connectTasks.push({ label: 'Receipt', driver: this.receiptPrinter });
+        }
       }
       this.labelPrinter = this.createPrinterFromConfig(config.labelPrinter, 'Label Printer' as any);
       if (this.labelPrinter) {
-        try {
-          const ok = await this.connectPrinterWithTimeout(this.labelPrinter, 'Label');
-          if (!ok) initErrors.push('Label: failed to connect');
-        } catch (e: any) { initErrors.push(`Label: ${e.message}`); }
+        if (shouldConnect) {
+          try {
+            const ok = await this.connectPrinterWithTimeout(this.labelPrinter, 'Label', connectTimeoutMs);
+            if (!ok) initErrors.push('Label: failed to connect');
+          } catch (e: any) { initErrors.push(`Label: ${e.message}`); }
+        } else {
+          connectTasks.push({ label: 'Label', driver: this.labelPrinter });
+        }
       }
       this.printerDriver = null;
     } else {
       this.receiptPrinter = null; this.labelPrinter = null;
       this.printerDriver = this.createPrinterDriverLegacy();
       if (this.printerDriver) {
-        try {
-          const ok = await this.connectPrinterWithTimeout(this.printerDriver, 'Default printer');
-          if (!ok) initErrors.push('Default printer: failed to connect');
-        } catch (e: any) { initErrors.push(`Default: ${e.message}`); }
+        if (shouldConnect) {
+          try {
+            const ok = await this.connectPrinterWithTimeout(this.printerDriver, 'Default printer', connectTimeoutMs);
+            if (!ok) initErrors.push('Default printer: failed to connect');
+          } catch (e: any) { initErrors.push(`Default: ${e.message}`); }
+        } else {
+          connectTasks.push({ label: 'Default printer', driver: this.printerDriver });
+        }
       }
+    }
+
+    if (!shouldConnect) {
+      this.pendingStartupPrinterConnectTasks = connectTasks;
     }
 
     // Update container reference
@@ -2420,7 +2575,7 @@ export class HardwareModule extends BaseModule {
         ? this.printersById[lanFirstInput.printerId] || null
         : this.getPrinterForJob(job);
 
-      if (!targetPrinter?.isConnected()) {
+      if (!targetPrinter || !(await this.ensurePrinterReadyForPrint(targetPrinter, job.printerId || String(printerType), job.printerId))) {
         if (attempt < PRINT_JOB_MAX_RETRIES) {
           logger.warn(`[HardwareModule] Job ${job.jobId}: printer ${printerType} not connected, retry ${attempt + 1}/${PRINT_JOB_MAX_RETRIES} in ${PRINT_JOB_RETRY_DELAY}ms...`);
           await new Promise(r => setTimeout(r, PRINT_JOB_RETRY_DELAY));
@@ -2643,6 +2798,7 @@ export class HardwareModule extends BaseModule {
 
   async start(): Promise<void> {
     this.setState(ModuleState.RUNNING);
+    this.startPendingPrinterConnects();
     // Cleanup old label files from previous days
     cleanupOldLabels().catch(e => logger.warn('[HardwareModule] Label cleanup failed:', e));
   }

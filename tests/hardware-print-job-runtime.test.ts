@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PrintJobType,
   PrinterType,
@@ -21,6 +21,8 @@ const mock = vi.hoisted(() => ({
   posnetConnects: false,
   posnetInstances: [] as any[],
   rowToPrinterConfig: vi.fn(),
+  thermalConnectImpl: null as null | ((driver: any) => Promise<boolean> | boolean),
+  thermalInitiallyConnected: true,
   thermalInstances: [] as any[],
 }));
 
@@ -65,14 +67,30 @@ vi.mock('../src/main/hardware/elzab/elzab-driver', () => ({
 
 vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
   class ThermalDriver {
+    connected = mock.thermalInitiallyConnected;
     printReceipt = vi.fn();
     openDrawer = vi.fn();
     constructor() {
       mock.thermalInstances.push(this);
     }
-    connect = vi.fn(async () => true);
-    disconnect = vi.fn();
-    isConnected = vi.fn(() => true);
+    connect = vi.fn(async () => {
+      if (mock.thermalConnectImpl) {
+        const ok = await mock.thermalConnectImpl(this);
+        this.connected = ok;
+        return ok;
+      }
+      this.connected = true;
+      return true;
+    });
+    disconnect = vi.fn(() => {
+      this.connected = false;
+    });
+    isConnected = vi.fn(() => this.connected);
+    healthCheck = vi.fn(async () => undefined);
+    recoverPrinter = vi.fn(async () => ({ recovered: false, newIdentifier: null }));
+    reconnect = vi.fn(async () => {
+      this.connected = true;
+    });
     printDailyReport = vi.fn();
     printXReport = vi.fn();
     printZReport = vi.fn();
@@ -113,11 +131,17 @@ vi.mock('../src/main/hardware/pdf/pdf-printer', () => ({
 }));
 
 describe('HardwareModule print job runtime guards', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mock.thermalInstances.length = 0;
     mock.posnetInstances.length = 0;
     mock.posnetConnects = false;
+    mock.thermalConnectImpl = null;
+    mock.thermalInitiallyConnected = true;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
     mock.lanFirstBeginPrintAttempt.mockResolvedValue({ action: 'PRINT', row: { status: 'PRINTING' } });
     mock.lanFirstMarkCompleted.mockResolvedValue(null);
@@ -181,6 +205,62 @@ describe('HardwareModule print job runtime guards', () => {
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'PRINTING');
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
+  });
+
+  it('can register startup printer drivers without connecting them on the critical path', async () => {
+    mock.thermalInitiallyConnected = false;
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter({ connect: false } as any);
+
+    expect(mock.thermalInstances).toHaveLength(1);
+    expect(mock.thermalInstances[0].connect).not.toHaveBeenCalled();
+  });
+
+  it('connects a disconnected routed printer on demand before failing an early print job', async () => {
+    vi.useFakeTimers();
+    mock.thermalInitiallyConnected = false;
+    mock.thermalConnectImpl = async () => true;
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => socket),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter({ connect: false } as any);
+    const driver = mock.thermalInstances[0];
+    driver.connect.mockClear();
+    driver.connected = false;
+
+    const receipt: ReceiptData = {
+      orderId: 'order-early',
+      orderNumber: 'SCO-early',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CARD', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    const printPromise = (module as any).handlePrintJob({
+      jobId: 'job-early',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      payload: receipt,
+    });
+    await vi.advanceTimersByTimeAsync(4_100);
+    await printPromise;
+
+    expect(driver.connect).toHaveBeenCalledTimes(1);
+    expect(driver.printReceipt).toHaveBeenCalledWith(receipt);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-early', 'COMPLETED');
   });
 
   it('opens the cash drawer after a successful routed POS receipt when requested', async () => {
