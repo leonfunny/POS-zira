@@ -30,9 +30,9 @@ Client stores/passes the cursor opaquely (`draft-product-sync.ts` `sync_metadata
 **Accepted trade-off:** a row updated later within the same millisecond as the page's max row would be skipped (sub-ms race, human/crawler-cadence writes — negligible; full sync fallback covers).
 
 **Steps:**
-- [ ] A1. Apply fix + regression spec (two-call loop test: second call with returned cursor yields 0 rows).
-- [ ] A2. Build + restart DEV backend (:3003), e2e verify with curl: `since=.722Z` → 20 drafts, `nextSince=.723Z`; `since=.723Z` → 0 drafts.
-- [ ] A3. Audit the sibling POS products delta endpoint for the same class (its cursor advanced in logs, but the boundary may be latent).
+- [x] A1. DONE 2026-07-07 — eNail trunk `b14272d6`: `nextDeltaCursor()` util + spec (3 tests) + draft-mirror ceil. Scoped to the draft mirror only; see A3 note (two-call loop test: second call with returned cursor yields 0 rows).
+- [x] A2. DONE 2026-07-07 — dev e2e against real stuck data: `since=.722Z` → 20 drafts, `nextSince=.723Z`; `since=.723Z` → 0 drafts. (Gotcha reconfirmed: fast-build --backend restarted on a stale dist; manual `tsc + tsc-alias + pm2 restart` emitted.) Build + restart DEV backend (:3003), e2e verify with curl: `since=.722Z` → 20 drafts, `nextSince=.723Z`; `since=.723Z` → 0 drafts.
+- [x] A3. DONE 2026-07-07 — same latent class CONFIRMED in `warehouse/services/product.service.ts` (categories reduce + products raw MAX). Fix deferred: a concurrent session owns that file mid-flight (new `findPublicCategories` + `pos-public-sync-cursor.spec.ts`); they should adopt `nextDeltaCursor` from `@/common/utils/delta-cursor.util`. Audit note on the sibling POS products delta endpoint for the same class (its cursor advanced in logs, but the boundary may be latent).
 - [ ] A4. Commit on eNail trunk; deploy Contabo (surgical dist patch + restart, ~90 s backend boot — needs an owner-approved window); verify prod: same two-call curl + POS log shows `Delta sync: 0/0` steady state.
 
 **Rollback:** revert the one-line change; behavior returns to (bad) current state, nothing else depends on cursor shape.
@@ -64,8 +64,8 @@ Client stores/passes the cursor opaquely (`draft-product-sync.ts` `sync_metadata
 **Root cause (verified 2026-07-07):** Contabo has user `paul` and sshd on :2222, but `/home/paul/.ssh/authorized_keys` **does not exist**. POS1's key (`zira-print-agent@DESKTOP-AK6GJ4Q`, ed25519) was simply never installed.
 
 **Steps:**
-- [ ] C1. On Contabo: create `/home/paul/.ssh/authorized_keys` (700/600, owner paul) with POS1's pubkey, restricted to tunnel use: `restrict,port-forwarding <key>`.
-- [ ] C2. Verify: POS1's tunnel retry (or next app start) binds `127.0.0.1:10677` on Contabo (`ss -tlnp | grep 10677`).
+- [x] C1. DONE 2026-07-07 — On Contabo: create `/home/paul/.ssh/authorized_keys` (700/600, owner paul) with POS1's pubkey, restricted to tunnel use: `restrict,port-forwarding <key>`.
+- [x] C2. Auth path verified end-to-end 2026-07-07 (`TUNNEL-AUTH-OK` from POS1 with the agent key); the listening tunnel binds on POS1's next auto-start/retry. Verify: POS1's tunnel retry (or next app start) binds `127.0.0.1:10677` on Contabo (`ss -tlnp | grep 10677`).
 
 **Note:** other tills' keys can be appended the same way when their tunnels are wanted.
 
