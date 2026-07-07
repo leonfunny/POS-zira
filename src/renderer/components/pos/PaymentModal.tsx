@@ -136,6 +136,7 @@ export default function PaymentModal({
   const [loyaltyError, setLoyaltyError] = useState<string | null>(null);
   const [nipPadOpen, setNipPadOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const nipInputRef = useRef<HTMLInputElement>(null);
   const scannerBufferRef = useRef('');
   const scannerLastKeyRef = useRef(0);
   const paymentCompleteInFlightRef = useRef(false);
@@ -255,6 +256,17 @@ export default function PaymentModal({
   const availableMethods: PaymentMethod[] = ['CASH', 'CARD', 'TRANSFER',
     ...(isB2B && hasCustomer ? ['INVOICE' as PaymentMethod] : [])];
 
+  const handleNipToggle = () => {
+    if (nipOpen && !nipForcedOpen) {
+      setNipOpen(false);
+      setNipPadOpen(false);
+      return;
+    }
+
+    setNipOpen(true);
+    setNipPadOpen(true);
+  };
+
   useEffect(() => {
     if (method === 'INVOICE' && !canPayInvoice) setMethod('CASH');
   }, [canPayInvoice, method]);
@@ -266,6 +278,10 @@ export default function PaymentModal({
   useEffect(() => {
     if (method === 'CASH' && !splitMode) inputRef.current?.focus();
   }, [method, splitMode]);
+
+  useEffect(() => {
+    if (nipOpen && nipPadOpen) nipInputRef.current?.focus();
+  }, [nipOpen, nipPadOpen]);
 
   useEffect(() => {
     document.body.dataset.posPaymentOpen = 'true';
@@ -1080,7 +1096,7 @@ export default function PaymentModal({
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setNipOpen(open => (open && !nipForcedOpen ? false : true))}
+                  onClick={handleNipToggle}
                   aria-expanded={nipOpen}
                   className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                     nipOpen
@@ -1322,6 +1338,7 @@ export default function PaymentModal({
                     digits stay visible the whole time. */}
                 <input
                   id="payment-customer-nip"
+                  ref={nipInputRef}
                   type="text"
                   inputMode="numeric"
                   data-keyboard="false"

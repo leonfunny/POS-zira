@@ -68,6 +68,13 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(RESTAURANT_TEMPLATE).toContain('checkoutDraft={state.checkoutDraft}');
   });
 
+  it('opens the NIP keypad immediately when the cashier taps Add NIP', () => {
+    expect(PAYMENT_MODAL).toContain('const handleNipToggle = () => {');
+    expect(PAYMENT_MODAL).toContain('setNipOpen(true);');
+    expect(PAYMENT_MODAL).toContain('setNipPadOpen(true);');
+    expect(PAYMENT_MODAL).toContain('onClick={handleNipToggle}');
+  });
+
   it('snapshots payment totals before clearing the cart for receipt prompts', () => {
     const snapshotIndex = PAYMENT_MODAL.indexOf('setPaymentSnapshot({');
     const clearIndex = PAYMENT_MODAL.indexOf("dispatch({ type: 'cart/clear' })");
