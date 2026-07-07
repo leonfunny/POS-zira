@@ -113,7 +113,8 @@ export default function StaffManagementSettings() {
       const result = await window.electronAPI.pos.staff.create({
         name: form.name.trim(),
         role: normalizeRole(form.role),
-        commissionRate: toBasisPoints(form.commissionPercent),
+        // Empty field = no commission change; avoids a needless backend call
+        commissionRate: form.commissionPercent.trim() === '' ? undefined : toBasisPoints(form.commissionPercent),
         isActive: true,
       });
       if (!result.success) throw new Error(result.error || 'Could not add staff');
@@ -147,7 +148,7 @@ export default function StaffManagementSettings() {
       const result = await window.electronAPI.pos.staff.update(row.id, {
         name: editingForm.name.trim(),
         role: normalizeRole(editingForm.role),
-        commissionRate: toBasisPoints(editingForm.commissionPercent),
+        commissionRate: editingForm.commissionPercent.trim() === '' ? undefined : toBasisPoints(editingForm.commissionPercent),
         isActive: row.is_active !== 0,
       });
       if (!result.success) throw new Error(result.error || 'Could not save staff');

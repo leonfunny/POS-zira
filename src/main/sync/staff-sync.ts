@@ -70,11 +70,19 @@ export class StaffSync {
       role: normalizeUserRole(input.role) || 'STAFF',
     });
 
-    if (input.commissionRate !== undefined) {
-      await apiClient.updateStaffCommission(token, user.id, input.commissionRate);
+    // The staff user exists on the server from here on. Commission is
+    // best-effort: a failure (e.g. 403 for a non-OWNER token) must not fail
+    // the create, otherwise the UI reports failure and a retry duplicates
+    // the staff user on the server.
+    try {
+      if (user?.id && input.commissionRate !== undefined) {
+        await apiClient.updateStaffCommission(token, user.id, input.commissionRate);
+      }
+    } catch (err: any) {
+      logger.warn(`[StaffSync] Staff created but commission update failed: ${err?.message ?? err}`);
+    } finally {
+      await this.pullStaffAfterMutation().catch(() => null);
     }
-
-    await this.pullStaffAfterMutation();
     return user?.id ? staffRepo.getByUserId(user.id) : null;
   }
 
@@ -89,20 +97,24 @@ export class StaffSync {
     }
     if (!staff?.user_id) throw new Error('Staff is not linked to a backend user yet. Refresh staff and try again.');
 
-    await apiClient.updateStaffUser(token, staff.user_id, {
-      full_name: input.name,
-      role: normalizeUserRole(input.role) || undefined,
-    });
+    // Re-pull in finally so the local roster reflects whatever part of the
+    // edit landed on the server, even when a later call throws.
+    try {
+      await apiClient.updateStaffUser(token, staff.user_id, {
+        full_name: input.name,
+        role: normalizeUserRole(input.role) || undefined,
+      });
 
-    if (input.commissionRate !== undefined) {
-      await apiClient.updateStaffCommission(token, staff.user_id, input.commissionRate);
+      if (input.commissionRate !== undefined) {
+        await apiClient.updateStaffCommission(token, staff.user_id, input.commissionRate);
+      }
+
+      if (input.isActive !== undefined && input.isActive !== (staff.is_active !== 0)) {
+        await apiClient.setStaffProfileStatus(token, staff.user_id, input.isActive ? 'ACTIVE' : 'OFF');
+      }
+    } finally {
+      await this.pullStaffAfterMutation().catch(() => null);
     }
-
-    if (input.isActive !== undefined && input.isActive !== (staff.is_active !== 0)) {
-      await apiClient.setStaffProfileStatus(token, staff.user_id, input.isActive ? 'ACTIVE' : 'OFF');
-    }
-
-    await this.pullStaffAfterMutation();
     return staffRepo.getById(id);
   }
 
