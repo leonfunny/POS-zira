@@ -2929,9 +2929,18 @@ export class PosModule extends BaseModule {
       }
     });
 
+    // One reprint per order at a time — POS2 cashiers hammered the button
+    // while a remote job was still pending (2026-07-06) and every extra
+    // attempt piled errors on top of a job that was already printing.
+    const reprintsInFlight = new Set<string>();
     ipcMain.handle('pos:reprint-receipt', async (_e, orderId: string) => {
+      if (reprintsInFlight.has(orderId)) {
+        return { success: false, receiptPrinted: false, error: 'Reprint already in progress for this order' };
+      }
+      reprintsInFlight.add(orderId);
       try { const printed = await this.paymentController?.reprintReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
+      finally { reprintsInFlight.delete(orderId); }
     });
 
     ipcMain.handle('pos:print-refund-receipt', async (_e, orderId: string) => {

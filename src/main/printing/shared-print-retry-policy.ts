@@ -11,6 +11,14 @@ export type SharedPrintRetryDecision =
 
 export const SHARED_PRINT_RETRY_DELAYS_MS = [2_000, 4_000, 6_000] as const;
 export const SHARED_RECEIPT_COMPLETION_TIMEOUT_MS = 10_000;
+/**
+ * Total client-side budget for ONE shared receipt submission. Real jobs on
+ * the shared POS1 till measured 9.2-19.8s end-to-end (2026-07-06, 21 jobs),
+ * so the 10s backend hold above regularly ends while the paper is still
+ * feeding — the client must keep polling instead of declaring failure.
+ * 30s also absorbs one job queued ahead on the shared printer.
+ */
+export const SHARED_RECEIPT_TOTAL_WAIT_MS = 30_000;
 export const SHARED_FISCAL_RETRY_COMPLETION_TIMEOUT_MS = 10_000;
 
 export function normalizePrintJobStatus(result?: CreatePrintJobResponse | null): string {

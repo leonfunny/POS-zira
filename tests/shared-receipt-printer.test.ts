@@ -50,7 +50,10 @@ vi.mock('../src/main/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { submitSharedReceiptPrint } from '../src/main/printing/shared-receipt-printer';
+import {
+  resetSharedReceiptResumeRegistry,
+  submitSharedReceiptPrint,
+} from '../src/main/printing/shared-receipt-printer';
 
 const receiptData: ReceiptData = {
   orderId: 'order-1',
@@ -64,6 +67,9 @@ const receiptData: ReceiptData = {
 describe('submitSharedReceiptPrint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Every test reuses order-1; without a reset the resume registry from a
+    // previous test short-circuits createPrintJob and breaks expectations.
+    resetSharedReceiptResumeRegistry();
     getConfig.mockReturnValue({ serverUrl: 'https://api.example.test', machineId: 'machine-2' });
     getSecureAuthToken.mockReturnValue('jwt-token');
     getSecureApiKey.mockReturnValue(null);
