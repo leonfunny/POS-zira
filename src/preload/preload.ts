@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
+import { createBootRetryInvoke } from './boot-invoke-retry';
 import {
   IPC_CHANNELS,
   AgentConfig,
@@ -67,6 +68,29 @@ import {
   PosScheduleRequestStaffPayload,
   PosScheduleStaffStatusPayload,
 } from '../shared/types';
+
+// Boot-race shield (POS1 2026-07-06): main registers module IPC handlers
+// ~30-40s into boot, but a window spawned earlier (second-instance
+// double-click while booting) starts invoking immediately and every call
+// dies with "No handler registered". All code below talks to this delegating
+// wrapper — `invoke` retries that one error while the renderer is young;
+// everything else passes straight through to Electron.
+const bootRetryInvoke = createBootRetryInvoke(
+  (channel, ...args) => electronIpcRenderer.invoke(channel, ...args),
+  {
+    onRetryExhausted: (channel, waitedMs) =>
+      console.error(
+        `[Preload] No handler for '${channel}' after ${Math.round(waitedMs / 1000)}s of boot retries`,
+      ),
+  },
+);
+
+const ipcRenderer = {
+  invoke: bootRetryInvoke,
+  send: electronIpcRenderer.send.bind(electronIpcRenderer),
+  on: electronIpcRenderer.on.bind(electronIpcRenderer),
+  removeListener: electronIpcRenderer.removeListener.bind(electronIpcRenderer),
+};
 
 // Log preload initialization
 console.log('[Preload] Initializing...');

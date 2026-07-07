@@ -43,6 +43,7 @@ import TrayManager, { TrayManagerHost } from '../tray';
 import logger from '../logger';
 import { handleZoomShortcut, resetWindowZoom } from '../windows/zoom-controls';
 import { getRendererDevServerUrl, shouldUseRendererDevServer } from '../windows/renderer-dev-server';
+import { attachRendererHealth } from '../windows/renderer-health';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -110,6 +111,7 @@ export class AgentOrchestrator implements TrayManagerHost {
   private isQuitting = false;
 
   private initStep = 0;
+  private processMetricsTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.container = new ServiceContainer();
@@ -300,6 +302,19 @@ export class AgentOrchestrator implements TrayManagerHost {
       this.logStep('Configuring auto-start...');
       this.configureAutoStart();
 
+      // 11b. Process-level health telemetry. A dead GPU process blanks the
+      // window while the renderer lives, and a renderer OOM builds up over
+      // days — both were invisible in the 2026-07-06 white-screen incident.
+      app.on('child-process-gone', (_event, details) => {
+        const line = `type=${details.type} reason=${details.reason} exitCode=${details.exitCode ?? 'n/a'}`;
+        if (details.type === 'GPU') {
+          logger.error(`[ProcessHealth] GPU process gone ${line}`);
+        } else if (details.reason !== 'clean-exit') {
+          logger.warn(`[ProcessHealth] Child process gone ${line}`);
+        }
+      });
+      this.startProcessMetricsLog();
+
       // 12. Handle app events
       app.on('window-all-closed', () => {
         logger.debug('All windows closed, continuing in tray');
@@ -403,6 +418,11 @@ export class AgentOrchestrator implements TrayManagerHost {
     });
 
     this.container.set(SERVICE_TOKENS.MAIN_WINDOW, this.mainWindow);
+
+    // White-screen instrumentation + auto-recovery (POS1 2026-07-06): a dead
+    // or hung renderer must leave a trace in the logs and reload itself
+    // instead of sitting as a white window until staff kill the app.
+    attachRendererHealth(this.mainWindow, { isQuitting: () => this.isQuitting });
 
     const isDev = shouldUseRendererDevServer();
     logger.info(`[Window] Loading renderer (dev=${isDev})...`);
@@ -572,6 +592,11 @@ export class AgentOrchestrator implements TrayManagerHost {
     logger.info('[Quit] Quitting application...');
     this.isQuitting = true;
 
+    if (this.processMetricsTimer) {
+      clearInterval(this.processMetricsTimer);
+      this.processMetricsTimer = null;
+    }
+
     // Remove IPC handlers registered by modules (per-channel, not blanket)
     for (const channel of Object.values(IPC_CHANNELS)) {
       try { ipcMain.removeHandler(channel); } catch (err: any) { logger.debug(`[Orchestrator] removeHandler ${channel} failed:`, err?.message); }
@@ -622,6 +647,27 @@ export class AgentOrchestrator implements TrayManagerHost {
   }
 
   // ─── Helpers ───────────────────────────────────────────────
+
+  /**
+   * One line every 5 minutes with per-process memory/CPU. The white-screen
+   * renderer had been up ~2.5 days with zero memory telemetry — this makes
+   * an OOM trend visible in combined.log before the renderer dies.
+   */
+  private startProcessMetricsLog(): void {
+    if (this.processMetricsTimer) return;
+    this.processMetricsTimer = setInterval(() => {
+      try {
+        const parts = app.getAppMetrics().map((metric) => {
+          const memMb = Math.round((metric.memory?.workingSetSize ?? 0) / 1024);
+          const cpu = (metric.cpu?.percentCPUUsage ?? 0).toFixed(0);
+          return `${metric.type}#${metric.pid} ${memMb}MB cpu=${cpu}%`;
+        });
+        logger.info(`[ProcessHealth] ${parts.join(' | ')}`);
+      } catch (err: any) {
+        logger.debug('[ProcessHealth] getAppMetrics failed:', err?.message);
+      }
+    }, 5 * 60_000);
+  }
 
   private logStep(message: string): void {
     this.initStep++;
