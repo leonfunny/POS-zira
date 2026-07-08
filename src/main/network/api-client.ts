@@ -1586,6 +1586,10 @@ export class ApiClient {
       canCreateCategory: raw?.canCreateCategory === true,
       canUpdateCategory: raw?.canUpdateCategory === true,
       supportsOptimisticConcurrency: raw?.supportsOptimisticConcurrency === true,
+      // Whitelist mapper: EVERY new capability must be mapped here or the
+      // renderer never sees it (supportsItemType was silently dropped once —
+      // the item-kind picker stayed hidden despite the backend advertising it).
+      supportsItemType: raw?.supportsItemType === true,
     };
   }
 

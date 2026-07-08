@@ -48,6 +48,9 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(apiClient).toContain('track_inventory: rawTrackInventory === false || rawTrackInventory === 0 ? 0 : 1');
     expect(posModule).toContain('item_type: variant.itemType != null');
     expect(posModule).toContain("typeof variant.trackInventory === 'boolean'");
+    // The capabilities mapper whitelists fields one by one — a missing line
+    // here silently hides the item-kind picker even when the backend is ready.
+    expect(apiClient).toContain('supportsItemType: raw?.supportsItemType === true');
   });
 
   it('gates every stock affordance on isStockTracked', () => {
