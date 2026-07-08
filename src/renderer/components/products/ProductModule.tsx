@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
-import type { ProductAdminCapabilities, ProductAdminVariant } from '../../../shared/types';
+import { AlertTriangle, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import type { ProductAdminCapabilities, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useProducts, type ProductKindFilter, type ProductListItem } from '../../hooks/useProducts';
 import { usePosStore } from '../../hooks/usePosStore';
+import Modal from '../shared/Modal';
 import CategoryGrid, { type ProductCategorySelection } from './CategoryGrid';
 import CategoryManagerDialog from './CategoryManagerDialog';
 import ProductAddFlow from './ProductAddFlow';
@@ -26,6 +27,7 @@ type BrowseView =
 type ProductView = BrowseView | { name: 'edit'; productId: string; returnTo: BrowseView };
 
 type ProductModuleToast = { kind: 'success' | 'error'; text: string };
+type ProductSaveOutcome = { stockBefore?: number; stockAfter?: number };
 type FailedLocalVariantImport = {
   variant_id: string;
   ean: string;
@@ -44,7 +46,7 @@ type ProductCategoryOption = {
   name_translations?: string | null;
 };
 
-const PRODUCT_KIND_FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts'];
+const PRODUCT_KIND_FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts', 'inactive'];
 const BACKEND_CATEGORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -104,6 +106,7 @@ function initialFailedImportCategoryId(
 
 function productAdminVariantToProduct(variant: ProductAdminVariant): ProductListItem {
   const saleUnit = variant.saleUnit ?? null;
+  const vatRate = Number(variant.vatRate);
   return {
     id: variant.id,
     template_id: variant.templateId ?? null,
@@ -114,7 +117,7 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
     category_id: variant.categoryId ?? null,
     image_url: variant.imageUrl ?? null,
     in_stock: Number(variant.totalStockQty) || 0,
-    vat_rate: Number(variant.vatRate) || 23,
+    vat_rate: Number.isFinite(vatRate) && vatRate >= 0 ? vatRate : 23,
     is_active: variant.isActive === false ? 0 : 1,
     updated_at: variant.updatedAt ?? null,
     available_qty: Number(variant.availableQty) || 0,
@@ -122,6 +125,14 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
     sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',
     name_translations: variant.nameTranslations ? JSON.stringify(variant.nameTranslations) : null,
   };
+}
+
+function productDisplayName(product: ProductListItem, language: Language): string {
+  return resolveName(product, language) || product.name;
+}
+
+function stockToastText(t: (key: string) => string, before: number, after: number): string {
+  return `${tOr(t, 'products.stock.successDetail', 'Stock')}: ${before} → ${after}`;
 }
 
 function FailedImportRow({
@@ -189,7 +200,7 @@ function FailedImportRow({
           type="button"
           onClick={() => void submit()}
           disabled={busy}
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-amber-600 px-3 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-amber-600 px-3 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RotateCcw size={15} />
           {busy ? tOr(t, 'products.importFailures.retrying', 'Retrying...') : tOr(t, 'products.importFailures.retry', 'Retry')}
@@ -205,7 +216,7 @@ function FailedImportRow({
             value={ean}
             onChange={(event) => setEan(event.target.value)}
             inputMode="numeric"
-            className="h-10 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
           />
         </label>
         <label className="block">
@@ -215,7 +226,7 @@ function FailedImportRow({
           <select
             value={categoryId}
             onChange={(event) => setCategoryId(event.target.value)}
-            className="h-10 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
           >
             <option value="">{tOr(t, 'products.importFailures.defaultCategory', 'Uncategorised')}</option>
             {categories.filter((category) => isBackendCategoryId(category.id)).map((category) => (
@@ -261,30 +272,18 @@ function FailedLocalVariantImportsDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-md bg-slate-50 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="flex items-start justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">
-              {tOr(t, 'products.importFailures.title', 'Cần xử lý')} ({imports.length})
-            </h2>
+    <Modal
+      open
+      size="full"
+      title={`${tOr(t, 'products.importFailures.title', 'Cần xử lý')} (${imports.length})`}
+      onClose={onClose}
+      panelClassName="sm:max-w-2xl"
+      closeLabel={tOr(t, 'products.close', 'Close')}
+    >
+        <div className="min-h-0 space-y-3 bg-slate-50 p-4">
             <p className="mt-1 text-sm text-slate-500">
               {tOr(t, 'products.importFailures.subtitle', 'Local imports that stopped after repeated backend rejection.')}
             </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-            aria-label={tOr(t, 'products.close', 'Close')}
-          >
-            <X size={20} />
-          </button>
-        </header>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {imports.length === 0 ? (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               {tOr(t, 'products.importFailures.empty', 'No failed local imports.')}
@@ -302,14 +301,15 @@ function FailedLocalVariantImportsDialog({
             ))
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
 function matchesProductKind(product: ProductListItem, filter: ProductKindFilter): boolean {
   const stock = product.available_qty ?? product.in_stock ?? 0;
   const price = Number(product.retail_price) || 0;
+  if (filter === 'inactive') return !product._isDraft && product.is_active === 0;
+  if (product.is_active === 0) return false;
   switch (filter) {
     case 'drafts':
       return product._isDraft === true;
@@ -338,7 +338,6 @@ export default function ProductModule({ language }: ProductModuleProps) {
     setQuery,
     refresh,
     syncProducts,
-    hideProductLocally,
     kindFilter,
     setKindFilter,
     syncing,
@@ -365,10 +364,14 @@ export default function ProductModule({ language }: ProductModuleProps) {
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
-  const catalogProductCount = allProducts.length - draftCount;
-  const noPriceCount = useMemo(
-    () => allProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length,
+  const activeCatalogProducts = useMemo(
+    () => allProducts.filter((product) => !product._isDraft && product.is_active !== 0),
     [allProducts],
+  );
+  const catalogProductCount = activeCatalogProducts.length;
+  const noPriceCount = useMemo(
+    () => activeCatalogProducts.filter((product) => (Number(product.retail_price) || 0) <= 0).length,
+    [activeCatalogProducts],
   );
   const failedImportCount = failedImports.length;
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
@@ -507,24 +510,59 @@ export default function ProductModule({ language }: ProductModuleProps) {
   }, []);
 
   const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant) => {
+    const createdProduct = productAdminVariantToProduct(variant);
     await refresh();
-    handleOpenProduct(productAdminVariantToProduct(variant));
-  }, [handleOpenProduct, refresh]);
+    handleOpenProduct(createdProduct);
+    setToast({
+      kind: 'success',
+      text: `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}`,
+    });
+  }, [handleOpenProduct, language, refresh, t]);
+
+  const handleProductSaved = useCallback((product: ProductListItem, outcome: ProductSaveOutcome) => {
+    if (typeof outcome.stockBefore === 'number' && typeof outcome.stockAfter === 'number') {
+      setToast({ kind: 'success', text: stockToastText(t, outcome.stockBefore, outcome.stockAfter) });
+      return;
+    }
+    setToast({
+      kind: 'success',
+      text: `${tOr(t, 'products.edit.success', 'Product saved')}: ${productDisplayName(product, language)}`,
+    });
+  }, [language, t]);
+
+  const handleStockAdjusted = useCallback((_product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => {
+    setToast({
+      kind: 'success',
+      text: stockToastText(t, result.adjustment.previousQuantity, result.adjustment.newQuantity),
+    });
+  }, [t]);
 
   const handleProductDeactivated = useCallback((product: ProductListItem) => {
-    hideProductLocally(product.id);
+    void refresh();
     returnFromEdit();
-    setToast({ kind: 'success', text: tOr(t, 'products.deactivate.hidden', 'Product hidden') });
-  }, [hideProductLocally, returnFromEdit, t]);
+    setToast({
+      kind: 'success',
+      text: `${tOr(t, 'products.deactivate.hidden', 'Product stopped')}: ${productDisplayName(product, language)}`,
+    });
+  }, [language, refresh, returnFromEdit, t]);
+
+  const handleProductReactivated = useCallback((product: ProductListItem) => {
+    void refresh();
+    returnFromEdit();
+    setToast({
+      kind: 'success',
+      text: `${tOr(t, 'products.reactivate.success', 'Product reactivated')}: ${productDisplayName(product, language)}`,
+    });
+  }, [language, refresh, returnFromEdit, t]);
 
   const handleStaleProductHidden = useCallback((product: ProductListItem) => {
-    hideProductLocally(product.id);
+    void refresh();
     returnFromEdit();
     setToast({
       kind: 'success',
       text: tOr(t, 'products.deactivate.notFoundHidden', 'Product was already unavailable; hidden locally.'),
     });
-  }, [hideProductLocally, returnFromEdit, t]);
+  }, [refresh, returnFromEdit, t]);
 
   const handleImportDraft = useCallback((product: ProductListItem) => {
     if (!product.barcode) return;
@@ -611,7 +649,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
                     key={filter}
                     type="button"
                     onClick={() => setKindFilter(filter)}
-                    className={`min-h-8 rounded-md border px-2.5 text-sm font-medium ${
+                    className={`min-h-11 min-w-11 rounded-md border px-3 text-sm font-medium ${
                       active
                         ? 'border-brand-600 bg-brand-50 text-brand-700'
                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
@@ -627,17 +665,17 @@ export default function ProductModule({ language }: ProductModuleProps) {
                 type="button"
                 onClick={() => void handleSyncProducts()}
                 disabled={syncing}
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 title={tOr(t, 'products.syncTitle', 'Sync catalog from backend')}
               >
-                <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+                <RefreshCw size={16} className={syncing ? 'animate-spin motion-reduce:animate-none' : ''} />
                 {syncing ? tOr(t, 'products.syncing', 'Syncing...') : tOr(t, 'products.sync', 'Sync')}
               </button>
               <div className="relative" onBlur={handleActionsBlur}>
                 <button
                   type="button"
                   onClick={() => setActionsOpen((open) => !open)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
                   title={tOr(t, 'products.actions', 'Product actions')}
                   aria-label={tOr(t, 'products.actions', 'Product actions')}
                   aria-haspopup="menu"
@@ -648,16 +686,16 @@ export default function ProductModule({ language }: ProductModuleProps) {
                 {actionsOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-10 z-30 w-56 rounded-md border border-slate-200 bg-white p-1 text-sm shadow-lg"
+                    className="absolute right-0 top-12 z-30 w-56 rounded-md border border-slate-200 bg-white p-1 text-sm shadow-lg"
                   >
                     <button
                       type="button"
                       role="menuitem"
                       onClick={handleRefreshLocal}
                       disabled={loading}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex min-h-11 w-full items-center gap-2 rounded-md px-3 py-2 text-left font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                      <RefreshCw size={16} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
                       {tOr(t, 'products.refreshLocal', 'Reload local catalog')}
                     </button>
                   </div>
@@ -756,7 +794,10 @@ export default function ProductModule({ language }: ProductModuleProps) {
           onImportDraft={handleImportDraft}
           onManageCategories={() => setCategoryManagerOpen(true)}
           onProductChanged={refresh}
+          onProductSaved={handleProductSaved}
+          onStockAdjusted={handleStockAdjusted}
           onProductDeactivated={handleProductDeactivated}
+          onProductReactivated={handleProductReactivated}
           onStaleProductHidden={handleStaleProductHidden}
         />
       ) : null}
@@ -765,7 +806,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
         open={searchOpen}
         query={query}
         products={searchProducts}
-        allProducts={allProducts}
+        allProducts={activeCatalogProducts}
         currentCategoryId={currentCategoryId}
         language={language}
         t={t}
@@ -826,7 +867,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
       {toast ? (
         <div
           role={toast.kind === 'error' ? 'alert' : 'status'}
-          className={`fixed bottom-4 right-4 z-[70] max-w-sm rounded-md border px-4 py-3 text-sm font-medium shadow-lg ${
+          className={`fixed bottom-4 right-4 z-[70] max-w-sm rounded-md border px-4 py-3 text-sm font-medium shadow-lg transition duration-150 motion-reduce:transition-none ${
             toast.kind === 'success'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
               : 'border-rose-200 bg-rose-50 text-rose-800'

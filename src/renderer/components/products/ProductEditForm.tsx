@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Tags } from 'lucide-react';
 import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
@@ -8,6 +8,9 @@ import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
+import { createStableMutationKeyStore } from './mutation-idempotency';
+import { useProductVatRates } from './product-vat-rates';
+import { executeProductSave } from './save-product-changes';
 
 interface ProductEditFormProps {
   product: ProductListItem;
@@ -21,7 +24,8 @@ interface ProductEditFormProps {
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onManageCategories: () => void;
-  onSaved: () => Promise<void> | void;
+  onProductChanged: () => Promise<void> | void;
+  onSaved: (outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
 }
 
 const DISPLAY_NAME_LOCALES = ['vi', 'pl', 'en'] as const;
@@ -67,15 +71,9 @@ function stockInputFromProduct(product: ProductListItem): string {
   return String(currentStock(product));
 }
 
-function makeIdempotencyKey(): string {
-  const randomUuid = globalThis.crypto?.randomUUID?.();
-  if (randomUuid) return randomUuid;
-  return `product-stock-recount-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function looksLikeFreshScaleCategory(category: Category | undefined): boolean {
-  const raw = `${category?.name || ''} ${category?.name_translations || ''}`.toLowerCase();
-  return /\bscale\b|\bfresh\b|tươi|tuoi|đồ tươi|do tuoi/.test(raw);
+function vatRateFromProduct(product: ProductListItem): number {
+  const vatRate = Number(product.vat_rate);
+  return Number.isFinite(vatRate) && vatRate >= 0 ? vatRate : 23;
 }
 
 function productSellBy(product: ProductListItem): 'PIECE' | 'WEIGHT' {
@@ -103,14 +101,16 @@ export default function ProductEditForm({
   onCancel,
   onDirtyChange,
   onManageCategories,
+  onProductChanged,
   onSaved,
 }: ProductEditFormProps) {
   const originalSellBy = productSellBy(product);
+  const originalVatRate = vatRateFromProduct(product);
   const [name, setName] = useState(product.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
-  const [vatRate, setVatRate] = useState(String(Number(product.vat_rate) || 23));
+  const [vatRate, setVatRate] = useState(String(originalVatRate));
   const [priceNet, setPriceNet] = useState(
-    netFromGross(moneyInputFromGrosze(product.retail_price), String(Number(product.vat_rate) || 23)),
+    netFromGross(moneyInputFromGrosze(product.retail_price), String(originalVatRate)),
   );
   const [barcode, setBarcode] = useState(product.barcode || '');
   const [sku, setSku] = useState(product.sku || '');
@@ -124,13 +124,16 @@ export default function ProductEditForm({
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockResetNotice, setStockResetNotice] = useState(false);
   const [pendingCancelConfirm, setPendingCancelConfirm] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const stockMutationKeyStore = useRef(createStableMutationKeyStore());
+  const vatRates = useProductVatRates(originalVatRate);
 
   useEffect(() => {
     setName(product.name || '');
     setPriceGross(moneyInputFromGrosze(product.retail_price));
-    setVatRate(String(Number(product.vat_rate) || 23));
+    setVatRate(String(originalVatRate));
     setPriceNet(
-      netFromGross(moneyInputFromGrosze(product.retail_price), String(Number(product.vat_rate) || 23)),
+      netFromGross(moneyInputFromGrosze(product.retail_price), String(originalVatRate)),
     );
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
@@ -143,6 +146,8 @@ export default function ProductEditForm({
     setBusy(false);
     setMessage(null);
     setStockResetNotice(false);
+    setAdvancedOpen(false);
+    stockMutationKeyStore.current.clear();
   }, [product.id]);
 
   const sortedCategories = useMemo(() => {
@@ -166,7 +171,7 @@ export default function ProductEditForm({
   const variantFieldsDirty = useMemo(() => (
     name !== (product.name || '')
     || priceGross !== moneyInputFromGrosze(product.retail_price)
-    || vatRate !== String(Number(product.vat_rate) || 23)
+    || vatRate !== String(originalVatRate)
     || barcode !== (product.barcode || '')
     || sku !== (product.sku || '')
     || categoryId !== (product.category_id || '')
@@ -187,7 +192,7 @@ export default function ProductEditForm({
     if (!name.trim()) return tOr(t, 'products.edit.nameRequired', 'Enter product name');
     if (parseMoneyToGrosze(priceGross) === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
-    if (!Number.isFinite(vat) || vat < 0) return tOr(t, 'products.edit.vatInvalid', 'Enter a valid VAT rate');
+    if (!vatRates.includes(vat)) return tOr(t, 'products.edit.vatInvalid', 'Select a valid VAT rate');
     if (canAdjustStock && parseStockQuantity(stockQty, sellBy) === null) {
       return sellBy === 'WEIGHT'
         ? tOr(t, 'products.create.stockWeightPrecision', 'Enter kg stock with up to 3 decimal places')
@@ -232,44 +237,53 @@ export default function ProductEditForm({
     setBusy(true);
     setMessage(null);
     try {
-      let expectedUpdatedAtForStock = product.updated_at || undefined;
-      let savedProductFields = false;
+      const stockIntent = JSON.stringify({
+        productId: product.id,
+        mode: 'recount',
+        newQuantity: parsedStockQty ?? 0,
+      });
+      const result = await executeProductSave({
+        productDirty,
+        stockDirty,
+        expectedUpdatedAt: product.updated_at || undefined,
+        updateProduct: () => window.electronAPI.pos.productAdmin.updateVariant(product.id, payload),
+        adjustStock: (expectedUpdatedAt) => {
+          const stockPayload: ProductAdminStockAdjustmentInput = {
+            mode: 'recount',
+            newQuantity: parsedStockQty ?? 0,
+            expectedUpdatedAt,
+            idempotencyKey: stockMutationKeyStore.current.get(stockIntent),
+          };
+          return window.electronAPI.pos.productAdmin.adjustStock(product.id, stockPayload);
+        },
+      });
 
-      if (productDirty) {
-        const result = await window.electronAPI.pos.productAdmin.updateVariant(product.id, payload);
-        if (!result?.ok) {
-          setMessage({
-            ok: false,
-            text: result?.error || result?.code || tOr(t, 'products.edit.failed', 'Could not save product'),
-          });
-          return;
-        }
-        expectedUpdatedAtForStock = result.data?.variant?.updatedAt || expectedUpdatedAtForStock;
-        savedProductFields = true;
+      if (result.status === 'product-failed') {
+        setMessage({
+          ok: false,
+          text: result.error || tOr(t, 'products.edit.failed', 'Could not save product'),
+        });
+        return;
       }
 
-      if (stockDirty) {
-        const stockPayload: ProductAdminStockAdjustmentInput = {
-          mode: 'recount',
-          newQuantity: parsedStockQty ?? 0,
-          expectedUpdatedAt: expectedUpdatedAtForStock,
-          idempotencyKey: makeIdempotencyKey(),
-        };
-        const stockResult = await window.electronAPI.pos.productAdmin.adjustStock(product.id, stockPayload);
-        if (!stockResult?.ok) {
-          const failure = stockResult?.error || stockResult?.code || tOr(t, 'products.stock.failed', 'Could not adjust stock');
-          setMessage({
-            ok: false,
-            text: savedProductFields
-              ? `${tOr(t, 'products.edit.stockFailed', 'Product saved, but stock could not be updated')}: ${failure}`
-              : failure,
-          });
-          return;
-        }
+      if (result.status === 'stock-failed') {
+        if (result.productSaved) await onProductChanged();
+        const failure = result.error || tOr(t, 'products.stock.failed', 'Could not adjust stock');
+        setMessage({
+          ok: false,
+          text: result.productSaved
+            ? `${tOr(t, 'products.edit.stockFailed', 'Product saved, but stock could not be updated')}: ${failure}`
+            : failure,
+        });
+        return;
       }
 
+      if (stockDirty) stockMutationKeyStore.current.clear();
       setMessage({ ok: true, text: tOr(t, 'products.edit.success', 'Product saved') });
-      await onSaved();
+      await onSaved({
+        stockBefore: stockDirty ? currentStock(product) : undefined,
+        stockAfter: stockDirty ? parsedStockQty ?? 0 : undefined,
+      });
       onDirtyChange?.(false);
       onCancel();
     } catch (err: any) {
@@ -319,7 +333,16 @@ export default function ProductEditForm({
           />
         </label>
 
-        {canEditDisplayName ? (
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((value) => !value)}
+          aria-expanded={advancedOpen}
+          className="inline-flex h-11 items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+        >
+          {tOr(t, 'products.advanced', 'Advanced')}
+        </button>
+
+        {advancedOpen && canEditDisplayName ? (
           <div className="border-t border-slate-200 pt-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-xs font-semibold uppercase text-slate-500">
@@ -372,32 +395,31 @@ export default function ProductEditForm({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {sellBy === 'WEIGHT'
-                ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
-                : tOr(t, 'products.drawer.priceNet', 'Net price')}
-            </span>
-            <input
-              inputMode="decimal"
-              value={priceNet}
-              onChange={(event) => {
-                const next = event.target.value;
-                setPriceNet(next);
-                setPriceGross(grossFromNet(next, vatRate));
-              }}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
-          </label>
+        <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          {advancedOpen ? (
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {sellBy === 'WEIGHT'
+                  ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
+                  : tOr(t, 'products.drawer.priceNet', 'Net price')}
+              </span>
+              <input
+                inputMode="decimal"
+                value={priceNet}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setPriceNet(next);
+                  setPriceGross(grossFromNet(next, vatRate));
+                }}
+                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+              />
+            </label>
+          ) : null}
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.drawer.vat', 'VAT')} %
             </span>
-            <input
-              type="number"
-              min="0"
-              step="1"
+            <select
               value={vatRate}
               onChange={(event) => {
                 const nextVat = event.target.value;
@@ -408,8 +430,10 @@ export default function ProductEditForm({
                   setPriceNet(netFromGross(priceGross, nextVat));
                 }
               }}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
+              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+            >
+              {vatRates.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+            </select>
           </label>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
@@ -430,7 +454,7 @@ export default function ProductEditForm({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid gap-3 ${advancedOpen ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.drawer.barcode', 'Barcode')}
@@ -441,16 +465,18 @@ export default function ProductEditForm({
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
           </label>
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.sku', 'SKU')}
-            </span>
-            <input
-              value={sku}
-              onChange={(event) => setSku(event.target.value)}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
-          </label>
+          {advancedOpen ? (
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {tOr(t, 'products.drawer.sku', 'SKU')}
+              </span>
+              <input
+                value={sku}
+                onChange={(event) => setSku(event.target.value)}
+                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+              />
+            </label>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -461,17 +487,10 @@ export default function ProductEditForm({
             <div className="flex gap-2">
               <select
                 value={categoryId}
-                onChange={(event) => {
-                  const nextCategoryId = event.target.value;
-                  setCategoryId(nextCategoryId);
-                  const nextCategory = categories.find((category) => category.id === nextCategoryId);
-                  if (looksLikeFreshScaleCategory(nextCategory)) {
-                    changeSellBy('WEIGHT');
-                  }
-                }}
+                onChange={(event) => setCategoryId(event.target.value)}
                 className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
-                <option value="">{tOr(t, 'products.allCategories', 'All categories')}</option>
+                <option value="">{tOr(t, 'products.uncategorised', 'Uncategorised')}</option>
                 {sortedCategories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {resolveName(category, language)}
@@ -504,17 +523,19 @@ export default function ProductEditForm({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
-            </span>
-            <input
-              value={saleUnit}
-              onChange={(event) => setSaleUnit(event.target.value)}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
-          </label>
+        <div className={`grid gap-3 ${advancedOpen ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {advancedOpen ? (
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+              </span>
+              <input
+                value={saleUnit}
+                onChange={(event) => setSaleUnit(event.target.value)}
+                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+              />
+            </label>
+          ) : null}
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             {sellBy === 'WEIGHT'
               ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
@@ -544,16 +565,18 @@ export default function ProductEditForm({
           </label>
         ) : null}
 
-        <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-            {tOr(t, 'products.edit.imageUrl', 'Image URL')}
-          </span>
-          <input
-            value={imageUrl}
-            onChange={(event) => setImageUrl(event.target.value)}
-            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-          />
-        </label>
+        {advancedOpen ? (
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.edit.imageUrl', 'Image URL')}
+            </span>
+            <input
+              value={imageUrl}
+              onChange={(event) => setImageUrl(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+            />
+          </label>
+        ) : null}
 
         {message ? (
           <div className={`rounded-md border px-3 py-2 text-sm ${
@@ -575,7 +598,7 @@ export default function ProductEditForm({
         <button
           type="button"
           onClick={() => void handleSave()}
-          disabled={busy}
+          disabled={busy || !dirty}
           className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? tOr(t, 'products.edit.saving', 'Saving...') : tOr(t, 'products.edit.save', 'Save')}

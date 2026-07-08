@@ -1,13 +1,14 @@
-import React, { useMemo, useState } from 'react';
-import { X } from 'lucide-react';
-import type { ProductStockAdjustmentMode } from '../../../shared/types';
+import React, { useMemo, useRef, useState } from 'react';
+import type { ProductAdminStockAdjustmentResponse, ProductStockAdjustmentMode } from '../../../shared/types';
 import type { ProductListItem } from '../../hooks/useProducts';
+import Modal from '../shared/Modal';
+import { createStableMutationKeyStore } from './mutation-idempotency';
 
 interface StockAdjustmentDialogProps {
   product: ProductListItem;
   t: (key: string) => string;
   onClose: () => void;
-  onAdjusted: () => Promise<void> | void;
+  onAdjusted: (result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
 }
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -17,11 +18,6 @@ function tOr(t: (key: string) => string, key: string, fallback: string): string 
 
 function currentStock(product: ProductListItem): number {
   return Number(product.available_qty ?? product.in_stock ?? 0) || 0;
-}
-
-function makeIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return `stock-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export default function StockAdjustmentDialog({
@@ -36,6 +32,7 @@ export default function StockAdjustmentDialog({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const mutationKeyStore = useRef(createStableMutationKeyStore());
 
   const stockBefore = currentStock(product);
   const stockAfter = useMemo(() => {
@@ -74,13 +71,20 @@ export default function StockAdjustmentDialog({
     setMessage(null);
     try {
       const trimmedNote = note.trim();
+      const intent = JSON.stringify({
+        productId: product.id,
+        mode,
+        quantity: mode === 'recount' ? undefined : Number(quantity),
+        newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
+        reason: trimmedNote || undefined,
+      });
       const result = await window.electronAPI.pos.productAdmin.adjustStock(product.id, {
         mode,
         quantity: mode === 'recount' ? undefined : Number(quantity),
         newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
         reason: trimmedNote || undefined,
         expectedUpdatedAt: product.updated_at || undefined,
-        idempotencyKey: makeIdempotencyKey(),
+        idempotencyKey: mutationKeyStore.current.get(intent),
       });
 
       if (!result?.ok) {
@@ -91,8 +95,9 @@ export default function StockAdjustmentDialog({
         return;
       }
 
+      mutationKeyStore.current.clear();
       setMessage({ ok: true, text: tOr(t, 'products.stock.success', 'Stock updated') });
-      await onAdjusted();
+      if (result.data) await onAdjusted(result.data);
       onClose();
     } catch (err: any) {
       setMessage({ ok: false, text: err?.message || tOr(t, 'products.stock.failed', 'Could not adjust stock') });
@@ -110,25 +115,35 @@ export default function StockAdjustmentDialog({
   ];
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4" onClick={onClose}>
-      <section
-        className="w-full max-w-[440px] rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-        aria-label={tOr(t, 'products.stock.dialogTitle', 'Adjust stock')}
-      >
-        <header className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4">
-          <h3 className="text-base font-semibold text-slate-950">
-            {tOr(t, 'products.stock.dialogTitle', 'Adjust stock')}
-          </h3>
+    <Modal
+      open
+      size="md"
+      zLayer="nested"
+      title={tOr(t, 'products.stock.dialogTitle', 'Adjust stock')}
+      onClose={onClose}
+      busy={busy}
+      closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+      footer={(
+        <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-            title={tOr(t, 'products.drawer.close', 'Close')}
+            disabled={busy}
+            className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
-            <X size={18} />
+            {tOr(t, 'products.drawer.close', 'Close')}
           </button>
-        </header>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={busy}
+            className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? tOr(t, 'products.stock.saving', 'Saving...') : tOr(t, 'products.stock.submit', 'Save stock')}
+          </button>
+        </div>
+      )}
+    >
 
         <div className="space-y-4 p-4">
           <div>
@@ -141,7 +156,7 @@ export default function StockAdjustmentDialog({
                   key={option.value}
                   type="button"
                   onClick={() => setMode(option.value)}
-                  className={`h-11 rounded-md border px-3 text-sm font-medium transition ${
+                  className={`h-11 rounded-md border px-3 text-sm font-medium transition duration-150 motion-reduce:transition-none ${
                     mode === option.value
                       ? 'border-brand-600 bg-brand-50 text-brand-700'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -214,25 +229,6 @@ export default function StockAdjustmentDialog({
             </div>
           ) : null}
         </div>
-
-        <footer className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-          >
-            {tOr(t, 'products.drawer.close', 'Close')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={busy}
-            className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy ? tOr(t, 'products.stock.saving', 'Saving...') : tOr(t, 'products.stock.submit', 'Save stock')}
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Modal>
   );
 }

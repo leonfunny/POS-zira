@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Package, ScanBarcode, X } from 'lucide-react';
+import { Package, ScanBarcode } from 'lucide-react';
 import type { ProductListItem } from '../../hooks/useProducts';
+import Modal from '../shared/Modal';
 
 interface ProductAddFlowProps {
   open: boolean;
@@ -142,7 +143,7 @@ export default function ProductAddFlow({
         setPreview(nextPreview);
         setMessage(tOr(t, 'products.add.draftFound', 'Draft product found. Review it before importing.'));
       } else {
-        setError(`${tOr(t, 'products.add.notFound', 'No local product or draft found for this barcode.')} ${tOr(t, 'products.add.serverRequired', 'Manual product creation requires backend product management support.')}`);
+        setError(`${tOr(t, 'products.add.notFound', 'No local product or draft found for this barcode.')} ${tOr(t, 'products.add.serverRequired', 'Manual product creation needs product management support.')}`);
       }
     } catch (err: any) {
       setError(err?.message || tOr(t, 'products.add.lookupFailed', 'Could not check this barcode'));
@@ -189,29 +190,18 @@ export default function ProductAddFlow({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={loading || importing ? undefined : onClose}>
-      <div
-        className="w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">{tOr(t, 'products.add.title', 'Add product by barcode')}</h2>
+    <Modal
+      open
+      size="lg"
+      title={tOr(t, 'products.add.title', 'Add product by barcode')}
+      onClose={onClose}
+      busy={loading || importing}
+      closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+    >
+        <div className="space-y-4 p-5">
             <p className="mt-1 text-sm text-slate-500">
               {tOr(t, 'products.add.description', 'Scan or type a barcode first. Existing items open for review; draft items can be imported safely.')}
             </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading || importing}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-          >
-            <X size={20} />
-          </button>
-        </header>
-
-        <div className="space-y-4 p-5">
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.add.barcode', 'Barcode')}
@@ -228,7 +218,7 @@ export default function ProductAddFlow({
                     void lookup();
                   }
                 }}
-                className="h-12 w-full rounded-md border border-slate-300 pl-11 pr-3 text-base font-semibold tracking-wide text-slate-950 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                className="h-12 w-full rounded-md border border-slate-300 pl-11 pr-3 text-base font-semibold tracking-wide text-slate-950 outline-none transition duration-150 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 motion-reduce:transition-none"
                 inputMode="numeric"
                 autoComplete="off"
               />
@@ -239,7 +229,7 @@ export default function ProductAddFlow({
             type="button"
             onClick={() => void lookup()}
             disabled={loading || importing}
-            className="inline-flex h-12 w-full items-center justify-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-12 w-full items-center justify-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition duration-150 hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
           >
             {loading ? tOr(t, 'products.loading', 'Loading products...') : tOr(t, 'products.add.lookup', 'Find')}
           </button>
@@ -267,7 +257,7 @@ export default function ProductAddFlow({
                 type="button"
                 onClick={() => void importDraft()}
                 disabled={importing || loading}
-                className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition duration-150 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
               >
                 {importing ? tOr(t, 'products.add.importing', 'Importing...') : tOr(t, 'products.add.importDraft', 'Import draft')}
               </button>
@@ -285,7 +275,6 @@ export default function ProductAddFlow({
             </div>
           ) : null}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

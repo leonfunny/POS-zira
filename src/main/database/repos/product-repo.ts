@@ -310,6 +310,12 @@ export const productRepo = {
     );
   },
 
+  getAllIncludingInactive(): ProductVariantRow[] {
+    return database.all<ProductVariantRow>(
+      `SELECT * FROM product_variants WHERE 1 = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+    );
+  },
+
   getByCategory(categoryId: string): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
       `SELECT * FROM product_variants WHERE category_id = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,

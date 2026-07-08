@@ -9,12 +9,16 @@ function source(path: string): string {
 }
 
 describe('Products drill-down components', () => {
-  it('renders ProductTile as a stock-coloured touch button with price warnings and status badges', () => {
+  it('renders ProductTile as a neutral touch button with stock strip, code, price warnings, and status badges', () => {
     const tile = source('src/renderer/components/products/ProductTile.tsx');
 
-    expect(tile).toContain('stockTileClasses(stock)');
+    expect(tile).toContain('stockColor(stock)');
+    expect(tile).toContain('stockStripClasses[stockBand]');
+    expect(tile).toContain('stockBadgeClasses[stockBand]');
     expect(tile).toContain('resolveName(product, language)');
     expect(tile).toContain('min-h-[96px]');
+    expect(tile).toContain('product.sku || product.barcode');
+    expect(tile).toContain('bg-white text-slate-950');
     expect(tile).toContain('product._isDraft');
     expect(tile).toContain('product.is_active === 0');
     expect(tile).toContain('price <= 0');

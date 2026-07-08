@@ -785,6 +785,7 @@ interface ElectronAPI {
     };
     products: {
       getAll: () => Promise<PosProduct[]>;
+      getAllIncludingInactive: () => Promise<PosProduct[]>;
       getByCategory: (catId: string) => Promise<PosProduct[]>;
       search: (query: string) => Promise<PosProduct[]>;
       searchByCode: (query: string) => Promise<PosProduct[]>;

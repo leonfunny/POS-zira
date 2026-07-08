@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { ProductListItem } from '../../hooks/useProducts';
+import Modal from '../shared/Modal';
+import { getSearchSubmitResult } from './product-search-submit';
 import { resolveScan, type ScanResolution } from './scan-match';
 
 interface ProductSearchOverlayProps {
@@ -100,49 +102,40 @@ export default function ProductSearchOverlay({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed left-0 right-0 top-0 z-50 flex bg-slate-950/45 p-4"
-      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
-      onClick={onClose}
+    <Modal
+      open
+      size="full"
+      title={tOr(t, 'products.search', 'Search products')}
+      onClose={onClose}
+      closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+      panelClassName="h-full sm:max-w-4xl"
+      bodyClassName="flex min-h-0 flex-1 flex-col"
+      overlayStyle={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
     >
-      <section
-        className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-        aria-label={tOr(t, 'products.search', 'Search products')}
+      <form
+        className="relative m-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const firstResult = getSearchSubmitResult(displayedProducts);
+          if (firstResult) handleOpenProduct(firstResult);
+          else void resolveCode(query);
+        }}
       >
-        <header className="flex items-center gap-3 border-b border-slate-200 p-4">
-          <form
-            className="relative min-w-0 flex-1"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void resolveCode(query);
-            }}
-          >
-            <Search size={19} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              ref={inputRef}
-              type="search"
-              value={query}
-              onChange={(event) => {
-                onQueryChange(event.target.value);
-                setResolution(null);
-                setLookupError(null);
-              }}
-              placeholder={tOr(t, 'products.searchCodePlaceholder', 'Nhập tên, EAN hoặc PLU')}
-              className="h-12 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-950 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-              aria-busy={resolving}
-            />
-          </form>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-            title={tOr(t, 'products.drawer.close', 'Close')}
-            aria-label={tOr(t, 'products.drawer.close', 'Close')}
-          >
-            <X size={20} />
-          </button>
-        </header>
+        <Search size={19} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            setResolution(null);
+            setLookupError(null);
+          }}
+          placeholder={tOr(t, 'products.searchCodePlaceholder', 'Nhập tên, EAN hoặc PLU')}
+          className="h-12 w-full rounded-md border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-950 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          aria-busy={resolving}
+        />
+      </form>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {resolution?.kind === 'many' ? (
@@ -200,7 +193,6 @@ export default function ProductSearchOverlay({
             </div>
           ) : null}
         </div>
-      </section>
-    </div>
+    </Modal>
   );
 }

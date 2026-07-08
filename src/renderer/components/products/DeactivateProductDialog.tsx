@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
 import type { ProductListItem } from '../../hooks/useProducts';
+import Modal from '../shared/Modal';
 
 interface DeactivateProductDialogProps {
   product: ProductListItem;
@@ -103,25 +103,35 @@ export default function DeactivateProductDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4" onClick={onClose}>
-      <section
-        className="w-full max-w-[420px] rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-        aria-label={tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}
-      >
-        <header className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4">
-          <h3 className="text-base font-semibold text-slate-950">
-            {tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}
-          </h3>
+    <Modal
+      open
+      size="md"
+      zLayer="nested"
+      title={tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}
+      onClose={onClose}
+      busy={busy}
+      closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+      footer={(
+        <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-            title={tOr(t, 'products.drawer.close', 'Close')}
+            disabled={busy}
+            className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
-            <X size={18} />
+            {tOr(t, 'products.edit.cancel', 'Cancel')}
           </button>
-        </header>
+          <button
+            type="button"
+            onClick={() => void handleDeactivate()}
+            disabled={busy}
+            className="h-11 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? tOr(t, 'products.deactivate.saving', 'Saving...') : tOr(t, 'products.deactivate.hideConfirm', 'Hide product')}
+          </button>
+        </div>
+      )}
+    >
 
         <div className="space-y-4 p-4">
           <p className="text-sm text-slate-600">
@@ -146,25 +156,6 @@ export default function DeactivateProductDialog({
             </div>
           ) : null}
         </div>
-
-        <footer className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-          >
-            {tOr(t, 'products.edit.cancel', 'Cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDeactivate()}
-            disabled={busy}
-            className="h-11 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy ? tOr(t, 'products.deactivate.saving', 'Saving...') : tOr(t, 'products.deactivate.hideConfirm', 'Hide product')}
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Modal>
   );
 }

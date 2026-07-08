@@ -1270,6 +1270,10 @@ export class PosModule extends BaseModule {
 
     // Products
     ipcMain.handle('pos:products:getAll', () => productRepo.getAll());
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCTS_GET_ALL_INCLUDING_INACTIVE,
+      () => productRepo.getAllIncludingInactive(),
+    );
     ipcMain.handle('pos:products:getByCategory', (_e, catId: string) => productRepo.getByCategory(catId));
     ipcMain.handle('pos:products:search', (_e, query: string) => productRepo.search(query));
     ipcMain.handle('pos:products:searchByCode', (_e, query: string) => productRepo.searchByCode(query));

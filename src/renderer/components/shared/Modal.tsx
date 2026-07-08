@@ -50,6 +50,8 @@ interface ModalProps {
   footer?: React.ReactNode;
   bodyClassName?: string;
   panelClassName?: string;
+  overlayClassName?: string;
+  overlayStyle?: React.CSSProperties;
   footerClassName?: string;
 }
 
@@ -69,15 +71,22 @@ export default function Modal({
   footer,
   bodyClassName = '',
   panelClassName = '',
+  overlayClassName = '',
+  overlayStyle,
   footerClassName,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
   const classes = modalClassNames(size, zLayer);
 
-  const closeNow = useCallback(() => {
-    if (!busy) onClose();
-  }, [busy, onClose]);
+  const requestClose = useCallback(() => {
+    if (busy) return;
+    if (guardUnsaved) {
+      onGuardedClose?.();
+      return;
+    }
+    onClose();
+  }, [busy, guardUnsaved, onClose, onGuardedClose]);
 
   const focusBoundary = useCallback((position: 'first' | 'last') => {
     const panel = panelRef.current;
@@ -102,26 +111,26 @@ export default function Modal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || busy) return;
       event.preventDefault();
-      onClose();
+      requestClose();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [busy, onClose, open]);
+  }, [busy, open, requestClose]);
 
   if (!open) return null;
 
   const handleBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || busy) return;
-    if (guardUnsaved) {
-      onGuardedClose?.();
-      return;
-    }
-    onClose();
+    requestClose();
   };
 
   return (
-    <div className={classes.overlay} onClick={handleBackdropClick}>
+    <div
+      className={`${classes.overlay} ${overlayClassName}`.trim()}
+      style={overlayStyle}
+      onClick={handleBackdropClick}
+    >
       <div tabIndex={0} onFocus={() => focusBoundary('last')} />
       <div
         ref={panelRef}
@@ -142,7 +151,7 @@ export default function Modal({
           {showCloseButton && (
             <button
               type="button"
-              onClick={closeNow}
+              onClick={requestClose}
               disabled={busy}
               aria-label={closeLabel}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"

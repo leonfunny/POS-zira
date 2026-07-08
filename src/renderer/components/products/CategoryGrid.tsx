@@ -51,7 +51,7 @@ function CategoryButton({
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-[104px] w-full items-center gap-3 rounded-md border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="flex min-h-[104px] w-full items-center gap-3 rounded-md border border-slate-200 bg-white p-4 text-left shadow-sm transition duration-150 hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 motion-reduce:transition-none"
     >
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600">
         {icon}

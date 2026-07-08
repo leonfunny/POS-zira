@@ -3,7 +3,7 @@ import { resolveName } from '../../shared/catalog-names';
 import type { Product, Category } from './usePosDb';
 import rlog from '../utils/logger';
 
-export type ProductKindFilter = 'all' | 'lowStock' | 'outOfStock' | 'noPrice' | 'drafts';
+export type ProductKindFilter = 'all' | 'lowStock' | 'outOfStock' | 'noPrice' | 'drafts' | 'inactive';
 export type ProductSyncErrorCode = 'no-auth' | 'failed' | null;
 
 export interface ProductListItem extends Product {
@@ -26,7 +26,6 @@ interface UseProductsResult {
   setKindFilter: (filter: ProductKindFilter) => void;
   refresh: () => Promise<void>;
   syncProducts: () => Promise<void>;
-  hideProductLocally: (productId: string) => void;
   syncing: boolean;
   syncErrorCode: ProductSyncErrorCode;
   syncOkAt: number | null;
@@ -87,6 +86,8 @@ function matchesQuery(
 function matchesKind(product: ProductListItem, filter: ProductKindFilter): boolean {
   const stock = product.available_qty ?? product.in_stock ?? 0;
   const price = Number(product.retail_price) || 0;
+  if (filter === 'inactive') return !product._isDraft && product.is_active === 0;
+  if (product.is_active === 0) return false;
   switch (filter) {
     case 'drafts':
       return product._isDraft === true;
@@ -137,7 +138,7 @@ export function useProducts(language: string): UseProductsResult {
     setError(null);
     try {
       const [productRows, categoryRows, draftRows] = await Promise.all([
-        window.electronAPI.pos.products.getAll(),
+        window.electronAPI.pos.products.getAllIncludingInactive(),
         window.electronAPI.pos.categories.getAllIncludingEmpty(),
         window.electronAPI.pos.draftProducts.getAll(DRAFT_PRODUCTS_INITIAL_LIMIT).catch(() => []),
       ]);
@@ -200,10 +201,6 @@ export function useProducts(language: string): UseProductsResult {
     }
   }, [refresh, syncing]);
 
-  const hideProductLocally = useCallback((productId: string) => {
-    setAllProducts((current) => current.filter((product) => product.id !== productId));
-  }, []);
-
   const products = useMemo(() => {
     const normalizedQuery = normalizeSearch(query.trim());
     return allProducts.filter((product) => {
@@ -227,7 +224,6 @@ export function useProducts(language: string): UseProductsResult {
     setKindFilter,
     refresh: () => refresh(false),
     syncProducts,
-    hideProductLocally,
     syncing,
     syncErrorCode,
     syncOkAt,

@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { ProductAdminCreateProductInput, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
+import Modal from '../shared/Modal';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
+import { useProductVatRates } from './product-vat-rates';
 import { findDuplicateBarcodeSet } from './scan-match';
 
 interface ProductCreateDialogProps {
@@ -95,6 +97,9 @@ export default function ProductCreateDialog({
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingCloseConfirm, setPendingCloseConfirm] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const vatRates = useProductVatRates();
 
   useEffect(() => {
     if (!open) return;
@@ -112,7 +117,14 @@ export default function ProductCreateDialog({
     setIdempotencyKey(makeIdempotencyKey());
     setBusy(false);
     setError(null);
+    setPendingCloseConfirm(false);
+    setAdvancedOpen(false);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setVatRate((current) => (vatRates.includes(Number(current)) ? current : String(vatRates[0] ?? 23)));
+  }, [open, vatRates]);
 
   const sortedCategories = useMemo(() => {
     return [...categories].sort((a, b) =>
@@ -167,7 +179,7 @@ export default function ProductCreateDialog({
     const priceGrossGrosze = parseMoneyToGrosze(priceGross);
     if (priceGrossGrosze === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
-    if (!Number.isFinite(vat) || vat < 0) return tOr(t, 'products.edit.vatInvalid', 'Enter a valid VAT rate');
+    if (!vatRates.includes(vat)) return tOr(t, 'products.edit.vatInvalid', 'Select a valid VAT rate');
 
     const initialStockQty = parseStockQuantity(stockQty, sellBy);
     if (initialStockQty === null) {
@@ -240,33 +252,60 @@ export default function ProductCreateDialog({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={busy ? undefined : onClose}>
-      <div
-        className="max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">
-              {tOr(t, 'products.create.title', 'Create product')}
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {tOr(t, 'products.create.description', 'Create a backend product with optional barcode, price, stock, and sale mode.')}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-            aria-label={tOr(t, 'products.drawer.close', 'Close')}
-          >
-            <X size={20} />
-          </button>
-        </header>
+  const dirty = name !== ''
+    || barcode !== (initialBarcode ?? '')
+    || sku !== ''
+    || priceGross !== ''
+    || priceNet !== ''
+    || vatRate !== String(vatRates[0] ?? 23)
+    || categoryId !== (initialCategoryId ?? '')
+    || sellBy !== 'PIECE'
+    || saleUnit !== 'szt'
+    || stockQty !== '0'
+    || imageUrl !== '';
 
-        <div className="max-h-[calc(92vh-9rem)] space-y-4 overflow-y-auto p-5">
+  const requestClose = () => {
+    if (dirty) setPendingCloseConfirm(true);
+    else onClose();
+  };
+
+  return (
+    <>
+      <Modal
+        open
+        size="full"
+        title={tOr(t, 'products.create.title', 'Create product')}
+        onClose={onClose}
+        busy={busy}
+        guardUnsaved={dirty}
+        onGuardedClose={() => setPendingCloseConfirm(true)}
+        panelClassName="sm:max-w-2xl"
+        closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+        footer={(
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={requestClose}
+              disabled={busy}
+              className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {tOr(t, 'products.edit.cancel', 'Cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={busy || !idempotencyKey}
+              className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? tOr(t, 'products.create.creating', 'Creating...') : tOr(t, 'products.create.submit', 'Create product')}
+            </button>
+          </div>
+        )}
+      >
+        <div className="space-y-4 p-5">
+            <p className="mt-1 text-sm text-slate-500">
+              {tOr(t, 'products.create.description', 'Add a product with its selling price, stock, and barcode.')}
+            </p>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.drawer.canonicalName', 'Canonical name')}
@@ -278,6 +317,15 @@ export default function ProductCreateDialog({
               autoFocus
             />
           </label>
+
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((value) => !value)}
+            aria-expanded={advancedOpen}
+            className="inline-flex h-11 items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+          >
+            {tOr(t, 'products.advanced', 'Advanced')}
+          </button>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <label className="block">
@@ -292,49 +340,50 @@ export default function ProductCreateDialog({
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
-            <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {tOr(t, 'products.drawer.sku', 'SKU')}
-              </span>
-              <input
-                value={sku}
-                onChange={(event) => setSku(event.target.value)}
-                placeholder={tOr(t, 'products.create.skuOptional', 'Optional')}
-                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-              />
-            </label>
+            {advancedOpen ? (
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                  {tOr(t, 'products.drawer.sku', 'SKU')}
+                </span>
+                <input
+                  value={sku}
+                  onChange={(event) => setSku(event.target.value)}
+                  placeholder={tOr(t, 'products.create.skuOptional', 'Optional')}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+            ) : null}
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {sellBy === 'WEIGHT'
-                  ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
-                  : tOr(t, 'products.drawer.priceNet', 'Net price')}
-              </span>
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="0.01"
-                value={priceNet}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setPriceNet(next);
-                  setPriceGross(grossFromNet(next, vatRate));
-                }}
-                placeholder="0.00"
-                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-              />
-            </label>
+          <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+            {advancedOpen ? (
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                  {sellBy === 'WEIGHT'
+                    ? tOr(t, 'products.drawer.priceNetPerKg', 'Net price / kg')
+                    : tOr(t, 'products.drawer.priceNet', 'Net price')}
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={priceNet}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setPriceNet(next);
+                    setPriceGross(grossFromNet(next, vatRate));
+                  }}
+                  placeholder="0.00"
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+            ) : null}
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
                 {tOr(t, 'products.drawer.vat', 'VAT')} %
               </span>
-              <input
-                type="number"
-                min="0"
-                step="1"
+              <select
                 value={vatRate}
                 onChange={(event) => {
                   const nextVat = event.target.value;
@@ -345,8 +394,10 @@ export default function ProductCreateDialog({
                     setPriceNet(netFromGross(priceGross, nextVat));
                   }
                 }}
-                className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-              />
+                className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+              >
+                {vatRates.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+              </select>
             </label>
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
@@ -381,7 +432,7 @@ export default function ProductCreateDialog({
                 onChange={(event) => setCategoryId(event.target.value)}
                 className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
-                <option value="">{tOr(t, 'products.allCategories', 'All categories')}</option>
+                <option value="">{tOr(t, 'products.uncategorised', 'Uncategorised')}</option>
                 {sortedCategories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {resolveName(category, language)}
@@ -397,7 +448,7 @@ export default function ProductCreateDialog({
                 <button
                   type="button"
                   onClick={() => changeSellBy('PIECE')}
-                  className={`h-10 rounded-md text-sm font-semibold transition ${
+                  className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
                     sellBy === 'PIECE' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -406,7 +457,7 @@ export default function ProductCreateDialog({
                 <button
                   type="button"
                   onClick={() => changeSellBy('WEIGHT')}
-                  className={`h-10 rounded-md text-sm font-semibold transition ${
+                  className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
                     sellBy === 'WEIGHT' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -416,7 +467,7 @@ export default function ProductCreateDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'md:grid-cols-2' : ''}`}>
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
                 {sellBy === 'WEIGHT'
@@ -431,29 +482,33 @@ export default function ProductCreateDialog({
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
+            {advancedOpen ? (
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                  {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+                </span>
+                <input
+                  value={saleUnit}
+                  onChange={(event) => setSaleUnit(event.target.value)}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                />
+              </label>
+            ) : null}
+          </div>
+
+          {advancedOpen ? (
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+                {tOr(t, 'products.edit.imageUrl', 'Image URL')}
               </span>
               <input
-                value={saleUnit}
-                onChange={(event) => setSaleUnit(event.target.value)}
+                value={imageUrl}
+                onChange={(event) => setImageUrl(event.target.value)}
+                placeholder={tOr(t, 'products.create.imageOptional', 'Optional')}
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
-          </div>
-
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.edit.imageUrl', 'Image URL')}
-            </span>
-            <input
-              value={imageUrl}
-              onChange={(event) => setImageUrl(event.target.value)}
-              placeholder={tOr(t, 'products.create.imageOptional', 'Optional')}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
-          </label>
+          ) : null}
 
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             {sellBy === 'WEIGHT'
@@ -467,26 +522,23 @@ export default function ProductCreateDialog({
             </div>
           ) : null}
         </div>
-
-        <footer className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-          >
-            {tOr(t, 'products.edit.cancel', 'Cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={busy || !idempotencyKey}
-            className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy ? tOr(t, 'products.create.creating', 'Creating...') : tOr(t, 'products.create.submit', 'Create product')}
-          </button>
-        </footer>
-      </div>
-    </div>
+      </Modal>
+      {pendingCloseConfirm ? (
+        <ConfirmActionDialog
+          open
+          tier="light"
+          title={tOr(t, 'common.confirmTitle', 'Please confirm')}
+          body={tOr(t, 'products.edit.discardConfirm', 'Discard unsaved changes?')}
+          confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
+          cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
+          danger
+          onConfirm={() => {
+            setPendingCloseConfirm(false);
+            onClose();
+          }}
+          onCancel={() => setPendingCloseConfirm(false)}
+        />
+      ) : null}
+    </>
   );
 }

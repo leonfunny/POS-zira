@@ -667,6 +667,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     products: {
       getAll: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_ALL),
+      getAllIncludingInactive: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_ALL_INCLUDING_INACTIVE),
       getByCategory: (catId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_GET_BY_CATEGORY, catId),
       search: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCTS_SEARCH, query),
       searchByCode: (query: string) => ipcRenderer.invoke('pos:products:searchByCode', query),

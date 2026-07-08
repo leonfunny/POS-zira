@@ -132,7 +132,9 @@ describe('Product module implementation contract', () => {
     expect(editView).toContain('StockAdjustmentDialog');
     expect(editView).toContain('canOpenStockAdjustment = canAdjustStock && !product._isDraft');
     expect(stockDialog).toContain('window.electronAPI.pos.productAdmin.adjustStock');
-    expect(stockDialog).toContain('idempotencyKey: makeIdempotencyKey()');
+    expect(stockDialog).toContain('createStableMutationKeyStore');
+    expect(stockDialog).toContain('idempotencyKey: mutationKeyStore.current.get(intent)');
+    expect(stockDialog).toContain('mutationKeyStore.current.clear()');
     expect(stockDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');
     expect(stockDialog).toContain("mode === 'recount'");
     expect(stockDialog).not.toContain("mode !== 'recount' && !reason.trim()");
@@ -165,8 +167,9 @@ describe('Product module implementation contract', () => {
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.adjustStock');
     expect(editForm).toContain("mode: 'recount'");
     expect(editForm).toContain('newQuantity: parsedStockQty ?? 0');
-    expect(editForm).toContain('expectedUpdatedAtForStock = result.data?.variant?.updatedAt');
-    expect(editForm).toContain('idempotencyKey: makeIdempotencyKey()');
+    expect(editForm).toContain('executeProductSave');
+    expect(editForm).toContain('if (result.productSaved) await onProductChanged()');
+    expect(editForm).toContain('idempotencyKey: stockMutationKeyStore.current.get(stockIntent)');
     expect(editForm).toContain('classifyProductSale');
     expect(editView).toContain('classifyProductSale');
     expect(posModule).toContain('getProductAdminVariantSellBy');
@@ -211,7 +214,8 @@ describe('Product module implementation contract', () => {
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.listCategories');
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.createCategory');
     expect(categoryManager).toContain('window.electronAPI.pos.productAdmin.updateCategory');
-    expect(categoryManager).toContain('idempotencyKey: makeIdempotencyKey()');
+    expect(categoryManager).toContain('createStableMutationKeyStore');
+    expect(categoryManager).toContain('idempotencyKey: mutationKeyStore.current.get(JSON.stringify(payload))');
     expect(categoryManager).toContain('expectedUpdatedAt: category.updatedAt || undefined');
     expect(categoryManager).toContain('expectedVersion: category.version');
     expect(categoryManager).not.toContain('productRepo');
@@ -219,11 +223,11 @@ describe('Product module implementation contract', () => {
   });
 
   it('loads products, drafts, categories, and preserves filters on sync events', () => {
-    expect(useProducts).toContain('window.electronAPI.pos.products.getAll()');
+    expect(useProducts).toContain('window.electronAPI.pos.products.getAllIncludingInactive()');
     expect(useProducts).toContain('window.electronAPI.pos.categories.getAllIncludingEmpty()');
     expect(useProducts).toContain('DRAFT_PRODUCTS_INITIAL_LIMIT');
     expect(useProducts).toContain('window.electronAPI.pos.draftProducts.getAll(DRAFT_PRODUCTS_INITIAL_LIMIT)');
-    expect(useProducts).toContain('hideProductLocally');
+    expect(useProducts).toContain("filter === 'inactive'");
     expect(moduleSource).toContain('usePosStore()');
     expect(moduleSource).toContain('selectedProductInCart');
     expect(moduleSource).toContain('products.deactivate.hidden');
@@ -291,7 +295,7 @@ describe('Product module implementation contract', () => {
   });
 
   it('labels mixed catalog and draft counts explicitly', () => {
-    expect(moduleSource).toContain('const catalogProductCount = allProducts.length - draftCount;');
+    expect(moduleSource).toContain('const catalogProductCount = activeCatalogProducts.length;');
     expect(moduleSource).toContain("products.count.visible");
     expect(moduleSource).toContain("products.count.catalog");
     expect(moduleSource).toContain('{catalogProductCount}');

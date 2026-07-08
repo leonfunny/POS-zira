@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer } from 'lucide-react';
+import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
+import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import DeactivateProductDialog from './DeactivateProductDialog';
@@ -28,7 +29,10 @@ interface ProductEditViewProps {
   onImportDraft: (product: ProductListItem) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
+  onProductSaved: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
+  onStockAdjusted: (product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
   onProductDeactivated: (product: ProductListItem) => Promise<void> | void;
+  onProductReactivated: (product: ProductListItem) => Promise<void> | void;
   onStaleProductHidden: (product: ProductListItem) => Promise<void> | void;
 }
 
@@ -83,7 +87,10 @@ export default function ProductEditView({
   onImportDraft,
   onManageCategories,
   onProductChanged,
+  onProductSaved,
+  onStockAdjusted,
   onProductDeactivated,
+  onProductReactivated,
   onStaleProductHidden,
 }: ProductEditViewProps) {
   const [labelBusy, setLabelBusy] = useState(false);
@@ -92,6 +99,7 @@ export default function ProductEditView({
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [reactivateBusy, setReactivateBusy] = useState(false);
   const [pendingBackConfirm, setPendingBackConfirm] = useState(false);
 
   useEffect(() => {
@@ -101,6 +109,7 @@ export default function ProductEditView({
     setEditing(false);
     setEditDirty(false);
     setDeactivateOpen(false);
+    setReactivateBusy(false);
     setPendingBackConfirm(false);
   }, [product.id]);
 
@@ -115,6 +124,7 @@ export default function ProductEditView({
   const canEditProduct = canUpdateProduct && !product._isDraft;
   const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
+  const canReactivate = canUpdateProduct && !product._isDraft && product.is_active === 0;
 
   const handleBack = () => {
     if (editing && editDirty) {
@@ -144,6 +154,33 @@ export default function ProductEditView({
       });
     } finally {
       setLabelBusy(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    if (!canReactivate || reactivateBusy) return;
+    setReactivateBusy(true);
+    setLabelMessage(null);
+    try {
+      const result = await window.electronAPI.pos.productAdmin.updateVariant(product.id, {
+        isActive: true,
+        expectedUpdatedAt: product.updated_at || undefined,
+      });
+      if (!result?.ok) {
+        setLabelMessage({
+          ok: false,
+          text: result?.error || result?.code || tOr(t, 'products.reactivate.failed', 'Could not reactivate product'),
+        });
+        return;
+      }
+      await onProductReactivated(product);
+    } catch (error) {
+      setLabelMessage({
+        ok: false,
+        text: error instanceof Error ? error.message : tOr(t, 'products.reactivate.failed', 'Could not reactivate product'),
+      });
+    } finally {
+      setReactivateBusy(false);
     }
   };
 
@@ -220,16 +257,30 @@ export default function ProductEditView({
                 <PackagePlus size={17} />
                 {tOr(t, 'products.stock.adjust', 'Adjust stock')}
               </button>
-              <button
-                type="button"
-                onClick={() => setDeactivateOpen(true)}
-                disabled={!canStopSelling}
-                className="inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                title={productInCart ? tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it') : undefined}
-              >
-                <Ban size={17} />
-                {tOr(t, 'products.deactivate.hideButton', 'Ngừng bán')}
-              </button>
+              {product.is_active === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => void handleReactivate()}
+                  disabled={!canReactivate || reactivateBusy}
+                  className="inline-flex h-11 items-center gap-2 rounded-md border border-emerald-200 bg-white px-4 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RotateCcw size={17} className={reactivateBusy ? 'animate-spin motion-reduce:animate-none' : ''} />
+                  {reactivateBusy
+                    ? tOr(t, 'products.reactivate.saving', 'Reactivating...')
+                    : tOr(t, 'products.reactivate.button', 'Sell again')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setDeactivateOpen(true)}
+                  disabled={!canStopSelling}
+                  className="inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={productInCart ? tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it') : undefined}
+                >
+                  <Ban size={17} />
+                  {tOr(t, 'products.deactivate.hideButton', 'Ngừng bán')}
+                </button>
+              )}
             </div>
 
             {productInCart && canDeactivateProduct && product.is_active !== 0 && !product._isDraft ? (
@@ -278,11 +329,15 @@ export default function ProductEditView({
             displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
             onManageCategories={onManageCategories}
             onDirtyChange={setEditDirty}
+            onProductChanged={onProductChanged}
             onCancel={() => {
               setEditing(false);
               setEditDirty(false);
             }}
-            onSaved={onProductChanged}
+            onSaved={async (outcome) => {
+              await onProductChanged();
+              await onProductSaved(product, outcome);
+            }}
           />
         ) : (
           <div className="mt-4 rounded-md border border-slate-200 px-4">
@@ -306,7 +361,10 @@ export default function ProductEditView({
           product={product}
           t={t}
           onClose={() => setStockOpen(false)}
-          onAdjusted={onProductChanged}
+          onAdjusted={async (result) => {
+            await onProductChanged();
+            await onStockAdjusted(product, result);
+          }}
         />
       ) : null}
 

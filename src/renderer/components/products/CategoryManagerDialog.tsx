@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, RefreshCw, Save, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Plus, RefreshCw, Save } from 'lucide-react';
 import type { ProductAdminCategory } from '../../../shared/types';
+import Modal from '../shared/Modal';
+import { createStableMutationKeyStore } from './mutation-idempotency';
 
 interface CategoryManagerDialogProps {
   language: string;
@@ -22,11 +24,6 @@ interface CategoryDraft {
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
-}
-
-function makeIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return `category-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function toDraft(category?: ProductAdminCategory): CategoryDraft {
@@ -103,35 +100,35 @@ function CategoryRow({
         <input
           value={draft.name}
           onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
-          className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           disabled={!canUpdateCategory}
         />
         <input
           value={draft.color}
           onChange={(event) => setDraft((prev) => ({ ...prev, color: event.target.value }))}
           placeholder="#2563eb"
-          className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           disabled={!canUpdateCategory}
         />
         <input
           value={draft.icon}
           onChange={(event) => setDraft((prev) => ({ ...prev, icon: event.target.value }))}
           placeholder="DR"
-          className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           disabled={!canUpdateCategory}
         />
         <input
           value={draft.sortOrder}
           onChange={(event) => setDraft((prev) => ({ ...prev, sortOrder: event.target.value }))}
           inputMode="numeric"
-          className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+          className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           disabled={!canUpdateCategory}
         />
         <button
           type="button"
           onClick={() => void handleSave()}
           disabled={!canUpdateCategory || busy}
-          className="flex h-10 w-11 items-center justify-center rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           title={tOr(t, 'products.category.save', 'Save')}
         >
           <Save size={17} />
@@ -162,6 +159,7 @@ export default function CategoryManagerDialog({
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const mutationKeyStore = useRef(createStableMutationKeyStore());
 
   const loadCategories = async () => {
     setLoading(true);
@@ -201,12 +199,15 @@ export default function CategoryManagerDialog({
     setCreating(true);
     setMessage(null);
     try {
-      const result = await window.electronAPI.pos.productAdmin.createCategory({
+      const payload = {
         name: newCategory.name.trim(),
         color: newCategory.color.trim() || null,
         icon: newCategory.icon.trim() || null,
         sortOrder: parseSortOrder(newCategory.sortOrder),
-        idempotencyKey: makeIdempotencyKey(),
+      };
+      const result = await window.electronAPI.pos.productAdmin.createCategory({
+        ...payload,
+        idempotencyKey: mutationKeyStore.current.get(JSON.stringify(payload)),
       });
       if (!result?.ok) {
         setMessage({
@@ -215,6 +216,7 @@ export default function CategoryManagerDialog({
         });
         return;
       }
+      mutationKeyStore.current.clear();
       setNewCategory(toDraft());
       setMessage({ ok: true, text: tOr(t, 'products.category.created', 'Category created') });
       await loadCategories();
@@ -232,38 +234,28 @@ export default function CategoryManagerDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4" onClick={onClose}>
-      <section
-        className="flex max-h-[86vh] w-full max-w-[720px] flex-col rounded-lg bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-        aria-label={tOr(t, 'products.category.title', 'Manage categories')}
-      >
-        <header className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4">
-          <h3 className="text-base font-semibold text-slate-950">
-            {tOr(t, 'products.category.title', 'Manage categories')}
-          </h3>
-          <div className="flex items-center gap-2">
+    <Modal
+      open
+      size="full"
+      zLayer="nested"
+      title={tOr(t, 'products.category.title', 'Manage categories')}
+      onClose={onClose}
+      busy={creating}
+      panelClassName="sm:max-w-[720px]"
+      closeLabel={tOr(t, 'products.drawer.close', 'Close')}
+    >
+        <div className="min-h-0 p-4">
+          <div className="mb-3 flex justify-end">
             <button
               type="button"
               onClick={() => void loadCategories()}
               disabled={loading}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               title={tOr(t, 'orders.refresh', 'Refresh')}
             >
-              <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              title={tOr(t, 'products.drawer.close', 'Close')}
-            >
-              <X size={18} />
+              <RefreshCw size={17} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
             </button>
           </div>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
             <div>{tOr(t, 'products.category.backendHelp', 'Categories here are loaded from Product Admin backend. Create/save sends changes to backend; the product filter updates after catalog sync.')}</div>
             {localCategoryCount > 0 ? (
@@ -283,32 +275,32 @@ export default function CategoryManagerDialog({
                   value={newCategory.name}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, name: event.target.value }))}
                   placeholder={tOr(t, 'products.category.name', 'Name')}
-                  className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                  className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
                 <input
                   value={newCategory.color}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, color: event.target.value }))}
                   placeholder="#2563eb"
-                  className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                  className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
                 <input
                   value={newCategory.icon}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, icon: event.target.value }))}
                   placeholder="DR"
-                  className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                  className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
                 <input
                   value={newCategory.sortOrder}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, sortOrder: event.target.value }))}
                   inputMode="numeric"
                   placeholder={tOr(t, 'products.category.sortOrder', 'Order')}
-                  className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
+                  className="h-11 min-w-0 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
                 <button
                   type="button"
                   onClick={() => void handleCreate()}
                   disabled={creating}
-                  className="flex h-10 w-11 items-center justify-center rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex h-11 w-11 items-center justify-center rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
                   title={tOr(t, 'products.category.create', 'Create')}
                 >
                   <Plus size={17} />
@@ -355,7 +347,6 @@ export default function CategoryManagerDialog({
             </div>
           )}
         </div>
-      </section>
-    </div>
+    </Modal>
   );
 }

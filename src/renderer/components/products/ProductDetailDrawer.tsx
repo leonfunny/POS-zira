@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
+import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import DeactivateProductDialog from './DeactivateProductDialog';
@@ -28,6 +29,8 @@ interface ProductDetailDrawerProps {
   onImportDraft: (product: ProductListItem) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
+  onProductSaved?: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
+  onStockAdjusted?: (product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
   onProductDeactivated: (product: ProductListItem) => Promise<void> | void;
   onStaleProductHidden: (product: ProductListItem) => Promise<void> | void;
 }
@@ -83,6 +86,8 @@ export default function ProductDetailDrawer({
   onImportDraft,
   onManageCategories,
   onProductChanged,
+  onProductSaved,
+  onStockAdjusted,
   onProductDeactivated,
   onStaleProductHidden,
 }: ProductDetailDrawerProps) {
@@ -165,7 +170,7 @@ export default function ProductDetailDrawer({
           <button
             type="button"
             onClick={handleCloseDrawer}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 transition duration-150 hover:bg-slate-100 hover:text-slate-900 motion-reduce:transition-none"
             title={tOr(t, 'products.drawer.close', 'Close')}
           >
             <X size={20} />
@@ -197,7 +202,7 @@ export default function ProductDetailDrawer({
                 <button
                   type="button"
                   onClick={() => onImportDraft(product)}
-                  className="mt-4 inline-flex h-11 items-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700"
+                  className="mt-4 inline-flex h-11 items-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white transition duration-150 hover:bg-brand-700 motion-reduce:transition-none"
                 >
                   {tOr(t, 'products.add.importDraft', 'Import draft')}
                 </button>
@@ -206,7 +211,7 @@ export default function ProductDetailDrawer({
                 type="button"
                 onClick={() => setEditing(true)}
                 disabled={!canEditProduct}
-                className="mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition duration-150 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                 title={
                   product._isDraft
                     ? tOr(t, 'products.edit.draftDisabled', 'Import the draft before editing')
@@ -222,7 +227,7 @@ export default function ProductDetailDrawer({
                 type="button"
                 onClick={() => void handlePrintLabel()}
                 disabled={!canPrintLabel}
-                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition duration-150 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:ml-2"
                 title={!product.barcode ? tOr(t, 'products.label.noBarcode', 'Add a barcode before printing a label') : undefined}
               >
                 <Printer size={17} />
@@ -232,7 +237,7 @@ export default function ProductDetailDrawer({
                 type="button"
                 onClick={() => setStockOpen(true)}
                 disabled={!canOpenStockAdjustment}
-                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition duration-150 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:ml-2"
                 title={
                   product._isDraft
                     ? tOr(t, 'products.stock.draftDisabled', 'Import the draft before adjusting stock')
@@ -248,7 +253,7 @@ export default function ProductDetailDrawer({
                 type="button"
                 onClick={() => setDeactivateOpen(true)}
                 disabled={!canStopSelling}
-                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-2"
+                className="ml-0 mt-3 inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 transition duration-150 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:ml-2"
                 title={
                   product._isDraft
                     ? tOr(t, 'products.deactivate.draftDisabled', 'Import the draft before stopping sales')
@@ -304,11 +309,15 @@ export default function ProductDetailDrawer({
               displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
               onManageCategories={onManageCategories}
               onDirtyChange={setEditDirty}
+              onProductChanged={onProductChanged}
               onCancel={() => {
                 setEditing(false);
                 setEditDirty(false);
               }}
-              onSaved={onProductChanged}
+              onSaved={async (outcome) => {
+                await onProductChanged();
+                await onProductSaved?.(product, outcome);
+              }}
             />
           ) : (
             <div className="mt-5 rounded-lg border border-slate-200">
@@ -332,7 +341,10 @@ export default function ProductDetailDrawer({
             product={product}
             t={t}
             onClose={() => setStockOpen(false)}
-            onAdjusted={onProductChanged}
+            onAdjusted={async (result) => {
+              await onProductChanged();
+              await onStockAdjusted?.(product, result);
+            }}
           />
         ) : null}
 
