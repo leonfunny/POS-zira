@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isStockTracked, productItemType } from '../src/shared/product-stock-tracking';
+import { getProductItemTypePolicy, isStockTracked, productItemType } from '../src/shared/product-stock-tracking';
 
 const root = resolve(__dirname, '..');
 const source = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -24,6 +24,24 @@ describe('product stock tracking helper', () => {
     expect(isStockTracked({ item_type: 'stockable', track_inventory: 1 })).toBe(true);
     expect(isStockTracked({ itemType: 'stockable', trackInventory: false })).toBe(false);
     expect(isStockTracked({ itemType: 'stockable', trackInventory: true })).toBe(true);
+  });
+
+  it('keeps sale mode for goods but forces services to piece-based sales', () => {
+    expect(getProductItemTypePolicy('stockable', 'WEIGHT')).toEqual({
+      stockApplies: true,
+      sellBySelectable: true,
+      sellBy: 'WEIGHT',
+    });
+    expect(getProductItemTypePolicy('consumable', 'WEIGHT')).toEqual({
+      stockApplies: false,
+      sellBySelectable: true,
+      sellBy: 'WEIGHT',
+    });
+    expect(getProductItemTypePolicy('service', 'WEIGHT')).toEqual({
+      stockApplies: false,
+      sellBySelectable: false,
+      sellBy: 'PIECE',
+    });
   });
 });
 
@@ -78,7 +96,7 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(editView).toContain('&& stockTracked');
     expect(drawer).toContain('&& isStockTracked(product)');
     expect(tile).toContain('const stockTracked = isStockTracked(product)');
-    expect(editForm).toContain("const stockEditable = canAdjustStock && stockTracked && itemType === 'stockable'");
+    expect(editForm).toContain('const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies');
   });
 
   it('sends itemType through create and update payloads only when supported', () => {
@@ -92,5 +110,16 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(types).toContain('supportsItemType?: boolean');
     expect(types).toContain("'STOCK_NOT_TRACKED'");
     expect(types).toContain("'STOCK_MUST_BE_ZERO'");
+  });
+
+  it('uses the shared item-type policy in both product forms', () => {
+    const createDialog = source('src/renderer/components/products/ProductCreateDialog.tsx');
+    const editForm = source('src/renderer/components/products/ProductEditForm.tsx');
+
+    for (const form of [createDialog, editForm]) {
+      expect(form).toContain('getProductItemTypePolicy');
+      expect(form).toContain('itemPolicy.sellBySelectable');
+      expect(form).toContain('itemPolicy.stockApplies');
+    }
   });
 });

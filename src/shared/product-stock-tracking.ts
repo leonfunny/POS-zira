@@ -30,3 +30,21 @@ export function isStockTracked(product: StockTrackable): boolean {
   if (flag === undefined || flag === null) return true;
   return !(flag === 0 || flag === false);
 }
+
+export interface ProductItemTypePolicy {
+  stockApplies: boolean;
+  sellBySelectable: boolean;
+  sellBy: 'PIECE' | 'WEIGHT';
+}
+
+export function getProductItemTypePolicy(itemType: string, sellBy: string): ProductItemTypePolicy {
+  const normalizedType = String(itemType || 'stockable').trim().toLowerCase();
+  const normalizedSellBy = String(sellBy).trim().toUpperCase() === 'WEIGHT' ? 'WEIGHT' : 'PIECE';
+  const isService = normalizedType === 'service';
+
+  return {
+    stockApplies: normalizedType === 'stockable',
+    sellBySelectable: !isService,
+    sellBy: isService ? 'PIECE' : normalizedSellBy,
+  };
+}

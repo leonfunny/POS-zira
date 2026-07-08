@@ -3,7 +3,7 @@ import { Tags } from 'lucide-react';
 import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../shared/pos-sale';
-import { isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
+import { getProductItemTypePolicy, isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
 import type { ProductAdminItemType, ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -107,9 +107,10 @@ export default function ProductEditForm({
   onProductChanged,
   onSaved,
 }: ProductEditFormProps) {
-  const originalSellBy = productSellBy(product);
   const originalVatRate = vatRateFromProduct(product);
   const originalItemType = productItemType(product);
+  const originalSellBy = productSellBy(product);
+  const initialSellBy = getProductItemTypePolicy(originalItemType, originalSellBy).sellBy;
   const stockTracked = isStockTracked(product);
   const [name, setName] = useState(product.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
@@ -120,8 +121,10 @@ export default function ProductEditForm({
   const [barcode, setBarcode] = useState(product.barcode || '');
   const [sku, setSku] = useState(product.sku || '');
   const [categoryId, setCategoryId] = useState(product.category_id || '');
-  const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(productSellBy(product));
-  const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
+  const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(initialSellBy);
+  const [saleUnit, setSaleUnit] = useState(
+    initialSellBy === originalSellBy ? product.sale_unit || '' : 'szt',
+  );
   const [itemType, setItemType] = useState(originalItemType);
   const [stockQty, setStockQty] = useState(stockInputFromProduct(product));
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
@@ -144,8 +147,9 @@ export default function ProductEditForm({
     setBarcode(product.barcode || '');
     setSku(product.sku || '');
     setCategoryId(product.category_id || '');
-    setSellBy(originalSellBy);
-    setSaleUnit(product.sale_unit || '');
+    const nextSellBy = getProductItemTypePolicy(originalItemType, originalSellBy).sellBy;
+    setSellBy(nextSellBy);
+    setSaleUnit(nextSellBy === originalSellBy ? product.sale_unit || '' : 'szt');
     setItemType(originalItemType);
     setStockQty(stockInputFromProduct(product));
     setImageUrl(product.image_url || '');
@@ -174,6 +178,7 @@ export default function ProductEditForm({
     [canEditDisplayName, displayNames, originalDisplayNames],
   );
   const translationsDirty = Object.keys(nameTranslationsPatch).length > 0;
+  const itemPolicy = getProductItemTypePolicy(itemType, sellBy);
 
   const variantFieldsDirty = useMemo(() => (
     name !== (product.name || '')
@@ -191,7 +196,7 @@ export default function ProductEditForm({
   const productDirty = variantFieldsDirty || translationsDirty;
   // Stock is only editable while the item both IS tracked and STAYS stockable
   // in this edit — switching kind and typing stock in one save is contradictory.
-  const stockEditable = canAdjustStock && stockTracked && itemType === 'stockable';
+  const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies;
   const stockDirty = stockEditable && stockQty !== stockInputFromProduct(product);
   const dirty = productDirty || stockDirty;
 
@@ -316,7 +321,7 @@ export default function ProductEditForm({
   };
 
   const changeSellBy = (value: string) => {
-    const nextSellBy = normalizeSellBy(value);
+    const nextSellBy = getProductItemTypePolicy(itemType, normalizeSellBy(value)).sellBy;
     setSellBy(nextSellBy);
     if (nextSellBy === originalSellBy) {
       setSaleUnit(product.sale_unit || (nextSellBy === 'WEIGHT' ? 'kg' : 'szt'));
@@ -327,6 +332,13 @@ export default function ProductEditForm({
     setSaleUnit(nextSellBy === 'WEIGHT' ? 'kg' : 'szt');
     setStockQty('0');
     setStockResetNotice(true);
+  };
+
+  const changeItemType = (value: string) => {
+    const nextItemType = value as ProductAdminItemType;
+    const nextPolicy = getProductItemTypePolicy(nextItemType, sellBy);
+    setItemType(nextItemType);
+    if (nextPolicy.sellBy !== sellBy) changeSellBy(nextPolicy.sellBy);
   };
 
   return (
@@ -493,7 +505,7 @@ export default function ProductEditForm({
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid gap-3 ${itemPolicy.sellBySelectable ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.drawer.category', 'Category')}
@@ -522,26 +534,28 @@ export default function ProductEditForm({
               </button>
             </div>
           </label>
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.sellBy', 'Sell by')}
-            </span>
-            <select
-              value={sellBy}
-              onChange={(event) => changeSellBy(event.target.value)}
-              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
-            >
-              <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Piece')}</option>
-              <option value="WEIGHT">{tOr(t, 'products.drawer.sellByWeight', 'Weight / kg')}</option>
-            </select>
-          </label>
+          {itemPolicy.sellBySelectable ? (
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {tOr(t, 'products.drawer.sellBy', 'Price by')}
+              </span>
+              <select
+                value={sellBy}
+                onChange={(event) => changeSellBy(event.target.value)}
+                className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+              >
+                <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Quantity')}</option>
+                <option value="WEIGHT">{tOr(t, 'products.drawer.sellByWeight', 'Weight (kg)')}</option>
+              </select>
+            </label>
+          ) : null}
         </div>
 
         <div className={`grid gap-3 ${advancedOpen ? 'grid-cols-2' : 'grid-cols-1'}`}>
           {advancedOpen ? (
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+                {tOr(t, 'products.drawer.saleUnit', 'Receipt unit')}
               </span>
               <input
                 value={saleUnit}
@@ -551,9 +565,13 @@ export default function ProductEditForm({
             </label>
           ) : null}
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            {sellBy === 'WEIGHT'
-              ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
-              : tOr(t, 'products.drawer.pieceHint', 'Normal products keep the existing piece-based flow.')}
+            {itemType === 'service'
+              ? tOr(t, 'products.itemType.serviceSaleHint', 'Each add to an order counts as one service.')
+              : itemType === 'consumable'
+                ? tOr(t, 'products.itemType.consumableSaleHint', 'POS calculates the sold quantity but does not deduct stock.')
+                : sellBy === 'WEIGHT'
+                  ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
+                  : tOr(t, 'products.drawer.pieceHint', 'POS calculates the price from the quantity sold.')}
           </div>
         </div>
 
@@ -564,13 +582,20 @@ export default function ProductEditForm({
             </span>
             <select
               value={itemType}
-              onChange={(event) => setItemType(event.target.value)}
+              onChange={(event) => changeItemType(event.target.value)}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
               <option value="stockable">{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
               <option value="service">{tOr(t, 'products.itemType.service', 'Service')}</option>
               <option value="consumable">{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
             </select>
+            {itemType !== 'stockable' ? (
+              <span className="mt-2 block text-xs text-slate-500">
+                {itemType === 'service'
+                  ? tOr(t, 'products.itemType.serviceHint', 'Fees or work sold without inventory tracking.')
+                  : tOr(t, 'products.itemType.consumableHint', 'Physical goods sold without inventory deductions.')}
+              </span>
+            ) : null}
             {itemType !== 'stockable' && originalItemType === 'stockable' && (Number(product.available_qty ?? product.in_stock) || 0) !== 0 ? (
               <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                 {tOr(t, 'products.itemType.zeroStockFirst', 'Zero this item’s stock before switching it off inventory tracking.')}

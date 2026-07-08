@@ -32,4 +32,17 @@ describe('product modal accessibility', () => {
     expect(moduleSource).toContain("import Modal from '../shared/Modal'");
     expect(moduleSource).toContain('<Modal');
   });
+
+  it('keeps focused product fields above the measured touch keyboard', () => {
+    const modal = source('src/renderer/components/shared/Modal.tsx');
+    const createDialog = source('src/renderer/components/products/ProductCreateDialog.tsx');
+
+    expect(modal).toContain('keyboardAware?: boolean');
+    expect(modal).toContain("bottom: 'var(--touch-keyboard-inset, 0px)'");
+    expect(modal).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
+    expect(modal).toContain('ResizeObserver');
+    expect(modal).toContain("closest('label')");
+    expect(modal).toContain('scrollIntoView');
+    expect(createDialog).toContain('keyboardAware');
+  });
 });

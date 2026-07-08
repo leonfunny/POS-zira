@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveName } from '../../../shared/catalog-names';
+import { getProductItemTypePolicy } from '../../../shared/product-stock-tracking';
 import type { ProductAdminCreateProductInput, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -24,6 +25,7 @@ interface ProductCreateDialogProps {
 }
 
 type SellByMode = 'PIECE' | 'WEIGHT';
+type ItemType = 'stockable' | 'service' | 'consumable';
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -95,7 +97,7 @@ export default function ProductCreateDialog({
   const [categoryId, setCategoryId] = useState('');
   const [sellBy, setSellBy] = useState<SellByMode>('PIECE');
   const [saleUnit, setSaleUnit] = useState('szt');
-  const [itemType, setItemType] = useState<'stockable' | 'service' | 'consumable'>('stockable');
+  const [itemType, setItemType] = useState<ItemType>('stockable');
   const [stockQty, setStockQty] = useState('0');
   const [imageUrl, setImageUrl] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
@@ -179,7 +181,14 @@ export default function ProductCreateDialog({
     if (nextSellBy === 'PIECE' && stockQty.includes('.')) setStockQty(String(Math.floor(Number(stockQty) || 0)));
   };
 
-  const stockApplies = itemType === 'stockable';
+  const changeItemType = (nextItemType: ItemType) => {
+    const nextPolicy = getProductItemTypePolicy(nextItemType, sellBy);
+    setItemType(nextItemType);
+    if (nextPolicy.sellBy !== sellBy) changeSellBy(nextPolicy.sellBy);
+  };
+
+  const itemPolicy = getProductItemTypePolicy(itemType, sellBy);
+  const stockApplies = itemPolicy.stockApplies;
 
   const validate = (): { priceGrossGrosze: number; initialStockQty: number } | string => {
     if (!name.trim()) return tOr(t, 'products.create.nameRequired', 'Enter product name');
@@ -287,6 +296,7 @@ export default function ProductCreateDialog({
     <>
       <Modal
         open
+        keyboardAware
         size="full"
         title={tOr(t, 'products.create.title', 'Create product')}
         onClose={onClose}
@@ -318,7 +328,7 @@ export default function ProductCreateDialog({
       >
         <div className="space-y-4 p-5">
             <p className="mt-1 text-sm text-slate-500">
-              {tOr(t, 'products.create.description', 'Add a product with its selling price, stock, and barcode.')}
+              {tOr(t, 'products.create.description', 'Add an item sold at the counter.')}
             </p>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
@@ -355,7 +365,7 @@ export default function ProductCreateDialog({
                   <button
                     key={value}
                     type="button"
-                    onClick={() => setItemType(value)}
+                    onClick={() => changeItemType(value)}
                     className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
                       itemType === value ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -366,7 +376,9 @@ export default function ProductCreateDialog({
               </div>
               {itemType !== 'stockable' ? (
                 <span className="mt-2 block text-xs text-slate-500">
-                  {tOr(t, 'products.itemType.noStockHint', 'This kind holds no countable stock — the stock field is hidden.')}
+                  {itemType === 'service'
+                    ? tOr(t, 'products.itemType.serviceHint', 'Fees or work sold without inventory tracking.')
+                    : tOr(t, 'products.itemType.consumableHint', 'Physical goods sold without inventory deductions.')}
                 </span>
               ) : null}
             </div>
@@ -467,7 +479,7 @@ export default function ProductCreateDialog({
             </label>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className={`grid grid-cols-1 gap-3 ${itemPolicy.sellBySelectable ? 'md:grid-cols-2' : ''}`}>
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
                 {tOr(t, 'products.drawer.category', 'Category')}
@@ -485,31 +497,33 @@ export default function ProductCreateDialog({
                 ))}
               </select>
             </label>
-            <div>
-              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                {tOr(t, 'products.drawer.sellBy', 'Sell by')}
-              </span>
-              <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => changeSellBy('PIECE')}
-                  className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
-                    sellBy === 'PIECE' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {tOr(t, 'products.drawer.sellByPiece', 'Piece')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => changeSellBy('WEIGHT')}
-                  className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
-                    sellBy === 'WEIGHT' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {tOr(t, 'products.drawer.sellByWeight', 'Weight / kg')}
-                </button>
+            {itemPolicy.sellBySelectable ? (
+              <div>
+                <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                  {tOr(t, 'products.drawer.sellBy', 'Price by')}
+                </span>
+                <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => changeSellBy('PIECE')}
+                    className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
+                      sellBy === 'PIECE' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tOr(t, 'products.drawer.sellByPiece', 'Quantity')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeSellBy('WEIGHT')}
+                    className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
+                      sellBy === 'WEIGHT' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tOr(t, 'products.drawer.sellByWeight', 'Weight (kg)')}
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
 
           <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'md:grid-cols-2' : ''}`}>
@@ -532,7 +546,7 @@ export default function ProductCreateDialog({
             {advancedOpen ? (
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-                  {tOr(t, 'products.drawer.saleUnit', 'Sale unit')}
+                  {tOr(t, 'products.drawer.saleUnit', 'Receipt unit')}
                 </span>
                 <input
                   value={saleUnit}
@@ -558,9 +572,13 @@ export default function ProductCreateDialog({
           ) : null}
 
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            {sellBy === 'WEIGHT'
-              ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
-              : tOr(t, 'products.drawer.pieceHint', 'Normal products keep the existing piece-based flow.')}
+            {itemType === 'service'
+              ? tOr(t, 'products.itemType.serviceSaleHint', 'Each add to an order counts as one service.')
+              : itemType === 'consumable'
+                ? tOr(t, 'products.itemType.consumableSaleHint', 'POS calculates the sold quantity but does not deduct stock.')
+                : sellBy === 'WEIGHT'
+                  ? tOr(t, 'products.drawer.weightHint', 'POS will read the scale and multiply kg by the price per kg.')
+                  : tOr(t, 'products.drawer.pieceHint', 'POS calculates the price from the quantity sold.')}
           </div>
 
           {error ? (
