@@ -99,6 +99,15 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(editForm).toContain('const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies');
   });
 
+  it('never marks non-tracked items sold-out on the sale grid', () => {
+    const saleCard = source('src/renderer/components/pos/ProductCard.tsx');
+
+    // soldOut/lowStock/oversold chrome all flow through `isService`; the
+    // itemType contract must feed it, not just the legacy 'cat-5' hack.
+    expect(saleCard).toContain("product.category_id === 'cat-5' || !isStockTracked(product)");
+    expect(saleCard).toContain("from '../../../shared/product-stock-tracking'");
+  });
+
   it('sends itemType through create and update payloads only when supported', () => {
     const createDialog = source('src/renderer/components/products/ProductCreateDialog.tsx');
     const editForm = source('src/renderer/components/products/ProductEditForm.tsx');

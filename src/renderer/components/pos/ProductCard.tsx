@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
+import { isStockTracked } from '../../../shared/product-stock-tracking';
 
 export interface ProductLongPressResult {
   success: boolean;
@@ -51,7 +52,11 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggeredRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
-  const isService = product.category_id === 'cat-5';
+  // Non-tracked items (itemType service/consumable or trackInventory=false)
+  // never gate on stock: a service is always sellable, never "sold out".
+  // The legacy 'cat-5' category hack predates the itemType contract; kept so
+  // old rows behave until they are re-typed.
+  const isService = product.category_id === 'cat-5' || !isStockTracked(product);
   const isDraft = product._isDraft === true;
   const stockQty = product.available_qty ?? product.in_stock;
   // Drafts are click-to-import — stock is informational at best, so don't
