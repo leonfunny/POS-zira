@@ -210,6 +210,14 @@ const HIDE_TEMPLATES_WITH_VARIANTS = `
   )
 `;
 
+// WHERE-clause guard for every local stock mutation (sale deduct, refund /
+// cancel / edit restock): `service`/`consumable` items and rows with
+// track_inventory=0 hold no countable stock, so the UPDATE must not touch
+// them. NULL columns (rows from before migration v53) count as tracked.
+// Backend applies the same rule in b2b-pos deduct/restore.
+export const STOCK_TRACKED_GUARD_SQL =
+  "AND COALESCE(item_type, 'stockable') = 'stockable' AND COALESCE(track_inventory, 1) = 1";
+
 const CATEGORY_PRUNE_BELT_CHECK_TABLES = [
   'services',
   'kitchen_self_order_category_prefs',
@@ -551,15 +559,15 @@ export const productRepo = {
   decrementStock(variantId: string, quantity: number, options?: { allowNegative?: boolean }): void {
     database.run(
       options?.allowNegative
-        ? 'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?'
-        : 'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ?',
+        ? `UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`
+        : `UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
       [quantity, quantity, variantId],
     );
   },
 
   incrementStock(variantId: string, quantity: number): void {
     database.run(
-      'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+      `UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
       [quantity, quantity, variantId],
     );
   },

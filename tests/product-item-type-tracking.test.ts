@@ -40,6 +40,18 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(repo).toContain('COALESCE(?, (SELECT track_inventory FROM product_variants WHERE id = ?), 1)');
   });
 
+  it('guards every local stock mutation with the shared tracked-only SQL clause', () => {
+    const repo = source('src/main/database/repos/product-repo.ts');
+    const orderRepo = source('src/main/database/repos/order-repo.ts');
+
+    expect(repo).toContain('export const STOCK_TRACKED_GUARD_SQL');
+    // decrementStock (both branches) + incrementStock
+    expect(repo.match(/\$\{STOCK_TRACKED_GUARD_SQL\}/g)?.length).toBe(3);
+    // order delete-restock + edit restore + edit deduct
+    expect(orderRepo.match(/\$\{STOCK_TRACKED_GUARD_SQL\}/g)?.length).toBe(3);
+    expect(orderRepo).toContain("import { STOCK_TRACKED_GUARD_SQL } from './product-repo'");
+  });
+
   it('maps the fields from both ingestion paths (catalog sync + product-admin mirror)', () => {
     const apiClient = source('src/main/network/api-client.ts');
     const posModule = source('src/main/modules/pos.module.ts');

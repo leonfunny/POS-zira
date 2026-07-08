@@ -3,6 +3,7 @@ import logger from '../../logger';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../../pos/order-line-contract';
 import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
 import { posEventEmitter } from '../../events/pos-event-emitter';
+import { STOCK_TRACKED_GUARD_SQL } from './product-repo';
 
 export interface OrderRow {
   id: string;
@@ -306,7 +307,7 @@ export const orderRepo = {
       for (const item of items) {
         if (item.variant_id && item.quantity > 0) {
           database.run(
-            'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+            `UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
             [item.quantity, item.quantity, item.variant_id],
           );
           restocked += item.quantity;
@@ -401,7 +402,7 @@ export const orderRepo = {
         for (const item of currentItems) {
           if (item.variant_id && item.quantity > 0) {
             database.run(
-              'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ?',
+              `UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
               [item.quantity, item.quantity, item.variant_id],
             );
             stockChanged = true;
@@ -412,7 +413,7 @@ export const orderRepo = {
         for (const item of nextItems) {
           if (item.variant_id && item.quantity > 0) {
             database.run(
-              'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?',
+              `UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
               [item.quantity, item.quantity, item.variant_id],
             );
             stockChanged = true;
