@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
@@ -6,6 +6,7 @@ import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
 import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm from './ProductEditForm';
 import ProductStatusBadge from './ProductStatusBadge';
@@ -108,6 +109,8 @@ export default function ProductEditView({
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [reactivateBusy, setReactivateBusy] = useState(false);
   const [pendingBackConfirm, setPendingBackConfirm] = useState(false);
+  const editScrollRef = useRef<HTMLDivElement | null>(null);
+  const handleKeyboardAwareFocus = useKeyboardAwareFocus(editScrollRef, editing);
 
   useEffect(() => {
     setLabelBusy(false);
@@ -193,7 +196,10 @@ export default function ProductEditView({
   };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section
+      className="flex min-h-0 flex-1 flex-col"
+      style={{ height: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
+    >
       <header className="mb-3 flex items-center gap-3 border-b border-slate-200 pb-3">
         <button
           type="button"
@@ -209,7 +215,11 @@ export default function ProductEditView({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div
+        ref={editScrollRef}
+        className="min-h-0 flex-1 overflow-y-auto pr-1"
+        onFocusCapture={handleKeyboardAwareFocus}
+      >
         <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row">
           {image ? (
             <img

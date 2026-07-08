@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
+import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'full';
 export type ModalZLayer = 'base' | 'nested';
@@ -80,6 +81,7 @@ export default function Modal({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
   const classes = modalClassNames(size, zLayer);
+  const handleKeyboardAwareFocus = useKeyboardAwareFocus(panelRef, open && keyboardAware);
 
   const requestClose = useCallback(() => {
     if (busy) return;
@@ -120,33 +122,6 @@ export default function Modal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [busy, open, requestClose]);
 
-  const scrollFocusedFieldIntoView = useCallback(() => {
-    if (!keyboardAware) return;
-    const panel = panelRef.current;
-    const activeElement = document.activeElement as HTMLElement | null;
-    if (!panel || !activeElement || !panel.contains(activeElement)) return;
-    const field = activeElement.closest('label') || activeElement;
-    field.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-  }, [keyboardAware]);
-
-  useEffect(() => {
-    if (!open || !keyboardAware || typeof ResizeObserver === 'undefined') return undefined;
-    const panel = panelRef.current;
-    if (!panel) return undefined;
-
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(scrollFocusedFieldIntoView);
-    });
-    observer.observe(panel);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [keyboardAware, open, scrollFocusedFieldIntoView]);
-
   if (!open) return null;
 
   const handleBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -170,7 +145,7 @@ export default function Modal({
         className={`${classes.panel} ${panelClassName}`.trim()}
         style={keyboardAware ? { maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' } : undefined}
         onClick={(event) => event.stopPropagation()}
-        onFocusCapture={() => window.requestAnimationFrame(scrollFocusedFieldIntoView)}
+        onFocusCapture={handleKeyboardAwareFocus}
       >
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
