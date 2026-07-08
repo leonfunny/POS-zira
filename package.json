@@ -4,6 +4,11 @@
   "description": "Zira - Desktop application for connecting POS with thermal printers and barcode scanners",
   "author": "Zira AI <contact@zira-ai.com>",
   "license": "MIT",
+  "packageManager": "npm@10.8.2",
+  "engines": {
+    "node": "20.x",
+    "npm": "10.x"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
