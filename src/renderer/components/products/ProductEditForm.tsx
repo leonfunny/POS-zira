@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Tags } from 'lucide-react';
 import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
+import { generateUniqueInternalEan } from '../../../shared/internal-ean';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../shared/pos-sale';
 import { getProductItemTypePolicy, isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
@@ -21,6 +22,10 @@ interface ProductEditFormProps {
   canManageCategories: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  /** 4-digit salon code (capabilities.salonCode) — enables the internal-EAN generate button. */
+  salonCode?: string | null;
+  /** Catalog-wide code collision check supplied by ProductModule (barcode/ean/sku). */
+  isBarcodeTaken?: (code: string) => boolean;
   canEditDisplayName: boolean;
   displayNameAffectsMultipleVariants: boolean;
   onCancel: () => void;
@@ -99,6 +104,8 @@ export default function ProductEditForm({
   canManageCategories,
   canAdjustStock,
   supportsItemType,
+  salonCode,
+  isBarcodeTaken,
   canEditDisplayName,
   displayNameAffectsMultipleVariants,
   onCancel,
@@ -490,6 +497,25 @@ export default function ProductEditForm({
               onChange={(event) => setBarcode(event.target.value)}
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
+            {salonCode && isBarcodeTaken && !barcode.trim() ? (
+              <button
+                type="button"
+                onClick={() => {
+                  // Unique against the whole local catalog (incl. inactive);
+                  // regenerates on collision, backend 409 stays the last net.
+                  const generated = generateUniqueInternalEan(salonCode, isBarcodeTaken);
+                  if (generated) {
+                    setBarcode(generated);
+                    setMessage(null);
+                  } else {
+                    setMessage({ ok: false, text: tOr(t, 'products.barcode.generateFailed', 'Could not generate a unique code — try again.') });
+                  }
+                }}
+                className="mt-2 inline-flex h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                {tOr(t, 'products.barcode.generate', 'Generate internal code')}
+              </button>
+            ) : null}
           </label>
           {advancedOpen ? (
             <label className="block">

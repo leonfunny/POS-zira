@@ -1590,6 +1590,9 @@ export class ApiClient {
       // renderer never sees it (supportsItemType was silently dropped once —
       // the item-kind picker stayed hidden despite the backend advertising it).
       supportsItemType: raw?.supportsItemType === true,
+      salonCode: typeof raw?.salonCode === 'string' && /^\d{4}$/.test(raw.salonCode)
+        ? raw.salonCode
+        : null,
     };
   }
 

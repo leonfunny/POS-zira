@@ -24,6 +24,8 @@ interface ProductEditViewProps {
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  salonCode?: string | null;
+  isBarcodeTaken?: (code: string) => boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
@@ -83,6 +85,8 @@ export default function ProductEditView({
   canDeactivateProduct,
   canAdjustStock,
   supportsItemType,
+  salonCode,
+  isBarcodeTaken,
   canManageCategories,
   adminBackendReady,
   productInCart,
@@ -332,6 +336,8 @@ export default function ProductEditView({
             canManageCategories={canManageCategories}
             canAdjustStock={canAdjustStock}
             supportsItemType={supportsItemType}
+            salonCode={salonCode}
+            isBarcodeTaken={isBarcodeTaken}
             canEditDisplayName={canEditDisplayName}
             displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
             onManageCategories={onManageCategories}

@@ -2903,6 +2903,8 @@ export interface ProductAdminCapabilities {
   supportsOptimisticConcurrency: boolean;
   /** Server understands itemType/trackInventory on variants (create/update/response). */
   supportsItemType?: boolean;
+  /** 4-digit salon code for minting internal EAN-13 barcodes ("2" + code + …). */
+  salonCode?: string | null;
 }
 
 /** Item kinds the product-admin backend accepts from POS (recipe/kit is backend-only). */

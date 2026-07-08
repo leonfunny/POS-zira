@@ -109,7 +109,9 @@ describe('Product module implementation contract', () => {
     expect(searchOverlay).toContain('canCreateProduct &&');
     expect(createDialog).toContain('window.electronAPI.pos.productAdmin.createProduct');
     expect(moduleSource).toContain('products={allProducts}');
-    expect(createDialog).toContain('barcode: normalizedBarcode || null');
+    // Barcode rides per attempt so an auto-generated duplicate can regenerate.
+    expect(createDialog).toContain("let attemptBarcode: string | null = normalizedBarcode || null");
+    expect(createDialog).toContain('barcode: attemptBarcode');
     expect(createDialog).toContain('sku: normalizedSku || null');
     expect(createDialog).toContain('findDuplicateBarcodeSet(normalizedBarcode');
     expect(createDialog).toContain('products.create.duplicateBarcode');

@@ -16,6 +16,7 @@ import ProductEditView from './ProductEditView';
 import ProductSearchOverlay from './ProductSearchOverlay';
 import ProductTileGrid from './ProductTileGrid';
 import { LOW_STOCK_THRESHOLD } from './product-stock-color';
+import { findDuplicateBarcodeSet } from './scan-match';
 
 interface ProductModuleProps {
   language: Language;
@@ -512,6 +513,14 @@ export default function ProductModule({ language }: ProductModuleProps) {
     setView((current) => current.name === 'edit' ? current.returnTo : { name: 'categories' });
   }, []);
 
+  // Collision check for the internal-EAN generator: every code-bearing field
+  // across the WHOLE local catalog (inactive rows included — their codes still
+  // occupy the backend unique index).
+  const isBarcodeTaken = useCallback((code: string) => (
+    findDuplicateBarcodeSet(code, allProducts).length > 0
+    || allProducts.some((product) => product.sku?.trim() === code)
+  ), [allProducts]);
+
   const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant) => {
     const createdProduct = productAdminVariantToProduct(variant);
     await refresh();
@@ -791,6 +800,8 @@ export default function ProductModule({ language }: ProductModuleProps) {
           canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
           canAdjustStock={adminCapabilities?.canAdjustStock === true}
           supportsItemType={adminCapabilities?.supportsItemType === true}
+          salonCode={adminCapabilities?.salonCode ?? null}
+          isBarcodeTaken={isBarcodeTaken}
           canManageCategories={canManageCategories}
           adminBackendReady={adminBackendReady}
           productInCart={selectedProductInCart}
@@ -830,6 +841,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
         initialCategoryId={createCategoryId}
         initialBarcode={createBarcode}
         supportsItemType={adminCapabilities?.supportsItemType === true}
+        salonCode={adminCapabilities?.salonCode ?? null}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreatedProduct}
       />
