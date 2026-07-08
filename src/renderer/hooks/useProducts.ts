@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveName } from '../../shared/catalog-names';
+import { isStockTracked } from '../../shared/product-stock-tracking';
 import type { Product, Category } from './usePosDb';
 import rlog from '../utils/logger';
 
@@ -94,9 +95,9 @@ function matchesKind(product: ProductListItem, filter: ProductKindFilter): boole
     case 'noPrice':
       return price <= 0;
     case 'outOfStock':
-      return !product._isDraft && stock <= 0;
+      return !product._isDraft && isStockTracked(product) && stock <= 0;
     case 'lowStock':
-      return !product._isDraft && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
+      return !product._isDraft && isStockTracked(product) && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
     case 'all':
     default:
       return true;

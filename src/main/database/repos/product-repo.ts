@@ -168,6 +168,9 @@ export interface ProductVariantRow {
   /** Server-owned modifier groups attached directly to this product. */
   kiosk_modifier_groups_json?: string | null;
   kiosk_note_enabled?: number | null;
+  // Item kind + tracking (migration v53). NULL item_type = stockable (old rows).
+  item_type?: string | null;
+  track_inventory?: number | null;
 }
 
 export interface CategoryRow {
@@ -433,13 +436,16 @@ export const productRepo = {
           in_stock, vat_rate, is_active, updated_at, available_qty, price_gross,
           price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, sell_by,
           name_translations, customer_display_enabled, customer_display_sort_order,
-          kiosk_media_json, kiosk_modifier_groups_json, kiosk_note_enabled
+          kiosk_media_json, kiosk_modifier_groups_json, kiosk_note_enabled,
+          item_type, track_inventory
         )
          VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           COALESCE(?, (SELECT kiosk_media_json FROM product_variants WHERE id = ?)),
           COALESCE(?, (SELECT kiosk_modifier_groups_json FROM product_variants WHERE id = ?)),
-          COALESCE(?, (SELECT kiosk_note_enabled FROM product_variants WHERE id = ?), 0)
+          COALESCE(?, (SELECT kiosk_note_enabled FROM product_variants WHERE id = ?), 0),
+          COALESCE(?, (SELECT item_type FROM product_variants WHERE id = ?)),
+          COALESCE(?, (SELECT track_inventory FROM product_variants WHERE id = ?), 1)
         )`,
         [
           p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0,
@@ -452,6 +458,8 @@ export const productRepo = {
           p.kiosk_media_json ?? null, p.id,
           p.kiosk_modifier_groups_json ?? null, p.id,
           p.kiosk_note_enabled ?? null, p.id,
+          p.item_type ?? null, p.id,
+          p.track_inventory ?? null, p.id,
         ],
       );
     }

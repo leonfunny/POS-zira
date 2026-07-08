@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import type { ProductAdminCapabilities, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import { resolveName } from '../../../shared/catalog-names';
+import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useProducts, type ProductKindFilter, type ProductListItem } from '../../hooks/useProducts';
@@ -123,6 +124,8 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
     available_qty: Number(variant.availableQty) || 0,
     sale_unit: saleUnit,
     sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',
+    item_type: variant.itemType != null ? String(variant.itemType).toLowerCase() : null,
+    track_inventory: variant.trackInventory === false ? 0 : 1,
     name_translations: variant.nameTranslations ? JSON.stringify(variant.nameTranslations) : null,
   };
 }
@@ -316,9 +319,9 @@ function matchesProductKind(product: ProductListItem, filter: ProductKindFilter)
     case 'noPrice':
       return price <= 0;
     case 'outOfStock':
-      return !product._isDraft && stock <= 0;
+      return !product._isDraft && isStockTracked(product) && stock <= 0;
     case 'lowStock':
-      return !product._isDraft && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
+      return !product._isDraft && isStockTracked(product) && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
     case 'all':
     default:
       return true;
@@ -787,6 +790,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
           displayNameAffectsMultipleVariants={selectedTemplateVariantCount > 1}
           canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
           canAdjustStock={adminCapabilities?.canAdjustStock === true}
+          supportsItemType={adminCapabilities?.supportsItemType === true}
           canManageCategories={canManageCategories}
           adminBackendReady={adminBackendReady}
           productInCart={selectedProductInCart}
@@ -825,6 +829,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
         t={t}
         initialCategoryId={createCategoryId}
         initialBarcode={createBarcode}
+        supportsItemType={adminCapabilities?.supportsItemType === true}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreatedProduct}
       />

@@ -115,7 +115,7 @@ describe('Product module implementation contract', () => {
     expect(createDialog).toContain('products.create.duplicateBarcode');
     expect(createDialog).toContain('products.create.duplicateSku');
     expect(createDialog).not.toContain('retailPrice: validation.priceGrossGrosze / 100');
-    expect(createDialog).toContain('initialStockQty: validation.initialStockQty');
+    expect(createDialog).toContain('initialStockQty: stockApplies ? validation.initialStockQty : 0');
     expect(createDialog).toContain('saleUnit: unit');
     expect(createDialog).toContain('\n      sellBy,\n');
     expect(createDialog).toContain("setStockQty('0')");
@@ -163,7 +163,7 @@ describe('Product module implementation contract', () => {
     expect(editForm).toContain('priceGrossGrosze');
     expect(editForm).toContain('expectedUpdatedAt: product.updated_at || undefined');
     expect(editView).toContain('canAdjustStock={canAdjustStock}');
-    expect(editForm).toContain('canAdjustStock && stockQty !== stockInputFromProduct(product)');
+    expect(editForm).toContain('stockEditable && stockQty !== stockInputFromProduct(product)');
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.adjustStock');
     expect(editForm).toContain("mode: 'recount'");
     expect(editForm).toContain('newQuantity: parsedStockQty ?? 0');

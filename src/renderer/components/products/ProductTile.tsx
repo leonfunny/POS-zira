@@ -1,5 +1,6 @@
 import React from 'react';
 import { resolveName } from '../../../shared/catalog-names';
+import { isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { stockColor, type StockColor } from './product-stock-color';
 
@@ -33,6 +34,7 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
   const stock = Number(product.available_qty ?? product.in_stock) || 0;
   const currency = tOr(t, 'pos.currency', 'zl');
   const productCode = product.sku || product.barcode || '';
+  const stockTracked = isStockTracked(product);
   const stockBand = stockColor(stock);
 
   return (
@@ -44,7 +46,9 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
       }`}
       title={displayName}
     >
-      <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${stockStripClasses[stockBand]}`} />
+      {stockTracked ? (
+        <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${stockStripClasses[stockBand]}`} />
+      ) : null}
       <div className="flex min-w-0 items-start justify-between gap-2">
         <span className="min-w-0 pl-1">
           <span className="line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{displayName}</span>
@@ -52,9 +56,17 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
             <span className="mt-1 block truncate text-xs font-medium text-slate-500">{productCode}</span>
           ) : null}
         </span>
-        <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-bold tabular-nums ${stockBadgeClasses[stockBand]}`}>
-          {stock}
-        </span>
+        {stockTracked ? (
+          <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-bold tabular-nums ${stockBadgeClasses[stockBand]}`}>
+            {stock}
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+            {productItemType(product) === 'service'
+              ? tOr(t, 'products.itemType.service', 'Service')
+              : tOr(t, 'products.itemType.noStock', 'No stock')}
+          </span>
+        )}
       </div>
 
       <div className="mt-3 flex flex-wrap items-end justify-between gap-2">

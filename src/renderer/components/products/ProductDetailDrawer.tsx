@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
+import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -22,6 +23,8 @@ interface ProductDetailDrawerProps {
   displayNameAffectsMultipleVariants: boolean;
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
+  /** Optional — parents that don't know capabilities keep the selector hidden. */
+  supportsItemType?: boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
@@ -79,6 +82,7 @@ export default function ProductDetailDrawer({
   displayNameAffectsMultipleVariants,
   canDeactivateProduct,
   canAdjustStock,
+  supportsItemType,
   canManageCategories,
   adminBackendReady,
   productInCart,
@@ -119,7 +123,7 @@ export default function ProductDetailDrawer({
   const stock = product.available_qty ?? product.in_stock ?? 0;
   const saleClass = classifyProductSale(product);
   const canPrintLabel = !!product.barcode && !labelBusy;
-  const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
+  const canOpenStockAdjustment = canAdjustStock && !product._isDraft && isStockTracked(product);
   const canEditProduct = canUpdateProduct && !product._isDraft;
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
 
@@ -233,6 +237,7 @@ export default function ProductDetailDrawer({
                 <Printer size={17} />
                 {labelBusy ? tOr(t, 'products.label.printing', 'Printing...') : tOr(t, 'products.label.print', 'Print label')}
               </button>
+              {isStockTracked(product) ? (
               <button
                 type="button"
                 onClick={() => setStockOpen(true)}
@@ -249,6 +254,7 @@ export default function ProductDetailDrawer({
                 <PackagePlus size={17} />
                 {tOr(t, 'products.stock.adjust', 'Adjust stock')}
               </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setDeactivateOpen(true)}
@@ -305,6 +311,7 @@ export default function ProductDetailDrawer({
               t={t}
               canManageCategories={canManageCategories}
               canAdjustStock={canAdjustStock}
+              supportsItemType={supportsItemType ?? false}
               canEditDisplayName={canEditDisplayName}
               displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
               onManageCategories={onManageCategories}

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
+import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -22,6 +23,7 @@ interface ProductEditViewProps {
   displayNameAffectsMultipleVariants: boolean;
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
+  supportsItemType: boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
@@ -80,6 +82,7 @@ export default function ProductEditView({
   displayNameAffectsMultipleVariants,
   canDeactivateProduct,
   canAdjustStock,
+  supportsItemType,
   canManageCategories,
   adminBackendReady,
   productInCart,
@@ -122,7 +125,8 @@ export default function ProductEditView({
   const saleClass = classifyProductSale(product);
   const canPrintLabel = !!product.barcode && !labelBusy;
   const canEditProduct = canUpdateProduct && !product._isDraft;
-  const canOpenStockAdjustment = canAdjustStock && !product._isDraft;
+  const stockTracked = isStockTracked(product);
+  const canOpenStockAdjustment = canAdjustStock && !product._isDraft && stockTracked;
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
   const canReactivate = canUpdateProduct && !product._isDraft && product.is_active === 0;
 
@@ -248,15 +252,17 @@ export default function ProductEditView({
                 <Printer size={17} />
                 {labelBusy ? tOr(t, 'products.label.printing', 'Printing...') : tOr(t, 'products.label.print', 'Print label')}
               </button>
-              <button
-                type="button"
-                onClick={() => setStockOpen(true)}
-                disabled={!canOpenStockAdjustment}
-                className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <PackagePlus size={17} />
-                {tOr(t, 'products.stock.adjust', 'Adjust stock')}
-              </button>
+              {stockTracked ? (
+                <button
+                  type="button"
+                  onClick={() => setStockOpen(true)}
+                  disabled={!canOpenStockAdjustment}
+                  className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <PackagePlus size={17} />
+                  {tOr(t, 'products.stock.adjust', 'Adjust stock')}
+                </button>
+              ) : null}
               {product.is_active === 0 ? (
                 <button
                   type="button"
@@ -325,6 +331,7 @@ export default function ProductEditView({
             t={t}
             canManageCategories={canManageCategories}
             canAdjustStock={canAdjustStock}
+            supportsItemType={supportsItemType}
             canEditDisplayName={canEditDisplayName}
             displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
             onManageCategories={onManageCategories}
@@ -345,7 +352,10 @@ export default function ProductEditView({
             <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
             <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
             <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
-            <DetailRow label={tOr(t, 'products.drawer.stock', 'Stock')} value={stock} />
+            <DetailRow
+              label={tOr(t, 'products.drawer.stock', 'Stock')}
+              value={stockTracked ? stock : tOr(t, 'products.itemType.noStockValue', '— (not tracked)')}
+            />
             <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
             <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
             <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />

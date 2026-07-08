@@ -1468,6 +1468,12 @@ export class PosModule extends BaseModule {
         kiosk_media_json: existing?.kiosk_media_json ?? null,
         kiosk_modifier_groups_json: existing?.kiosk_modifier_groups_json ?? null,
         kiosk_note_enabled: existing?.kiosk_note_enabled ?? 0,
+        item_type: variant.itemType != null
+          ? String(variant.itemType).toLowerCase()
+          : existing?.item_type ?? null,
+        track_inventory: typeof variant.trackInventory === 'boolean'
+          ? (variant.trackInventory ? 1 : 0)
+          : existing?.track_inventory ?? 1,
       };
 
       productRepo.upsertMany([row]);

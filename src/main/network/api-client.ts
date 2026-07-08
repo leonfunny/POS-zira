@@ -1887,6 +1887,13 @@ export class ApiClient {
       // Product display name follows the template's translations (Phase 1 scope —
       // variant-specific translations are deferred). Variant-level overrides land later.
       const translationSource = item.nameTranslations ?? item.name_translations ?? item.template?.nameTranslations ?? item.template?.name_translations;
+      // Item kind + tracking flag (backend itemType/trackInventory contract).
+      // Variant-level productType wins; template is the fallback. Absent on old
+      // backends -> NULL locally, which isStockTracked() treats as stockable.
+      const rawItemType = item.productType ?? item.product_type ?? item.itemType ?? item.item_type
+        ?? item.template?.productType ?? item.template?.product_type;
+      const rawTrackInventory = item.trackInventory ?? item.track_inventory
+        ?? item.template?.trackInventory ?? item.template?.track_inventory;
       return {
         id: item.id,
         template_id: item.templateId ?? item.template_id ?? null,
@@ -1915,6 +1922,8 @@ export class ApiClient {
         thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,
         sale_unit: item.saleUnit ?? item.sale_unit ?? item.template?.baseUnit ?? item.template?.base_unit ?? null,
         sell_by: item.sellBy ?? item.sell_by ?? item.template?.sellBy ?? item.template?.sell_by ?? 'PIECE',
+        item_type: rawItemType != null ? String(rawItemType).toLowerCase() : null,
+        track_inventory: rawTrackInventory === false || rawTrackInventory === 0 ? 0 : 1,
         name_translations: encodeTranslations(translationSource),
         kiosk_media_json: encodeJsonField(
           item.kioskMedia ?? item.kiosk_media ?? item.template?.kioskMedia ?? item.template?.kiosk_media,

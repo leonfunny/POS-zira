@@ -17,6 +17,8 @@ interface ProductCreateDialogProps {
   t: (key: string) => string;
   initialCategoryId?: string | null;
   initialBarcode?: string;
+  /** Backend understands itemType (capabilities.supportsItemType) — shows the item-kind picker. */
+  supportsItemType: boolean;
   onClose: () => void;
   onCreated: (variant: ProductAdminVariant) => Promise<void> | void;
 }
@@ -79,6 +81,7 @@ export default function ProductCreateDialog({
   t,
   initialCategoryId,
   initialBarcode,
+  supportsItemType,
   onClose,
   onCreated,
 }: ProductCreateDialogProps) {
@@ -92,6 +95,7 @@ export default function ProductCreateDialog({
   const [categoryId, setCategoryId] = useState('');
   const [sellBy, setSellBy] = useState<SellByMode>('PIECE');
   const [saleUnit, setSaleUnit] = useState('szt');
+  const [itemType, setItemType] = useState<'stockable' | 'service' | 'consumable'>('stockable');
   const [stockQty, setStockQty] = useState('0');
   const [imageUrl, setImageUrl] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
@@ -112,6 +116,7 @@ export default function ProductCreateDialog({
     setCategoryId(initialCategoryId ?? '');
     setSellBy('PIECE');
     setSaleUnit('szt');
+    setItemType('stockable');
     setStockQty('0');
     setImageUrl('');
     setIdempotencyKey(makeIdempotencyKey());
@@ -174,12 +179,17 @@ export default function ProductCreateDialog({
     if (nextSellBy === 'PIECE' && stockQty.includes('.')) setStockQty(String(Math.floor(Number(stockQty) || 0)));
   };
 
+  const stockApplies = itemType === 'stockable';
+
   const validate = (): { priceGrossGrosze: number; initialStockQty: number } | string => {
     if (!name.trim()) return tOr(t, 'products.create.nameRequired', 'Enter product name');
     const priceGrossGrosze = parseMoneyToGrosze(priceGross);
     if (priceGrossGrosze === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
     if (!vatRates.includes(vat)) return tOr(t, 'products.edit.vatInvalid', 'Select a valid VAT rate');
+
+    // Non-stockable kinds never send stock (backend rejects it with STOCK_NOT_TRACKED).
+    if (!stockApplies) return { priceGrossGrosze, initialStockQty: 0 };
 
     const initialStockQty = parseStockQuantity(stockQty, sellBy);
     if (initialStockQty === null) {
@@ -224,13 +234,16 @@ export default function ProductCreateDialog({
       sku: normalizedSku || null,
       priceGrossGrosze: validation.priceGrossGrosze,
       vatRate: Number(vatRate),
-      initialStockQty: validation.initialStockQty,
+      initialStockQty: stockApplies ? validation.initialStockQty : 0,
       categoryId: categoryId || null,
       saleUnit: unit,
       sellBy,
       imageUrl: imageUrl.trim() || null,
       idempotencyKey,
     };
+    if (supportsItemType && itemType !== 'stockable') {
+      payload.itemType = itemType;
+    }
 
     setBusy(true);
     setError(null);
@@ -261,6 +274,7 @@ export default function ProductCreateDialog({
     || categoryId !== (initialCategoryId ?? '')
     || sellBy !== 'PIECE'
     || saleUnit !== 'szt'
+    || itemType !== 'stockable'
     || stockQty !== '0'
     || imageUrl !== '';
 
@@ -326,6 +340,37 @@ export default function ProductCreateDialog({
           >
             {tOr(t, 'products.advanced', 'Advanced')}
           </button>
+
+          {supportsItemType ? (
+            <div>
+              <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                {tOr(t, 'products.itemType.label', 'Item kind')}
+              </span>
+              <div className="grid grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
+                {([
+                  ['stockable', tOr(t, 'products.itemType.stockable', 'Stocked goods')],
+                  ['service', tOr(t, 'products.itemType.service', 'Service')],
+                  ['consumable', tOr(t, 'products.itemType.consumable', 'Consumable')],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setItemType(value)}
+                    className={`h-11 rounded-md text-sm font-semibold transition duration-150 motion-reduce:transition-none ${
+                      itemType === value ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {itemType !== 'stockable' ? (
+                <span className="mt-2 block text-xs text-slate-500">
+                  {tOr(t, 'products.itemType.noStockHint', 'This kind holds no countable stock — the stock field is hidden.')}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <label className="block">
@@ -468,6 +513,7 @@ export default function ProductCreateDialog({
           </div>
 
           <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'md:grid-cols-2' : ''}`}>
+            {stockApplies ? (
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
                 {sellBy === 'WEIGHT'
@@ -482,6 +528,7 @@ export default function ProductCreateDialog({
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
+            ) : null}
             {advancedOpen ? (
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">

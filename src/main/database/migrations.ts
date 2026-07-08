@@ -1581,4 +1581,15 @@ export const migrations: Migration[] = [
       UPDATE shifts SET close_synced = 1 WHERE closed_at IS NOT NULL AND backend_id IS NOT NULL;
     `,
   },
+  {
+    version: 53,
+    name: 'product_variant_item_type_tracking',
+    up: `
+      -- Backend itemType/trackInventory contract: 'service'/'consumable' items
+      -- (or template trackInventory=false) hold no countable stock. NULL means
+      -- "not synced yet" and is treated as stockable + tracked (today's behaviour).
+      ALTER TABLE product_variants ADD COLUMN item_type TEXT;
+      ALTER TABLE product_variants ADD COLUMN track_inventory INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ];

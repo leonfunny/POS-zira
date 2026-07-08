@@ -3,7 +3,8 @@ import { Tags } from 'lucide-react';
 import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../shared/pos-sale';
-import type { ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
+import { isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
+import type { ProductAdminItemType, ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
@@ -19,6 +20,7 @@ interface ProductEditFormProps {
   t: (key: string) => string;
   canManageCategories: boolean;
   canAdjustStock: boolean;
+  supportsItemType: boolean;
   canEditDisplayName: boolean;
   displayNameAffectsMultipleVariants: boolean;
   onCancel: () => void;
@@ -96,6 +98,7 @@ export default function ProductEditForm({
   t,
   canManageCategories,
   canAdjustStock,
+  supportsItemType,
   canEditDisplayName,
   displayNameAffectsMultipleVariants,
   onCancel,
@@ -106,6 +109,8 @@ export default function ProductEditForm({
 }: ProductEditFormProps) {
   const originalSellBy = productSellBy(product);
   const originalVatRate = vatRateFromProduct(product);
+  const originalItemType = productItemType(product);
+  const stockTracked = isStockTracked(product);
   const [name, setName] = useState(product.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
   const [vatRate, setVatRate] = useState(String(originalVatRate));
@@ -117,6 +122,7 @@ export default function ProductEditForm({
   const [categoryId, setCategoryId] = useState(product.category_id || '');
   const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(productSellBy(product));
   const [saleUnit, setSaleUnit] = useState(product.sale_unit || '');
+  const [itemType, setItemType] = useState(originalItemType);
   const [stockQty, setStockQty] = useState(stockInputFromProduct(product));
   const [imageUrl, setImageUrl] = useState(product.image_url || '');
   const [displayNames, setDisplayNames] = useState<Record<string, string>>(() => displayNamesFromProduct(product));
@@ -140,6 +146,7 @@ export default function ProductEditForm({
     setCategoryId(product.category_id || '');
     setSellBy(originalSellBy);
     setSaleUnit(product.sale_unit || '');
+    setItemType(originalItemType);
     setStockQty(stockInputFromProduct(product));
     setImageUrl(product.image_url || '');
     setDisplayNames(displayNamesFromProduct(product));
@@ -178,10 +185,14 @@ export default function ProductEditForm({
     || sellBy !== originalSellBy
     || saleUnit !== (product.sale_unit || '')
     || imageUrl !== (product.image_url || '')
-  ), [barcode, categoryId, imageUrl, name, originalSellBy, priceGross, product, saleUnit, sellBy, sku, vatRate]);
+    || (supportsItemType && itemType !== originalItemType)
+  ), [barcode, categoryId, imageUrl, itemType, name, originalItemType, originalSellBy, priceGross, product, saleUnit, sellBy, sku, supportsItemType, vatRate]);
 
   const productDirty = variantFieldsDirty || translationsDirty;
-  const stockDirty = canAdjustStock && stockQty !== stockInputFromProduct(product);
+  // Stock is only editable while the item both IS tracked and STAYS stockable
+  // in this edit — switching kind and typing stock in one save is contradictory.
+  const stockEditable = canAdjustStock && stockTracked && itemType === 'stockable';
+  const stockDirty = stockEditable && stockQty !== stockInputFromProduct(product);
   const dirty = productDirty || stockDirty;
 
   useEffect(() => {
@@ -193,7 +204,7 @@ export default function ProductEditForm({
     if (parseMoneyToGrosze(priceGross) === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
     if (!vatRates.includes(vat)) return tOr(t, 'products.edit.vatInvalid', 'Select a valid VAT rate');
-    if (canAdjustStock && parseStockQuantity(stockQty, sellBy) === null) {
+    if (stockEditable && parseStockQuantity(stockQty, sellBy) === null) {
       return sellBy === 'WEIGHT'
         ? tOr(t, 'products.create.stockWeightPrecision', 'Enter kg stock with up to 3 decimal places')
         : tOr(t, 'products.create.stockPieceInvalid', 'Piece stock must be a whole number');
@@ -210,8 +221,8 @@ export default function ProductEditForm({
 
     const priceGrossGrosze = parseMoneyToGrosze(priceGross);
     if (priceGrossGrosze === null) return;
-    const parsedStockQty = canAdjustStock ? parseStockQuantity(stockQty, sellBy) : null;
-    if (canAdjustStock && parsedStockQty === null) return;
+    const parsedStockQty = stockEditable ? parseStockQuantity(stockQty, sellBy) : null;
+    if (stockEditable && parsedStockQty === null) return;
 
     const payload: ProductAdminUpdateVariantInput = {
       expectedUpdatedAt: product.updated_at || undefined,
@@ -229,6 +240,9 @@ export default function ProductEditForm({
         imageUrl: imageUrl.trim() || null,
         isActive: product.is_active !== 0,
       });
+      if (supportsItemType && itemType !== originalItemType) {
+        payload.itemType = itemType as ProductAdminItemType;
+      }
     }
     if (translationsDirty && canEditDisplayName) {
       payload.nameTranslations = nameTranslationsPatch;
@@ -543,7 +557,29 @@ export default function ProductEditForm({
           </div>
         </div>
 
-        {canAdjustStock ? (
+        {supportsItemType ? (
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+              {tOr(t, 'products.itemType.label', 'Item kind')}
+            </span>
+            <select
+              value={itemType}
+              onChange={(event) => setItemType(event.target.value)}
+              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
+            >
+              <option value="stockable">{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
+              <option value="service">{tOr(t, 'products.itemType.service', 'Service')}</option>
+              <option value="consumable">{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
+            </select>
+            {itemType !== 'stockable' && originalItemType === 'stockable' && (Number(product.available_qty ?? product.in_stock) || 0) !== 0 ? (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                {tOr(t, 'products.itemType.zeroStockFirst', 'Zero this item’s stock before switching it off inventory tracking.')}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+
+        {stockEditable ? (
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {sellBy === 'WEIGHT'

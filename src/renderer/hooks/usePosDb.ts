@@ -23,6 +23,10 @@ export interface Product {
   thumbnail_url?: string | null;
   sale_unit?: string | null;
   sell_by?: 'PIECE' | 'WEIGHT' | string | null;
+  // Item kind + tracking flag (migration v53). NULL/absent = stockable+tracked.
+  // 'service'/'consumable' (or track_inventory=0) hide every stock affordance.
+  item_type?: string | null;
+  track_inventory?: number | null;
   // Translation map (migration v28). JSON string of `{lang: name}`.
   // Orders/fiscal payloads use canonical `name`; paper receipts localize
   // separately at print time.

@@ -2901,7 +2901,12 @@ export interface ProductAdminCapabilities {
   canCreateCategory: boolean;
   canUpdateCategory: boolean;
   supportsOptimisticConcurrency: boolean;
+  /** Server understands itemType/trackInventory on variants (create/update/response). */
+  supportsItemType?: boolean;
 }
+
+/** Item kinds the product-admin backend accepts from POS (recipe/kit is backend-only). */
+export type ProductAdminItemType = 'stockable' | 'service' | 'consumable';
 
 export type ProductAdminErrorCode =
   | 'DUPLICATE_PRODUCT'
@@ -2919,7 +2924,9 @@ export type ProductAdminErrorCode =
   | 'INVALID_CATEGORY'
   | 'INVALID_VAT_RATE'
   | 'PRICE_MINOR_UNIT_MISMATCH'
-  | 'IDEMPOTENCY_CONFLICT';
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'STOCK_NOT_TRACKED'
+  | 'STOCK_MUST_BE_ZERO';
 
 export interface ProductAdminErrorEnvelope {
   ok: false;
@@ -2966,6 +2973,10 @@ export interface ProductAdminVariant {
   thumbnailUrl?: string | null;
   updatedAt: string;
   version?: number;
+  /** Item kind (`stockable` | `service` | `consumable` | `recipe`); absent on older servers. */
+  itemType?: string;
+  /** Template-level tracking flag. Non-tracked items reject stock adjustments. */
+  trackInventory?: boolean;
 }
 
 export interface ProductAdminCreateProductInput {
@@ -2979,6 +2990,8 @@ export interface ProductAdminCreateProductInput {
   saleUnit?: string | null;
   sellBy?: 'PIECE' | 'WEIGHT';
   imageUrl?: string | null;
+  itemType?: ProductAdminItemType;
+  trackInventory?: boolean;
   idempotencyKey?: string;
 }
 
@@ -2994,6 +3007,10 @@ export interface ProductAdminUpdateVariantInput {
   sellBy?: 'PIECE' | 'WEIGHT';
   imageUrl?: string | null;
   isActive?: boolean;
+  /** Switching a stocked item away from `stockable` needs zero stock first (409 STOCK_MUST_BE_ZERO). */
+  itemType?: ProductAdminItemType;
+  /** Template-level tracking flag (sibling-wide); disabling needs zero stock (409 STOCK_MUST_BE_ZERO). */
+  trackInventory?: boolean;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
 }
