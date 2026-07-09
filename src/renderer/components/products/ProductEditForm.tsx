@@ -13,6 +13,7 @@ import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 import { createStableMutationKeyStore } from './mutation-idempotency';
 import { useProductVatRates } from './product-vat-rates';
 import { executeProductSave } from './save-product-changes';
+import { receiptNamePreview } from './receipt-name-preview';
 
 interface ProductEditFormProps {
   product: ProductListItem;
@@ -32,7 +33,7 @@ interface ProductEditFormProps {
   onDirtyChange?: (dirty: boolean) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
-  onSaved: (outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
+  onSaved: (outcome: { stockBefore?: number; stockAfter?: number; vatChanged?: boolean }) => Promise<void> | void;
 }
 
 const DISPLAY_NAME_LOCALES = ['vi', 'pl', 'en'] as const;
@@ -186,6 +187,10 @@ export default function ProductEditForm({
   );
   const translationsDirty = Object.keys(nameTranslationsPatch).length > 0;
   const itemPolicy = getProductItemTypePolicy(itemType, sellBy);
+  const receiptPreview = useMemo(
+    () => receiptNamePreview(name, displayNames),
+    [displayNames, name],
+  );
 
   const variantFieldsDirty = useMemo(() => (
     name !== (product.name || '')
@@ -309,6 +314,7 @@ export default function ProductEditForm({
       await onSaved({
         stockBefore: stockDirty ? currentStock(product) : undefined,
         stockAfter: stockDirty ? parsedStockQty ?? 0 : undefined,
+        vatChanged: vatRate !== String(originalVatRate),
       });
       onDirtyChange?.(false);
       onCancel();
@@ -357,7 +363,7 @@ export default function ProductEditForm({
       <div className="space-y-4 p-4">
         <label className="block">
           <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-            {tOr(t, 'products.drawer.canonicalName', 'Canonical name')}
+            {tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')}
           </span>
           <input
             value={name}
@@ -365,6 +371,47 @@ export default function ProductEditForm({
             className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
           />
         </label>
+
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold uppercase text-amber-800">
+              {tOr(t, 'products.edit.displayNamePl', 'Receipt / fiscal name (Polish)')}
+            </span>
+            {displayNameAffectsMultipleVariants ? (
+              <span className="text-xs font-medium text-amber-700">
+                {tOr(t, 'products.edit.displayNameAllVariants', 'Applies to all variants of this product')}
+              </span>
+            ) : null}
+          </div>
+          <input
+            value={displayNames.pl}
+            onChange={(event) => setDisplayNames((current) => ({ ...current, pl: event.target.value }))}
+            placeholder={name.trim() || product.name}
+            maxLength={255}
+            readOnly={!canEditDisplayName}
+            className="h-11 w-full rounded-md border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500"
+          />
+          {!canEditDisplayName ? (
+            <p className="mt-2 text-xs font-medium text-amber-800">
+              {tOr(t, 'products.edit.displayNameUnavailable', 'This backend cannot edit receipt display names.')}
+            </p>
+          ) : null}
+          {receiptPreview.source === 'canonical' ? (
+            <p className="mt-2 text-xs font-medium text-amber-800">
+              {tOr(t, 'products.edit.receiptFallbackWarning', 'Polish receipt name is blank, so receipts will print the internal name.')}
+            </p>
+          ) : null}
+          <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-700 sm:grid-cols-2">
+            <div>
+              <span className="font-semibold text-slate-600">{tOr(t, 'products.edit.receiptPrints', 'Receipt prints')}:</span>{' '}
+              <span className="font-medium text-slate-950">{receiptPreview.value || '-'}</span>
+            </div>
+            <div>
+              <span className="font-semibold text-slate-600">{tOr(t, 'products.edit.receiptFiscalFold', 'Fiscal-safe text')}:</span>{' '}
+              <span className="font-mono text-slate-950">{receiptPreview.fiscalSafe || '-'}</span>
+            </div>
+          </div>
+        </div>
 
         <button
           type="button"
@@ -381,13 +428,8 @@ export default function ProductEditForm({
               <h4 className="text-xs font-semibold uppercase text-slate-500">
                 {tOr(t, 'products.edit.displayNames', 'Display names')}
               </h4>
-              {displayNameAffectsMultipleVariants ? (
-                <span className="text-xs font-medium text-amber-700">
-                  {tOr(t, 'products.edit.displayNameAllVariants', 'Applies to all variants of this product')}
-                </span>
-              ) : null}
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold text-slate-600">
                   {tOr(t, 'products.edit.displayNameVi', 'Vietnamese')}
@@ -395,18 +437,6 @@ export default function ProductEditForm({
                 <input
                   value={displayNames.vi}
                   onChange={(event) => setDisplayNames((current) => ({ ...current, vi: event.target.value }))}
-                  placeholder={name.trim() || product.name}
-                  maxLength={255}
-                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-2 block text-xs font-semibold text-slate-600">
-                  {tOr(t, 'products.edit.displayNamePl', 'Polish')}
-                </span>
-                <input
-                  value={displayNames.pl}
-                  onChange={(event) => setDisplayNames((current) => ({ ...current, pl: event.target.value }))}
                   placeholder={name.trim() || product.name}
                   maxLength={255}
                   className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"

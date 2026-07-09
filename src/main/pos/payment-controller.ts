@@ -2,7 +2,7 @@ import { ReceiptData, PrinterType } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { productRepo } from '../database/repos/product-repo';
-import { resolveName } from '../../shared/catalog-names';
+import { RECEIPT_NAME_LOCALE, resolveName } from '../../shared/catalog-names';
 import { calculateLineTotalGrosze, normalizeSellBy } from '../../shared/pos-sale';
 import logger from '../logger';
 
@@ -142,7 +142,7 @@ export class PaymentController {
       : item.sku
         ? productRepo.getBySku(item.sku)
         : null;
-    return resolveName(product, 'pl') || item.name;
+    return resolveName(product, RECEIPT_NAME_LOCALE) || item.name;
   }
 
   private describePrintFailure(err: unknown, fallback: string): string {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import type { ProductAdminCapabilities, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import { resolveName } from '../../../shared/catalog-names';
@@ -7,29 +7,28 @@ import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useProducts, type ProductKindFilter, type ProductListItem } from '../../hooks/useProducts';
 import { usePosStore } from '../../hooks/usePosStore';
+import { useProductAdminCapabilities } from '../../hooks/useProductAdminCapabilities';
 import Modal from '../shared/Modal';
-import CategoryGrid, { type ProductCategorySelection } from './CategoryGrid';
+import CategoryGrid from './CategoryGrid';
 import CategoryManagerDialog from './CategoryManagerDialog';
 import ProductAddFlow from './ProductAddFlow';
 import ProductCreateDialog from './ProductCreateDialog';
 import ProductEditView from './ProductEditView';
 import ProductSearchOverlay from './ProductSearchOverlay';
+import { deepLinkOutcome, isExternalEdit, viewAfterEditExit, type BrowseView, type ProductView } from './product-view-nav';
 import ProductTileGrid from './ProductTileGrid';
 import { LOW_STOCK_THRESHOLD } from './product-stock-color';
 import { findDuplicateBarcodeSet } from './scan-match';
 
 interface ProductModuleProps {
   language: Language;
+  openVariantId?: string | null;
+  onExitExternal?: () => void;
+  externalBackLabel?: string;
 }
 
-type BrowseView =
-  | { name: 'categories' }
-  | { name: 'products'; categoryId: ProductCategorySelection };
-
-type ProductView = BrowseView | { name: 'edit'; productId: string; returnTo: BrowseView };
-
 type ProductModuleToast = { kind: 'success' | 'error'; text: string };
-type ProductSaveOutcome = { stockBefore?: number; stockAfter?: number };
+type ProductSaveOutcome = { stockBefore?: number; stockAfter?: number; vatChanged?: boolean };
 type FailedLocalVariantImport = {
   variant_id: string;
   ean: string;
@@ -329,7 +328,7 @@ function matchesProductKind(product: ProductListItem, filter: ProductKindFilter)
   }
 }
 
-export default function ProductModule({ language }: ProductModuleProps) {
+export default function ProductModule({ language, openVariantId, onExitExternal, externalBackLabel }: ProductModuleProps) {
   const { t } = useTranslation(language);
   const { state: posState } = usePosStore();
   const {
@@ -359,12 +358,15 @@ export default function ProductModule({ language }: ProductModuleProps) {
   const [addInitialBarcode, setAddInitialBarcode] = useState('');
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
-  const [adminCapabilities, setAdminCapabilities] = useState<ProductAdminCapabilities | null>(null);
-  const [adminCapabilityError, setAdminCapabilityError] = useState<string | null>(null);
-  const [adminCapabilitiesLoading, setAdminCapabilitiesLoading] = useState(true);
+  const {
+    capabilities: adminCapabilities,
+    error: adminCapabilityError,
+    loading: adminCapabilitiesLoading,
+  } = useProductAdminCapabilities();
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
   const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
   const [failedImportsOpen, setFailedImportsOpen] = useState(false);
+  const consumedOpenVariantIdRef = useRef<string | null>(null);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
@@ -424,10 +426,12 @@ export default function ProductModule({ language }: ProductModuleProps) {
       return;
     }
     if (!fresh && !selectedProduct._isDraft) {
+      const shouldExitExternal = isExternalEdit(view);
       setSelectedProduct(null);
-      setView((current) => current.name === 'edit' ? current.returnTo : current);
+      setView((current) => viewAfterEditExit(current));
+      if (shouldExitExternal) onExitExternal?.();
     }
-  }, [allProducts, loading, selectedProduct]);
+  }, [allProducts, loading, onExitExternal, selectedProduct, view]);
 
   useEffect(() => {
     if (!toast) return;
@@ -462,31 +466,6 @@ export default function ProductModule({ language }: ProductModuleProps) {
     };
   }, [refreshFailedImports]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadAdminCapabilities() {
-      setAdminCapabilitiesLoading(true);
-      try {
-        const response = await window.electronAPI.pos.productAdmin.getCapabilities();
-        if (cancelled) return;
-        setAdminCapabilities(response.capabilities);
-        setAdminCapabilityError(response.ok ? null : response.error || 'product-admin-unavailable');
-      } catch (caught) {
-        if (cancelled) return;
-        setAdminCapabilities(null);
-        setAdminCapabilityError(caught instanceof Error ? caught.message : 'product-admin-unavailable');
-      } finally {
-        if (!cancelled) setAdminCapabilitiesLoading(false);
-      }
-    }
-
-    void loadAdminCapabilities();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const handleOpenProduct = useCallback((product: ProductListItem) => {
     setSelectedProduct(product);
     setView((current) => ({
@@ -495,6 +474,30 @@ export default function ProductModule({ language }: ProductModuleProps) {
       returnTo: current.name === 'edit' ? current.returnTo : current,
     }));
   }, []);
+
+  useEffect(() => {
+    const outcome = deepLinkOutcome(
+      openVariantId,
+      loading,
+      consumedOpenVariantIdRef.current,
+      (productId) => allProducts.some((product) => product.id === productId),
+    );
+    if (outcome.kind === 'reset') {
+      consumedOpenVariantIdRef.current = null;
+      return;
+    }
+    if (outcome.kind === 'missing') {
+      consumedOpenVariantIdRef.current = openVariantId ?? null;
+      setToast({ kind: 'error', text: tOr(t, 'products.deepLink.notFound', 'Product is no longer in the local catalog. Sync products and try again.') });
+      return;
+    }
+    if (outcome.kind !== 'open') return;
+    const product = allProducts.find((item) => item.id === outcome.productId);
+    if (!product) return;
+    consumedOpenVariantIdRef.current = outcome.productId;
+    setSelectedProduct(product);
+    setView({ name: 'edit', productId: product.id, returnTo: { name: 'external' } });
+  }, [allProducts, loading, openVariantId, t]);
 
   const handleOpenCreate = useCallback((categoryId: string | null, barcode = '') => {
     if (adminCapabilities?.canCreateProduct !== true) return;
@@ -509,9 +512,11 @@ export default function ProductModule({ language }: ProductModuleProps) {
   }, []);
 
   const returnFromEdit = useCallback(() => {
+    const shouldExitExternal = isExternalEdit(view);
     setSelectedProduct(null);
-    setView((current) => current.name === 'edit' ? current.returnTo : { name: 'categories' });
-  }, []);
+    setView((current) => viewAfterEditExit(current));
+    if (shouldExitExternal) onExitExternal?.();
+  }, [onExitExternal, view]);
 
   // Collision check for the internal-EAN generator: every code-bearing field
   // across the WHOLE local catalog (inactive rows included — their codes still
@@ -532,6 +537,10 @@ export default function ProductModule({ language }: ProductModuleProps) {
   }, [handleOpenProduct, language, refresh, t]);
 
   const handleProductSaved = useCallback((product: ProductListItem, outcome: ProductSaveOutcome) => {
+    if (outcome.vatChanged && selectedProductInCart) {
+      setToast({ kind: 'error', text: tOr(t, 'products.edit.vatChangedInCart', 'Product saved, but the cart line still uses the old VAT. Remove and add the item again before payment.') });
+      return;
+    }
     if (typeof outcome.stockBefore === 'number' && typeof outcome.stockAfter === 'number') {
       setToast({ kind: 'success', text: stockToastText(t, outcome.stockBefore, outcome.stockAfter) });
       return;
@@ -540,7 +549,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
       kind: 'success',
       text: `${tOr(t, 'products.edit.success', 'Product saved')}: ${productDisplayName(product, language)}`,
     });
-  }, [language, t]);
+  }, [language, selectedProductInCart, t]);
 
   const handleStockAdjusted = useCallback((_product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => {
     setToast({
@@ -805,6 +814,7 @@ export default function ProductModule({ language }: ProductModuleProps) {
           canManageCategories={canManageCategories}
           adminBackendReady={adminBackendReady}
           productInCart={selectedProductInCart}
+          backLabel={isExternalEdit(view) ? externalBackLabel : undefined}
           onBack={returnFromEdit}
           onImportDraft={handleImportDraft}
           onManageCategories={() => setCategoryManagerOpen(true)}

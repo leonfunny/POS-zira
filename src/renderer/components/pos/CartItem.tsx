@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { PencilLine, Printer, Scale, StickyNote, Trash2 } from 'lucide-react';
+import { Pencil, PencilLine, Printer, Scale, StickyNote, Trash2 } from 'lucide-react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
 import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
@@ -16,6 +16,7 @@ interface CartItemProps {
   onRemove: (id: string) => void;
   onSetNotes?: (id: string, notes: string) => void;
   onPrintLabel?: (item: CartItemType) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
+  onEditProduct?: (item: CartItemType) => void;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
   onEditPrice?: (item: CartItemType) => void;
   onReadScale?: (item: CartItemType) => void;
@@ -37,6 +38,7 @@ export default function CartItemRow({
   onRemove,
   onSetNotes,
   onPrintLabel,
+  onEditProduct,
   onSelectField,
   onEditPrice,
   onReadScale,
@@ -227,6 +229,21 @@ export default function CartItemRow({
               <span>{item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNoteShort', 'Note')}</span>
             </button>
           )}
+          {/* Icon-only on purpose: this row already carries Print and Remove as
+              text buttons, and the cart column is 296px (360px at xl). A third
+              label ("Sửa sản phẩm", "Edytuj produkt") overflows the row, and the
+              quantity stepper — overflow-hidden — is what gets clipped. */}
+          {onEditProduct && item.variantId ? (
+            <button
+              type="button"
+              onClick={() => onEditProduct(item)}
+              aria-label={tOr('pos.cart.editProduct', 'Edit product')}
+              title={tOr('pos.cart.editProduct', 'Edit product')}
+              className="h-11 w-11 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-800 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center justify-center"
+            >
+              <Pencil size={16} strokeWidth={2.4} aria-hidden="true" />
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => onRemove(item.id)}

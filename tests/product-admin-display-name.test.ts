@@ -89,6 +89,6 @@ describe('Product Admin display-name contract', () => {
     expect(editForm).toContain("products.edit.displayNameEn");
     expect(editForm).not.toContain("products.edit.displayNameDe");
     expect(translations).toContain("'products.edit.displayNameVi': 'Tên hiển thị tiếng Việt'");
-    expect(translations).toContain("'products.edit.displayNamePl': 'Tên hiển thị tiếng Ba Lan'");
+    expect(translations).toContain("'products.edit.displayNamePl': 'Tên trên hóa đơn / fiscal (Ba Lan)'");
   });
 });

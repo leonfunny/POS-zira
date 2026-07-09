@@ -211,10 +211,11 @@ interface RetailTemplateProps {
   onPrintLastCartLabelCommand?: () => void | Promise<void>;
   onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
   onAddProductFeedback?: (displayName: string) => void;
+  onEditProduct?: (variantId: string) => void;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const allowOversell = config?.allowOversell === true;
@@ -676,6 +677,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
     }
   }, [handlePrintProductCode, tOr]);
+
+  const handleEditCartProduct = useCallback((item: CartItem) => {
+    if (item.variantId) onEditProduct?.(item.variantId);
+  }, [onEditProduct]);
 
   const handlePrintLastScannedCartItemCode = useCallback(async () => {
     const variantId = lastLabelVariantIdRef.current;
@@ -1439,6 +1444,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             lang={lang}
             heldCartsCount={heldCarts.length}
             onPrintItemLabel={handlePrintCartItemCode}
+            onEditProduct={onEditProduct ? handleEditCartProduct : undefined}
             showOrderActionChips
           />
         </div>

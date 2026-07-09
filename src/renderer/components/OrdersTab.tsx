@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Printer, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Printer, RefreshCw, Search } from 'lucide-react';
 import { Language } from '../i18n/translations';
 import { useTranslation } from '../i18n/useTranslation';
 import { useConfig } from '../hooks/useConfig';
@@ -9,6 +9,7 @@ import rlog from '../utils/logger';
 
 interface OrdersTabProps {
   language: Language;
+  onEditProduct?: (variantId: string) => void;
 }
 
 interface OrderRow {
@@ -39,6 +40,7 @@ interface OrderRow {
 interface OrderItemRow {
   id: string;
   order_id: string;
+  variant_id?: string | null;
   name: string;
   sku: string | null;
   price: number;
@@ -196,7 +198,7 @@ function statusBadgeClass(status: string, refundedAt?: string | null): string {
   }
 }
 
-export default function OrdersTab({ language }: OrdersTabProps) {
+export default function OrdersTab({ language, onEditProduct }: OrdersTabProps) {
   const { t } = useTranslation(language);
   const { config } = useConfig();
   const currency = tOr(t, 'pos.currency', 'zł');
@@ -610,7 +612,24 @@ export default function OrdersTab({ language }: OrdersTabProps) {
                               <tbody className="divide-y divide-slate-200">
                                 {detail.items.map((item) => (
                                   <tr key={item.id}>
-                                    <td className="py-1 pr-2 text-slate-800">{item.name}{item.sku ? <span className="ml-2 text-xs text-slate-400">{item.sku}</span> : null}</td>
+                                    <td className="py-1 pr-2 text-slate-800">
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        {onEditProduct && item.variant_id ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => onEditProduct(item.variant_id as string)}
+                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-800"
+                                            title={tOr(t, 'orders.item.editProduct', 'Edit product')}
+                                            aria-label={tOr(t, 'orders.item.editProduct', 'Edit product')}
+                                          >
+                                            <Pencil size={14} />
+                                          </button>
+                                        ) : null}
+                                        <span className="min-w-0 truncate">
+                                          {item.name}{item.sku ? <span className="ml-2 text-xs text-slate-400">{item.sku}</span> : null}
+                                        </span>
+                                      </div>
+                                    </td>
                                     <td className="py-1 pr-2 text-right tabular-nums text-slate-700">{item.quantity}</td>
                                     <td className="py-1 pr-2 text-right tabular-nums text-slate-700">{formatMoney(item.price, currency)}</td>
                                     <td className="py-1 pr-2 text-right tabular-nums text-slate-700">{item.vat_rate}%</td>

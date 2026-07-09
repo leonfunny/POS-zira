@@ -32,7 +32,7 @@ interface ProductDetailDrawerProps {
   onImportDraft: (product: ProductListItem) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
-  onProductSaved?: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
+  onProductSaved?: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number; vatChanged?: boolean }) => Promise<void> | void;
   onStockAdjusted?: (product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
   onProductDeactivated: (product: ProductListItem) => Promise<void> | void;
   onStaleProductHidden: (product: ProductListItem) => Promise<void> | void;
@@ -329,7 +329,7 @@ export default function ProductDetailDrawer({
           ) : (
             <div className="mt-5 rounded-lg border border-slate-200">
               <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
-              <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
+              <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')} value={product.name} />
               <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
               <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
               <DetailRow label={tOr(t, 'products.drawer.stock', 'Stock')} value={stock} />

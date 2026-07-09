@@ -10,6 +10,7 @@ import Modal from '../shared/Modal';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 import { useProductVatRates } from './product-vat-rates';
 import { findDuplicateBarcodeSet } from './scan-match';
+import { receiptNamePreview } from './receipt-name-preview';
 
 interface ProductCreateDialogProps {
   open: boolean;
@@ -337,6 +338,7 @@ export default function ProductCreateDialog({
     || itemType !== 'stockable'
     || stockQty !== '0'
     || imageUrl !== '';
+  const receiptPreview = receiptNamePreview(name, {});
 
   const requestClose = () => {
     if (dirty) setPendingCloseConfirm(true);
@@ -383,7 +385,7 @@ export default function ProductCreateDialog({
             </p>
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.drawer.canonicalName', 'Canonical name')}
+              {tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')}
             </span>
             <input
               value={name}
@@ -391,6 +393,10 @@ export default function ProductCreateDialog({
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               autoFocus
             />
+            <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              {tOr(t, 'products.create.receiptNameHint', 'New products cannot set the Polish receipt name here yet. This internal name will print until you edit the product.')}{' '}
+              {tOr(t, 'products.edit.receiptFiscalFold', 'Fiscal-safe text')}: <span className="font-mono">{receiptPreview.fiscalSafe || '-'}</span>
+            </span>
           </label>
 
           <button

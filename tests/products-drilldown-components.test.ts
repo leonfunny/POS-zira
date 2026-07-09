@@ -80,10 +80,12 @@ describe('Products drill-down components', () => {
 
   it('routes ProductModule through categories, product tiles, edit view, and search overlay', () => {
     const moduleSource = source('src/renderer/components/products/ProductModule.tsx');
+    const navSource = source('src/renderer/components/products/product-view-nav.ts');
 
-    expect(moduleSource).toContain("{ name: 'categories' }");
-    expect(moduleSource).toContain("{ name: 'products'; categoryId: ProductCategorySelection }");
-    expect(moduleSource).toContain("{ name: 'edit'; productId: string; returnTo: BrowseView }");
+    expect(navSource).toContain("{ name: 'categories' }");
+    expect(navSource).toContain("{ name: 'products'; categoryId: ProductCategorySelection }");
+    expect(navSource).toContain("{ name: 'edit'; productId: string; returnTo: EditReturn }");
+    expect(moduleSource).toContain("type ProductView");
     expect(moduleSource).toContain('<CategoryGrid');
     expect(moduleSource).toContain('<ProductTileGrid');
     expect(moduleSource).toContain('<ProductEditView');

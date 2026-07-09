@@ -1,10 +1,10 @@
 // Display-name localization for catalog rows (products + categories).
 //
 // Contract:
-// - `name` is canonical: order lines and fiscal payloads MUST keep this exact string.
+// - `name` is canonical: backend sync and local order storage keep this exact string.
 // - `name_translations` is localized display data: drives in-app rendering for
-//   category pills, product cards, search/scan toasts, cart rows, and customer
-//   receipt rendering when a locale-specific paper name is required.
+//   category pills, product cards, search/scan toasts, cart rows, and the
+//   receipt/fiscal item name when `RECEIPT_NAME_LOCALE` has a usable value.
 // - Missing/empty translations fall back to canonical `name`, so a fully un-translated
 //   catalog still renders correctly in any UI language.
 //
@@ -13,6 +13,8 @@
 // to `resolveName` everywhere display is needed.
 
 export type NameTranslations = Record<string, string>;
+
+export const RECEIPT_NAME_LOCALE = 'pl';
 
 interface NamedRow {
   name?: string | null;

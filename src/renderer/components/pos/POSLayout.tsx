@@ -254,6 +254,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
 
 interface POSLayoutProps {
   onFullscreen?: () => void;
+  onEditProduct?: (variantId: string) => void;
 }
 
 type ScanToastType = 'ok' | 'warn' | 'err';
@@ -284,7 +285,7 @@ function getPickupKitchenPrintBadge(statusValue: unknown): { text: string; class
   return { text: 'Chờ bếp', className: 'bg-slate-50 text-slate-600 border-slate-200' };
 }
 
-export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
+export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProps = {}) {
   useBarcodeForwarder();
   const { state, dispatch } = usePosStore();
   const { config, saveConfig } = useConfig();
@@ -1628,6 +1629,7 @@ export default function POSLayout({ onFullscreen }: POSLayoutProps = {}) {
             onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
             onManualWeightRequired={openManualWeightPrompt}
             onAddProductFeedback={handleRetailAddProductFeedback}
+            onEditProduct={onEditProduct}
             homeResetKey={homeResetKey}
           />
         )}

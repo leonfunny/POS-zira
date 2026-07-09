@@ -50,7 +50,7 @@ describe('Product module implementation contract', () => {
   it('keeps product mutations behind product-admin capabilities', () => {
     expect(drawer).toContain('products.drawer.readOnly');
     expect(editView).toContain('products.drawer.readOnly');
-    expect(moduleSource).toContain('window.electronAPI.pos.productAdmin.getCapabilities()');
+    expect(moduleSource).toContain('useProductAdminCapabilities');
     expect(moduleSource).toContain('products.admin.notReady');
     expect(moduleSource).toContain('canUpdateProduct={adminCapabilities?.canUpdateProduct === true}');
     expect(moduleSource).toContain('canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}');

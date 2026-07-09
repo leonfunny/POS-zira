@@ -22,6 +22,7 @@ interface CartProps {
   onHold?: () => void;
   /** Retail label print action for a cart line. When provided it replaces the note button. */
   onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
+  onEditProduct?: (item: CartItem) => void;
   showOrderActionChips?: boolean;
 }
 
@@ -560,6 +561,7 @@ export default function Cart({
   heldCartsCount = 0,
   onHold,
   onPrintItemLabel,
+  onEditProduct,
   showOrderActionChips = true,
 }: CartProps) {
   const currency = t('pos.currency');
@@ -857,6 +859,7 @@ export default function Cart({
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
                 onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
                 onPrintLabel={onPrintItemLabel}
+                onEditProduct={onEditProduct}
                 onSelectField={handleSelectField}
                 onEditPrice={handleOpenPricePopup}
                 onReadScale={scaleEnabled ? handleReadScale : undefined}

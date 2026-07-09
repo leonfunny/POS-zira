@@ -28,6 +28,7 @@ import { useAuth } from './hooks/useAuth';
 import { useRemoteControl } from './hooks/useRemoteControl';
 import { useEntitlements } from './hooks/useEntitlements';
 import { useKeyboardManager } from './hooks/useKeyboardManager';
+import { resetProductAdminCapabilitiesCache, useProductAdminCapabilities } from './hooks/useProductAdminCapabilities';
 
 // DEFAULT_ENTITLEMENTS now comes from shared/types — single source shared
 // with the main process (the two copies used to diverge: pos true here,
@@ -65,6 +66,7 @@ export default function App() {
   const [isCheckinFullscreen, setIsCheckinFullscreen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
+  const [productEditRequest, setProductEditRequest] = useState<{ variantId: string; returnTo: Tab } | null>(null);
 
   // Hooks
   const { config, setConfig, updateConfig, saveConfig, refresh: refreshConfig } = useConfig();
@@ -72,6 +74,7 @@ export default function App() {
   const { state: remoteState, endSession } = useRemoteControl();
   const { entitlements, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
   const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
+  const { capabilities: productAdminCapabilities } = useProductAdminCapabilities(isAuthenticated);
 
   // Kiosk swipe-to-exit (must be top-level — used inside conditional render blocks below)
   const swipeTouchStartY = useRef<number | null>(null);
@@ -231,6 +234,7 @@ export default function App() {
   };
 
   const handleLoginSuccess = async (user: AuthUser) => {
+    resetProductAdminCapabilitiesCache();
     setAuthUser(user);
     // Reload status, config, and entitlements after login
     try {
@@ -250,12 +254,39 @@ export default function App() {
   // Note: per-user cart (pos.activeCart.<userId>) is intentionally preserved
   // so it restores when the same user logs back in.
   const clearRendererState = useCallback(() => {
+    resetProductAdminCapabilitiesCache();
+    setProductEditRequest(null);
     try {
       window.localStorage.removeItem('pos.heldCarts');
     } catch {}
     setConnectionStatus({ connected: false });
     setDeviceStatus(null);
   }, []);
+
+  // Both halves must hold. `canUpdateProduct` comes from the backend role;
+  // `visibleTabs` comes from plan entitlements + Module Manager overrides — they
+  // move independently. Gating on the capability alone renders a pencil that
+  // calls setActiveTab('products'), which the "ensure activeTab is visible"
+  // effect above then bounces to visibleTabs[0]: the operator is thrown onto an
+  // unrelated tab having edited nothing.
+  const canEditProductsFromSale = productAdminCapabilities?.canUpdateProduct === true
+    && visibleTabs.includes('products');
+
+  const requestProductEdit = useCallback((variantId: string, returnTo: Tab) => {
+    if (!variantId || !canEditProductsFromSale) return;
+    setProductEditRequest({ variantId, returnTo });
+    setActiveTab('products');
+  }, [canEditProductsFromSale]);
+
+  const exitProductEdit = useCallback(() => {
+    const returnTo = productEditRequest?.returnTo;
+    setProductEditRequest(null);
+    if (returnTo) setActiveTab(returnTo);
+  }, [productEditRequest]);
+
+  useEffect(() => {
+    if (activeTab !== 'products' && productEditRequest) setProductEditRequest(null);
+  }, [activeTab, productEditRequest]);
 
   const handleLogout = async () => {
     try {
@@ -306,7 +337,15 @@ export default function App() {
   const appLanguage = (config?.language || 'en') as Language;
   const posUiLanguage = (config?.posLanguage || config?.language || 'en') as Language;
   const keyboardLanguage = (activeTab === 'pos' || activeTab === 'label') ? posUiLanguage : appLanguage;
+  const appT = getTranslation(appLanguage);
   const keyboardT = getTranslation(keyboardLanguage);
+  const tOrApp = useCallback((key: string, fallback: string) => {
+    const value = appT(key);
+    return value && value !== key ? value : fallback;
+  }, [appT]);
+  const productEditBackLabel = productEditRequest?.returnTo === 'orders'
+    ? tOrApp('products.backToOrder', 'Back to order')
+    : tOrApp('products.backToCart', 'Back to cart');
   const showGlobalKeyboard = keyboardVisible && activeTab !== 'checkin';
   const globalKeyboardInset = showGlobalKeyboard ? touchKeyboardHeight : 0;
   const posFullscreenKeyboardInset = keyboardVisible ? touchKeyboardHeight : 0;
@@ -463,7 +502,12 @@ export default function App() {
             </div>
           ) : (
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
-              {activeTab === 'pos' && isTabAvailable('pos') && <POSLayout onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }} />}
+              {activeTab === 'pos' && isTabAvailable('pos') && (
+                <POSLayout
+                  onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
+                  onEditProduct={canEditProductsFromSale ? (variantId) => requestProductEdit(variantId, 'pos') : undefined}
+                />
+              )}
               {activeTab === 'label' && isTabAvailable('label') && (
                 <LabelModule language={posUiLanguage} />
               )}
@@ -493,10 +537,18 @@ export default function App() {
                 <InvoicingTab language={(config?.language as Language) || 'en'} />
               )}
               {activeTab === 'orders' && isTabAvailable('orders') && (
-                <OrdersTab language={(config?.language as Language) || 'en'} />
+                <OrdersTab
+                  language={(config?.language as Language) || 'en'}
+                  onEditProduct={canEditProductsFromSale ? (variantId) => requestProductEdit(variantId, 'orders') : undefined}
+                />
               )}
               {activeTab === 'products' && isTabAvailable('products') && (
-                <ProductModule language={(config?.language as Language) || 'en'} />
+                <ProductModule
+                  language={(config?.language as Language) || 'en'}
+                  openVariantId={productEditRequest?.variantId}
+                  onExitExternal={exitProductEdit}
+                  externalBackLabel={productEditBackLabel}
+                />
               )}
               {activeTab === 'warehouse' && isTabAvailable('warehouse') && (
                 <WarehouseModule language={(config?.language as Language) || 'en'} />

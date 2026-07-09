@@ -1,6 +1,6 @@
 # Deep-link từ dòng bán hàng tới màn sửa sản phẩm — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cho phép mở thẳng màn sửa sản phẩm từ một dòng trong giỏ hàng POS hoặc một dòng trong chi tiết đơn ở tab Orders — và sửa lại cụm ô tên sản phẩm để nó nói đúng ô nào thật sự in lên hoá đơn.
 
@@ -41,6 +41,7 @@ Chúng là source-assertion đã cũ sau đợt refactor internal-EAN. **Không 
 | `src/renderer/components/products/receipt-name-preview.ts` | Hàm thuần: cho `name` + `displayNames` đang gõ, trả đúng chuỗi hoá đơn sẽ in, nguồn của nó, và dạng ELZAB fold. |
 | `src/renderer/components/products/product-view-nav.ts` | Kiểu `ProductView`/`BrowseView`/`EditReturn` + hai hàm thuần `isExternalEdit`, `viewAfterEditExit`. Đây là nơi hai cái bẫy điều hướng bị khoá bằng test. |
 | `src/renderer/hooks/useProductAdminCapabilities.ts` | Hook + cache module-scope cho `pos.productAdmin.getCapabilities()`, kèm `resetProductAdminCapabilitiesCache()`. |
+| `tests/product-admin-capabilities-hook.test.ts` | Khoá bẫy App render trước login: hook không được cache `no-auth`, và App phải bật hook bằng `isAuthenticated`. |
 | `tests/receipt-name-locale-contract.test.ts` | Khoá hợp đồng: đường in resolve qua `RECEIPT_NAME_LOCALE`. |
 | `tests/receipt-name-preview.test.ts` | Hàm preview khớp resolver của đường in. |
 | `tests/product-name-fields-truthful.test.ts` | Nhãn ô canonical không được nhận là tên hoá đơn; nhãn ô PL phải nhận. |
@@ -61,7 +62,7 @@ Phase này **độc lập** với deep-link và ship được một mình. Nó d
 ## Task 1: Hằng số locale của tên hoá đơn
 
 **Files:**
-- Modify: `src/shared/catalog-names.ts` (thêm export sau `export type NameTranslations`)
+- Modify: `src/shared/catalog-names.ts` (sửa comment contract cũ + thêm export sau `export type NameTranslations`)
 - Modify: `src/main/pos/payment-controller.ts:5` và `:145`
 - Test: `tests/receipt-name-locale-contract.test.ts`
 
@@ -120,7 +121,17 @@ Expected: FAIL. `expect(RECEIPT_NAME_LOCALE).toBe('pl')` nhận `undefined`, và
 
 - [ ] **Step 3: Export hằng số**
 
-Trong `src/shared/catalog-names.ts`, ngay dưới `export type NameTranslations = Record<string, string>;`:
+Trong `src/shared/catalog-names.ts`, sửa block comment đầu file trước. Dòng hiện tại nói `order lines and fiscal payloads MUST keep this exact string` là sai với đường in hiện tại. Thay bằng nghĩa thật:
+
+```ts
+// - `name` is canonical: persisted order lines keep this exact string for
+//   backend reconciliation and fallback display.
+// - `name_translations` is localized display data: drives in-app rendering for
+//   category pills, product cards, search/scan toasts, cart rows, and the
+//   receipt/fiscal item name when `RECEIPT_NAME_LOCALE` has a usable value.
+```
+
+Rồi ngay dưới `export type NameTranslations = Record<string, string>;`:
 
 ```ts
 /**
@@ -300,6 +311,7 @@ Key `products.drawer.canonicalName` được **bốn** component dùng (`Product
 - Modify: `src/renderer/components/products/ProductEditForm.tsx:360` và `:405`
 - Modify: `src/renderer/components/products/ProductEditView.tsx:368`
 - Test: `tests/product-name-fields-truthful.test.ts`
+- Update existing test: `tests/product-admin-display-name.test.ts`
 
 **Interfaces:**
 - Produces: fallback chuẩn `'Internal name (backend sync)'` cho canonical và `'Receipt / fiscal name (Polish)'` cho PL. Task 4 và Task 5 dùng lại đúng hai chuỗi này.
@@ -430,15 +442,15 @@ tOr(t, 'products.edit.displayNamePl', 'Receipt / fiscal name (Polish)')
 - [ ] **Step 5: Chạy test — phải PASS**
 
 ```bash
-ssh winpc "cd C:\POS-zira && npx vitest run tests/product-name-fields-truthful.test.ts"
+ssh winpc "cd C:\POS-zira && npx vitest run tests/product-name-fields-truthful.test.ts tests/product-admin-display-name.test.ts"
 ```
 
-Expected: PASS, 4 tests.
+Expected: PASS. `product-name-fields-truthful` có 4 test. `product-admin-display-name.test.ts` cũng phải được cập nhật: assertion cuối không được còn kỳ vọng chuỗi cũ `'Tên hiển thị tiếng Ba Lan'`; đổi nó sang label mới của `products.edit.displayNamePl`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-ssh winpc "cd C:\POS-zira && git add src/renderer/i18n/translations.ts src/renderer/components/products/ tests/product-name-fields-truthful.test.ts && git commit -m \"fix(products): stop labelling the canonical name as the receipt name\""
+ssh winpc "cd C:\POS-zira && git add src/renderer/i18n/translations.ts src/renderer/components/products/ tests/product-name-fields-truthful.test.ts tests/product-admin-display-name.test.ts && git commit -m \"fix(products): stop labelling the canonical name as the receipt name\""
 ```
 
 ---
@@ -986,11 +998,12 @@ Hiện `ProductModule` gọi `getCapabilities()` **mỗi lần mount** — một
 
 **Files:**
 - Create: `src/renderer/hooks/useProductAdminCapabilities.ts`
+- Test: `tests/product-admin-capabilities-hook.test.ts`
 
 **Interfaces:**
 - Produces:
   ```ts
-  function useProductAdminCapabilities(): {
+  function useProductAdminCapabilities(enabled?: boolean): {
     capabilities: ProductAdminCapabilities | null;
     error: string | null;
     loading: boolean;
@@ -1001,6 +1014,8 @@ Hiện `ProductModule` gọi `getCapabilities()` **mỗi lần mount** — một
   Task 8 và Task 12 dùng.
 
 - [ ] **Step 1: Viết hook**
+
+**Bẫy không được bỏ qua:** `App` render trước khi đăng nhập. Nếu hook tự gọi IPC khi chưa auth, nó sẽ nhận `no-auth`, cache module-scope kết quả đó, rồi sau login vẫn giấu nút bút chì. Hook phải có `enabled` flag, default `true` cho `ProductModule`, và `App` phải gọi `useProductAdminCapabilities(isAuthenticated)`. Không cache error result.
 
 Tạo `src/renderer/hooks/useProductAdminCapabilities.ts`:
 
@@ -1041,12 +1056,17 @@ async function load(): Promise<CapabilitiesState> {
   }
 }
 
-export function useProductAdminCapabilities() {
-  const [state, setState] = useState<CapabilitiesState | null>(cache);
-  const [loading, setLoading] = useState(cache === null);
+export function useProductAdminCapabilities(enabled = true) {
+  const [state, setState] = useState<CapabilitiesState | null>(() => enabled ? cache : null);
+  const [loading, setLoading] = useState(enabled && cache === null);
 
   useEffect(() => {
     let cancelled = false;
+    if (!enabled) {
+      setState(null);
+      setLoading(false);
+      return;
+    }
     if (cache) {
       setState(cache);
       setLoading(false);
@@ -1055,7 +1075,7 @@ export function useProductAdminCapabilities() {
     setLoading(true);
     const request = (inFlight ??= load());
     request.then((next) => {
-      cache = next;
+      cache = next.error ? null : next;
       inFlight = null;
       if (cancelled) return;
       setState(next);
@@ -1064,17 +1084,23 @@ export function useProductAdminCapabilities() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      resetProductAdminCapabilitiesCache();
+      setState(null);
+      setLoading(false);
+      return;
+    }
     resetProductAdminCapabilitiesCache();
     setLoading(true);
     const next = await (inFlight ??= load());
-    cache = next;
+    cache = next.error ? null : next;
     inFlight = null;
     setState(next);
     setLoading(false);
-  }, []);
+  }, [enabled]);
 
   return {
     capabilities: state?.capabilities ?? null,
@@ -1085,18 +1111,42 @@ export function useProductAdminCapabilities() {
 }
 ```
 
-- [ ] **Step 2: Typecheck**
+- [ ] **Step 2: Viết source-assertion test cho bẫy pre-auth**
 
-```bash
-ssh winpc "cd C:\POS-zira && npm run typecheck:renderer"
+Tạo `tests/product-admin-capabilities-hook.test.ts`:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const root = resolve(__dirname, '..');
+const source = (path: string): string =>
+  readFileSync(resolve(root, path), 'utf8').replace(/\r\n/g, '\n');
+
+describe('product-admin capabilities hook', () => {
+  it('does not run or cache capabilities before authentication', () => {
+    const hook = source('src/renderer/hooks/useProductAdminCapabilities.ts');
+
+    expect(hook).toContain('useProductAdminCapabilities(enabled = true)');
+    expect(hook).toContain('if (!enabled)');
+    expect(hook).toContain('cache = next.error ? null : next');
+  });
+});
 ```
 
-Expected: exit 0.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Typecheck + test**
 
 ```bash
-ssh winpc "cd C:\POS-zira && git add src/renderer/hooks/useProductAdminCapabilities.ts && git commit -m \"feat(products): cache product-admin capabilities across tabs\""
+ssh winpc "cd C:\POS-zira && npx vitest run tests/product-admin-capabilities-hook.test.ts && npm run typecheck:renderer"
+```
+
+Expected: 1 test PASS; typecheck exit 0.
+
+- [ ] **Step 4: Commit**
+
+```bash
+ssh winpc "cd C:\POS-zira && git add src/renderer/hooks/useProductAdminCapabilities.ts tests/product-admin-capabilities-hook.test.ts && git commit -m \"feat(products): cache product-admin capabilities across tabs\""
 ```
 
 ---
@@ -1105,6 +1155,7 @@ ssh winpc "cd C:\POS-zira && git add src/renderer/hooks/useProductAdminCapabilit
 
 **Files:**
 - Modify: `src/renderer/components/products/ProductModule.tsx`
+- Update existing test: `tests/product-module-static.test.ts`
 
 **Interfaces:**
 - Consumes: `isExternalEdit`, `viewAfterEditExit`, `BrowseView`, `ProductView` (Task 6); `useProductAdminCapabilities` (Task 7).
@@ -1178,6 +1229,8 @@ Xoá ba state (dòng 362-364) và toàn bộ effect `loadAdminCapabilities` (dò
 
 Mọi chỗ dùng `adminCapabilities`, `adminCapabilityError`, `adminCapabilitiesLoading` giữ nguyên tên nên không phải sửa gì thêm.
 
+Trong `tests/product-module-static.test.ts`, test `keeps product mutations behind product-admin capabilities` hiện còn assert `ProductModule` gọi thẳng `window.electronAPI.pos.productAdmin.getCapabilities()`. Assertion đó phải đổi sang kiểm `ProductModule` import/dùng `useProductAdminCapabilities`; không được để full suite đỏ vì test cũ mô tả kiến trúc cũ.
+
 - [ ] **Step 4: Sửa `returnFromEdit` (bẫy #1)**
 
 Thay hàm ở dòng ~511:
@@ -1206,7 +1259,7 @@ Thay effect ở dòng ~419:
       return;
     }
     if (!fresh && !selectedProduct._isDraft) {
-      // Product vanished mid-edit (another terminal deactivated it, then synced).
+      // Product vanished mid-edit (deleted or absent from the local mirror).
       // Popping `returnTo` blindly would push `{name:'external'}` into the view
       // state, which is not a BrowseView and breaks render.
       const external = isExternalEdit(view);
@@ -1237,8 +1290,12 @@ Thêm ngay dưới `handleOpenProduct` (dòng ~497):
     }
     consumedRef.current = openVariantId ?? null;
     if (outcome.kind === 'missing') {
-      setToast({ kind: 'error', text: tOr(t, 'products.deepLink.notFound', 'Product is no longer in the catalog') });
-      onExitExternal?.();
+      // Do NOT call onExitExternal() here. setToast + onExitExternal batch into one
+      // render: App switches tab, ProductModule unmounts, and the toast never paints.
+      // Leave the operator on the products tab with the message. App clears the stale
+      // request as soon as they navigate away, and consumedRef stops a reopen loop.
+      consumedRef.current = openVariantId ?? null;
+      setToast({ kind: 'error', text: tOr(t, 'products.deepLink.notFound', 'Product is no longer in the local catalog. Sync products and try again.') });
       return;
     }
     const product = allProducts.find((item) => item.id === outcome.productId)!;
@@ -1281,7 +1338,7 @@ Expected: exit 0. Nếu TS báo `backLabel` không tồn tại trên `ProductEdi
 - [ ] **Step 10: Commit** (sau khi Task 9 xong và typecheck sạch)
 
 ```bash
-ssh winpc "cd C:\POS-zira && git add src/renderer/components/products/ProductModule.tsx src/renderer/i18n/translations.ts && git commit -m \"feat(products): open the edit view from a deep link\""
+ssh winpc "cd C:\POS-zira && git add src/renderer/components/products/ProductModule.tsx src/renderer/i18n/translations.ts tests/product-module-static.test.ts && git commit -m \"feat(products): open the edit view from a deep link\""
 ```
 
 ---
@@ -1550,6 +1607,7 @@ const CART = source('src/renderer/components/pos/Cart.tsx');
 const CART_ITEM = source('src/renderer/components/pos/CartItem.tsx');
 const ORDERS = source('src/renderer/components/OrdersTab.tsx');
 const PRODUCT_MODULE = source('src/renderer/components/products/ProductModule.tsx');
+const CAPABILITIES_HOOK = source('src/renderer/hooks/useProductAdminCapabilities.ts');
 
 describe('deep-link plumbing', () => {
   it('App owns the request and hands it to ProductModule', () => {
@@ -1564,6 +1622,12 @@ describe('deep-link plumbing', () => {
 
   it('App drops the capabilities cache when the user changes', () => {
     expect(APP).toContain('resetProductAdminCapabilitiesCache()');
+  });
+
+  it('App does not cache a pre-login no-auth capabilities response', () => {
+    expect(APP).toContain('useProductAdminCapabilities(isAuthenticated)');
+    expect(CAPABILITIES_HOOK).toContain('if (!enabled)');
+    expect(CAPABILITIES_HOOK).toContain('cache = next.error ? null : next');
   });
 
   it('the kiosk fullscreen POS branch never receives onEditProduct', () => {
@@ -1624,7 +1688,7 @@ Ngay dưới `const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
 Ngay dưới `const { entitlements, ... } = useEntitlements();` (dòng 73):
 
 ```ts
-  const { capabilities: productAdminCapabilities } = useProductAdminCapabilities();
+  const { capabilities: productAdminCapabilities } = useProductAdminCapabilities(isAuthenticated);
 ```
 
 Ngay dưới `const isTabAvailable = useCallback(...)` (dòng 134):
@@ -1666,7 +1730,13 @@ Ngay dưới `const keyboardT = getTranslation(keyboardLanguage);` (dòng 309):
     : tOrApp('products.backToCart', 'Back to cart');
 ```
 
-- [ ] **Step 7: `App.tsx` — xoá cache khi đổi user**
+- [ ] **Step 7: `App.tsx` — xoá cache khi đổi user / login**
+
+Trong `handleLoginSuccess`, thêm ngay đầu hàm trước `setAuthUser(user);`:
+
+```ts
+    resetProductAdminCapabilitiesCache();
+```
 
 Trong `clearRendererState` (dòng 252), thêm ngay dưới `try { window.localStorage.removeItem('pos.heldCarts'); } catch {}`:
 
@@ -1802,7 +1872,7 @@ Dòng ~612, thay `<td>` đầu tiên:
 ssh winpc "cd C:\POS-zira && npx vitest run tests/product-edit-deeplink-wiring.test.ts && npm run typecheck:renderer"
 ```
 
-Expected: 7 tests PASS; typecheck exit 0.
+Expected: 8 tests PASS; typecheck exit 0.
 
 - [ ] **Step 7: Commit**
 
@@ -1924,7 +1994,7 @@ ssh winpc "cd C:\POS-zira && git add src/renderer/components/products/ src/rende
 ssh winpc "cd C:\POS-zira && npx vitest run"
 ```
 
-Expected: **chỉ còn 2 test fail có sẵn** trong `tests/product-admin-create-contract.test.ts`. Số test pass phải là **1752 + 40 = 1792** (Task 1: 4 · Task 2: 5 · Task 3: 4 · Task 4: 5 · Task 5: 2 · Task 6: 13 · Task 12+13: 7).
+Expected: **chỉ còn 2 test fail có sẵn** trong `tests/product-admin-create-contract.test.ts`. Nếu baseline chưa đổi, số test pass phải là **1752 + 42 = 1794** (Task 1: 4 · Task 2: 5 · Task 3: 4 · Task 4: 5 · Task 5: 2 · Task 6: 13 · Task 7: 1 · Task 12+13: 8). Nếu số tổng lệch vì nhánh đã có thêm test khác, nguyên tắc là không được có file fail mới ngoài baseline đã ghi.
 
 - [ ] **Step 2: Typecheck + build**
 

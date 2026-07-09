@@ -30,11 +30,12 @@ interface ProductEditViewProps {
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
+  backLabel?: string;
   onBack: () => void;
   onImportDraft: (product: ProductListItem) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
-  onProductSaved: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number }) => Promise<void> | void;
+  onProductSaved: (product: ProductListItem, outcome: { stockBefore?: number; stockAfter?: number; vatChanged?: boolean }) => Promise<void> | void;
   onStockAdjusted: (product: ProductListItem, result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
   onProductDeactivated: (product: ProductListItem) => Promise<void> | void;
   onProductReactivated: (product: ProductListItem) => Promise<void> | void;
@@ -91,6 +92,7 @@ export default function ProductEditView({
   canManageCategories,
   adminBackendReady,
   productInCart,
+  backLabel,
   onBack,
   onImportDraft,
   onManageCategories,
@@ -207,7 +209,7 @@ export default function ProductEditView({
           className="inline-flex h-11 shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           <ChevronLeft size={18} />
-          {tOr(t, 'products.back', 'Back')}
+          {backLabel || tOr(t, 'products.back', 'Back')}
         </button>
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-slate-950">{displayName}</h2>
@@ -365,7 +367,7 @@ export default function ProductEditView({
         ) : (
           <div className="mt-4 rounded-md border border-slate-200 px-4">
             <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
-            <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Canonical name')} value={product.name} />
+            <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')} value={product.name} />
             <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
             <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
             <DetailRow
