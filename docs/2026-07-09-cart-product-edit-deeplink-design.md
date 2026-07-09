@@ -37,13 +37,55 @@ Cộng với `mirrorProductAdminVariant()` (`src/main/modules/pos.module.ts:1585
 
 Vậy feature này **thuần tuý là bài toán điều hướng**, không phải bài toán đồng bộ dữ liệu.
 
-### 2.1. Cái bẫy đi kèm
+### 2.1. Cái bẫy: ô mang nhãn "tên hoá đơn" KHÔNG phải tên hoá đơn
 
-`resolveName(product, 'pl')` hardcode locale `'pl'`. Theo contract ghi ở đầu `src/shared/catalog-names.ts`, thứ tự ưu tiên là `name_translations.pl` **trước**, rồi mới tới `name` canonical.
+`resolveName(row, lang)` (`src/shared/catalog-names.ts`) trả `name_translations[lang]` nếu không rỗng, **rồi mới** tới `name` canonical. `getReceiptItemName` gọi nó với `'pl'`.
 
-`ProductEditForm` (`src/renderer/components/products/ProductEditForm.tsx:38`) cho sửa ba ô display name — `vi`, `pl`, `en` — cộng một ô "Canonical name" riêng.
+Nhưng trong `ProductEditForm.tsx:358-366`, ô bind vào canonical `name` lại đeo nhãn key `products.drawer.canonicalName`:
 
-Nên với một sản phẩm đã có `name_translations.pl` (đúng nguồn sai do AI import), **sửa ô Canonical name sẽ không đổi được tên trên hoá đơn** — ô `pl` vẫn thắng. Nhân viên chạy UI POS tiếng Việt lại có xu hướng sửa ô Vietnamese, cũng không ăn. Đây là chỗ "sửa rồi mà vẫn sai" nguy hiểm nhất, và thiết kế phải xử lý nó (mục 3.5).
+| dòng | locale | nội dung nhãn |
+|---|---|---|
+| `translations.ts:972` | en | `Receipt / fiscal name` |
+| `translations.ts:2494` | vi | `Tên trên hóa đơn / fiscal` |
+| `translations.ts:8918` | pl | `Nazwa na paragonie / fiskalna` |
+
+**Nhãn nói dối.** Ô thật sự điều khiển tờ giấy là "Tên hiển thị tiếng Ba Lan" (`displayNames.pl`) — và nó bị giấu sau nút `Advanced`, lại còn gate thêm bằng `canEditDisplayName`.
+
+Git blame kể trọn câu chuyện:
+
+- `4f6f514` (2026-05-16) *"fix: print localized polish product names on receipts"* — đẻ ra `getReceiptItemName`, hoá đơn bắt đầu ưu tiên tên PL.
+- `aea2538` (2026-06-30) *"feat(products): add display name editor"* — đẻ ra ô display name **và** dán nhãn `Receipt / fiscal name` lên ô canonical.
+
+Nhãn được viết sáu tuần sau khi đường in đã đổi, và sai ngay từ lúc sinh ra. **Không có test nào khoá hành vi tên-hoá-đơn**, nên không gì chặn cú trôi này.
+
+### 2.2. Bằng chứng dữ liệu (mirror local trên winpc, đọc read-only 2026-07-09)
+
+Sản phẩm mẫu người dùng báo:
+
+```
+id                = a5e5618e-2004-431d-825c-d6eb0d026326
+name              = "Cật (thận lợn)"     ← canonical, thực chất là tên tiếng Việt
+name_translations = {"pl":"Nerka"}       ← KHÔNG có key "vi"
+→ getReceiptItemName() = "Nerka"
+```
+
+Ô "Tên hiển thị tiếng Việt" trống; chữ xám trong đó là **placeholder** = canonical (`ProductEditForm.tsx:397`). Vì `resolveName(_, 'vi')` không thấy `vi` nên mọi bề mặt UI tiếng Việt rơi về canonical.
+
+Độ phủ trên 1.706 variant của `pos.db`:
+
+| ô | có giá trị | vai trò thật |
+|---|---|---|
+| canonical `name` | 1.706 (bắt buộc) | khoá đối soát backend + `order_items.name` + fallback |
+| `pl` | 1.646 (96%) | **tên in ra hoá đơn giấy & fiscal** |
+| `en` | 1.270 | chỉ hiển thị |
+| `vi` | 89 (5%) | chỉ hiển thị |
+| không có bản dịch nào | 40 | hoá đơn in thẳng canonical tiếng Việt |
+
+**770 / 1.646 tên PL chứa token cân nặng** (`\d+\s?(g|kg|ml|l)`), ví dụ `"Asian Pearl Małże Venus Gotowane 400g"`. Đây chính là nơi lỗi "tên ghi 250g nhưng hàng 400g" sống — trong ô bị giấu sau `Advanced`.
+
+Với 40 sản phẩm không có `pl`: POSNET `sanitizeName()` chỉ cắt 40 ký tự và bỏ ký tự điều khiển, **không bỏ dấu** → đẩy nguyên `"Cật (thận lợn)"` xuống máy in fiscal. ELZAB thì `toFiscalSafeItemName()` fold về ASCII → `"Cat (than lon)"`.
+
+Catalog hiện **1 template = 1 variant** (0 template có >1 variant), nên overlay cấp template chưa gây lây chéo — nhưng backend `product-admin.service.ts:269-292` ghi `name_translations` vào bảng `products` (template) bằng JSONB merge và bump mọi sibling, nên ràng buộc đó vẫn có thật. `splitTranslations()` coi chuỗi rỗng là **lệnh xoá locale**: xoá trắng ô PL ⇒ hoá đơn rơi về canonical tiếng Việt.
 
 ---
 
@@ -142,9 +184,11 @@ Nút chỉ render khi hội đủ ba điều kiện:
 
 Chuỗi prop: `App` → `POSLayout` (prop mới `onEditProduct?`) → `RetailTemplate` (`POSLayout.tsx:1618`) → `Cart` → `CartItemRow`.
 
-### 3.5. Preview "Tên in trên hoá đơn" — chống bẫy bằng hằng số dùng chung
+### 3.5. Sửa sự thật của cụm ô tên
 
-Export từ `src/shared/catalog-names.ts`:
+**Không đụng một dòng logic in nào.** Chỉ đổi nhãn, đổi thứ tự, và bày sự thật ra.
+
+**(a) Hằng số dùng chung.** Export từ `src/shared/catalog-names.ts`:
 
 ```ts
 /** Locale the customer-facing receipt renders item names in. Both the print path
@@ -152,22 +196,54 @@ Export từ `src/shared/catalog-names.ts`:
 export const RECEIPT_NAME_LOCALE = 'pl';
 ```
 
-`payment-controller.ts:145` đổi `resolveName(product, 'pl')` → `resolveName(product, RECEIPT_NAME_LOCALE)`.
+`payment-controller.ts:145` đổi `resolveName(product, 'pl')` → `resolveName(product, RECEIPT_NAME_LOCALE)`. Máy in và form từ đó dùng chung một hàm và một hằng, không thể trôi khỏi nhau.
 
-`ProductEditForm` thêm một dòng read-only, tính live từ state hiện tại của form (`name` + `displayNames`), chạy đúng `resolveName` và đúng hằng số đó:
+**(b) Đổi nhãn cho đúng sự thật** (`translations.ts`, cả 8 locale, luôn đọc qua `tOr` nên thiếu locale không vỡ):
+
+| key | nhãn cũ (sai) | nhãn mới |
+|---|---|---|
+| `products.drawer.canonicalName` | "Tên trên hóa đơn / fiscal" | "Tên gốc (nội bộ, đồng bộ backend)" |
+| `products.edit.displayNamePl` | "Tên hiển thị tiếng Ba Lan" | "Tên trên hoá đơn / fiscal (Ba Lan)" |
+
+`products.edit.displayNameVi` / `displayNameEn` giữ nguyên — chúng đúng là tên hiển thị.
+
+**(c) Kéo ô PL ra khỏi `Advanced`.** Đặt ngay dưới ô canonical, luôn thấy. `vi`/`en` ở lại trong `Advanced`. Layout:
 
 ```
-Tên in trên hoá đơn:  Đậu bắp 400g
-                      (đang lấy từ ô Ba Lan)
+Tên gốc (nội bộ, đồng bộ backend)  *
+[ Cật (thận lợn)                  ]
+
+Tên trên hoá đơn / fiscal (Ba Lan)
+[ Nerka                           ]
+↳ In ra: Nerka
+
+[ Advanced ▾ ]
+   Tên hiển thị tiếng Việt  [      ]
+   Tên hiển thị tiếng Anh   [      ]
 ```
 
-Chú thích nguồn đổi giữa `(đang lấy từ ô Ba Lan)` và `(đang lấy từ ô Canonical name)` tuỳ theo `displayNames.pl` có rỗng hay không.
+**(d) Dòng preview "In ra:"** tính live từ state hiện tại của form bằng `resolveName({ name, name_translations: displayNames }, RECEIPT_NAME_LOCALE)`.
 
-Vì máy in và ô preview dùng **chung một hàm và chung một hằng**, hai đầu không thể trôi khỏi nhau. Đây là toàn bộ nội dung của việc "xử lý cái bẫy": không đụng logic in, chỉ khiến sự thật hiện lên trước mắt người đang sửa.
+Khi `displayNames.pl` **rỗng**, preview chuyển sang cảnh báo vàng, hiển thị đúng chuỗi sẽ xuống máy in:
 
-Preview vẫn hiện **kể cả khi `canEditDisplayName` false** (lúc đó các ô display name bị ẩn): `displayNamesFromProduct(product)` khởi tạo state từ `product.name_translations` bất kể capability, nên preview đọc đúng giá trị đang có trong DB và người sửa biết ngay tại sao ô Canonical name của mình không ăn.
+```
+⚠ Bỏ trống → in tên gốc "Cật (thận lợn)"
+   POSNET in nguyên dấu; ELZAB bỏ dấu thành "Cat (than lon)"
+```
 
-Hằng số này **không** phải chỗ để cấu hình ngôn ngữ hoá đơn. Bỏ hardcode `'pl'` thành config là một thay đổi riêng, đụng thẳng đường in fiscal, nằm ngoài phạm vi tài liệu này.
+Đây là cách xử lý 40 sản phẩm chưa có tên PL: **cảnh báo, không ép**. Không đụng dữ liệu, không thêm ràng buộc bắt buộc ở `ProductCreateDialog`.
+
+**(e) Cảnh báo khi xoá trắng ô PL.** Backend `splitTranslations()` coi chuỗi rỗng là lệnh **xoá locale**, nên xoá ô PL là hành động phá huỷ tên đang in. Preview ở (d) đã nói đúng hậu quả; không cần dialog xác nhận.
+
+**(f) Giữ cảnh báo `displayNameAffectsMultipleVariants`** ngay cạnh ô PL vừa được đề bạt. Overlay nằm ở template (`product-admin.service.ts:269-292`), nên sửa nó đổi tên hoá đơn của **mọi variant cùng template**. Catalog hiện 1:1 nên chưa nổ, nhưng ràng buộc là thật.
+
+**(g) Khi `canEditDisplayName` false** (backend `capabilities.version < 2`): ô PL **không được biến mất** — render read-only kèm ghi chú "backend chưa hỗ trợ sửa tên hiển thị". Nếu để nó ẩn như hiện nay, người vận hành chỉ còn thấy đúng ô canonical, và ô đó không điều khiển tờ giấy → quay lại đúng cái bẫy ta đang gỡ.
+
+Hằng số `RECEIPT_NAME_LOCALE` **không** phải chỗ để cấu hình ngôn ngữ hoá đơn. Bỏ hardcode `'pl'` thành config là thay đổi riêng, đụng thẳng đường in fiscal, nằm ngoài phạm vi tài liệu này.
+
+### 3.5.1. Thứ tự ship
+
+Mục 3.5 **độc lập** với deep-link và nên ship trước: nó là thay đổi copy + layout, không có state mới, và nó tự mình dập tắt cả một lớp bug "sửa rồi mà vẫn sai". Deep-link (3.1–3.4, 3.6, 3.7) đi sau, và khi đó nó dẫn người dùng tới một cái form đã nói thật.
 
 ### 3.6. Capabilities nhấc lên `App`
 
@@ -233,8 +309,10 @@ Unit test mới, đặt trong `tests/` phẳng theo convention repo:
 - `tests/product-module-external-return.test.ts`
   - `returnFromEdit` ở nhánh external gọi `onExitExternal`, **không** set view thành `{name:'external'}`;
   - effect "sản phẩm biến mất" (dòng 419) ở nhánh external gọi `onExitExternal` thay vì `setView(returnTo)` — đây là regression test cho cái bẫy ở mục 3.3(b).
-- `tests/receipt-name-locale-contract.test.ts`
-  - với cùng một input `{ name, name_translations }`, giá trị preview của form và `resolveName(product, RECEIPT_NAME_LOCALE)` trả **cùng một chuỗi**, cho cả ba trường hợp: chỉ có canonical; có `pl`; có `vi` nhưng không có `pl`. Đây là lý do tồn tại của hằng số.
+- `tests/receipt-name-locale-contract.test.ts` — **test này lẽ ra phải tồn tại từ 2026-05-16; không có nó nên nhãn trôi 6 tuần mà không ai biết.**
+  - với cùng một input `{ name, name_translations }`, preview của form và `resolveName(product, RECEIPT_NAME_LOCALE)` trả **cùng một chuỗi**, cho cả ba trường hợp: chỉ có canonical; có `pl`; có `vi` nhưng không có `pl`;
+  - `resolveName({name:'Cật (thận lợn)', name_translations:{pl:'Nerka'}}, RECEIPT_NAME_LOCALE) === 'Nerka'` — khoá đúng hành vi người dùng đã báo;
+  - `PaymentController.getReceiptItemName` dùng `RECEIPT_NAME_LOCALE`, không phải literal `'pl'` (grep-level assertion hoặc export hàm để test trực tiếp).
 
 Smoke tay trên máy:
 
@@ -259,13 +337,15 @@ Kiểm tra âm tính: đăng nhập bằng tài khoản không có `canUpdatePro
 | `src/renderer/hooks/useProductAdminCapabilities.ts` | **mới** — hook + module-scope cache + `resetProductAdminCapabilitiesCache()` |
 | `src/renderer/components/products/ProductModule.tsx` | props `openVariantId` / `onExitExternal`; union `returnTo`; effect deep-link; hai chỗ sửa ở mục 3.3; đọc capabilities từ hook; toast cảnh báo VAT |
 | `src/renderer/components/products/ProductEditView.tsx` | prop `backLabel?: string` cho nút `ChevronLeft` |
-| `src/renderer/components/products/ProductEditForm.tsx` | dòng preview "Tên in trên hoá đơn" |
+| `src/renderer/components/products/ProductEditForm.tsx` | kéo ô PL ra khỏi `Advanced`; dòng preview "In ra:"; cảnh báo khi PL rỗng; PL read-only khi `canEditDisplayName` false |
+| `src/renderer/i18n/translations.ts` | đổi nhãn `products.drawer.canonicalName` + `products.edit.displayNamePl` (8 locale) |
 | `src/renderer/components/pos/CartItem.tsx` | prop `onEditProduct?`, nút bút chì 44×44 |
 | `src/renderer/components/pos/Cart.tsx` | prop `onEditProduct?` truyền xuống |
 | `src/renderer/components/pos/POSLayout.tsx` | prop `onEditProduct?` → `RetailTemplate` |
 | `src/renderer/components/pos/templates/retail/RetailTemplate.tsx` | truyền `onEditProduct` xuống `Cart` |
 | `src/renderer/components/OrdersTab.tsx` | `variant_id` vào `OrderItemRow`; nút bút chì; prop `onEditProduct?` |
-| `src/renderer/i18n/translations.ts` | key mới, luôn dùng qua `tOr(...)` để thiếu locale không vỡ |
+
+Mọi key i18n mới đọc qua `tOr(...)` để locale thiếu không làm vỡ UI.
 
 ---
 
@@ -275,3 +355,5 @@ Kiểm tra âm tính: đăng nhập bằng tài khoản không có `canUpdatePro
 - **Module-scope cache của capabilities** sống ngoài cây React nên `key={sessionKey}` không xoá được nó; phải reset thủ công trong `clearRendererState()` (`App.tsx:252`), nếu không đổi tài khoản sẽ thấy capabilities của tài khoản cũ.
 - **`ProductEditView` mở tiếp modal** (`StockAdjustmentDialog`, `DeactivateProductDialog`, `CategoryManagerDialog`). Vì ta đổi tab thật chứ không lồng sheet, không có modal chồng modal. Đây là lý do chính chọn deep-link thay vì sheet.
 - **`consumedRef`** chặn mở lại cùng một `variantId` hai lần liên tiếp. Vì `App` xoá `productEditRequest` mỗi khi rời tab `products`, `openVariantId` chuyển về `undefined` giữa hai lần, nên lần sau ref phải được reset khi `openVariantId` rỗng.
+- **Đổi nhãn ô canonical là thay đổi ngữ nghĩa với người dùng cũ**, không chỉ là chữ. Ai từng sửa ô "Tên trên hóa đơn / fiscal" và tưởng mình đổi được tờ giấy thì nay biết là không. Nên thông báo cho người vận hành khi ship, kèm danh sách 40 sản phẩm chưa có tên PL.
+- **Preview trong form đọc `displayNames` state, còn máy in đọc mirror local.** Hai nguồn khớp nhau sau khi lưu (vì `mirrorProductAdminVariant` ghi xuống local ngay), nhưng **trước** khi lưu preview hiển thị giá trị chưa lưu. Đó là ý đồ — preview trả lời "nếu tôi lưu cái này thì in ra gì".
