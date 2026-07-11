@@ -27,6 +27,10 @@ interface BeginDailyReportRunInput {
   trigger: FiscalDailyReportRunTrigger;
 }
 
+export interface FiscalReceiptOccurrenceRow {
+  occurred_at: string | null;
+}
+
 export const fiscalDailyReportRunRepo = {
   getLatestSuccess(): FiscalDailyReportRunRow | null {
     return database.get<FiscalDailyReportRunRow>(
@@ -57,6 +61,18 @@ export const fiscalDailyReportRunRepo = {
       [printedAt],
     );
     return !!row;
+  },
+
+  getLatestSuccessfulFiscalReceiptAfter(printedAt: string): FiscalReceiptOccurrenceRow | null {
+    return database.get<FiscalReceiptOccurrenceRow>(
+      `SELECT COALESCE(resolved_at, sent_at, created_at) AS occurred_at
+       FROM fiscal_attempts
+       WHERE status = 'SUCCESS_CONFIRMED'
+         AND COALESCE(resolved_at, sent_at, created_at) > ?
+       ORDER BY COALESCE(resolved_at, sent_at, created_at) DESC
+       LIMIT 1`,
+      [printedAt],
+    );
   },
 
   begin(input: BeginDailyReportRunInput): FiscalDailyReportRunRow {

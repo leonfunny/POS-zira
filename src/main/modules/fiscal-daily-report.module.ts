@@ -9,8 +9,12 @@ import {
 } from '../database/repos/fiscal-daily-report-run-repo';
 import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
+import {
+  FISCAL_DAILY_REPORT_TIMEZONE,
+  resolveFiscalDailyReportTarget,
+} from '../fiscal/fiscal-daily-report-date';
 
-const DEFAULT_TZ = 'Europe/Warsaw';
+const DEFAULT_TZ = FISCAL_DAILY_REPORT_TIMEZONE;
 const DEFAULT_HOUR = 23;
 const DEFAULT_MINUTE = 58;
 const DEFAULT_RETRY_MINUTES = 5;
@@ -109,14 +113,24 @@ export class FiscalDailyReportModule extends BaseModule {
     const now = getZonedNow(new Date(), config.timezone);
     const scheduledMinute = config.hour * 60 + config.minute;
     const currentMinute = now.hour * 60 + now.minute;
-    if (currentMinute < scheduledMinute) return;
-
-    const scheduledFor = `${now.date}T${pad2(config.hour)}:${pad2(config.minute)}:00[${config.timezone}]`;
     const latestSuccess = fiscalDailyReportRunRepo.getLatestSuccess();
+    const latestReceiptAfterLatestSuccess = latestSuccess?.printed_at
+      ? fiscalDailyReportRunRepo.getLatestSuccessfulFiscalReceiptAfter(latestSuccess.printed_at)
+      : null;
+    const target = resolveFiscalDailyReportTarget({
+      nowDate: now.date,
+      currentMinute,
+      hour: config.hour,
+      minute: config.minute,
+      timezone: config.timezone,
+      latestReceiptAt: latestReceiptAfterLatestSuccess?.occurred_at ?? null,
+    });
+    if (!target.due) return;
+
     const hasReceiptAfterLatestSuccess = latestSuccess?.printed_at
-      ? fiscalDailyReportRunRepo.hasSuccessfulFiscalReceiptAfter(latestSuccess.printed_at)
+      ? !!latestReceiptAfterLatestSuccess
       : true;
-    const scheduledRun = fiscalDailyReportRunRepo.getLatestForSchedule(scheduledFor, 'auto');
+    const scheduledRun = fiscalDailyReportRunRepo.getLatestForSchedule(target.scheduledFor, 'auto');
     const decision = shouldAttemptFiscalDailyReport({
       latestSuccess,
       hasReceiptAfterLatestSuccess,
@@ -128,7 +142,7 @@ export class FiscalDailyReportModule extends BaseModule {
     if (!decision.shouldRun) {
       if (decision.reason === 'no_receipts_after_last_success') {
         logger.info(
-          `[FiscalDailyReport] Skipping automatic fiscal daily report for ${now.date}: ` +
+          `[FiscalDailyReport] Skipping automatic fiscal daily report for ${target.reportDate}: ` +
           'no confirmed fiscal receipts after the latest successful daily report',
         );
       }
@@ -137,22 +151,22 @@ export class FiscalDailyReportModule extends BaseModule {
 
     this.inFlight = true;
     const row = fiscalDailyReportRunRepo.begin({
-      reportDate: now.date,
-      scheduledFor,
+      reportDate: target.reportDate,
+      scheduledFor: target.scheduledFor,
       trigger: 'auto',
     });
-    await this.flushRunState('begin', now.date);
+    await this.flushRunState('begin', target.reportDate);
 
     try {
       const hardware = this.container.getOptional<HardwareModule>(SERVICE_TOKENS.HARDWARE_MODULE);
       if (!hardware) throw new Error('Hardware module is not available');
 
       logger.info(
-        `[FiscalDailyReport] Printing automatic fiscal daily report for ${now.date} ` +
-        `(reason=${reason}, attempt=${row.attempts}, scheduled=${scheduledFor})`,
+        `[FiscalDailyReport] Printing automatic fiscal daily report for ${target.reportDate} ` +
+        `(${target.catchUp ? 'catch-up, ' : ''}reason=${reason}, attempt=${row.attempts}, scheduled=${target.scheduledFor})`,
       );
       const result = await hardware.printFiscalDailyReport({
-        date: now.date,
+        date: target.reportDate,
         transactionCount: 0,
         grossSales: 0,
         discounts: 0,
@@ -166,9 +180,9 @@ export class FiscalDailyReportModule extends BaseModule {
         );
       }
       fiscalDailyReportRunRepo.markSuccess(row.id, result);
-      await this.flushRunState('success', now.date);
+      await this.flushRunState('success', target.reportDate);
       logger.info(
-        `[FiscalDailyReport] Automatic fiscal daily report printed for ${now.date} ` +
+        `[FiscalDailyReport] Automatic fiscal daily report printed for ${target.reportDate} ` +
         `(command=${result.commandUsed || 'unknown'}, reportNo=${result.beforeReportNumber ?? '?'}->${result.afterReportNumber ?? '?'}` +
         `${result.confirmationUnknown ? ', confirmation=paper-required' : ''})`,
       );
@@ -179,8 +193,8 @@ export class FiscalDailyReportModule extends BaseModule {
       } else {
         fiscalDailyReportRunRepo.markFailed(row.id, message);
       }
-      await this.flushRunState('failure', now.date);
-      logger.error(`[FiscalDailyReport] Automatic fiscal daily report failed for ${now.date}: ${message}`);
+      await this.flushRunState('failure', target.reportDate);
+      logger.error(`[FiscalDailyReport] Automatic fiscal daily report failed for ${target.reportDate}: ${message}`);
     } finally {
       this.inFlight = false;
     }
@@ -271,9 +285,6 @@ function isRetryDue(updatedAt: string, retryMinutes: number, nowMs = Date.now())
   return nowMs - updated >= retryMinutes * 60_000;
 }
 
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));

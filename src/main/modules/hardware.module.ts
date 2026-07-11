@@ -72,6 +72,10 @@ import { app } from 'electron';
 import logger from '../logger';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
 import { classifyPrintFailureAfterDriverCall } from '../printing/print-failure-classifier';
+import {
+  getFiscalDailyReportDate,
+  getFiscalDailyReportDateFromDbTimestamp,
+} from '../fiscal/fiscal-daily-report-date';
 
 type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
@@ -373,7 +377,7 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.PRINT_FISCAL_DAILY_REPORT_NOW, async (): Promise<FiscalDailyReportPrintResponse> => {
-      const reportDate = getFiscalDailyReportDate(new Date());
+      const reportDate = resolveManualFiscalDailyReportDate(new Date());
       let manualRunId: string | null = null;
       try {
         const dailyReportConfig = getConfig().fiscalDailyReport;
@@ -790,7 +794,13 @@ export class HardwareModule extends BaseModule {
   }
 
   async printFiscalDailyReport(data: Partial<DailyReportData> = {}): Promise<FiscalDailyReportResult> {
-    const targetPrinter = this.getPrinterForType(PrinterType.FISCAL);
+    let targetPrinter = this.getPrinterForType(PrinterType.FISCAL);
+    if (!targetPrinter) {
+      logger.warn('[HardwareModule] Fiscal printer not configured before daily report; reinitializing printers...');
+      await this.reinitializePrinter({ connect: true });
+      targetPrinter = this.getPrinterForType(PrinterType.FISCAL);
+    }
+
     if (!targetPrinter) {
       throw new Error('No fiscal printer configured for automatic daily report');
     }
@@ -2862,15 +2872,16 @@ function numberOrUndefined(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function getFiscalDailyReportDate(date: Date): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Warsaw',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-  return `${parts.year}-${parts.month}-${parts.day}`;
+function resolveManualFiscalDailyReportDate(now: Date): string {
+  const latestSuccess = fiscalDailyReportRunRepo.getLatestSuccess();
+  if (latestSuccess?.printed_at) {
+    const latestReceipt = fiscalDailyReportRunRepo.getLatestSuccessfulFiscalReceiptAfter(latestSuccess.printed_at);
+    if (latestReceipt?.occurred_at) {
+      return getFiscalDailyReportDateFromDbTimestamp(latestReceipt.occurred_at);
+    }
+  }
+
+  return getFiscalDailyReportDate(now);
 }
 
 function delay(ms: number): Promise<void> {

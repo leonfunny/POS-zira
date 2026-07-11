@@ -905,7 +905,7 @@ export class EscPosFormatter {
   }
 
   /**
-   * Format Z Report (end of day, zeroing report)
+   * Format shift report printed on the receipt printer.
    */
   formatZReport(reportData: DailyReportData): Buffer {
     const parts: Buffer[] = [];
@@ -913,9 +913,8 @@ export class EscPosFormatter {
     parts.push(ESCPOS.INIT);
     parts.push(ESCPOS.ALIGN_CENTER);
     parts.push(ESCPOS.DOUBLE_SIZE_ON);
-    parts.push(this.text('RAPORT Z'));
+    parts.push(this.text('RAPORT ZMIANY'));
     parts.push(ESCPOS.NORMAL_SIZE);
-    parts.push(this.text('(Raport dobowy fiskalny)'));
     parts.push(this.text(''));
 
     // Remove the header part and add Z report header
