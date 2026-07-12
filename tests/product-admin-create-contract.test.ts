@@ -17,7 +17,7 @@ describe('Product Admin create app contract', () => {
     const createInput = types.match(/export interface ProductAdminCreateProductInput \{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(createInput).not.toContain('retailPrice?:');
 
-    const payloadBlock = dialog.match(/const payload: ProductAdminCreateProductInput = \{[\s\S]*?\n    \};/)?.[0] ?? '';
+    const payloadBlock = dialog.match(/const basePayload: Omit<ProductAdminCreateProductInput[\s\S]*?\n    \};/)?.[0] ?? '';
     expect(payloadBlock).toContain('priceGrossGrosze: validation.priceGrossGrosze');
     expect(payloadBlock).not.toContain('retailPrice:');
 
@@ -37,7 +37,7 @@ describe('Product Admin create app contract', () => {
     expect(dialog).toContain('product.sku?.trim() === normalizedSku');
 
     const submit = dialog.match(/const handleSubmit = async \(\) => \{[\s\S]*?\n  \};/)?.[0] ?? '';
-    const createCallIndex = submit.indexOf('window.electronAPI.pos.productAdmin.createProduct(payload)');
+    const createCallIndex = submit.indexOf('window.electronAPI.pos.productAdmin.createProduct({');
     const barcodeDuplicateIndex = submit.indexOf('getDuplicateBarcodeMessage(normalizedBarcode)');
     const skuDuplicateIndex = submit.indexOf('product.sku?.trim() === normalizedSku');
     expect(createCallIndex).toBeGreaterThanOrEqual(0);
