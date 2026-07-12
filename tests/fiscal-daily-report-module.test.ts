@@ -79,7 +79,22 @@ describe('FiscalDailyReportModule scheduling policy', () => {
     })).toEqual({ shouldRun: true, reason: 'ready' });
   });
 
-  it('stops retrying after max attempts for the scheduled slot', () => {
+  it('stops retrying after max attempts within the same Warsaw day', () => {
+    // updated_at 21:58Z = 23:58 Warsaw (CEST) on 06-13; nowMs 21:59Z = 23:59
+    // Warsaw, still 06-13 — budget exhausted, no retry.
+    expect(shouldAttemptFiscalDailyReport({
+      latestSuccess: null,
+      hasReceiptAfterLatestSuccess: true,
+      scheduledRun: { status: 'FAILED', attempts: 3, updated_at: '2026-06-13 21:58:00' },
+      retryMinutes: 5,
+      maxAttempts: 3,
+      nowMs: Date.parse('2026-06-13T21:59:00Z'),
+    })).toEqual({ shouldRun: false, reason: 'max_attempts_reached' });
+  });
+
+  it('resets the exhausted budget once the Warsaw day rolls over (missed Z-report is overdue)', () => {
+    // Same exhausted 06-13 slot, but now it is 00:10 Warsaw on 06-14
+    // (22:10Z) — the missed raport dobowy must print, not stay blocked forever.
     expect(shouldAttemptFiscalDailyReport({
       latestSuccess: null,
       hasReceiptAfterLatestSuccess: true,
@@ -87,6 +102,6 @@ describe('FiscalDailyReportModule scheduling policy', () => {
       retryMinutes: 5,
       maxAttempts: 3,
       nowMs: Date.parse('2026-06-13T22:10:00Z'),
-    })).toEqual({ shouldRun: false, reason: 'max_attempts_reached' });
+    })).toEqual({ shouldRun: true, reason: 'ready' });
   });
 });

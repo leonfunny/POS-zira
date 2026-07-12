@@ -11,6 +11,8 @@ import type { HardwareModule } from './hardware.module';
 import logger from '../logger';
 import {
   FISCAL_DAILY_REPORT_TIMEZONE,
+  getFiscalDailyReportDate,
+  getFiscalDailyReportDateFromDbTimestamp,
   resolveFiscalDailyReportTarget,
 } from '../fiscal/fiscal-daily-report-date';
 
@@ -21,6 +23,18 @@ const DEFAULT_RETRY_MINUTES = 5;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const MAX_ATTEMPTS = 6;
 const TICK_MS = 30_000;
+// Cold start: how far back to look for a confirmed fiscal receipt to anchor the
+// catch-up scan when there is no previous successful daily-report run yet.
+const COLD_START_LOOKBACK_DAYS = 7;
+
+// Latest UTC instant `days` ago, formatted like the DB timestamps
+// (`YYYY-MM-DD HH:MM:SS`) so it can be compared against fiscal_attempts.
+function lookbackCutoffTimestamp(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace('T', ' ');
+}
 
 interface FiscalDailyReportConfig {
   enabled?: boolean;
@@ -114,9 +128,14 @@ export class FiscalDailyReportModule extends BaseModule {
     const scheduledMinute = config.hour * 60 + config.minute;
     const currentMinute = now.hour * 60 + now.minute;
     const latestSuccess = fiscalDailyReportRunRepo.getLatestSuccess();
+    // Cold start: a till that has been selling (fiscal_attempts exist) but never
+    // ran an automatic daily report — fresh install or feature just enabled —
+    // has no latestSuccess to anchor the catch-up on, so a recently missed
+    // Z-report would never print automatically. Fall back to the most recent
+    // confirmed fiscal receipt within the lookback window.
     const latestReceiptAfterLatestSuccess = latestSuccess?.printed_at
       ? fiscalDailyReportRunRepo.getLatestSuccessfulFiscalReceiptAfter(latestSuccess.printed_at)
-      : null;
+      : fiscalDailyReportRunRepo.getLatestSuccessfulFiscalReceiptAfter(lookbackCutoffTimestamp(COLD_START_LOOKBACK_DAYS));
     const target = resolveFiscalDailyReportTarget({
       nowDate: now.date,
       currentMinute,
@@ -232,7 +251,22 @@ export function shouldAttemptFiscalDailyReport(input: FiscalDailyReportDecisionI
     return { shouldRun: false, reason: 'schedule_already_success' };
   }
   if (input.scheduledRun && input.scheduledRun.attempts >= input.maxAttempts) {
-    return { shouldRun: false, reason: 'max_attempts_reached' };
+    // Day-rollover reset: the attempt budget is spent per scheduled run, but a
+    // missed daily Z-report (raport dobowy) becomes legally overdue once the
+    // Europe/Warsaw calendar day turns over. Catch-up reuses the missed day's
+    // scheduledFor key, so without this the exhausted budget would block the
+    // report forever (e.g. ELZAB powered off through the 23:58 window +
+    // boot-time retries burned before the shop opens). Once the day changes,
+    // allow a fresh attempt instead of never printing it automatically again.
+    const spentDate = input.scheduledRun.updated_at
+      ? getFiscalDailyReportDateFromDbTimestamp(input.scheduledRun.updated_at)
+      : null;
+    const nowDate = input.nowMs != null ? getFiscalDailyReportDate(new Date(input.nowMs)) : null;
+    if (!spentDate || !nowDate || spentDate === nowDate) {
+      return { shouldRun: false, reason: 'max_attempts_reached' };
+    }
+    // New Warsaw day since attempts were exhausted — fall through and retry.
+    return { shouldRun: true, reason: 'ready' };
   }
   if (input.scheduledRun?.updated_at && !isRetryDue(input.scheduledRun.updated_at, input.retryMinutes, input.nowMs)) {
     return { shouldRun: false, reason: 'retry_not_due' };
