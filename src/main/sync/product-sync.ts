@@ -73,7 +73,7 @@ export class ProductSync {
     }
 
     database.transaction(() => {
-      if (data.categories.length > 0) {
+      if (data.categories.length > 0 && data.categoriesAuthoritative !== false) {
         productRepo.upsertCategories(data.categories);
         const keepCategoryIds = new Set(data.categories.map((c: any) => c.id));
         const pruned = productRepo.deleteCategoriesExcept(keepCategoryIds);
@@ -83,6 +83,13 @@ export class ProductSync {
             .join(', ');
           logger.info(`[ProductSync] Pruned ${pruned.removed} categories deleted on backend: ${names}`);
         }
+      } else if (data.categories.length > 0) {
+        // The authoritative category list could not be fetched (public-categories
+        // endpoint failed). Upsert what the product payload embedded, but DO NOT
+        // prune — a transient endpoint failure must never delete local categories
+        // or NULL product_variants.category_id.
+        productRepo.upsertCategories(data.categories);
+        logger.warn('[ProductSync] Category list not authoritative — upserted embedded categories, prune skipped');
       }
       if (data.products.length > 0) {
         productRepo.upsertMany(data.products);

@@ -1693,7 +1693,7 @@ export class ApiClient {
   async getPosProducts(
     token: string,
     since?: string,
-  ): Promise<{ products: any[]; categories: any[]; nextSince?: string; serverTime?: string; deletedIds?: string[] }> {
+  ): Promise<{ products: any[]; categories: any[]; categoriesAuthoritative?: boolean; nextSince?: string; serverTime?: string; deletedIds?: string[] }> {
     const baseParams = new URLSearchParams({ limit: '100' });
     if (since) baseParams.set('since', since);
 
@@ -1793,6 +1793,10 @@ export class ApiClient {
       };
     };
 
+    // Tracks whether the authoritative category list was actually retrieved.
+    // A failed public-categories fetch must NOT be treated as "no categories",
+    // otherwise full sync prunes every local category on a transient error.
+    let publicCategoriesAuthoritative = true;
     const fetchPublicCategories = async (): Promise<any[]> => {
       try {
         const url = `${this.baseUrl}/api/v1/warehouse/public/categories`;
@@ -1809,6 +1813,7 @@ export class ApiClient {
           .map(normalizeCategory)
           .filter((category): category is any => !!category);
       } catch (err: any) {
+        publicCategoriesAuthoritative = false;
         logger.warn(`[ApiClient] Public category sync skipped: ${err?.message ?? err}`);
         return [];
       }
@@ -1994,6 +1999,7 @@ export class ApiClient {
     return {
       products,
       categories: Array.from(categoryMap.values()),
+      categoriesAuthoritative: publicCategoriesAuthoritative,
       nextSince: lastNextSince,
       serverTime: lastServerTime,
       deletedIds: deletedIds.length > 0 ? deletedIds : undefined,
