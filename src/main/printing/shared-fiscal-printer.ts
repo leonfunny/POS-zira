@@ -18,7 +18,9 @@ import {
   getPrintJobId,
   normalizePrintJobStatus,
   SHARED_FISCAL_RETRY_COMPLETION_TIMEOUT_MS,
+  SHARED_FISCAL_TOTAL_WAIT_MS,
   SHARED_PRINT_RETRY_DELAYS_MS,
+  shouldMintFreshFiscalKey,
 } from './shared-print-retry-policy';
 
 const SHARED_FISCAL_ROLE: SalonPrinterRole = 'FISCAL_RECEIPT';
@@ -41,6 +43,10 @@ export interface SharedFiscalPrintResult {
   status?: string;
   sent?: boolean;
   failureClass?: PrintJobFailureClass | null;
+  // The job outlived the polling budget but is not a confirmed failure — the
+  // paragon may still be feeding on POS1. Callers must NOT treat this as a hard
+  // failure that provokes a duplicate reprint.
+  stillPrinting?: boolean;
   error?: string;
 }
 
@@ -88,6 +94,17 @@ function isUnsupportedIdempotencyFieldError(err: unknown): boolean {
     /idempotencyKey/i.test(message)
   );
 }
+
+// Same idempotencyKey reused for a different job/payload -> backend 409
+// (see docs/server-change-requests/2026-06-29-safe-print-retry-backend-contract-AS-BUILT.md).
+function isIdempotencyConflictError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return (
+    /same idempotencyKey/i.test(message) ||
+    (/\b409\b/.test(message) && /idempotenc/i.test(message))
+  );
+}
+
 
 function createClient(): ApiClient {
   const config = getConfig();
@@ -148,8 +165,9 @@ async function waitForFiscalRetryCompletion(
   apiKey: string | null,
   machineId: string | undefined,
   jobId: string,
+  deadlineMs?: number,
 ): Promise<CreatePrintJobResponse> {
-  const deadline = Date.now() + SHARED_FISCAL_RETRY_COMPLETION_TIMEOUT_MS;
+  const deadline = deadlineMs ?? Date.now() + SHARED_FISCAL_RETRY_COMPLETION_TIMEOUT_MS;
   let latest: CreatePrintJobResponse = { jobId, status: 'SENT' };
 
   while (Date.now() < deadline) {
@@ -180,8 +198,26 @@ async function resolveFinalFiscalResult(
   initial: CreatePrintJobResponse,
 ): Promise<SharedFiscalPrintResult> {
   let current = initial;
+  // The ELZAB paragon on POS1 keeps feeding after the 10s backend hold returns
+  // (measured 9.2-19.8s). Poll to this budget before giving any verdict so a
+  // slow-but-successful fiscal receipt is not journaled FAILED — which is what
+  // provoked cashiers to reprint and risk a duplicate paragon.
+  const totalDeadline = Date.now() + SHARED_FISCAL_TOTAL_WAIT_MS;
+  let safeRetriesUsed = 0;
 
-  for (let retryIndex = 0; retryIndex <= SHARED_PRINT_RETRY_DELAYS_MS.length; retryIndex++) {
+  const stillPrintingResult = (jobId: string | undefined, status: string): SharedFiscalPrintResult => ({
+    handled: true,
+    printed: false,
+    printerId,
+    jobId,
+    status: status || 'IN_FLIGHT',
+    sent: current.sent,
+    failureClass: current.failureClass ?? null,
+    stillPrinting: true,
+    error: `Remote fiscal job ${jobId || 'unknown'} still printing on POS1 after ${Math.round(SHARED_FISCAL_TOTAL_WAIT_MS / 1000)}s — check the ELZAB printout before reprinting`,
+  });
+
+  for (;;) {
     const jobId = getPrintJobId(current);
     const status = normalizePrintJobStatus(current);
     const decision = classifySharedPrintResponse('FISCAL_RECEIPT', current);
@@ -190,30 +226,43 @@ async function resolveFinalFiscalResult(
       return { handled: true, printed: true, printerId, jobId, status, sent: current.sent, failureClass: current.failureClass ?? null };
     }
 
-    if (decision.decision !== 'AUTO_RETRY_SAFE' || !jobId || retryIndex >= SHARED_PRINT_RETRY_DELAYS_MS.length) {
+    // Job accepted but not terminal yet — keep polling to the budget. The old
+    // code lumped this into the non-retryable stop branch and returned
+    // printed:false, so every fiscal receipt that outlived the 10s hold
+    // surfaced as a failure while the paragon was still feeding.
+    if (decision.decision === 'ALREADY_IN_FLIGHT' && jobId) {
+      if (Date.now() >= totalDeadline) return stillPrintingResult(jobId, status);
+      current = await waitForFiscalRetryCompletion(client, token, apiKey, machineId, jobId, totalDeadline);
+      if (current.timedOut) return stillPrintingResult(getPrintJobId(current) || jobId, normalizePrintJobStatus(current));
+      continue;
+    }
+
+    if (decision.decision !== 'AUTO_RETRY_SAFE' || !jobId || safeRetriesUsed >= SHARED_PRINT_RETRY_DELAYS_MS.length) {
       const rawError = current.errorMessage || current.message || current.retryBlockedReason || decision.reason;
-      const error = (
-        decision.decision === 'STOP_RECONCILE_REQUIRED' ||
-        decision.decision === 'ALREADY_IN_FLIGHT'
-      )
+      const error = decision.decision === 'STOP_RECONCILE_REQUIRED'
         ? `Remote fiscal job ${jobId || 'unknown'} is not safe to retry automatically (${rawError}). Check POS1/ELZAB paper and job status before retrying.`
         : rawError;
       return { handled: true, printed: false, printerId, jobId, status, sent: current.sent, failureClass: current.failureClass ?? null, error: String(error) };
     }
 
-    await delay(SHARED_PRINT_RETRY_DELAYS_MS[retryIndex]);
-    const retryAttemptNo = retryIndex + 1;
-    const retryResult = await safeRetryFiscalJob(client, token, apiKey, machineId, jobId, retryAttemptNo);
+    await delay(SHARED_PRINT_RETRY_DELAYS_MS[safeRetriesUsed]);
+    safeRetriesUsed += 1;
+    const retryResult = await safeRetryFiscalJob(client, token, apiKey, machineId, jobId, safeRetriesUsed);
     if (retryResult.retryAllowed !== true || retryResult.sent !== true) {
       current = retryResult;
       continue;
     }
 
-    logger.info(`[SharedFiscalPrinter] safe retry #${retryAttemptNo} re-dispatched fiscal job ${jobId}`);
-    current = await waitForFiscalRetryCompletion(client, token, apiKey, machineId, jobId);
+    logger.info(`[SharedFiscalPrinter] safe retry #${safeRetriesUsed} re-dispatched fiscal job ${jobId}`);
+    current = await waitForFiscalRetryCompletion(
+      client,
+      token,
+      apiKey,
+      machineId,
+      jobId,
+      Math.max(totalDeadline, Date.now() + SHARED_FISCAL_RETRY_COMPLETION_TIMEOUT_MS),
+    );
   }
-
-  return { handled: true, printed: false, printerId, error: 'Shared fiscal retry exhausted' };
 }
 
 async function resolveSharedFiscalPrinter(
@@ -336,31 +385,67 @@ export async function submitSharedFiscalPrint(
       `[SharedFiscalPrinter] creating POS_FISCAL_RECEIPT job for fiscal printer ${route.printerId} ` +
       `paymentMethod=${String(receiptData.payment?.method || 'none')}`,
     );
-    let result: CreatePrintJobResponse;
-    try {
-      result = await createFiscalJob(client, token, apiKey, config.machineId, body);
-    } catch (err) {
-      if (!body.idempotencyKey || !isUnsupportedIdempotencyFieldError(err)) throw err;
-      logger.warn('[SharedFiscalPrinter] Backend does not accept idempotencyKey yet; using legacy fiscal create without auto retry');
-      const { idempotencyKey: _idempotencyKey, ...legacyBody } = body;
-      result = await createFiscalJob(client, token, apiKey, config.machineId, legacyBody);
-    }
-    const jobId = (result.jobId || result.id) as string | undefined;
-    const status = finalStatusFromResponse(result);
 
-    const final = await resolveFinalFiscalResult(client, token, apiKey, config.machineId, route.printerId, result);
-    if (final.printed) {
-      logger.info(`[SharedFiscalPrinter] fiscal receipt completed on shared printer ${route.printerId}${jobId ? ` as job ${jobId}` : ''}`);
-      return final;
-    }
+    let attemptKey = idempotencyKey;
+    let freshKeyUsed = false;
+    // At most two iterations: the once-per-order key, then ONE fresh-key
+    // re-issue if that job is wedged (terminal SAFE_BEFORE_PRINT).
+    for (;;) {
+      const attemptBody: CreatePrintJobRequest = { ...body };
+      if (attemptKey) attemptBody.idempotencyKey = attemptKey;
+      else delete (attemptBody as { idempotencyKey?: string }).idempotencyKey;
 
-    const responseMessage = final.error || result.errorMessage || result.message;
-    const finalStatus = final.status || status;
-    const error = finalStatus
-      ? `Shared fiscal print ${finalStatus.toLowerCase()}${responseMessage ? `: ${responseMessage}` : ''}`
-      : 'Backend did not return final COMPLETED status for fiscal receipt job';
-    logger.error(`[SharedFiscalPrinter] ${error}${jobId ? ` (${jobId})` : ''}`);
-    return { ...final, error };
+      let result: CreatePrintJobResponse;
+      try {
+        result = await createFiscalJob(client, token, apiKey, config.machineId, attemptBody);
+      } catch (err) {
+        if (isIdempotencyConflictError(err)) {
+          // Same key, different payload — blind retries only repeat this 409.
+          logger.error(`[SharedFiscalPrinter] Idempotency conflict for key ${attemptKey || 'n/a'}: ${(err as any)?.message || err}`);
+          return {
+            handled: true,
+            printed: false,
+            printerId: route.printerId,
+            error: 'A fiscal job for this order already exists on the shared printer — check the ELZAB printout on POS1 first, then use Reprint if a copy is really needed',
+          };
+        }
+        if (attemptBody.idempotencyKey && isUnsupportedIdempotencyFieldError(err)) {
+          logger.warn('[SharedFiscalPrinter] Backend does not accept idempotencyKey yet; using legacy fiscal create without auto retry');
+          const { idempotencyKey: _idempotencyKey, ...legacyBody } = attemptBody;
+          result = await createFiscalJob(client, token, apiKey, config.machineId, legacyBody);
+        } else {
+          throw err;
+        }
+      }
+      const jobId = (result.jobId || result.id) as string | undefined;
+      const status = finalStatusFromResponse(result);
+
+      const final = await resolveFinalFiscalResult(client, token, apiKey, config.machineId, route.printerId, result);
+      if (final.printed) {
+        logger.info(`[SharedFiscalPrinter] fiscal receipt completed on shared printer ${route.printerId}${jobId ? ` as job ${jobId}` : ''}`);
+        return final;
+      }
+
+      // Unwedge: the once-per-order key produced a job that terminally failed
+      // BEFORE the paragon printed and can no longer auto-retry. Re-issue ONCE
+      // under a fresh key so the never-printed receipt can still be produced.
+      // shouldMintFreshFiscalKey gates this so it NEVER fires for a job that
+      // might already have printed (no duplicate paragon).
+      if (!freshKeyUsed && attemptKey && shouldMintFreshFiscalKey(final)) {
+        freshKeyUsed = true;
+        attemptKey = buildSharedPrintIdempotencyKey('fiscal', config.machineId, String(referenceId || ''), `reprint-${Date.now()}`);
+        logger.warn(`[SharedFiscalPrinter] Fiscal job wedged (status=${final.status}, class=${final.failureClass}); re-issuing once with fresh key ${attemptKey}`);
+        continue;
+      }
+
+      const responseMessage = final.error || result.errorMessage || result.message;
+      const finalStatus = final.status || status;
+      const error = finalStatus
+        ? `Shared fiscal print ${finalStatus.toLowerCase()}${responseMessage ? `: ${responseMessage}` : ''}`
+        : 'Backend did not return final COMPLETED status for fiscal receipt job';
+      logger.error(`[SharedFiscalPrinter] ${error}${jobId ? ` (${jobId})` : ''}`);
+      return { ...final, error };
+    }
   } catch (err: any) {
     const error = err?.message || String(err);
     logger.error(`[SharedFiscalPrinter] Shared fiscal print failed for printer ${route.printerId}: ${error}`);

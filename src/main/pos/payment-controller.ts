@@ -41,7 +41,7 @@ type SharedReceiptPrinter = (
 type SharedFiscalPrinter = (
   data: ReceiptData,
   meta: { referenceType?: string; referenceId?: string; source?: string },
-) => Promise<{ handled: boolean; printed: boolean; printerId?: string; jobId?: string; error?: string }>;
+) => Promise<{ handled: boolean; printed: boolean; printerId?: string; jobId?: string; stillPrinting?: boolean; error?: string }>;
 type SharedFiscalStatusProvider = () => Promise<{ configured: boolean; connected: boolean; printerId?: string; error?: string }>;
 
 type PrintReceiptOptions = {
@@ -627,6 +627,15 @@ export class PaymentController {
             printJobId: shared.jobId,
           });
           return true;
+        }
+        if (shared.stillPrinting) {
+          // The paragon may still be feeding on POS1 (the job outlived the poll
+          // budget without a terminal verdict). Do NOT journal FAILED — that is
+          // a false record, and it is exactly what pushed cashiers to reprint
+          // and risk a duplicate fiscal receipt. Surface an actionable message
+          // so the operator verifies the ELZAB printout before any reprint.
+          logger.warn(`[Payment] Fiscal job still printing for order ${orderNumberLabel}: ${shared.error}`);
+          throw new Error(shared.error || 'Remote fiscal job still printing — check POS1/ELZAB before reprinting');
         }
         const error = shared.error || 'Remote fiscal printer did not confirm final print completion';
         logger.error(`${failureMessage}: ${error}`);
