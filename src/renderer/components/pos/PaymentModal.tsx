@@ -49,7 +49,7 @@ type PaymentSnapshot = {
 
 type ReceiptRecovery = {
   orderId: string;
-  nextAction: 'close' | 'fiscalPrompt';
+  nextAction: 'close' | 'fiscalPrompt' | 'fiscalRetry';
 };
 
 type LoyaltyLookupState = 'idle' | 'loading' | 'found' | 'not_found' | 'error';
@@ -340,12 +340,15 @@ export default function PaymentModal({
     if (onComplete) { onComplete(); } else { onClose(); }
   };
 
-  const showFiscalWarningThenClose = (warning: string) => {
-    setPrintWarning(warning);
+  // A failed fiscal receipt (the paragon is required by Polish fiscal law) must
+  // NOT silently complete the sale. Instead of auto-closing behind a 4s toast,
+  // enter a persistent recovery state so the cashier explicitly retries the
+  // fiscal print or acknowledges completing without it. The order is already
+  // saved and journaled, so it stays reprintable from Order History / reconcile.
+  const enterFiscalRecovery = (orderId: string, warning: string) => {
     setSavingLabel('');
-    setTimeout(() => {
-      finishCompletedPayment();
-    }, 4000);
+    setPrintWarning(warning);
+    setReceiptRecovery({ orderId, nextAction: 'fiscalRetry' });
   };
 
   const printFiscalReceiptForOrder = async (orderId: string): Promise<string | null> => {
@@ -367,14 +370,15 @@ export default function PaymentModal({
     const warning = await printFiscalReceiptForOrder(orderId);
     setReceiptRetrying(false);
     setSavingLabel('');
-    setReceiptRecovery(null);
-    setPrintWarning(null);
 
     if (warning) {
-      showFiscalWarningThenClose(warning);
+      // Fiscal retry failed again — stay in the recovery state, do not close.
+      enterFiscalRecovery(orderId, warning);
       return;
     }
 
+    setReceiptRecovery(null);
+    setPrintWarning(null);
     finishCompletedPayment();
   };
 
@@ -533,9 +537,26 @@ export default function PaymentModal({
     const printOrderCopy = hasCash || hasBlik;
     const printOrderCopyWithDrawer = hasCash;
     const autoPrintFiscal = !printOrderCopy && method !== 'INVOICE';
+
+    // Guard against a raced mount-time probe: a fast checkout can complete
+    // before hasFiscalPrinter() resolved, leaving the flag at its initial
+    // false. When fiscalization is expected (card/transfer, or cash in
+    // 'always' mode), re-check now so a legally required paragon is not
+    // silently skipped just because the probe hadn't returned yet.
+    let effectiveHasFiscalPrinter = hasFiscalPrinter;
+    if (!effectiveHasFiscalPrinter && (autoPrintFiscal || fiscalOnCashSale === 'always')) {
+      try {
+        const probe = await window.electronAPI.pos.payment.hasFiscalPrinter();
+        effectiveHasFiscalPrinter = !!probe?.configured;
+        if (effectiveHasFiscalPrinter !== hasFiscalPrinter) setHasFiscalPrinter(effectiveHasFiscalPrinter);
+      } catch (err) {
+        rlog.warn('[PaymentModal] Fiscal printer re-probe failed:', err);
+      }
+    }
+
     const fiscalAction = resolveFiscalAction({
       printOrderCopy,
-      hasFiscalPrinter,
+      hasFiscalPrinter: effectiveHasFiscalPrinter,
       method,
       mode: fiscalOnCashSale,
     });
@@ -562,7 +583,7 @@ export default function PaymentModal({
 
     let fiscalWarning: string | null = null;
     if (autoPrintFiscal) {
-      if (!hasFiscalPrinter) {
+      if (!effectiveHasFiscalPrinter) {
         rlog.warn('[PaymentModal] No fiscal printer configured; skipping fiscal receipt for non-cash payment');
       } else {
         setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
@@ -611,7 +632,7 @@ export default function PaymentModal({
     }
 
     if (fiscalWarning) {
-      showFiscalWarningThenClose(fiscalWarning);
+      enterFiscalRecovery(orderId, fiscalWarning);
       return;
     }
 
@@ -637,7 +658,7 @@ export default function PaymentModal({
     setFiscalPrompt(null);
 
     if (warning) {
-      showFiscalWarningThenClose(warning);
+      enterFiscalRecovery(orderId, warning);
       return;
     }
 
@@ -671,6 +692,13 @@ export default function PaymentModal({
   const handleRetryReceipt = async () => {
     const recovery = receiptRecovery;
     if (!recovery || receiptRetrying) return;
+
+    if (recovery.nextAction === 'fiscalRetry') {
+      // Recovery entered because the fiscal receipt failed — retry the fiscal
+      // print, not the thermal order copy.
+      await printFiscalFromRecovery(recovery.orderId);
+      return;
+    }
 
     setReceiptRetrying(true);
     setSavingLabel(t('test.printing') || 'Printing...');
@@ -1786,7 +1814,9 @@ export default function PaymentModal({
                 <p className="font-semibold text-slate-950">{activeMethodLabel}</p>
                 <p className="truncate">
                   {receiptRecovery
-                    ? tOr('pos.payment.orderSavedPrintPending', 'Order saved - receipt still needs printing')
+                    ? (receiptRecovery.nextAction === 'fiscalRetry'
+                        ? tOr('pos.payment.orderSavedFiscalPending', 'Order saved - fiscal receipt still needs printing')
+                        : tOr('pos.payment.orderSavedPrintPending', 'Order saved - receipt still needs printing'))
                     : splitMode
                     ? `${tOr('pos.split.remaining', 'Remaining')}: ${money(Math.max(remaining, 0))}`
                     : `${t('pos.cart.total')}: ${money(grandTotal)}`}
@@ -1801,7 +1831,11 @@ export default function PaymentModal({
                   disabled={receiptRetrying}
                   className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
                 >
-                  {receiptRetrying ? (savingLabel || tOr('test.printing', 'Printing...')) : tOr('pos.payment.retryReceipt', 'Retry order print')}
+                  {receiptRetrying
+                    ? (savingLabel || tOr('test.printing', 'Printing...'))
+                    : receiptRecovery?.nextAction === 'fiscalRetry'
+                      ? tOr('pos.payment.retryFiscal', 'Retry fiscal receipt')
+                      : tOr('pos.payment.retryReceipt', 'Retry order print')}
                 </button>
                 <button
                   type="button"
@@ -1809,7 +1843,9 @@ export default function PaymentModal({
                   disabled={receiptRetrying}
                   className="min-h-[56px] flex-1 rounded-md border border-amber-300 bg-amber-50 px-5 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {tOr('pos.payment.continueWithoutReceipt', 'Continue without print')}
+                  {receiptRecovery?.nextAction === 'fiscalRetry'
+                    ? tOr('pos.payment.continueWithoutFiscal', 'Complete without fiscal receipt')
+                    : tOr('pos.payment.continueWithoutReceipt', 'Continue without print')}
                 </button>
               </div>
             ) : (
