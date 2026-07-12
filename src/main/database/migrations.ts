@@ -1592,4 +1592,30 @@ export const migrations: Migration[] = [
       ALTER TABLE product_variants ADD COLUMN track_inventory INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  {
+    version: 54,
+    name: 'shift_close_sync_reopen_recent',
+    // v52 blanket-marked EVERY closed backend shift close_synced=1, including
+    // shifts that were CLOSED OFFLINE and never delivered their close to the
+    // backend. Under the new retry query (COALESCE(close_synced,0)=0) those
+    // genuinely-pending closes are dropped forever, leaving the server shift
+    // dangling open with no closing_cash.
+    //
+    // Re-open ONLY recently-closed shifts (last 14 days) so the new bounded
+    // reconcile drains real pending closes on next reconnect. Already-delivered
+    // closes get one idempotent re-attempt that the backend answers terminal
+    // (404 / already-closed) and isTerminalShiftCloseError shelves to -1 within
+    // max attempts — no infinite loop. Window is limited to bound the one-time
+    // close-sync API burst to shifts from around the upgrade window; stale
+    // offline closes older than 14 days are intentionally left as-is.
+    up: `
+      UPDATE shifts
+         SET close_synced = 0,
+             close_sync_attempts = 0
+       WHERE closed_at IS NOT NULL
+         AND backend_id IS NOT NULL
+         AND close_synced = 1
+         AND closed_at >= datetime('now', '-14 days');
+    `,
+  },
 ];
