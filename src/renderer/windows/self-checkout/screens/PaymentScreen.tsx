@@ -191,6 +191,15 @@ export default function PaymentScreen({
         return;
       }
 
+      // The main-process gate fails closed when no real staff code is set (or it
+      // is still the legacy default). That is a configuration problem, not a
+      // wrong guess — surface it without spending the lockout budget.
+      if ((result as { reason?: string } | undefined)?.reason === 'not_configured') {
+        setPinCode('');
+        setPinError(t.staffPinNotConfigured);
+        return;
+      }
+
       const nextGate = recordFailure(pinGate, now);
       const enteredLock = canAttempt(pinGate, now) && !canAttempt(nextGate, now);
       setPinGate(nextGate);

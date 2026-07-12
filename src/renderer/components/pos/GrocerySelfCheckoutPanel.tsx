@@ -53,6 +53,7 @@ export default function GrocerySelfCheckoutPanel({
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
   const [monitor, setMonitor] = useState<number>(0);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number>(90000);
+  const [staffCode, setStaffCode] = useState<string>('');
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [opening, setOpening] = useState(false);
 
@@ -63,6 +64,7 @@ export default function GrocerySelfCheckoutPanel({
     setMode(c.selfCheckoutMode === 'production' ? 'production' : 'demo');
     setMonitor(typeof c.selfCheckoutMonitor === 'number' ? c.selfCheckoutMonitor : 0);
     setIdleTimeoutMs(typeof c.selfCheckoutIdleTimeoutMs === 'number' ? c.selfCheckoutIdleTimeoutMs : 90000);
+    setStaffCode(typeof c.selfCheckoutStaffCode === 'string' ? c.selfCheckoutStaffCode : '');
   }, [config]);
 
   useEffect(() => {
@@ -98,6 +100,15 @@ export default function GrocerySelfCheckoutPanel({
       ? t('selfCheckout.blocked')
       : t('selfCheckout.mode.production');
 
+  const staffCodeLabel =
+    uiLanguage === 'pl' ? 'Kod personelu (kiosk)' : uiLanguage === 'vi' ? 'Mã nhân viên (kiosk)' : 'Staff code (kiosk)';
+  const staffCodeHelp =
+    uiLanguage === 'pl'
+      ? 'Wymagany do potwierdzenia płatności w kiosku. Puste lub „123456" = zablokowane.'
+      : uiLanguage === 'vi'
+        ? 'Bắt buộc để duyệt thanh toán ở kiosk. Trống hoặc "123456" = khoá.'
+        : 'Required to authorize kiosk assisted payments. Empty or "123456" = blocked.';
+
   const persist = async (patch: Record<string, any>) => {
     try {
       await saveConfig(patch);
@@ -117,6 +128,7 @@ export default function GrocerySelfCheckoutPanel({
         selfCheckoutLanguage: kioskLanguage,
         selfCheckoutMonitor: monitor,
         selfCheckoutIdleTimeoutMs: idleTimeoutMs,
+        selfCheckoutStaffCode: staffCode.trim(),
       });
       const result = await window.electronAPI.window.open('selfCheckout');
       if (!result?.success) {
@@ -364,6 +376,23 @@ export default function GrocerySelfCheckoutPanel({
               <option value={120000}>{t('selfCheckout.timeout.2m')}</option>
               <option value={300000}>{t('selfCheckout.timeout.5m')}</option>
             </select>
+          </SettingField>
+
+          <SettingField
+            icon={<ShieldAlert size={17} />}
+            label={staffCodeLabel}
+            help={staffCodeHelp}
+          >
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={staffCode}
+              onChange={(e) => setStaffCode(e.target.value)}
+              onBlur={() => persist({ selfCheckoutStaffCode: staffCode.trim() })}
+              placeholder="••••"
+              className="h-11 w-full rounded-lg border border-[var(--sand-300)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+            />
           </SettingField>
         </div>
       </section>

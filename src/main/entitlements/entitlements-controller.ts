@@ -16,6 +16,16 @@ import {
   DeleteConfirmConfig,
 } from '../../shared/types';
 import { getConfig, setConfig, getSecureAuthToken } from '../config/store';
+import {
+  evaluateStaffVerify,
+  initialStaffVerifyGate,
+  StaffVerifyGate,
+} from '../../shared/self-checkout-staff-verify';
+
+// Main-process lockout state for the self-checkout assisted-payment gate.
+// Owned here (not in the renderer) so re-opening the payment window cannot
+// reset the brute-force counter on a public kiosk.
+let selfCheckoutStaffGate: StaffVerifyGate = initialStaffVerifyGate;
 
 // Default delete confirmation config
 const DEFAULT_DELETE_CONFIRM: DeleteConfirmConfig = {
@@ -287,6 +297,21 @@ export function registerEntitlementsHandlers(mainWindow: BrowserWindow | null) {
     }
 
     return { valid: code === deleteConfig.code };
+  });
+
+  // Verify staff code for a self-checkout assisted payment. Unlike delete-confirm
+  // this NEVER auto-approves: an unconfigured or default '123456' code fails
+  // closed, and the lockout is enforced here in the main process.
+  ipcMain.handle(IPC_CHANNELS.SELF_CHECKOUT_STAFF_VERIFY, async (_event, code: string) => {
+    const config = getConfig();
+    const { gate, result } = evaluateStaffVerify(
+      selfCheckoutStaffGate,
+      String(code ?? ''),
+      config.selfCheckoutStaffCode,
+      Date.now(),
+    );
+    selfCheckoutStaffGate = gate;
+    return result;
   });
 
   console.log('[Entitlements] IPC handlers registered');

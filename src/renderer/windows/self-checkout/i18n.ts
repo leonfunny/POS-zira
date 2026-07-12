@@ -133,6 +133,7 @@ interface ScStrings {
   staffPinConfirm: string;
   staffPinCancel: string;
   staffPinError: string;
+  staffPinNotConfigured: string;
   staffPinLocked: string;
   staffPinBackspace: string;
   replayVoice: string;
@@ -255,6 +256,7 @@ const PL: ScStrings = {
   staffPinConfirm: 'Potwierdź',
   staffPinCancel: 'Anuluj',
   staffPinError: 'Nieprawidłowy kod',
+  staffPinNotConfigured: 'Kod personelu nie jest skonfigurowany. Ustaw go w ustawieniach POS.',
   staffPinLocked: 'Za dużo prób. Poczekaj {seconds} s.',
   staffPinBackspace: 'Usuń cyfrę',
   replayVoice: 'Odtwórz komunikat',
@@ -392,6 +394,7 @@ const EN: ScStrings = {
   staffPinConfirm: 'Confirm',
   staffPinCancel: 'Cancel',
   staffPinError: 'Invalid code',
+  staffPinNotConfigured: 'Staff code is not set. Configure it in POS settings.',
   staffPinLocked: 'Too many attempts. Wait {seconds}s.',
   staffPinBackspace: 'Delete digit',
   replayVoice: 'Replay announcement',
@@ -529,6 +532,7 @@ const VI: ScStrings = {
   staffPinConfirm: 'Xác nhận',
   staffPinCancel: 'Hủy',
   staffPinError: 'Mã không đúng',
+  staffPinNotConfigured: 'Chưa cấu hình mã nhân viên. Đặt mã trong cài đặt POS.',
   staffPinLocked: 'Thử quá nhiều lần. Chờ {seconds} giây.',
   staffPinBackspace: 'Xóa số',
   replayVoice: 'Phát lại',

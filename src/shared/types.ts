@@ -630,6 +630,7 @@ export interface AgentConfig {
   selfCheckoutFakePaymentEnabled?: boolean; // Reserved legacy flag; production checkout ignores it until readiness gates are implemented.
   selfCheckoutLanguage?: 'pl' | 'en' | 'vi';
   selfCheckoutIdleTimeoutMs?: number;    // Auto-reset to welcome after N ms idle
+  selfCheckoutStaffCode?: string;        // Per-terminal staff code that authorizes kiosk assisted payments. Empty/'123456' = fail closed.
   kitchenSelfOrderEnabled?: boolean;      // Separate customer-facing food-order kiosk.
   kitchenSelfOrderMonitor?: number;
   kitchenSelfOrderLanguage?: 'pl' | 'en' | 'vi';
@@ -1525,6 +1526,9 @@ export const IPC_CHANNELS = {
   // Delete Confirmation
   DELETE_CONFIRM_GET_CONFIG: 'delete-confirm:get-config',
   DELETE_CONFIRM_VERIFY: 'delete-confirm:verify',
+
+  // Self-checkout staff authorization (assisted-payment gate)
+  SELF_CHECKOUT_STAFF_VERIFY: 'self-checkout:staff-verify',
 
   // SSH Tunnel
   SSH_TUNNEL_GET_STATUS: 'ssh-tunnel:get-status',
@@ -3559,4 +3563,7 @@ export const ENTITLEMENTS_CHANNELS = {
   // Delete confirmation
   DELETE_CONFIRM_GET_CONFIG: 'delete-confirm:get-config',
   DELETE_CONFIRM_VERIFY: 'delete-confirm:verify',     // Verify code before delete
+
+  // Self-checkout staff authorization (assisted-payment gate)
+  SELF_CHECKOUT_STAFF_VERIFY: 'self-checkout:staff-verify', // Verify staff code before a kiosk assisted payment
 } as const;

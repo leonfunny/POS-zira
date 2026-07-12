@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkStatus: (id: string) =>
       ipcRenderer.invoke('self-checkout:help-status', id),
     staffVerify: (code: string) =>
-      ipcRenderer.invoke(IPC_CHANNELS.DELETE_CONFIRM_VERIFY, code),
+      ipcRenderer.invoke(IPC_CHANNELS.SELF_CHECKOUT_STAFF_VERIFY, code),
     readiness: () => ipcRenderer.invoke('self-checkout:readiness'),
     close: () => ipcRenderer.invoke('self-checkout:close'),
   },

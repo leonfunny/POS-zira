@@ -386,6 +386,9 @@ const store = new Store<AgentConfig>({
     selfCheckoutFakePaymentEnabled: { type: 'boolean', default: false },
     selfCheckoutLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
     selfCheckoutIdleTimeoutMs: { type: 'number', default: 90000 },
+    // Staff code that authorizes a kiosk assisted payment. Empty = fail closed
+    // (assisted payment blocked until the owner sets a real per-terminal code).
+    selfCheckoutStaffCode: { type: 'string', default: '' },
     kitchenSelfOrderEnabled: { type: 'boolean', default: false },
     kitchenSelfOrderMonitor: { type: 'number', default: 0 },
     kitchenSelfOrderLanguage: { type: 'string', enum: ['pl', 'en', 'vi'], default: 'pl' },
