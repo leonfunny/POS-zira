@@ -7,6 +7,7 @@ import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 import Modal from '../shared/Modal';
+import { sanitizeDecimalText } from './decimal-input';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 import { useProductVatRates } from './product-vat-rates';
 import { findDuplicateBarcodeSet } from './scan-match';
@@ -492,13 +493,12 @@ export default function ProductCreateDialog({
                     : tOr(t, 'products.drawer.priceNet', 'Net price')}
                 </span>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min="0"
-                  step="0.01"
+                  autoComplete="off"
                   value={priceNet}
                   onChange={(event) => {
-                    const next = event.target.value;
+                    const next = sanitizeDecimalText(event.target.value);
                     setPriceNet(next);
                     setPriceGross(grossFromNet(next, vatRate));
                   }}
@@ -534,13 +534,12 @@ export default function ProductCreateDialog({
                   : tOr(t, 'products.drawer.priceGross', 'Gross price')}
               </span>
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min="0.01"
-                step="0.01"
+                autoComplete="off"
                 value={priceGross}
                 onChange={(event) => {
-                  const next = event.target.value;
+                  const next = sanitizeDecimalText(event.target.value);
                   setPriceGross(next);
                   setPriceNet(netFromGross(next, vatRate));
                 }}
