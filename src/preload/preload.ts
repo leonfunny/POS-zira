@@ -676,6 +676,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     localVariantImports: {
       listFailed: () => ipcRenderer.invoke('pos:local-variant-imports:listFailed'),
+      listUnresolvedIds: () => ipcRenderer.invoke('pos:local-variant-imports:list-unresolved-ids'),
       requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) =>
         ipcRenderer.invoke('pos:local-variant-imports:requeue', payload),
     },

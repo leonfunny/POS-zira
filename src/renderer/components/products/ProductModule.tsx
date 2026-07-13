@@ -366,6 +366,10 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
   const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
   const [failedImportsOpen, setFailedImportsOpen] = useState(false);
+  // Draft imports still living under their local id (PENDING/FAILED): the
+  // server doesn't know these ids, so the edit view must block product-admin
+  // mutations instead of collecting 404 "Variant not found".
+  const [unresolvedImportIds, setUnresolvedImportIds] = useState<Set<string>>(new Set());
   const consumedOpenVariantIdRef = useRef<string | null>(null);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
@@ -449,6 +453,12 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
       setFailedImports(response?.ok ? (response.imports || []) : []);
     } catch {
       setFailedImports([]);
+    }
+    try {
+      const unresolved = await window.electronAPI.pos.localVariantImports.listUnresolvedIds();
+      setUnresolvedImportIds(new Set(unresolved?.ok ? unresolved.ids : []));
+    } catch {
+      setUnresolvedImportIds(new Set());
     }
   }, []);
 
@@ -814,6 +824,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           canManageCategories={canManageCategories}
           adminBackendReady={adminBackendReady}
           productInCart={selectedProductInCart}
+          importPending={unresolvedImportIds.has(selectedProduct.id)}
           backLabel={isExternalEdit(view) ? externalBackLabel : undefined}
           onBack={returnFromEdit}
           onImportDraft={handleImportDraft}

@@ -1286,6 +1286,19 @@ export class PosModule extends BaseModule {
       count: localVariantImportsRepo.getFailedCount(),
       imports: localVariantImportsRepo.getFailed(),
     }));
+    // Ids the Products tab must treat as "not on the server yet": PENDING
+    // rows plus FAILED ones (both still carry the local draft id). The edit
+    // view blocks product-admin mutations for them instead of letting the
+    // backend answer 404 "Variant not found".
+    ipcMain.handle('pos:local-variant-imports:list-unresolved-ids', () => {
+      try {
+        const pending = Array.from(localVariantImportsRepo.getPendingVariantIds());
+        const failed = localVariantImportsRepo.getFailed().map((row) => row.variant_id);
+        return { ok: true, ids: [...new Set([...pending, ...failed])] };
+      } catch (err: any) {
+        return { ok: false, ids: [], error: err?.message ?? 'list-unresolved-failed' };
+      }
+    });
     ipcMain.handle(
       'pos:local-variant-imports:requeue',
       async (_e, payload: { variantId?: string; ean?: string; categoryId?: string | null }) => {
@@ -1503,6 +1516,19 @@ export class PosModule extends BaseModule {
       | 'canUpdateCategory'
     >;
 
+    // A variant imported from a draft lives locally under the DRAFT id until
+    // ProductSync reconciles it; the server only knows the reconciled id.
+    // Every product-admin mutation must therefore retarget through the alias
+    // map, or the backend answers 404 "Variant not found". Local-mirror
+    // operations keep using the ORIGINAL id — that is the row on screen.
+    const resolveVariantIdAlias = (variantId: string): string => {
+      try {
+        return localVariantImportsRepo.getServerVariantId(variantId) ?? variantId;
+      } catch {
+        return variantId;
+      }
+    };
+
     const withProductAdminCapability = async <T>(
       capability: ProductAdminCapability,
       label: string,
@@ -1577,7 +1603,7 @@ export class PosModule extends BaseModule {
             }
             return apiClient.updateProductVariant(
               token,
-              variantId,
+              resolveVariantIdAlias(variantId),
               canSendDisplayName ? (payload || {}) : legacyPayload,
             );
           },
@@ -1595,7 +1621,7 @@ export class PosModule extends BaseModule {
         const result = await withProductAdminCapability<ProductAdminVariantMutationResponse>(
           'canDeactivateProduct',
           'deactivate variant',
-          (token) => apiClient.deactivateProductVariant(token, variantId, {
+          (token) => apiClient.deactivateProductVariant(token, resolveVariantIdAlias(variantId), {
             ...(payload || {}),
             reason: String(payload?.reason || '').trim() || 'Hidden from POS',
           }),
@@ -1623,7 +1649,7 @@ export class PosModule extends BaseModule {
         return withProductAdminCapability<ProductAdminStockAdjustmentResponse>(
           'canAdjustStock',
           'adjust stock',
-          (token) => apiClient.adjustProductStock(token, variantId, input),
+          (token) => apiClient.adjustProductStock(token, resolveVariantIdAlias(variantId), input),
           (data) => {
             mirrorProductAdminVariant(data.variant, 'product_admin_stock_adjustment');
             refreshProductsAfterProductAdminMutationInBackground('product_admin_stock_adjustment');
@@ -1914,18 +1940,25 @@ export class PosModule extends BaseModule {
         notifyPosRenderers(this.container, 'pos:products-synced');
         const variant = productRepo.getById(variantId);
         let syncPending = true;
+        let resolvedVariant = variant;
         try {
           const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
           const reconciled = await syncMod?.reconcileLocalVariantImports?.(1);
           if (reconciled > 0) {
             syncPending = false;
             await syncMod?.deltaSync?.();
+            // Hand the renderer the SERVER row when it already exists in the
+            // local mirror — opening the edit view on the draft-id alias is
+            // what made every follow-up save 404 with "Variant not found".
+            const serverId = localVariantImportsRepo.getServerVariantId(variantId);
+            const serverVariant = serverId ? productRepo.getById(serverId) : null;
+            resolvedVariant = serverVariant ?? variant;
             notifyPosRenderers(this.container, 'pos:products-synced');
           }
         } catch (syncErr: any) {
           logger.debug(`[PosModule] immediate online draft import skipped: ${syncErr?.message ?? syncErr}`);
         }
-        return { ok: true, outcome: 'LOCAL_IMPORT', variant, syncPending };
+        return { ok: true, outcome: 'LOCAL_IMPORT', variant: resolvedVariant, syncPending };
       } catch (err: any) {
         logger.error(`[PosModule] Local draft import failed for ean=${ean}: ${err?.message ?? err}`);
         return { ok: false, error: err?.message ?? 'local-import-failed' };

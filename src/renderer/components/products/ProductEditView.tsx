@@ -30,6 +30,8 @@ interface ProductEditViewProps {
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
+  /** Draft import not reconciled with the server yet — mutations would 404. */
+  importPending?: boolean;
   backLabel?: string;
   onBack: () => void;
   onImportDraft: (product: ProductListItem) => void;
@@ -92,6 +94,7 @@ export default function ProductEditView({
   canManageCategories,
   adminBackendReady,
   productInCart,
+  importPending = false,
   backLabel,
   onBack,
   onImportDraft,
@@ -133,10 +136,10 @@ export default function ProductEditView({
   const stock = product.available_qty ?? product.in_stock ?? 0;
   const saleClass = classifyProductSale(product);
   const canPrintLabel = !!product.barcode && !labelBusy;
-  const canEditProduct = canUpdateProduct && !product._isDraft;
+  const canEditProduct = canUpdateProduct && !product._isDraft && !importPending;
   const stockTracked = isStockTracked(product);
-  const canOpenStockAdjustment = canAdjustStock && !product._isDraft && stockTracked;
-  const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart;
+  const canOpenStockAdjustment = canAdjustStock && !product._isDraft && stockTracked && !importPending;
+  const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart && !importPending;
   const canReactivate = canUpdateProduct && !product._isDraft && product.is_active === 0;
 
   const handleBack = () => {
@@ -308,6 +311,12 @@ export default function ProductEditView({
             {productInCart && canDeactivateProduct && product.is_active !== 0 && !product._isDraft ? (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
                 {tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it.')}
+              </div>
+            ) : null}
+
+            {importPending ? (
+              <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800">
+                {tOr(t, 'products.import.pendingHint', 'Sản phẩm đang chờ đồng bộ với server — bấm Sync ở tab Products rồi thử lại.')}
               </div>
             ) : null}
 

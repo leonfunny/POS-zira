@@ -794,6 +794,7 @@ interface ElectronAPI {
     };
     localVariantImports: {
       listFailed: () => Promise<{ ok: boolean; count: number; imports: LocalVariantImportFailure[]; error?: string }>;
+      listUnresolvedIds: () => Promise<{ ok: boolean; ids: string[]; error?: string }>;
       requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) => Promise<{ ok: boolean; syncPending?: boolean; variant?: PosProduct | null; error?: string }>;
     };
     categories: {
