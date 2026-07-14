@@ -20,8 +20,6 @@ interface ProductSyncDeps {
 }
 
 const LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS = 50;
-const LOCAL_VARIANT_IMPORT_SAVE_RETRIES = 3;
-const LOCAL_VARIANT_IMPORT_SAVE_RETRY_DELAY_MS = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const localVariantImportReconcileInFlight = new Map<string, Promise<void>>();
 let catalogOperationTail: Promise<void> = Promise.resolve();
@@ -118,27 +116,25 @@ function parseLocalImportScanCreatePayload(payloadJson: string): LocalImportScan
 }
 
 async function flushLocalImportIntentToDisk(): Promise<{ success: true } | { success: false; error: string }> {
-  for (let attempt = 1; attempt <= LOCAL_VARIANT_IMPORT_SAVE_RETRIES; attempt += 1) {
-    const result = await database.save();
-    if (result.success) return { success: true };
-
-    const error = result.error || 'unknown database save error';
-    if (!/already in progress/i.test(error) || attempt === LOCAL_VARIANT_IMPORT_SAVE_RETRIES) {
-      return { success: false, error };
-    }
-    await new Promise((resolve) => setTimeout(resolve, LOCAL_VARIANT_IMPORT_SAVE_RETRY_DELAY_MS));
-  }
-  return { success: false, error: 'database save failed' };
+  const result = await database.saveCoalesced(5000);
+  return result.success
+    ? { success: true }
+    : { success: false, error: result.error || 'unknown database save error' };
 }
 
 /** Retry an async fn with exponential backoff (1s, 3s, 9s). */
-async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  shouldRetry: (error: unknown) => boolean = () => true,
+): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err: any) {
       lastError = err;
+      if (!shouldRetry(err)) throw err;
       if (attempt < maxAttempts) {
         const delay = Math.pow(3, attempt - 1) * 1000; // 1s, 3s, 9s
         logger.warn(`[ProductSync] Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err.message}`);
@@ -149,11 +145,50 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   throw lastError;
 }
 
+function isUnsafeProductSyncCursorError(error: any): boolean {
+  const body = error?.serverBody;
+  const envelopeError = body?.error && typeof body.error === 'object' ? body.error : null;
+  const details = error?.details ?? body?.details ?? envelopeError?.details;
+  const code = String(
+    error?.code
+      ?? body?.code
+      ?? envelopeError?.code
+      ?? '',
+  ).trim().toUpperCase();
+  const resetRequired = error?.resetRequired === true
+    || details?.resetRequired === true
+    || body?.resetRequired === true
+    || envelopeError?.resetRequired === true;
+  return Number(error?.status) === 409
+    && code === 'PRODUCT_SYNC_CURSOR_UNSAFE'
+    && resetRequired;
+}
+
 export class ProductSync {
   /** Remember if delta sync is unsupported — avoids 7s retry waste each connect. */
   private deltaUnsupported = false;
+  private productSyncCursorV2: boolean | null = null;
+  private productSyncCapabilityToken: string | null = null;
 
   constructor(private deps: ProductSyncDeps = {}) {}
+
+  private async supportsProductSyncCursorV2(token: string): Promise<boolean> {
+    if (this.productSyncCapabilityToken === token && this.productSyncCursorV2 !== null) {
+      return this.productSyncCursorV2;
+    }
+    try {
+      const capabilities = await apiClient.getProductAdminCapabilities(token);
+      this.productSyncCursorV2 = capabilities.supportsProductSyncV2 === true
+        || Number(capabilities.productSyncVersion) >= 2;
+      this.productSyncCapabilityToken = token;
+    } catch (error: any) {
+      logger.debug(`[ProductSync] Cursor-v2 capability probe failed; using legacy sync: ${error?.message ?? error}`);
+      // Do not pin a transient capability failure for the lifetime of a login.
+      // This run stays legacy-safe; the next poll can discover v2.
+      return false;
+    }
+    return this.productSyncCursorV2;
+  }
 
   /**
    * Queue a local catalog mutation after every full/delta sync already in
@@ -182,13 +217,19 @@ export class ProductSync {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
 
-    const data = await withRetry(() => apiClient.getPosProducts(token));
+    const cursorV2 = await this.supportsProductSyncCursorV2(token);
+    const data = await withRetry(
+      () => apiClient.getPosProducts(token, undefined, { cursorV2 }),
+      3,
+      (error) => !(cursorV2 && isUnsafeProductSyncCursorError(error)),
+    );
     const baseline = this.getGuardBaseline();
     const guard = evaluateProductSyncGuard({
       mode: 'full',
       baseline,
       products: data.products,
       categories: data.categories,
+      categoriesComplete: data.categoriesComplete,
       deletedIds: data.deletedIds,
     });
     this.enforceGuard(guard);
@@ -199,6 +240,8 @@ export class ProductSync {
     database.transaction(() => {
       if (data.categories.length > 0) {
         productRepo.upsertCategories(data.categories);
+      }
+      if (data.categoriesComplete) {
         const keepCategoryIds = new Set(data.categories.map((c: any) => c.id));
         const pruned = productRepo.deleteCategoriesExcept(keepCategoryIds);
         if (pruned.removed > 0) {
@@ -231,17 +274,19 @@ export class ProductSync {
       }
       this.cleanupSyncedLocalAliases();
 
-      const syncTimestamp = data.nextSince ?? new Date().toISOString();
-      database.run(
-        "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('products_last_sync', ?, datetime('now'))",
-        [syncTimestamp],
-      );
+      const nextCursor = cursorV2 ? data.nextSyncCursor : data.nextSince;
+      if (nextCursor) {
+        database.run(
+          'INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, datetime(\'now\'))',
+          [cursorV2 ? 'products_sync_cursor_v2' : 'products_last_sync', nextCursor],
+        );
+      }
     });
     database.markDirty();
     markFullSync('products');
 
     logger.info(
-      `[ProductSync] Full sync: ${data.products.length} products, ${data.categories.length} categories (nextSince=${data.nextSince ?? 'local'})`,
+      `[ProductSync] Full sync: ${data.products.length} products, ${data.categories.length} categories (cursor=${data.nextSyncCursor ?? data.nextSince ?? 'unchanged'})`,
     );
     return { productsCount: data.products.length, categoriesCount: data.categories.length };
   }
@@ -255,8 +300,12 @@ export class ProductSync {
   }
 
   private async deltaSyncUnlocked(): Promise<number> {
+    const token = getSecureAuthToken();
+    if (!token) throw new Error('Not authenticated');
+    const cursorV2 = await this.supportsProductSyncCursorV2(token);
     const lastSync = database.get<{ value: string }>(
-      "SELECT value FROM sync_metadata WHERE key = 'products_last_sync'",
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      [cursorV2 ? 'products_sync_cursor_v2' : 'products_last_sync'],
     );
     // Safety net for stale-cursor / empty-mirror state — e.g. a re-pair to a
     // different agent where clearSalonData didn't run (legacy session). The
@@ -277,13 +326,31 @@ export class ProductSync {
       return result.productsCount;
     }
 
-    const token = getSecureAuthToken();
-    if (!token) throw new Error('Not authenticated');
-
     let data;
     try {
-      data = await withRetry(() => apiClient.getPosProducts(token, lastSync.value));
+      data = await withRetry(() => apiClient.getPosProducts(
+        token,
+        lastSync.value,
+        { cursorV2 },
+      ), 3, (error) => !(cursorV2 && isUnsafeProductSyncCursorError(error)));
     } catch (err: any) {
+      if (cursorV2 && isUnsafeProductSyncCursorError(err)) {
+        logger.warn('[ProductSync] Cursor-v2 exceeded the safe watermark; clearing it and running one full v2 sync');
+        database.run(
+          'DELETE FROM sync_metadata WHERE key = ?',
+          ['products_sync_cursor_v2'],
+        );
+        database.markDirty();
+        const saved = await database.saveCoalesced(5000);
+        if (!saved.success) {
+          throw new Error(`Failed to persist cursor-v2 reset: ${saved.error || 'unknown database save error'}`);
+        }
+        // Call the unlocked full path exactly once. If the server rejects the
+        // epoch request too, fullSyncUnlocked bubbles the typed error without
+        // recursion, retries, or a legacy fallback.
+        const result = await this.fullSyncUnlocked();
+        return result.productsCount;
+      }
       // Backend rejects 'since' param — remember and fall back to full sync
       if (err.message?.includes('since') || err.message?.includes('should not exist')) {
         this.deltaUnsupported = true;
@@ -299,6 +366,7 @@ export class ProductSync {
       baseline: this.getGuardBaseline(),
       products: data.products,
       categories: data.categories,
+      categoriesComplete: data.categoriesComplete,
       deletedIds: data.deletedIds,
     });
     this.enforceGuard(guard);
@@ -310,14 +378,30 @@ export class ProductSync {
       if (data.categories.length > 0) {
         productRepo.upsertCategories(data.categories);
       }
+      if (data.categoriesComplete) {
+        const keepCategoryIds = new Set(data.categories.map((category: any) => category.id));
+        const pruned = productRepo.deleteCategoriesExcept(keepCategoryIds);
+        if (pruned.removed > 0) {
+          const names = pruned.categories
+            .map((category) => `${category.name} (${category.id})`)
+            .join(', ');
+          logger.info(`[ProductSync] Pruned ${pruned.removed} categories deleted on backend: ${names}`);
+        }
+      }
       if (data.deletedIds && data.deletedIds.length > 0) {
         productRepo.deactivateByIds(data.deletedIds);
       }
       this.cleanupSyncedLocalAliases();
-      const syncTimestamp = data.nextSince ?? new Date().toISOString();
+      // Cursor-v2 always supplies a snapshot watermark on the final page.
+      // Legacy empty deltas often omit nextSince; retain the previous cursor
+      // rather than using the workstation clock and skipping server writes.
+      const syncTimestamp = cursorV2
+        ? data.nextSyncCursor
+        : data.nextSince ?? lastSync.value;
+      if (!syncTimestamp) throw new Error('SYNC_CURSOR_INVALID: missing final cursor');
       database.run(
-        "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('products_last_sync', ?, datetime('now'))",
-        [syncTimestamp],
+        'INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, datetime(\'now\'))',
+        [cursorV2 ? 'products_sync_cursor_v2' : 'products_last_sync', syncTimestamp],
       );
     });
     database.markDirty();
@@ -326,7 +410,7 @@ export class ProductSync {
     this.deltaUnsupported = false;
 
     const deletedCount = data.deletedIds?.length ?? 0;
-    logger.info(`[ProductSync] Delta sync: ${data.products.length} updated, ${deletedCount} deleted (nextSince=${data.nextSince ?? 'local'})`);
+    logger.info(`[ProductSync] Delta sync: ${data.products.length} updated, ${deletedCount} deleted (cursor=${data.nextSyncCursor ?? data.nextSince ?? 'unchanged'})`);
     return data.products.length;
   }
 
@@ -363,6 +447,7 @@ export class ProductSync {
         if (!row) return;
 
         let scanCreatePayload: LocalImportScanCreatePayload | null = null;
+        let hadPriorDispatch = false;
         try {
         if (row.attempts >= LOCAL_VARIANT_IMPORT_MAX_ATTEMPTS) {
           localVariantImportsRepo.markFailed(
@@ -378,12 +463,20 @@ export class ProductSync {
         const hasSavedPayload = !!savedPayloadJson;
         const hasSavedKey = !!savedIdempotencyKey;
 
-        if (row.intent_dispatched_at) {
-          // The server's scan-create idempotency cache is best-effort, so an
-          // exact replay alone cannot prove whether a prior stock mutation
-          // committed. A fresh IMPORT_DRAFT lookup is the only safe replay
-          // gate: it proves there is still no salon variant. RESTOCK cannot
-          // distinguish pre-existing stock from an already-applied delta.
+        if (hasSavedPayload !== hasSavedKey) {
+          localVariantImportsRepo.markFailed(
+            row.variant_id,
+            'Saved scan-create intent is incomplete; refusing to dispatch a reconstructed request',
+          );
+          changed = true;
+          return;
+        }
+
+        if (row.intent_dispatched_at && !hasSavedPayload) {
+          // Only legacy rows without exact replay bytes/key need the read-only
+          // lookup quarantine. Current scan-create requests are protected by
+          // the PostgreSQL ledger, so a dispatched durable intent must replay
+          // its exact payload/key first and consume the canonical response.
           let lookup: any;
           try {
             lookup = await apiClient.lookupByEan(token, row.ean);
@@ -418,22 +511,12 @@ export class ProductSync {
             return;
           }
 
-          if (!hasSavedPayload || !hasSavedKey) {
-            localVariantImportsRepo.resetLegacyUncertainIntent(row.variant_id);
-            row.intent_dispatched_at = null;
-          }
+          localVariantImportsRepo.resetLegacyUncertainIntent(row.variant_id);
+          row.intent_dispatched_at = null;
         }
 
         let idempotencyKey = savedIdempotencyKey;
-        if (hasSavedPayload || hasSavedKey) {
-          if (!hasSavedPayload || !hasSavedKey) {
-            localVariantImportsRepo.markFailed(
-              row.variant_id,
-              'Saved scan-create intent is incomplete; refusing to dispatch a reconstructed request',
-            );
-            changed = true;
-            return;
-          }
+        if (hasSavedPayload) {
           scanCreatePayload = parseLocalImportScanCreatePayload(savedPayloadJson);
           if (!scanCreatePayload) {
             localVariantImportsRepo.markFailed(
@@ -497,6 +580,10 @@ export class ProductSync {
           );
         }
 
+        // Capture this before marking the current attempt. A persisted marker
+        // means an earlier process may have reached the server and crashed
+        // before recording its response, even when attempts is still zero.
+        hadPriorDispatch = !!row.intent_dispatched_at;
         localVariantImportsRepo.markIntentDispatched(row.variant_id);
         const flush = await flushLocalImportIntentToDisk();
         if (!flush.success) {
@@ -557,9 +644,18 @@ export class ProductSync {
         }
 
         if (isDefinitiveScanCreateRejection(err)) {
-          localVariantImportsRepo.markDefinitivelyRejected(row.variant_id, message);
+          if (hadPriorDispatch || (Number(row.attempts) || 0) > 0) {
+            // A previous attempt may already have committed even though its
+            // response was lost. A later validation/permission response does
+            // not prove otherwise, so retain the exact payload/key for replay
+            // or manual recovery instead of releasing the intent.
+            markLocalVariantImportRetryOrFailed(row, message);
+            logger.warn(`[ProductSync] Local variant reconcile remains outcome-ambiguous for ${row.variant_id}: ${message}`);
+          } else {
+            localVariantImportsRepo.markDefinitivelyRejected(row.variant_id, message);
+            logger.warn(`[ProductSync] Local variant reconcile was definitively rejected for ${row.variant_id}: ${message}`);
+          }
           changed = true;
-          logger.warn(`[ProductSync] Local variant reconcile was definitively rejected for ${row.variant_id}: ${message}`);
           return;
         }
 
@@ -570,7 +666,16 @@ export class ProductSync {
       });
     }
 
-    if (changed) database.markDirty();
+    if (changed) {
+      database.markDirty();
+      // Terminal SYNCED/FAILED transitions are part of the mutation safety
+      // ledger. Do not leave them solely to the 5s autosave window after a
+      // server response; a restart must see the terminal outcome.
+      const flush = await flushLocalImportIntentToDisk();
+      if (!flush.success) {
+        logger.error(`[ProductSync] Failed to persist local-import terminal state immediately: ${flush.error}`);
+      }
+    }
     return reconciled;
   }
 
@@ -690,9 +795,22 @@ const AMBIGUOUS_SCAN_CREATE_CODES = new Set([
   'TIMEOUT',
 ]);
 
+const AMBIGUOUS_SCAN_CREATE_STATUSES = new Set([401, 408, 425, 429]);
+const DEFINITIVE_SCAN_CREATE_CODES = new Set([
+  'IDEMPOTENCY_KEY_REUSED',
+  'IDEMPOTENCY_PAYLOAD_MISMATCH',
+  'PAYLOAD_HASH_MISMATCH',
+]);
+
+function isAmbiguousScanCreateCode(code: string): boolean {
+  if (AMBIGUOUS_SCAN_CREATE_CODES.has(code)) return true;
+  return /(?:AUTH|TOKEN|NETWORK|CONNECTION|ECONN|TIMEOUT|TIMED_OUT|IN_PROGRESS|TOO_EARLY|THROTTL|RATE_LIMIT)/.test(code);
+}
+
 function isDefinitiveScanCreateRejection(err: any): boolean {
   const status = Number(err?.status);
-  if (!Number.isInteger(status) || status < 400 || status >= 500 || status === 408) return false;
+  if (!Number.isInteger(status) || status < 400 || status >= 500
+    || AMBIGUOUS_SCAN_CREATE_STATUSES.has(status)) return false;
   const body = err?.serverBody;
   const code = String(
     err?.code
@@ -700,7 +818,20 @@ function isDefinitiveScanCreateRejection(err: any): boolean {
       ?? body?.error?.code
       ?? (typeof body?.error === 'string' ? body.error : ''),
   ).trim().toUpperCase();
-  return !AMBIGUOUS_SCAN_CREATE_CODES.has(code);
+  if (isAmbiguousScanCreateCode(code)) return false;
+  if (DEFINITIVE_SCAN_CREATE_CODES.has(code)) return true;
+
+  // Validation, unsupported payloads and permanent permission failures are
+  // safe to release for operator correction. A generic 409 is not: it can be
+  // an idempotency/in-progress race whose canonical response is still pending.
+  return status === 400
+    || status === 403
+    || status === 404
+    || status === 405
+    || status === 410
+    || status === 413
+    || status === 415
+    || status === 422;
 }
 
 function extractActiveLookupVariantId(result: any, ean: string): string | null {

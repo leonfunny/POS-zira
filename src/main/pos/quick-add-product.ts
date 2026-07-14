@@ -44,7 +44,7 @@ export function toQuickAddVariantRow(
     in_stock: variant.totalStockQty ?? variant.in_stock ?? fallback.quantity,
     vat_rate: Number(variant.taxRate ?? variant.vat_rate ?? product?.taxRate ?? product?.vat_rate ?? 23) || 23,
     is_active: variant.isActive === false || variant.is_active === 0 ? 0 : 1,
-    updated_at: variant.updatedAt ?? variant.updated_at ?? product?.updatedAt ?? product?.updated_at ?? new Date().toISOString(),
+    updated_at: variant.canonicalUpdatedAt ?? variant.canonical_updated_at ?? variant.updatedAt ?? variant.updated_at ?? product?.canonicalUpdatedAt ?? product?.canonical_updated_at ?? product?.updatedAt ?? product?.updated_at ?? new Date().toISOString(),
     available_qty: variant.availableQty ?? variant.available_qty ?? variant.totalStockQty ?? variant.in_stock ?? fallback.quantity,
     price_gross: fallback.retailPriceGrosze,
     price_net: 0,

@@ -5,8 +5,11 @@ import {
   isProductAdminSessionContextCurrent,
   mergeProductAdminNullableMirrorFields,
   normalizeProductReceiptInput,
+  productAdminCanonicalUpdatedAt,
+  productAdminCategoryToRow,
   redactProductAdminPurchaseData,
   requireProductAdminExpectedUpdatedAt,
+  sanitizeExistingProductInventoryModeUpdate,
   shouldApplyProductAdminVariantMirror,
 } from '../src/main/pos/product-workspace-input';
 
@@ -20,6 +23,54 @@ function errorCode(action: () => unknown): string | undefined {
 }
 
 describe('product workspace IPC input boundary', () => {
+  it('rejects existing inventory-mode transitions and omits unchanged dangerous fields', () => {
+    const trackedPiece = {
+      sell_by: 'PIECE',
+      item_type: 'stockable',
+      track_inventory: 1,
+    } as any;
+
+    expect(() => sanitizeExistingProductInventoryModeUpdate(
+      { sellBy: 'WEIGHT' },
+      trackedPiece,
+    )).toThrow('existing-product-inventory-mode-transition-unavailable');
+    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+      { itemType: 'service' },
+      trackedPiece,
+    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
+    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+      { trackInventory: false },
+      trackedPiece,
+    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
+
+    const untrackedPiece = {
+      sell_by: 'PIECE',
+      item_type: 'stockable',
+      track_inventory: 0,
+    } as any;
+    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+      { trackInventory: true },
+      untrackedPiece,
+    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
+
+    const untrackedService = {
+      sell_by: 'PIECE',
+      item_type: 'service',
+      track_inventory: 1,
+    } as any;
+    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+      { itemType: 'stockable' },
+      untrackedService,
+    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
+
+    expect(sanitizeExistingProductInventoryModeUpdate({
+      name: 'Renamed',
+      sellBy: 'PIECE',
+      itemType: 'stockable',
+      trackInventory: true,
+    }, trackedPiece)).toEqual({ name: 'Renamed' });
+  });
+
   it('clears canonical nullable fields on explicit null but preserves absent legacy fields', () => {
     const existing = {
       template_id: 'template-old',
@@ -74,6 +125,62 @@ describe('product workspace IPC input boundary', () => {
       { updated_at: 'not-a-date' } as any,
     )).toBe(true);
     expect(shouldApplyProductAdminVariantMirror({}, null)).toBe(true);
+    expect(productAdminCanonicalUpdatedAt({
+      updatedAt: '2026-07-14T10:00:01.000Z',
+      canonicalUpdatedAt: '2026-07-14T10:00:05.000Z',
+    } as any)).toBe('2026-07-14T10:00:05.000Z');
+    expect(shouldApplyProductAdminVariantMirror({
+      updatedAt: '2026-07-14T10:00:01.000Z',
+      canonicalUpdatedAt: '2026-07-14T10:00:05.000Z',
+    } as any, existing)).toBe(true);
+  });
+
+  it('maps a created category response directly into the local catalog shape', () => {
+    expect(productAdminCategoryToRow({
+      id: 'category-1',
+      name: ' Tea ',
+      icon: 'DR',
+      color: '#2563eb',
+      sortOrder: 4,
+      isActive: true,
+      kitchenPrint: true,
+      updatedAt: '2026-07-14T10:00:05.000Z',
+    })).toEqual({
+      id: 'category-1',
+      name: 'Tea',
+      icon: 'DR',
+      color: '#2563eb',
+      sort_order: 4,
+      updated_at: '2026-07-14T10:00:05.000Z',
+      kitchen_print: 1,
+    });
+  });
+
+  it('merges a partial reorder response without erasing catalog-only category fields', () => {
+    const existing = {
+      id: 'category-1',
+      name: 'Tea',
+      icon: 'DR',
+      color: '#2563eb',
+      sort_order: 7,
+      updated_at: '2026-07-14T10:00:00.000Z',
+      name_translations: JSON.stringify({ vi: 'Trà' }),
+      customer_display_enabled: 0,
+      customer_display_section: 'cold-drinks',
+      customer_display_sort_order: 12,
+      kitchen_print: 1,
+      kiosk_modifier_groups_json: '[{"id":"size"}]',
+    } as any;
+
+    expect(productAdminCategoryToRow({
+      id: 'category-1',
+      name: 'Tea',
+      isActive: true,
+      updatedAt: '2026-07-14T10:01:00.000Z',
+    } as any, existing)).toEqual({
+      ...existing,
+      updated_at: '2026-07-14T10:01:00.000Z',
+    });
   });
 
   it('fails closed before an existing-variant API call when OCC requires a revision token', () => {

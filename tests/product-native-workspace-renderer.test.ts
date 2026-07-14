@@ -85,7 +85,7 @@ describe('native Product workspace renderer', () => {
     expect(form).toContain('productAdmin.uploadMainImage(baselineProduct.id');
     expect(form).toContain('expectedUpdatedAt: result.expectedUpdatedAt,');
     expect(source('src/renderer/components/products/ProductCreateDialog.tsx'))
-      .toContain('expectedUpdatedAt: createdVariant.updatedAt,');
+      .toContain('expectedUpdatedAt: createdVariant.canonicalUpdatedAt ?? createdVariant.updatedAt,');
   });
 
   it('uses lot-aware receiving with stable retry identity and refreshes the lot summary', () => {
@@ -268,10 +268,11 @@ describe('native Product workspace renderer', () => {
   it('keeps URL updates compatible while enforcing purchase-price capabilities in main IPC', () => {
     const main = source('src/main/modules/pos.module.ts');
 
-    expect(main).toContain('input.purchasePriceGrosze !== undefined');
+    expect(main).toContain('requestPayload.purchasePriceGrosze !== undefined');
     expect(main).toContain('normalizedPayload.purchasePriceGrosze !== undefined');
     expect(main).not.toContain('payload?.imageUrl !== undefined && capabilities.canReplaceMainImage !== true');
-    expect(main).toContain('delete normalizedPayload.unitCostGrosze');
+    expect(main).toContain('delete input.unitCostGrosze');
+    expect(main).toContain('payload.unitCostGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)');
     expect(main).toContain('redactProductAdminPurchaseData(rawData)');
     expect(main.indexOf('redactProductAdminPurchaseData(rawData)'))
       .toBeLessThan(main.indexOf('if (afterSuccess) {'));

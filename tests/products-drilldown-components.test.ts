@@ -112,7 +112,7 @@ describe('Products drill-down components', () => {
     expect(dialog).toContain('setCategoryId(initialCategoryId ??');
     expect(dialog).toContain('setBarcode(initialBarcode ??');
     expect(dialog).toContain('setIdempotencyKey(makeIdempotencyKey())');
-    expect(dialog).toContain('if (grosze < 1) return null');
+    expect(dialog).toContain('parseProductMoneyInputToGrosze(value, { allowZero: false })');
     expect(dialog).toContain('idempotencyKey,');
     expect(dialog).toContain('sellBy,');
     expect(dialog).toContain('result.data.variant');

@@ -63,4 +63,26 @@ describe('database save dirty tracking', () => {
     await expect(database.save()).resolves.toMatchObject({ success: true });
     expect((database as any).dirty).toBe(false);
   });
+
+  it('saveCoalesced waits for an older writer and persists the newer dirty version', async () => {
+    let finishFirstWrite!: () => void;
+    atomicWriteFile
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        finishFirstWrite = resolve;
+      }))
+      .mockResolvedValueOnce(undefined);
+
+    database.markDirty();
+    const firstSave = database.save();
+    await Promise.resolve();
+    database.markDirty();
+
+    const durabilityBarrier = database.saveCoalesced(5000);
+    finishFirstWrite();
+    await expect(firstSave).resolves.toMatchObject({ success: true });
+    await expect(durabilityBarrier).resolves.toMatchObject({ success: true });
+
+    expect(atomicWriteFile).toHaveBeenCalledTimes(2);
+    expect((database as any).dirty).toBe(false);
+  });
 });

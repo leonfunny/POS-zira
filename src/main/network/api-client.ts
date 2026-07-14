@@ -38,6 +38,8 @@ import {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
+  ProductAdminCategoryOrderUpdate,
+  ProductAdminCategoryOrderUpdateResponse,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
   ProductAdminLotListResponse,
@@ -1647,6 +1649,10 @@ export class ApiClient {
       canAdjustStock: raw?.canAdjustStock === true,
       canCreateCategory: raw?.canCreateCategory === true,
       canUpdateCategory: raw?.canUpdateCategory === true,
+      canReorderCategory: raw?.canReorderCategory === true,
+      supportsCategoryBatchUpdate: raw?.supportsCategoryBatchUpdate === true,
+      supportsCategoryKitchenPrint: raw?.supportsCategoryKitchenPrint === true,
+      supportsCategoryDelta: raw?.supportsCategoryDelta === true,
       canViewPurchasePrice: raw?.canViewPurchasePrice === true,
       canReplaceMainImage: raw?.canReplaceMainImage === true,
       canReceiveStock: raw?.canReceiveStock === true,
@@ -1659,6 +1665,9 @@ export class ApiClient {
       // renderer never sees it (supportsItemType was silently dropped once —
       // the item-kind picker stayed hidden despite the backend advertising it).
       supportsItemType: raw?.supportsItemType === true,
+      supportsProductSyncV2: raw?.supportsProductSyncV2 === true
+        || Number(raw?.productSyncVersion) >= 2,
+      productSyncVersion: Number(raw?.productSyncVersion) || 0,
       salonCode: typeof raw?.salonCode === 'string' && /^\d{4}$/.test(raw.salonCode)
         ? raw.salonCode
         : null,
@@ -1784,11 +1793,21 @@ export class ApiClient {
   }
 
   async listProductAdminCategories(token: string): Promise<ProductAdminCategoryListResponse> {
-    return this.productAdminRequest<ProductAdminCategoryListResponse>(
+    const raw = await this.productAdminRequest<any>(
       token,
       'GET',
       '/categories',
     );
+    const categories = Array.isArray(raw?.categories)
+      ? raw.categories
+      : Array.isArray(raw?.items)
+        ? raw.items
+        : [];
+    return {
+      categories,
+      total: Number.isFinite(Number(raw?.total)) ? Number(raw.total) : categories.length,
+      serverTime: typeof raw?.serverTime === 'string' ? raw.serverTime : undefined,
+    };
   }
 
   async createProductAdminCategory(
@@ -1818,6 +1837,18 @@ export class ApiClient {
     );
   }
 
+  async updateProductAdminCategoryOrder(
+    token: string,
+    updates: ProductAdminCategoryOrderUpdate[],
+  ): Promise<ProductAdminCategoryOrderUpdateResponse> {
+    return this.productAdminRequest<ProductAdminCategoryOrderUpdateResponse>(
+      token,
+      'PATCH',
+      '/categories/order',
+      { updates },
+    );
+  }
+
   /**
    * Get POS products and categories (with optional delta since timestamp)
    * GET /api/v1/warehouse/public/products
@@ -1825,9 +1856,22 @@ export class ApiClient {
   async getPosProducts(
     token: string,
     since?: string,
-  ): Promise<{ products: any[]; categories: any[]; nextSince?: string; serverTime?: string; deletedIds?: string[] }> {
+    options: { cursorV2?: boolean } = {},
+  ): Promise<{
+    products: any[];
+    categories: any[];
+    categoriesComplete: boolean;
+    nextSince?: string;
+    nextSyncCursor?: string;
+    serverTime?: string;
+    deletedIds?: string[];
+  }> {
     const baseParams = new URLSearchParams({ limit: '100' });
-    if (since) baseParams.set('since', since);
+    if (options.cursorV2) {
+      if (since) baseParams.set('syncCursor', since);
+    } else if (since) {
+      baseParams.set('since', since);
+    }
 
     logger.info(`[ApiClient] Fetching POS products${since ? ` (since ${since})` : ''}...`);
 
@@ -1845,32 +1889,93 @@ export class ApiClient {
     let allItems: any[] = [];
     let page = 1;
     let lastNextSince: string | undefined;
+    let finalNextSyncCursor: string | undefined;
     let lastServerTime: string | undefined;
     let deletedIds: string[] = [];
+    let pageCursor: string | undefined;
 
     while (true) {
-      baseParams.set('page', String(page));
-      const url = `${this.baseUrl}/api/v1/warehouse/public/products?${baseParams}`;
+      if (options.cursorV2) {
+        baseParams.delete('page');
+        if (pageCursor) {
+          baseParams.delete('syncCursor');
+          baseParams.set('pageCursor', pageCursor);
+        }
+      } else {
+        baseParams.set('page', String(page));
+      }
+      const route = options.cursorV2
+        ? '/api/v1/warehouse/public/products/sync-v2'
+        : '/api/v1/warehouse/public/products';
+      const url = `${this.baseUrl}${route}?${baseParams}`;
 
       const response = await fetchWithTimeout(url, { headers });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP ${response.status}`);
+        const envelopeError = errorData
+          && typeof errorData === 'object'
+          && errorData.error
+          && typeof errorData.error === 'object'
+          ? errorData.error
+          : null;
+        const error = new Error(
+          envelopeError?.message
+            || (typeof errorData === 'object' ? errorData?.message : null)
+            || `HTTP ${response.status}`,
+        ) as Error & {
+          status?: number;
+          code?: string;
+          details?: Record<string, unknown> | null;
+          resetRequired?: boolean;
+          serverBody?: unknown;
+        };
+        error.status = response.status;
+        if (errorData && typeof errorData === 'object') {
+          const stringErrorCode = typeof errorData.error === 'string'
+            && /^[A-Z0-9_]+$/.test(errorData.error)
+            ? errorData.error
+            : undefined;
+          error.code = errorData.code ?? envelopeError?.code ?? stringErrorCode;
+          error.details = errorData.details ?? envelopeError?.details;
+          error.resetRequired = errorData.resetRequired === true
+            || error.details?.resetRequired === true
+            || envelopeError?.resetRequired === true;
+          error.serverBody = errorData;
+        }
+        throw error;
       }
 
       const raw = await response.json();
       const pageItems: any[] = raw.items ?? raw.products ?? [];
       allItems = allItems.concat(pageItems);
       if (raw.nextSince) lastNextSince = raw.nextSince;
+      if (raw.nextSyncCursor) finalNextSyncCursor = raw.nextSyncCursor;
       if (raw.serverTime) lastServerTime = raw.serverTime;
       if (Array.isArray(raw.deletedIds)) deletedIds = deletedIds.concat(raw.deletedIds);
+
+      if (options.cursorV2) {
+        const hasMore = raw.hasMore === true;
+        const nextPageCursor = typeof raw.nextPageCursor === 'string' && raw.nextPageCursor
+          ? raw.nextPageCursor
+          : undefined;
+        if (!hasMore) break;
+        if (!nextPageCursor) throw new Error('SYNC_CURSOR_INVALID: missing nextPageCursor');
+        pageCursor = nextPageCursor;
+        page++;
+        if (page > 1000) throw new Error('SYNC_CURSOR_INVALID: page safety limit exceeded');
+        continue;
+      }
 
       // Stop if we got fewer items than the limit (last page) or no items
       if (pageItems.length < 100 || pageItems.length === 0) break;
       page++;
       // Safety cap to prevent infinite loops
-      if (page > 100) break;
+      if (page > 100) throw new Error('legacy product pagination safety limit exceeded');
+    }
+
+    if (options.cursorV2 && !finalNextSyncCursor) {
+      throw new Error('SYNC_CURSOR_INVALID: final page missing nextSyncCursor');
     }
 
     const items = allItems;
@@ -1925,7 +2030,7 @@ export class ApiClient {
       };
     };
 
-    const fetchPublicCategories = async (): Promise<any[]> => {
+    const fetchPublicCategories = async (): Promise<{ categories: any[]; complete: boolean }> => {
       try {
         const url = `${this.baseUrl}/api/v1/warehouse/public/categories`;
         const response = await fetchWithTimeout(url, { headers });
@@ -1937,12 +2042,15 @@ export class ApiClient {
         const rows: any[] = Array.isArray(raw)
           ? raw
           : raw.items ?? raw.categories ?? [];
-        return rows
-          .map(normalizeCategory)
-          .filter((category): category is any => !!category);
+        return {
+          categories: rows
+            .map(normalizeCategory)
+            .filter((category): category is any => !!category),
+          complete: true,
+        };
       } catch (err: any) {
         logger.warn(`[ApiClient] Public category sync skipped: ${err?.message ?? err}`);
-        return [];
+        return { categories: [], complete: false };
       }
     };
 
@@ -1955,7 +2063,8 @@ export class ApiClient {
       }
     }
 
-    for (const category of await fetchPublicCategories()) {
+    const publicCategories = await fetchPublicCategories();
+    for (const category of publicCategories.categories) {
       categoryMap.set(category.id, category);
     }
 
@@ -2045,7 +2154,11 @@ export class ApiClient {
         in_stock: item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
         vat_rate: parseFloat(item.template?.taxRate ?? item.template?.tax_rate ?? item.vat_rate) || 23,
         is_active: item.isActive ?? item.is_active ?? true ? 1 : 0,
-        updated_at: item.updatedAt ?? item.updated_at ?? null,
+        updated_at: item.canonicalUpdatedAt
+          ?? item.canonical_updated_at
+          ?? item.updatedAt
+          ?? item.updated_at
+          ?? null,
         // Enriched fields (backend v2 — fallback-safe for old backends)
         available_qty: item.availableQty ?? item.available_qty ?? item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
         price_gross: priceGross,
@@ -2126,9 +2239,11 @@ export class ApiClient {
     return {
       products,
       categories: Array.from(categoryMap.values()),
+      categoriesComplete: publicCategories.complete,
       nextSince: lastNextSince,
+      nextSyncCursor: finalNextSyncCursor,
       serverTime: lastServerTime,
-      deletedIds: deletedIds.length > 0 ? deletedIds : undefined,
+      deletedIds: deletedIds.length > 0 ? Array.from(new Set(deletedIds)) : undefined,
     };
   }
 

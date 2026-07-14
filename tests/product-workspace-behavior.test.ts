@@ -28,11 +28,11 @@ describe('product workspace stock adjustment gates', () => {
     const handlerStart = mainSource.indexOf('IPC_CHANNELS.POS_PRODUCT_ADMIN_ADJUST_STOCK');
     const handlerEnd = mainSource.indexOf('IPC_CHANNELS.POS_PRODUCT_ADMIN_GET_VARIANT', handlerStart);
     const handler = mainSource.slice(handlerStart, handlerEnd);
-    const rejection = "input.mode === 'receive' && capabilities.supportsLotReceiving === true";
+    const rejection = "requestPayload.mode === 'receive' && capabilities.supportsLotReceiving === true";
 
     expect(handlerStart).toBeGreaterThanOrEqual(0);
     expect(handlerEnd).toBeGreaterThan(handlerStart);
     expect(handler).toContain(rejection);
-    expect(handler.indexOf(rejection)).toBeLessThan(handler.indexOf('apiClient.adjustProductStock'));
+    expect(handler.indexOf(rejection)).toBeLessThan(handler.indexOf("mutationType: 'ADJUST_STOCK'"));
   });
 });

@@ -42,7 +42,16 @@ import {
   redactProductAdminPurchaseData,
   requireProductAdminExpectedUpdatedAt,
   shouldApplyProductAdminVariantMirror,
+  productAdminCanonicalUpdatedAt,
+  productAdminCategoryToRow,
+  sanitizeExistingProductInventoryModeUpdate,
 } from '../pos/product-workspace-input';
+import {
+  ProductAdminMutationOutbox,
+  productAdminMutationTenantKey,
+} from '../pos/product-admin-mutation-outbox';
+import type { ProductAdminMutationOutboxRow } from '../database/repos/product-admin-mutation-outbox-repo';
+import { isValidProductMoneyGrosze } from '../../shared/product-money';
 import {
   lookupExternalProductByEan,
   normalizeEan,
@@ -498,6 +507,8 @@ export class PosModule extends BaseModule {
   private shiftController: ShiftController | null = null;
   private fiscalReceiptSyncTimer: ReturnType<typeof setInterval> | null = null;
   private fiscalReceiptSyncInFlight = false;
+  private productAdminMutationOutbox: ProductAdminMutationOutbox | null = null;
+  private productAdminMutationReplayTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -1517,9 +1528,10 @@ export class PosModule extends BaseModule {
       if (!variant?.id) return false;
 
       const existing = productRepo.getById(variant.id);
+      const canonicalUpdatedAt = productAdminCanonicalUpdatedAt(variant);
       if (!shouldApplyProductAdminVariantMirror(variant, existing)) {
         logger.warn(
-          `[PosModule] Skipped stale product-admin variant ${variant.id} (${source}); incoming=${variant.updatedAt ?? 'missing'}, existing=${existing?.updated_at ?? 'missing'}`,
+          `[PosModule] Skipped stale product-admin variant ${variant.id} (${source}); incoming=${canonicalUpdatedAt ?? 'missing'}, existing=${existing?.updated_at ?? 'missing'}`,
         );
         return false;
       }
@@ -1544,7 +1556,7 @@ export class PosModule extends BaseModule {
         is_active: typeof variant.isActive === 'boolean'
           ? (variant.isActive ? 1 : 0)
           : existing?.is_active ?? 1,
-        updated_at: variant.updatedAt ?? existing?.updated_at ?? new Date().toISOString(),
+        updated_at: canonicalUpdatedAt ?? existing?.updated_at ?? new Date().toISOString(),
         available_qty: availableQty ?? existing?.available_qty ?? 0,
         price_gross: priceGrosze,
         price_net: existing?.price_net ?? 0,
@@ -1577,6 +1589,22 @@ export class PosModule extends BaseModule {
       return true;
     };
 
+    const mirrorProductAdminCategory = (
+      category: ProductAdminCategory | undefined | null,
+      source: string,
+    ): boolean => {
+      if (!category?.id) return false;
+      productRepo.upsertCategories([
+        productAdminCategoryToRow(category, productRepo.getCategoryById(category.id)),
+      ]);
+      database.markDirty();
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+        source: `${source}_local_mirror`,
+      });
+      return true;
+    };
+
     const deactivateLocalProductAdminVariant = (variantId: string, source: string) => {
       const id = String(variantId || '').trim();
       if (!id) return;
@@ -1595,6 +1623,7 @@ export class PosModule extends BaseModule {
       | 'canAdjustStock'
       | 'canCreateCategory'
       | 'canUpdateCategory'
+      | 'canReorderCategory'
       | 'canViewPurchasePrice'
       | 'canReplaceMainImage'
       | 'canReceiveStock'
@@ -1695,6 +1724,195 @@ export class PosModule extends BaseModule {
       }
     };
 
+    const currentProductAdminMutationScope = () => {
+      const config = getConfig();
+      return {
+        serverUrl: String(config.serverUrl ?? ''),
+        salonId: String(config.salonId ?? ''),
+        deviceId: String(config.machineId ?? config.agentId ?? ''),
+      };
+    };
+
+    const requireDurableMutationCapability = (
+      capabilities: ProductAdminCapabilities,
+      capability: ProductAdminCapability,
+    ) => {
+      if (capabilities[capability] !== true) {
+        const error = new Error('unsupported-capability') as Error & { code?: string; status?: number };
+        error.code = 'UNSUPPORTED_CAPABILITY';
+        error.status = 403;
+        throw error;
+      }
+    };
+
+    const assertProductMoney = (value: unknown, allowZero: boolean, field: string) => {
+      if (value === undefined || value === null) return;
+      if (!isValidProductMoneyGrosze(value, { allowZero })) {
+        const error = new Error(`invalid-${field}`) as Error & { code?: string; status?: number; field?: string };
+        error.code = 'INVALID_PRICE';
+        error.status = 400;
+        error.field = field;
+        throw error;
+      }
+    };
+
+    const productAdminMutationOutbox = new ProductAdminMutationOutbox({
+      getScope: currentProductAdminMutationScope,
+      sanitizeResponse: (response) => redactProductAdminPurchaseData(response),
+      dispatch: async (row, request, stagedImage) => {
+        const token = getSecureAuthToken();
+        if (!token) {
+          const error = new Error('no-auth') as Error & { code?: string };
+          error.code = 'UNAUTHORIZED_PRODUCT_ADMIN';
+          throw error;
+        }
+        if (productAdminMutationTenantKey(currentProductAdminMutationScope()) !== row.tenant_key) {
+          const error = new Error('auth-context-changed') as Error & { code?: string; status?: number };
+          error.code = 'SALON_CONTEXT_MISMATCH';
+          error.status = 409;
+          throw error;
+        }
+        const capabilities = await apiClient.getProductAdminCapabilities(token);
+        const payload = { ...((request.payload as Record<string, unknown> | undefined) || {}) } as any;
+        const variantId = String(row.target_variant_id || request.variantId || '').trim();
+
+        switch (row.mutation_type) {
+          case 'CREATE_PRODUCT': {
+            requireDurableMutationCapability(capabilities, 'canCreateProduct');
+            assertProductMoney(payload.priceGrossGrosze, false, 'priceGrossGrosze');
+            assertProductMoney(payload.purchasePriceGrosze, true, 'purchasePriceGrosze');
+            if (payload.purchasePriceGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)) {
+              const error = new Error('purchase-price-unavailable') as Error & { code?: string; status?: number };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              error.status = 403;
+              throw error;
+            }
+            return apiClient.createProductVariant(token, {
+              ...payload,
+              idempotencyKey: row.idempotency_key || undefined,
+            });
+          }
+          case 'CREATE_CATEGORY':
+            requireDurableMutationCapability(capabilities, 'canCreateCategory');
+            return apiClient.createProductAdminCategory(token, {
+              ...payload,
+              idempotencyKey: row.idempotency_key || undefined,
+            });
+          case 'ADJUST_STOCK': {
+            requireDurableMutationCapability(capabilities, 'canAdjustStock');
+            requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload.expectedUpdatedAt,
+            );
+            if (payload.mode === 'receive' && capabilities.supportsLotReceiving === true) {
+              const error = new Error('lot-aware-receiving-required') as Error & { code?: string; status?: number };
+              error.code = 'LOT_RECEIVING_REQUIRED';
+              error.status = 409;
+              throw error;
+            }
+            return apiClient.adjustProductStock(token, variantId, {
+              ...payload,
+              idempotencyKey: row.idempotency_key || undefined,
+            });
+          }
+          case 'RECEIVE_STOCK': {
+            requireDurableMutationCapability(capabilities, 'canReceiveStock');
+            if (capabilities.supportsLotReceiving !== true) {
+              const error = new Error('lot-receiving-unavailable') as Error & { code?: string; status?: number };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              error.status = 409;
+              throw error;
+            }
+            normalizeProductReceiptInput({
+              ...payload,
+              idempotencyKey: row.idempotency_key || '',
+              expectedUpdatedAt: payload.expectedUpdatedAt,
+            });
+            requireProductAdminExpectedUpdatedAt(capabilities, payload.expectedUpdatedAt);
+            if (payload.unitCostGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)) {
+              const error = new Error('purchase-price-unavailable') as Error & { code?: string; status?: number };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              error.status = 403;
+              throw error;
+            }
+            return apiClient.receiveProductStock(token, variantId, {
+              ...payload,
+              idempotencyKey: row.idempotency_key || '',
+            } as ProductAdminReceiveStockInput);
+          }
+          case 'UPLOAD_MAIN_IMAGE': {
+            requireDurableMutationCapability(capabilities, 'canReplaceMainImage');
+            if (capabilities.supportsMainImageUpload !== true || !stagedImage) {
+              const error = new Error('main-image-upload-unavailable') as Error & { code?: string; status?: number };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              error.status = 409;
+              throw error;
+            }
+            requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload.expectedUpdatedAt,
+            );
+            return apiClient.uploadProductMainImage(token, variantId, {
+              bytes: stagedImage,
+              mimeType: String(payload.mimeType || ''),
+              fileName: String(payload.fileName || 'product-image'),
+              expectedUpdatedAt: payload.expectedUpdatedAt,
+            });
+          }
+        }
+      },
+      apply: async (row: ProductAdminMutationOutboxRow, response: any) => {
+        if (productAdminMutationTenantKey(currentProductAdminMutationScope()) !== row.tenant_key) {
+          throw new Error('product-admin-local-apply-tenant-changed');
+        }
+        const isCurrentProductAdminSession = () => {
+          try {
+            return productAdminMutationTenantKey(currentProductAdminMutationScope()) === row.tenant_key;
+          } catch {
+            return false;
+          }
+        };
+        switch (row.mutation_type) {
+          case 'CREATE_PRODUCT':
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_create', () => {
+              mirrorProductAdminVariant(response?.variant, 'product_admin_create');
+            }, isCurrentProductAdminSession);
+            break;
+          case 'CREATE_CATEGORY':
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_category_create', () => {
+              mirrorProductAdminCategory(response?.category, 'product_admin_category_create');
+            }, isCurrentProductAdminSession);
+            break;
+          case 'ADJUST_STOCK':
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_stock_adjustment', () => {
+              mirrorProductAdminVariant(response?.variant, 'product_admin_stock_adjustment');
+            }, isCurrentProductAdminSession);
+            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
+              source: 'product_admin',
+              adjustment: response?.adjustment,
+              variant: response?.variant,
+            });
+            break;
+          case 'RECEIVE_STOCK':
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_receive_stock', () => {
+              mirrorProductAdminVariant(response?.variant, 'product_admin_receive_stock');
+            }, isCurrentProductAdminSession);
+            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
+              source: 'product_admin_receipt',
+              receipt: response?.receipt,
+              variant: response?.variant,
+            });
+            break;
+          case 'UPLOAD_MAIN_IMAGE':
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_main_image', () => {
+              mirrorProductAdminVariant(response?.variant, 'product_admin_main_image');
+            }, isCurrentProductAdminSession);
+            break;
+        }
+      },
+    });
+    this.productAdminMutationOutbox = productAdminMutationOutbox;
+
     const normalizeCategoryOrderUpdates = (
       input: unknown,
     ): ProductAdminCategoryOrderUpdate[] => {
@@ -1704,9 +1922,10 @@ export class PosModule extends BaseModule {
       for (const raw of input) {
         const id = String((raw as any)?.id || '').trim();
         const sortOrder = Math.floor(Number((raw as any)?.sortOrder));
+        const expectedUpdatedAt = String((raw as any)?.expectedUpdatedAt || '').trim() || undefined;
         if (!id || !Number.isFinite(sortOrder) || sortOrder < 0 || seen.has(id)) continue;
         seen.add(id);
-        updates.push({ id, sortOrder });
+        updates.push({ id, sortOrder, expectedUpdatedAt });
       }
       return updates;
     };
@@ -1718,23 +1937,24 @@ export class PosModule extends BaseModule {
           ...(payload || {}),
           idempotencyKey: payload?.idempotencyKey || randomUUID(),
         } as ProductAdminCreateProductInput;
+        const { idempotencyKey, ...requestPayload } = input;
         return withProductAdminCapability<ProductAdminProductMutationResponse>(
           'canCreateProduct',
           'create product',
-          (token, capabilities) => {
-            if (input.purchasePriceGrosze !== undefined
-              && (capabilities.supportsPurchasePrice !== true
-                || capabilities.canViewPurchasePrice !== true)) {
+          async (_token, capabilities) => {
+            assertProductMoney(requestPayload.priceGrossGrosze, false, 'priceGrossGrosze');
+            assertProductMoney(requestPayload.purchasePriceGrosze, true, 'purchasePriceGrosze');
+            if (requestPayload.purchasePriceGrosze !== undefined
+              && !canAccessProductPurchasePrice(capabilities)) {
               const error = new Error('purchase-price-unavailable') as Error & { code?: string };
               error.code = 'UNSUPPORTED_CAPABILITY';
               throw error;
             }
-            return apiClient.createProductVariant(token, input);
-          },
-          async (data, isCurrentProductAdminSession) => {
-            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_create', () => {
-              mirrorProductAdminVariant(data.variant, 'product_admin_create');
-            }, isCurrentProductAdminSession);
+            return productAdminMutationOutbox.execute({
+              mutationType: 'CREATE_PRODUCT',
+              idempotencyKey,
+              request: { payload: requestPayload },
+            }) as Promise<ProductAdminProductMutationResponse>;
           },
         );
       },
@@ -1747,11 +1967,17 @@ export class PosModule extends BaseModule {
           'canUpdateProduct',
           'update variant',
           (token, capabilities) => {
+            assertProductMoney(payload?.priceGrossGrosze, true, 'priceGrossGrosze');
+            assertProductMoney(payload?.purchasePriceGrosze, true, 'purchasePriceGrosze');
             const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
               capabilities,
               payload?.expectedUpdatedAt,
             );
-            const normalizedPayload = { ...(payload || {}), expectedUpdatedAt };
+            const resolvedVariantId = resolveVariantIdAlias(variantId);
+            const normalizedPayload = sanitizeExistingProductInventoryModeUpdate(
+              { ...(payload || {}), expectedUpdatedAt },
+              productRepo.getById(resolvedVariantId),
+            );
             const { nameTranslations, ...legacyPayload } = normalizedPayload;
             const canSendDisplayName = capabilities.version >= 2 && capabilities.canEditDisplayName === true;
             if (nameTranslations !== undefined && !canSendDisplayName) {
@@ -1768,7 +1994,7 @@ export class PosModule extends BaseModule {
             }
             return apiClient.updateProductVariant(
               token,
-              resolveVariantIdAlias(variantId),
+              resolvedVariantId,
               canSendDisplayName ? normalizedPayload : legacyPayload,
             );
           },
@@ -1832,15 +2058,16 @@ export class PosModule extends BaseModule {
           ...(payload || {}),
           idempotencyKey: payload?.idempotencyKey || randomUUID(),
         } as ProductAdminStockAdjustmentInput;
+        const { idempotencyKey, ...requestPayload } = input;
         return withProductAdminCapability<ProductAdminStockAdjustmentResponse>(
           'canAdjustStock',
           'adjust stock',
-          (token, capabilities) => {
+          async (_token, capabilities) => {
             const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
               capabilities,
-              input.expectedUpdatedAt,
+              requestPayload.expectedUpdatedAt,
             );
-            if (input.mode === 'receive' && capabilities.supportsLotReceiving === true) {
+            if (requestPayload.mode === 'receive' && capabilities.supportsLotReceiving === true) {
               const error = new Error('lot-aware-receiving-required') as Error & {
                 code?: string;
                 status?: number;
@@ -1849,21 +2076,12 @@ export class PosModule extends BaseModule {
               error.status = 409;
               throw error;
             }
-            return apiClient.adjustProductStock(token, resolveVariantIdAlias(variantId), {
-              ...input,
-              expectedUpdatedAt,
-            });
-          },
-          async (data, isCurrentProductAdminSession) => {
-            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_stock_adjustment', () => {
-              mirrorProductAdminVariant(data.variant, 'product_admin_stock_adjustment');
-            }, isCurrentProductAdminSession);
-            if (!isCurrentProductAdminSession()) return;
-            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
-              source: 'product_admin',
-              adjustment: data.adjustment,
-              variant: data.variant,
-            });
+            return productAdminMutationOutbox.execute({
+              mutationType: 'ADJUST_STOCK',
+              targetVariantId: resolveVariantIdAlias(variantId),
+              idempotencyKey,
+              request: { payload: { ...requestPayload, expectedUpdatedAt } },
+            }) as Promise<ProductAdminStockAdjustmentResponse>;
           },
         );
       },
@@ -1892,7 +2110,7 @@ export class PosModule extends BaseModule {
         withProductAdminCapability<ProductAdminMainImageUploadResponse>(
           'canReplaceMainImage',
           'upload main image',
-          (token, capabilities) => {
+          async (_token, capabilities) => {
             if (capabilities.supportsMainImageUpload !== true) {
               const error = new Error('main-image-upload-unavailable') as Error & { code?: string };
               error.code = 'UNSUPPORTED_CAPABILITY';
@@ -1903,19 +2121,18 @@ export class PosModule extends BaseModule {
               payload?.expectedUpdatedAt,
             );
             const image = decodeProductImageDataUrl(payload);
-            return apiClient.uploadProductMainImage(
-              token,
-              resolveVariantIdAlias(variantId),
-              {
-                ...image,
-                expectedUpdatedAt,
+            return productAdminMutationOutbox.execute({
+              mutationType: 'UPLOAD_MAIN_IMAGE',
+              targetVariantId: resolveVariantIdAlias(variantId),
+              request: {
+                payload: {
+                  mimeType: image.mimeType,
+                  fileName: image.fileName,
+                  expectedUpdatedAt,
+                },
               },
-            );
-          },
-          async (data, isCurrentProductAdminSession) => {
-            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_main_image', () => {
-              mirrorProductAdminVariant(data.variant, 'product_admin_main_image');
-            }, isCurrentProductAdminSession);
+              stagedImage: image,
+            }) as Promise<ProductAdminMainImageUploadResponse>;
           },
         ),
     );
@@ -1939,45 +2156,34 @@ export class PosModule extends BaseModule {
 
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_RECEIVE_STOCK,
-      async (_e, variantId: string, payload: ProductAdminReceiveStockInput) =>
-        withProductAdminCapability<ProductAdminReceiveStockResponse>(
+      async (_e, variantId: string, payload: ProductAdminReceiveStockInput) => {
+        return withProductAdminCapability<ProductAdminReceiveStockResponse>(
           'canReceiveStock',
           'receive stock',
-          (token, capabilities) => {
+          async (_token, capabilities) => {
             if (capabilities.supportsLotReceiving !== true) {
               const error = new Error('lot-receiving-unavailable') as Error & { code?: string };
               error.code = 'UNSUPPORTED_CAPABILITY';
               throw error;
             }
+            const input = normalizeProductReceiptInput(payload);
             const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
               capabilities,
-              payload?.expectedUpdatedAt,
+              input.expectedUpdatedAt,
             );
-            const normalizedPayload = {
-              ...normalizeProductReceiptInput(payload),
-              expectedUpdatedAt,
-            };
             if (!canAccessProductPurchasePrice(capabilities)) {
-              delete normalizedPayload.unitCostGrosze;
+              delete input.unitCostGrosze;
             }
-            return apiClient.receiveProductStock(
-              token,
-              resolveVariantIdAlias(variantId),
-              normalizedPayload,
-            );
+            const { idempotencyKey, ...requestPayload } = input;
+            return productAdminMutationOutbox.execute({
+              mutationType: 'RECEIVE_STOCK',
+              targetVariantId: resolveVariantIdAlias(variantId),
+              idempotencyKey,
+              request: { payload: { ...requestPayload, expectedUpdatedAt } },
+            }) as Promise<ProductAdminReceiveStockResponse>;
           },
-          async (data, isCurrentProductAdminSession) => {
-            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_receive_stock', () => {
-              mirrorProductAdminVariant(data.variant, 'product_admin_receive_stock');
-            }, isCurrentProductAdminSession);
-            if (!isCurrentProductAdminSession()) return;
-            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
-              source: 'product_admin_receipt',
-              receipt: data.receipt,
-              variant: data.variant,
-            });
-          },
-        ),
+        );
+      },
     );
 
     ipcMain.handle(
@@ -2008,14 +2214,15 @@ export class PosModule extends BaseModule {
           ...(payload || {}),
           idempotencyKey: payload?.idempotencyKey || randomUUID(),
         } as ProductAdminCategoryMutationInput;
+        const { idempotencyKey, ...requestPayload } = input;
         return withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canCreateCategory',
           'create category',
-          (token) => apiClient.createProductAdminCategory(token, input),
-          (_data, isCurrentProductAdminSession) => refreshProductsAfterProductAdminMutation(
-            'product_admin_category_create',
-            isCurrentProductAdminSession,
-          ),
+          async () => productAdminMutationOutbox.execute({
+            mutationType: 'CREATE_CATEGORY',
+            idempotencyKey,
+            request: { payload: requestPayload },
+          }) as Promise<ProductAdminCategoryMutationResponse>,
         );
       },
     );
@@ -2026,7 +2233,22 @@ export class PosModule extends BaseModule {
         return withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canUpdateCategory',
           'update category',
-          (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
+          (token, capabilities) => {
+            if (payload?.kitchenPrint !== undefined
+              && capabilities.supportsCategoryKitchenPrint !== true) {
+              const error = new Error('category-kitchen-print-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            return apiClient.updateProductAdminCategory(token, categoryId, {
+              ...(payload || {}),
+              expectedUpdatedAt,
+            });
+          },
           async (_data, isCurrentProductAdminSession) => {
             await refreshProductsAfterProductAdminMutation(
               'product_admin_category_update',
@@ -2063,49 +2285,43 @@ export class PosModule extends BaseModule {
           } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
         }
 
-        const token = getSecureAuthToken();
-        if (!token) {
-          return { ok: false, error: 'no-auth', code: 'UNAUTHORIZED_PRODUCT_ADMIN' } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
-        }
-
-        try {
-          const capabilities = await apiClient.getProductAdminCapabilities(token);
-          if (capabilities.canUpdateCategory !== true) {
-            return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
-          }
-
-          const categories: ProductAdminCategory[] = [];
-          let serverTime: string | undefined;
-          for (const update of updates) {
-            const response = await apiClient.updateProductAdminCategory(token, update.id, {
-              sortOrder: update.sortOrder,
-            });
-            if (response?.category) categories.push(response.category);
-            if (response?.serverTime) serverTime = response.serverTime;
-          }
-
-          productRepo.setCategorySortOrders(updates);
-          database.markDirty();
-          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
-          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
-            source: 'product_admin_category_order_local_mirror',
-          });
-
-          return {
-            ok: true,
-            data: {
-              categories,
-              updated: updates.length,
-              serverTime,
-            },
-          } as ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>;
-        } catch (err: any) {
-          logger.warn(`[PosModule] product-admin update category order failed: ${err?.message ?? err}`);
-          return toProductAdminError<ProductAdminCategoryOrderUpdateResponse>(
-            err,
-            'update category order failed',
-          );
-        }
+        return withProductAdminCapability<ProductAdminCategoryOrderUpdateResponse>(
+          'canUpdateCategory',
+          'update category order',
+          async (token, capabilities) => {
+            if (capabilities.canReorderCategory !== true
+              || capabilities.supportsCategoryBatchUpdate !== true) {
+              const error = new Error('category-batch-order-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            const exactUpdates = updates.map((update) => ({
+              ...update,
+              expectedUpdatedAt: requireProductAdminExpectedUpdatedAt(
+                capabilities,
+                update.expectedUpdatedAt,
+              ),
+            }));
+            return apiClient.updateProductAdminCategoryOrder(token, exactUpdates);
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync(
+              'product_admin_category_order',
+              () => {
+                // Preserve the exact requested sort as a compatibility
+                // fallback, then hydrate fresh OCC revisions from the atomic
+                // batch response so the next reorder does not reuse stale
+                // category.updatedAt values.
+                productRepo.setCategorySortOrders(updates);
+                for (const category of data.categories || []) {
+                  mirrorProductAdminCategory(category, 'product_admin_category_order');
+                }
+                database.markDirty();
+              },
+              isCurrentProductAdminSession,
+            );
+          },
+        );
       },
     );
 
@@ -4580,6 +4796,9 @@ export class PosModule extends BaseModule {
       this.posStore?.dispatch({ type: 'cart/clear' });
       this.posStore?.dispatch({ type: 'session/close' });
     });
+    bus.on('user:logged-in', () => {
+      this.replayProductAdminMutations('login');
+    });
   }
 
   setupSocketHandlers(socket: SocketClient): void {
@@ -4723,6 +4942,27 @@ export class PosModule extends BaseModule {
     this.fiscalReceiptSyncTimer = null;
   }
 
+  private replayProductAdminMutations(reason: string): void {
+    void this.productAdminMutationOutbox?.replayPending().catch((error: any) => {
+      logger.debug(`[PosModule] Product-admin mutation replay (${reason}) deferred: ${error?.message ?? error}`);
+    });
+  }
+
+  private startProductAdminMutationReplayTimer(): void {
+    if (this.productAdminMutationReplayTimer) return;
+    this.replayProductAdminMutations('startup');
+    this.productAdminMutationReplayTimer = setInterval(() => {
+      this.replayProductAdminMutations('timer');
+    }, 30_000);
+    this.productAdminMutationReplayTimer.unref?.();
+  }
+
+  private stopProductAdminMutationReplayTimer(): void {
+    if (!this.productAdminMutationReplayTimer) return;
+    clearInterval(this.productAdminMutationReplayTimer);
+    this.productAdminMutationReplayTimer = null;
+  }
+
   async start(): Promise<void> {
     this.setState(ModuleState.RUNNING);
     try {
@@ -4734,6 +4974,7 @@ export class PosModule extends BaseModule {
       logger.warn(`[Fiskal] backfill failed: ${err?.message || err}`);
     }
     this.startFiscalReceiptSyncTimer();
+    this.startProductAdminMutationReplayTimer();
     // Set salon display info from config
     const config = getConfig();
     const salonSlug = config.salonSlug as string | undefined;
@@ -4745,6 +4986,7 @@ export class PosModule extends BaseModule {
 
   async stop(): Promise<void> {
     this.stopFiscalReceiptSyncTimer();
+    this.stopProductAdminMutationReplayTimer();
     this.windowManager?.destroy();
     if (this.posStore && typeof this.posStore.destroy === 'function') {
       this.posStore.destroy();
@@ -4754,6 +4996,7 @@ export class PosModule extends BaseModule {
 
   async destroy(): Promise<void> {
     this.stopFiscalReceiptSyncTimer();
+    this.stopProductAdminMutationReplayTimer();
     this.setState(ModuleState.STOPPED);
   }
 }

@@ -3,8 +3,8 @@ import { Tags } from 'lucide-react';
 import { diffNameTranslations, parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { generateUniqueInternalEan } from '../../../shared/internal-ean';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
-import { normalizeSellBy } from '../../../shared/pos-sale';
 import { getProductItemTypePolicy, isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
+import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import type { ProductAdminItemType, ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -116,6 +116,16 @@ export function productEditNavigationState(busy: boolean): {
   };
 }
 
+export function canChangeExistingProductItemType(
+  currentTracked: boolean,
+  currentSellBy: 'PIECE' | 'WEIGHT',
+  nextItemType: ProductAdminItemType,
+): boolean {
+  const nextPolicy = getProductItemTypePolicy(nextItemType, currentSellBy);
+  return nextPolicy.stockApplies === currentTracked
+    && nextPolicy.sellBy === currentSellBy;
+}
+
 export async function runProductPostCommitBestEffort(
   callbacks: Array<() => Promise<void> | void>,
 ): Promise<void> {
@@ -145,20 +155,12 @@ function optionalMoneyInputFromGrosze(value: number | null | undefined): string 
 }
 
 function parseMoneyToGrosze(value: string): number | null {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
+  const parsed = parseProductMoneyInputToGrosze(value, { allowZero: true });
+  return typeof parsed === 'number' ? parsed : null;
 }
 
 function parseOptionalMoneyToGrosze(value: string): number | null | undefined {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  if (!/^\d+(\.\d{0,2})?$/.test(normalized)) return undefined;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return Math.round(parsed * 100);
+  return parseProductMoneyInputToGrosze(value, { allowBlank: true, allowZero: true });
 }
 
 function decimalPlaces(value: string): number {
@@ -294,7 +296,6 @@ export default function ProductEditForm({
   const [displayNames, setDisplayNames] = useState<Record<string, string>>(() => displayNamesFromProduct(baselineProduct));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [stockResetNotice, setStockResetNotice] = useState(false);
   const [pendingCancelConfirm, setPendingCancelConfirm] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stockAttemptDispatched, setStockAttemptDispatched] = useState(false);
@@ -328,7 +329,6 @@ export default function ProductEditForm({
     setDisplayNames(displayNamesFromProduct(sessionProduct));
     setBusy(false);
     setMessage(null);
-    setStockResetNotice(false);
     setAdvancedOpen(false);
     setStockAttemptDispatched(false);
     stockMutationAttemptStore.current.clear();
@@ -378,22 +378,16 @@ export default function ProductEditForm({
     || barcode !== (baselineProduct.barcode || '')
     || sku !== (baselineProduct.sku || '')
     || categoryId !== (baselineProduct.category_id || '')
-    || sellBy !== originalSellBy
     || saleUnit !== (baselineProduct.sale_unit || '')
     || imageUrlDirty
     || purchasePriceDirty
     || (supportsItemType && itemType !== originalItemType)
-  ), [barcode, baselineProduct, categoryId, imageUrlDirty, itemType, name, originalItemType, originalSellBy, priceGross, purchasePriceDirty, saleUnit, sellBy, sku, supportsItemType, vatRate]);
+  ), [barcode, baselineProduct, categoryId, imageUrlDirty, itemType, name, originalItemType, priceGross, purchasePriceDirty, saleUnit, sku, supportsItemType, vatRate]);
 
   const productDirty = variantFieldsDirty || translationsDirty;
   // Stock is only editable while the item both IS tracked and STAYS stockable
   // in this edit — switching kind and typing stock in one save is contradictory.
   const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies;
-  const sellByLockedByStockPermission = stockTracked
-    && currentStock(baselineProduct) !== 0
-    && !canAdjustStock;
-  const sellByChangeRequiresStockPermission = sellByLockedByStockPermission
-    && sellBy !== originalSellBy;
   const stockDirty = stockEditable && stockQty !== stockInputFromProduct(baselineProduct);
   const mediaDirty = pendingImage !== null;
   const dirty = productDirty || stockDirty || mediaDirty;
@@ -428,7 +422,6 @@ export default function ProductEditForm({
     setDisplayNames(inputs.displayNames);
     if (includeStock) {
       setStockQty(inputs.stockQty);
-      setStockResetNotice(false);
     }
   };
 
@@ -448,13 +441,6 @@ export default function ProductEditForm({
     }
     if (imageUrlDirty && !isValidProductImageUrl(imageUrl)) {
       return tOr(t, 'products.media.urlInvalid', 'Use a complete http:// or https:// image URL');
-    }
-    if (sellByChangeRequiresStockPermission) {
-      return tOr(
-        t,
-        'products.edit.sellByStockPermission',
-        'Stock adjustment permission is required to change the sale unit while this item has stock.',
-      );
     }
     if (stockEditable && parseStockQuantity(stockQty, sellBy) === null) {
       return sellBy === 'WEIGHT'
@@ -489,13 +475,14 @@ export default function ProductEditForm({
         vatRate: Number(vatRate),
         categoryId: categoryId || null,
         saleUnit: saleUnit.trim() || null,
-        sellBy,
         isActive: baselineProduct.is_active !== 0,
       });
       if (imageUrlDirty) {
         payload.imageUrl = imageUrl.trim() || null;
       }
-      if (supportsItemType && itemType !== originalItemType) {
+      if (supportsItemType
+        && itemType !== originalItemType
+        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType)) {
         payload.itemType = itemType as ProductAdminItemType;
       }
       if (purchasePriceDirty) {
@@ -519,11 +506,14 @@ export default function ProductEditForm({
         vat_rate: Number(vatRate),
         category_id: categoryId || null,
         sale_unit: saleUnit.trim() || null,
-        sell_by: sellBy,
         is_active: baselineProduct.is_active,
       });
       if (imageUrlDirty) committedFields.image_url = imageUrl.trim() || null;
-      if (supportsItemType && itemType !== originalItemType) committedFields.item_type = itemType;
+      if (supportsItemType
+        && itemType !== originalItemType
+        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType)) {
+        committedFields.item_type = itemType;
+      }
     }
     if (translationsDirty && canEditDisplayName) {
       const committedTranslations = { ...parseTranslations(baselineProduct.name_translations) };
@@ -657,7 +647,7 @@ export default function ProductEditForm({
             image_url: uploadResult.data.image.url,
             thumbnail_url: uploadResult.data.image.thumbnailUrl,
           },
-          uploadResult.data.variant.updatedAt,
+          uploadResult.data.variant.canonicalUpdatedAt ?? uploadResult.data.variant.updatedAt,
         );
         committedSessionBaseline = uploadedImageBaseline;
         setCommittedBaseline(uploadedImageBaseline);
@@ -704,26 +694,10 @@ export default function ProductEditForm({
     onCancel();
   };
 
-  const changeSellBy = (value: string) => {
-    const nextSellBy = getProductItemTypePolicy(itemType, normalizeSellBy(value)).sellBy;
-    if (sellByLockedByStockPermission && nextSellBy !== originalSellBy) return;
-    setSellBy(nextSellBy);
-    if (nextSellBy === originalSellBy) {
-      setSaleUnit(baselineProduct.sale_unit || (nextSellBy === 'WEIGHT' ? 'kg' : 'szt'));
-      setStockQty(stockInputFromProduct(baselineProduct));
-      setStockResetNotice(false);
-      return;
-    }
-    setSaleUnit(nextSellBy === 'WEIGHT' ? 'kg' : 'szt');
-    setStockQty('0');
-    setStockResetNotice(true);
-  };
-
   const changeItemType = (value: string) => {
     const nextItemType = value as ProductAdminItemType;
-    const nextPolicy = getProductItemTypePolicy(nextItemType, sellBy);
+    if (!canChangeExistingProductItemType(stockTracked, originalSellBy, nextItemType)) return;
     setItemType(nextItemType);
-    if (nextPolicy.sellBy !== sellBy) changeSellBy(nextPolicy.sellBy);
   };
 
   return (
@@ -1015,22 +989,19 @@ export default function ProductEditForm({
               </span>
               <select
                 value={sellBy}
-                onChange={(event) => changeSellBy(event.target.value)}
-                disabled={sellByLockedByStockPermission}
+                disabled
                 className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
                 <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Quantity')}</option>
                 <option value="WEIGHT">{tOr(t, 'products.drawer.sellByWeight', 'Weight (kg)')}</option>
               </select>
-              {sellByLockedByStockPermission ? (
-                <span className="mt-2 block text-xs text-slate-500">
-                  {tOr(
-                    t,
-                    'products.edit.sellByStockPermission',
-                    'Stock adjustment permission is required to change the sale unit while this item has stock.',
-                  )}
-                </span>
-              ) : null}
+              <span className="mt-2 block text-xs text-slate-500">
+                {tOr(
+                  t,
+                  'products.edit.inventoryModeLocked',
+                  'Quantity/weight mode is locked for existing products. Create a new product to use a different mode.',
+                )}
+              </span>
             </label>
           ) : null}
         </div>
@@ -1067,22 +1038,27 @@ export default function ProductEditForm({
             <select
               value={itemType}
               onChange={(event) => changeItemType(event.target.value)}
+              disabled={stockTracked}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
-              <option value="stockable">{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
-              <option value="service">{tOr(t, 'products.itemType.service', 'Service')}</option>
-              <option value="consumable">{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
+              <option value="stockable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'stockable')}>{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
+              <option value="service" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'service')}>{tOr(t, 'products.itemType.service', 'Service')}</option>
+              <option value="consumable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'consumable')}>{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
             </select>
+            {stockTracked ? (
+              <span className="mt-2 block text-xs text-slate-500">
+                {tOr(
+                  t,
+                  'products.edit.inventoryTrackingLocked',
+                  'Inventory tracking cannot be disabled on an existing product. Create a new product for a non-tracked item.',
+                )}
+              </span>
+            ) : null}
             {itemType !== 'stockable' ? (
               <span className="mt-2 block text-xs text-slate-500">
                 {itemType === 'service'
                   ? tOr(t, 'products.itemType.serviceHint', 'Fees or work sold without inventory tracking.')
                   : tOr(t, 'products.itemType.consumableHint', 'Physical goods sold without inventory deductions.')}
-              </span>
-            ) : null}
-            {itemType !== 'stockable' && originalItemType === 'stockable' && currentStock(baselineProduct) !== 0 ? (
-              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                {tOr(t, 'products.itemType.zeroStockFirst', 'Zero this item’s stock before switching it off inventory tracking.')}
               </span>
             ) : null}
           </label>
@@ -1102,11 +1078,6 @@ export default function ProductEditForm({
               step={sellBy === 'WEIGHT' ? '0.001' : '1'}
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
-            {stockResetNotice ? (
-              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                {tOr(t, 'products.edit.stockResetNotice', 'Changing the sale unit clears current stock - re-enter the quantity in the new unit.')}
-              </span>
-            ) : null}
           </label>
         ) : null}
 

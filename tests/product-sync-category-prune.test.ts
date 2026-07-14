@@ -3,6 +3,7 @@ import type { CategoryRow, ProductVariantRow } from '../src/main/database/repos/
 
 const {
   getPosProductsMock,
+  getProductAdminCapabilitiesMock,
   upsertCategoriesMock,
   upsertManyMock,
   deactivateExceptMock,
@@ -16,6 +17,7 @@ const {
   databaseGetMock,
   databaseRunMock,
   databaseMarkDirtyMock,
+  databaseSaveCoalescedMock,
   databaseTransactionMock,
   getSecureAuthTokenMock,
   loggerInfoMock,
@@ -23,6 +25,7 @@ const {
   markFullSyncMock,
 } = vi.hoisted(() => ({
   getPosProductsMock: vi.fn(),
+  getProductAdminCapabilitiesMock: vi.fn(),
   upsertCategoriesMock: vi.fn(),
   upsertManyMock: vi.fn(),
   deactivateExceptMock: vi.fn(),
@@ -36,6 +39,7 @@ const {
   databaseGetMock: vi.fn(),
   databaseRunMock: vi.fn(),
   databaseMarkDirtyMock: vi.fn(),
+  databaseSaveCoalescedMock: vi.fn(),
   databaseTransactionMock: vi.fn((fn: () => void) => fn()),
   getSecureAuthTokenMock: vi.fn(() => 'token'),
   loggerInfoMock: vi.fn(),
@@ -46,6 +50,7 @@ const {
 vi.mock('../src/main/network/api-client', () => ({
   apiClient: {
     getPosProducts: getPosProductsMock,
+    getProductAdminCapabilities: getProductAdminCapabilitiesMock,
   },
 }));
 
@@ -79,6 +84,7 @@ vi.mock('../src/main/database/database', () => ({
     get: databaseGetMock,
     run: databaseRunMock,
     markDirty: databaseMarkDirtyMock,
+    saveCoalesced: databaseSaveCoalescedMock,
     transaction: databaseTransactionMock,
   },
 }));
@@ -147,8 +153,13 @@ function mockGuardBaseline() {
     price_gross: 1000,
     is_active: 1,
   }]);
-  databaseGetMock.mockImplementation((sql: string) => {
-    if (sql.includes("key = 'products_last_sync'")) return { value: 'cursor-1' };
+  databaseGetMock.mockImplementation((sql: string, params?: unknown[]) => {
+    if (sql.includes('FROM sync_metadata') && params?.[0] === 'products_last_sync') {
+      return { value: 'cursor-1' };
+    }
+    if (sql.includes('FROM sync_metadata') && params?.[0] === 'products_sync_cursor_v2') {
+      return { value: 'cursor-v2-1' };
+    }
     if (sql.includes('COUNT(*) AS n')) return { n: 1 };
     if (sql.includes('COUNT(*) as count FROM product_variants WHERE is_active = 1')) {
       return { count: 1 };
@@ -162,10 +173,15 @@ describe('ProductSync category pruning', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getSecureAuthTokenMock.mockReturnValue('token');
+    getProductAdminCapabilitiesMock.mockResolvedValue({
+      supportsProductSyncV2: false,
+      productSyncVersion: 1,
+    });
     databaseTransactionMock.mockImplementation((fn: () => void) => fn());
     getPendingVariantIdsMock.mockReturnValue([]);
     getSyncedAliasesMock.mockReturnValue([]);
     deleteCategoriesExceptMock.mockReturnValue({ removed: 0, categories: [] });
+    databaseSaveCoalescedMock.mockResolvedValue({ success: true });
     mockGuardBaseline();
   });
 
@@ -176,6 +192,7 @@ describe('ProductSync category pruning', () => {
       categories,
       deletedIds: [],
       nextSince: 'cursor-2',
+      categoriesComplete: true,
     });
     deleteCategoriesExceptMock.mockReturnValueOnce({
       removed: 2,
@@ -216,6 +233,36 @@ describe('ProductSync category pruning', () => {
     expect(deleteCategoriesExceptMock).not.toHaveBeenCalled();
   });
 
+  it('clears all local categories when an authoritative full snapshot is empty', async () => {
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [product('p-1')],
+      categories: [],
+      categoriesComplete: true,
+      deletedIds: [],
+      nextSince: 'cursor-2',
+    });
+
+    await expect(new ProductSync().fullSync()).resolves.toMatchObject({ productsCount: 1 });
+
+    expect(upsertCategoriesMock).not.toHaveBeenCalled();
+    expect(deleteCategoriesExceptMock).toHaveBeenCalledTimes(1);
+    expect([...(deleteCategoriesExceptMock.mock.calls[0]?.[0] as Set<string>)]).toEqual([]);
+  });
+
+  it('preserves local categories when the public category snapshot failed', async () => {
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [product('p-1')],
+      categories: [],
+      categoriesComplete: false,
+      deletedIds: [],
+      nextSince: 'cursor-2',
+    });
+
+    await expect(new ProductSync().fullSync()).resolves.toMatchObject({ productsCount: 1 });
+
+    expect(deleteCategoriesExceptMock).not.toHaveBeenCalled();
+  });
+
   it('does not prune categories during delta sync', async () => {
     const categories = [category('cat-1')];
     getPosProductsMock.mockResolvedValueOnce({
@@ -230,6 +277,27 @@ describe('ProductSync category pruning', () => {
     expect(result).toBe(1);
     expect(upsertCategoriesMock).toHaveBeenCalledWith(categories);
     expect(deleteCategoriesExceptMock).not.toHaveBeenCalled();
+  });
+
+  it('removes backend-deleted categories during an authoritative delta sync', async () => {
+    const categories = [category('cat-1')];
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [product('p-1')],
+      categories,
+      categoriesComplete: true,
+      deletedIds: [],
+      nextSince: 'cursor-2',
+    });
+    deleteCategoriesExceptMock.mockReturnValueOnce({
+      removed: 1,
+      categories: [{ id: 'ghost', name: 'Ghost' }],
+    });
+
+    await expect(new ProductSync().deltaSync()).resolves.toBe(1);
+
+    const keepIds = deleteCategoriesExceptMock.mock.calls[0]?.[0] as Set<string>;
+    expect([...keepIds]).toEqual(['cat-1']);
+    expect(loggerInfoMock).toHaveBeenCalledWith(expect.stringContaining('Ghost (ghost)'));
   });
 
   it('runs a queued catalog callback only after an older delta has finished applying', async () => {
@@ -283,6 +351,106 @@ describe('ProductSync category pruning', () => {
 
     await expect(failedDelta).rejects.toThrow('catalog apply failed');
     await expect(mirror).resolves.toBe('mirrored-after-failure');
+  });
+
+  it('uses cursor-v2 metadata and advances only to the server final cursor', async () => {
+    getProductAdminCapabilitiesMock.mockResolvedValueOnce({
+      supportsProductSyncV2: true,
+      productSyncVersion: 2,
+    });
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [product('p-v2')],
+      categories: [],
+      deletedIds: [],
+      nextSyncCursor: 'cursor-v2-2',
+    });
+
+    await expect(new ProductSync().deltaSync()).resolves.toBe(1);
+
+    expect(getPosProductsMock).toHaveBeenCalledWith(
+      'token',
+      'cursor-v2-1',
+      { cursorV2: true },
+    );
+    expect(databaseRunMock).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT OR REPLACE INTO sync_metadata'),
+      ['products_sync_cursor_v2', 'cursor-v2-2'],
+    );
+  });
+
+  it('resets an unsafe cursor-v2 once and performs one full v2 sync without legacy fallback', async () => {
+    getProductAdminCapabilitiesMock.mockResolvedValueOnce({
+      supportsProductSyncV2: true,
+      productSyncVersion: 2,
+    });
+    const unsafe = Object.assign(new Error('cursor exceeds safe watermark'), {
+      status: 409,
+      code: 'PRODUCT_SYNC_CURSOR_UNSAFE',
+      resetRequired: true,
+      serverBody: {
+        error: 'PRODUCT_SYNC_CURSOR_UNSAFE',
+        message: 'cursor exceeds safe watermark',
+        resetRequired: true,
+      },
+    });
+    getPosProductsMock
+      .mockRejectedValueOnce(unsafe)
+      .mockResolvedValueOnce({
+        products: [product('p-full-v2')],
+        categories: [],
+        categoriesComplete: true,
+        deletedIds: [],
+        nextSyncCursor: 'cursor-v2-reset',
+      });
+
+    await expect(new ProductSync().deltaSync()).resolves.toBe(1);
+
+    expect(getPosProductsMock).toHaveBeenCalledTimes(2);
+    expect(getPosProductsMock.mock.calls).toEqual([
+      ['token', 'cursor-v2-1', { cursorV2: true }],
+      ['token', undefined, { cursorV2: true }],
+    ]);
+    expect(databaseRunMock).toHaveBeenCalledWith(
+      'DELETE FROM sync_metadata WHERE key = ?',
+      ['products_sync_cursor_v2'],
+    );
+    expect(databaseSaveCoalescedMock).toHaveBeenCalledWith(5000);
+  });
+
+  it('bubbles a repeated unsafe response from the one full v2 reset attempt without looping', async () => {
+    getProductAdminCapabilitiesMock.mockResolvedValueOnce({
+      supportsProductSyncV2: true,
+      productSyncVersion: 2,
+    });
+    const unsafe = Object.assign(new Error('cursor unsafe'), {
+      status: 409,
+      code: 'PRODUCT_SYNC_CURSOR_UNSAFE',
+      details: { resetRequired: true },
+    });
+    getPosProductsMock.mockRejectedValue(unsafe);
+
+    await expect(new ProductSync().deltaSync()).rejects.toMatchObject({
+      code: 'PRODUCT_SYNC_CURSOR_UNSAFE',
+    });
+
+    expect(getPosProductsMock).toHaveBeenCalledTimes(2);
+    expect(getPosProductsMock.mock.calls[1]).toEqual(['token', undefined, { cursorV2: true }]);
+  });
+
+  it('retains the previous legacy cursor on an empty delta without using local time', async () => {
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [],
+      categories: [],
+      deletedIds: [],
+      nextSince: undefined,
+    });
+
+    await expect(new ProductSync().deltaSync()).resolves.toBe(0);
+
+    expect(databaseRunMock).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT OR REPLACE INTO sync_metadata'),
+      ['products_last_sync', 'cursor-1'],
+    );
   });
 
   it('serializes direct catalog sync calls across ProductSync instances', async () => {

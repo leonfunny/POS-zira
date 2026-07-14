@@ -180,17 +180,20 @@ describe('Product module implementation contract', () => {
     expect(editView).toContain('classifyProductSale');
     expect(posModule).toContain('mergeProductAdminNullableMirrorFields');
     expect(sharedTypes).toContain("sellBy?: 'PIECE' | 'WEIGHT';");
-    expect(editForm).toMatch(/\n\s+sellBy,\n/);
     expect(editForm).toContain('const originalSellBy = productSellBy(baselineProduct);');
-    expect(editForm).toContain("setStockQty('0')");
-    expect(editForm).toContain('stockResetNotice');
-    expect(editForm).toContain('products.edit.stockResetNotice');
-    expect(editForm).toContain('const sellByLockedByStockPermission =');
-    expect(editForm).toContain('if (sellByChangeRequiresStockPermission)');
-    expect(editForm).toContain('disabled={sellByLockedByStockPermission}');
-    expect(translationBlock('en')).toContain("'products.edit.sellByStockPermission':");
-    expect(translationBlock('vi')).toContain("'products.edit.sellByStockPermission':");
-    expect(translationBlock('pl')).toContain("'products.edit.sellByStockPermission':");
+    const updatePayloadBlock = editForm.slice(
+      editForm.indexOf('const payload: ProductAdminUpdateVariantInput'),
+      editForm.indexOf('const committedFields: Partial<ProductListItem>'),
+    );
+    expect(updatePayloadBlock).not.toMatch(/\bsellBy\s*:/);
+    expect(editForm).toContain('canChangeExistingProductItemType');
+    expect(editForm).toContain('products.edit.inventoryModeLocked');
+    expect(editForm).toContain('products.edit.inventoryTrackingLocked');
+    expect(posModule).toContain('sanitizeExistingProductInventoryModeUpdate');
+    for (const locale of ['en', 'vi', 'pl'] as const) {
+      expect(translationBlock(locale)).toContain("'products.edit.inventoryModeLocked':");
+      expect(translationBlock(locale)).toContain("'products.edit.inventoryTrackingLocked':");
+    }
     expect(apiClient).not.toContain('withoutUnsupportedProductAdminSellBy');
     expect(editForm).toContain('products.edit.discardConfirm');
     expect(deactivateDialog).toContain('window.electronAPI.pos.productAdmin.deactivateVariant');

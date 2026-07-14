@@ -1,11 +1,14 @@
 import * as path from 'path';
 import type {
   ProductAdminCapabilities,
+  ProductAdminCategory,
   ProductAdminMainImageUploadInput,
   ProductAdminReceiveStockInput,
+  ProductAdminUpdateVariantInput,
   ProductAdminVariant,
 } from '../../shared/types';
-import type { ProductVariantRow } from '../database/repos/product-repo';
+import type { CategoryRow, ProductVariantRow } from '../database/repos/product-repo';
+import { isValidProductMoneyGrosze } from '../../shared/product-money';
 
 export const PRODUCT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -233,6 +236,87 @@ function productAdminRevision(value: unknown): number | null {
   return Number.isFinite(revision) ? revision : null;
 }
 
+export function productAdminCategoryToRow(
+  category: ProductAdminCategory,
+  existing?: CategoryRow | null,
+): CategoryRow {
+  const id = String(category?.id || '').trim();
+  const name = String(category?.name || '').trim() || existing?.name || '';
+  if (!id || !name) {
+    throw inputError('invalid-product-admin-category', 'INVALID_CATEGORY', 'category');
+  }
+  const row: CategoryRow = {
+    id,
+    name,
+    icon: hasOwn(category, 'icon') ? category.icon ?? null : existing?.icon ?? null,
+    color: hasOwn(category, 'color') ? category.color ?? null : existing?.color ?? null,
+    sort_order: typeof category.sortOrder === 'number' && Number.isFinite(category.sortOrder)
+      ? Math.max(0, Math.floor(Number(category.sortOrder)))
+      : existing?.sort_order ?? 0,
+    updated_at: String(category.updatedAt || '').trim() || existing?.updated_at || null,
+    kitchen_print: typeof category.kitchenPrint === 'boolean'
+      ? (category.kitchenPrint ? 1 : 0)
+      : existing?.kitchen_print ?? null,
+  };
+  // Product-admin category mutations do not carry the display/localization
+  // columns supplied by catalog sync. INSERT OR REPLACE would reset those
+  // columns unless the existing local row is merged first.
+  return existing ? { ...existing, ...row } : row;
+}
+
+export function productAdminCanonicalUpdatedAt(
+  variant: Partial<ProductAdminVariant>,
+): string | undefined {
+  const explicit = typeof variant.canonicalUpdatedAt === 'string'
+    ? variant.canonicalUpdatedAt.trim()
+    : '';
+  if (explicit) return explicit;
+  const legacy = typeof variant.updatedAt === 'string' ? variant.updatedAt.trim() : '';
+  return legacy || undefined;
+}
+
+export function sanitizeExistingProductInventoryModeUpdate(
+  input: ProductAdminUpdateVariantInput,
+  existing: ProductVariantRow | null | undefined,
+): ProductAdminUpdateVariantInput {
+  if (!existing) return { ...input };
+
+  const currentSellBy = String(existing.sell_by || '').toUpperCase() === 'WEIGHT'
+    ? 'WEIGHT'
+    : 'PIECE';
+  const currentItemType = String(existing.item_type || 'stockable').trim().toLowerCase() || 'stockable';
+  const currentTrackFlag = existing.track_inventory !== 0;
+  const currentTracked = currentItemType === 'stockable' && currentTrackFlag;
+  const nextSellBy = input.sellBy ?? currentSellBy;
+  const nextItemType = input.itemType == null
+    ? currentItemType
+    : String(input.itemType).trim().toLowerCase();
+  const nextTrackFlag = input.trackInventory ?? currentTrackFlag;
+  const nextTracked = nextItemType === 'stockable' && nextTrackFlag;
+
+  if (nextSellBy !== currentSellBy || nextTracked !== currentTracked) {
+    const error = new Error('existing-product-inventory-mode-transition-unavailable') as Error & {
+      code?: string;
+      status?: number;
+    };
+    error.code = 'INVENTORY_MODE_TRANSITION_UNSUPPORTED';
+    error.status = 409;
+    throw error;
+  }
+
+  const sanitized = { ...input };
+  // OCC payloads should not carry unchanged inventory-mode fields. They have
+  // stricter server semantics than ordinary descriptive edits and can become
+  // dangerous if the local mirror is stale.
+  if (sanitized.sellBy === currentSellBy) delete sanitized.sellBy;
+  if (sanitized.itemType != null
+    && String(sanitized.itemType).trim().toLowerCase() === currentItemType) {
+    delete sanitized.itemType;
+  }
+  if (sanitized.trackInventory === currentTrackFlag) delete sanitized.trackInventory;
+  return sanitized;
+}
+
 /**
  * A mutation response may arrive after a newer catalog delta has already been
  * mirrored. Apply the response as one canonical unit only when its revision is
@@ -245,7 +329,7 @@ export function shouldApplyProductAdminVariantMirror(
 ): boolean {
   if (!existing) return true;
 
-  const incomingRevision = productAdminRevision(variant.updatedAt);
+  const incomingRevision = productAdminRevision(productAdminCanonicalUpdatedAt(variant));
   if (incomingRevision === null) return false;
 
   const existingRevision = productAdminRevision(existing.updated_at);
@@ -323,7 +407,7 @@ export function normalizeProductReceiptInput(
   let unitCostGrosze: number | undefined;
   if (payload?.unitCostGrosze !== null && payload?.unitCostGrosze !== undefined) {
     const cost = payload.unitCostGrosze;
-    if (typeof cost !== 'number' || !Number.isSafeInteger(cost) || cost < 0) {
+    if (!isValidProductMoneyGrosze(cost, { allowZero: true })) {
       throw inputError('invalid-receipt-unit-cost', 'INVALID_PRICE', 'unitCostGrosze');
     }
     unitCostGrosze = cost;

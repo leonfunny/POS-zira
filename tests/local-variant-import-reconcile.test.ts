@@ -38,7 +38,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
 
 vi.mock('../src/main/database/database', () => ({
   database: {
-    save: vi.fn(),
+    saveCoalesced: vi.fn(),
     markDirty: vi.fn(),
   },
 }));
@@ -112,7 +112,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     vi.mocked(localVariantImportsRepo.getPendingByVariantId).mockReturnValue(null);
     vi.mocked(localVariantImportsRepo.getSyncedAliases).mockReturnValue([]);
     vi.mocked(productRepo.getAllCategories).mockReturnValue([]);
-    vi.mocked(database.save).mockResolvedValue({ success: true });
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true });
   });
 
   it('coalesces concurrent reconciliation of the same variant into one network mutation', async () => {
@@ -222,10 +222,6 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     vi.mocked(apiClient.scanCreate)
       .mockRejectedValueOnce(new Error('response lost after request'))
       .mockResolvedValueOnce({ outcome: 'IMPORT_DRAFT', variantId: 'server-replay' });
-    vi.mocked(apiClient.lookupByEan).mockResolvedValueOnce({
-      mode: 'IMPORT_DRAFT',
-      draft: { draftId: row.draft_id, ean: row.ean },
-    });
 
     const sync = new ProductSync();
     await sync.reconcileLocalVariantImports();
@@ -241,14 +237,14 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       taxRate: 5,
     });
     expect(retryRequest).toEqual(firstRequest);
-    expect(apiClient.lookupByEan).toHaveBeenCalledOnce();
-    expect(vi.mocked(apiClient.lookupByEan).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(apiClient.scanCreate).mock.invocationCallOrder[1]);
+    expect(apiClient.lookupByEan).not.toHaveBeenCalled();
     expect(productRepo.getById).toHaveBeenCalledTimes(1);
     expect(localVariantImportsRepo.storeIntent).toHaveBeenCalledTimes(1);
-    expect(database.save).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(database.save).mock.invocationCallOrder[0])
+    expect(database.saveCoalesced).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(database.saveCoalesced).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(apiClient.scanCreate).mock.invocationCallOrder[0]);
+    expect(vi.mocked(apiClient.scanCreate).mock.invocationCallOrder[1])
+      .toBeLessThan(vi.mocked(database.saveCoalesced).mock.invocationCallOrder[3]);
   });
 
   it('does not dispatch when the intent ledger cannot be flushed to disk', async () => {
@@ -272,7 +268,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       vat_rate: 23,
       category_id: null,
     } as any);
-    vi.mocked(database.save).mockResolvedValueOnce({
+    vi.mocked(database.saveCoalesced).mockResolvedValueOnce({
       success: false,
       error: 'disk full',
     });
@@ -364,6 +360,52 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     );
   });
 
+  it.each([
+    { status: 401, code: 'TOKEN_EXPIRED', message: 'Authentication expired' },
+    { status: 429, code: 'RATE_LIMITED', message: 'Too many requests' },
+  ])('keeps HTTP $status scan-create intents replayable instead of quarantining dependent orders', async ({
+    status,
+    code,
+    message,
+  }) => {
+    const variantId = `transient-${status}`;
+    vi.mocked(localVariantImportsRepo.getPending).mockReturnValueOnce([{
+      variant_id: variantId,
+      draft_id: `draft-${status}`,
+      ean: `8935039500${status}`,
+      status: 'PENDING',
+      attempts: 0,
+      last_error: null,
+      created_at: '2026-07-13 10:00:00',
+      synced_at: null,
+      server_variant_id: null,
+      category_id: null,
+      intent_payload_json: null,
+      intent_idempotency_key: null,
+      intent_dispatched_at: null,
+    }]);
+    vi.mocked(productRepo.getById).mockReturnValueOnce({
+      id: variantId,
+      retail_price: 1000,
+      in_stock: 2,
+      available_qty: 2,
+      vat_rate: 23,
+      category_id: null,
+    } as any);
+    vi.mocked(apiClient.scanCreate).mockRejectedValueOnce(Object.assign(
+      new Error(message),
+      { status, serverBody: { code } },
+    ));
+
+    await new ProductSync().reconcileLocalVariantImports();
+
+    expect(localVariantImportsRepo.storeIntent).toHaveBeenCalledOnce();
+    expect(localVariantImportsRepo.markIntentDispatched).toHaveBeenCalledOnce();
+    expect(localVariantImportsRepo.markAttempt).toHaveBeenCalledWith(variantId, message);
+    expect(localVariantImportsRepo.markDefinitivelyRejected).not.toHaveBeenCalled();
+    expect(localVariantImportsRepo.markFailed).not.toHaveBeenCalled();
+  });
+
   it('keeps an idempotency conflict immutable because the key may have prior commit history', async () => {
     vi.mocked(localVariantImportsRepo.getPending).mockReturnValueOnce([{
       variant_id: 'idempotency-conflict',
@@ -400,6 +442,175 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       'idempotency-conflict',
       'Idempotency key conflict',
     );
+  });
+
+  it('releases a confirmed idempotency payload mismatch for operator correction', async () => {
+    vi.mocked(localVariantImportsRepo.getPending).mockReturnValueOnce([{
+      variant_id: 'payload-mismatch',
+      draft_id: 'draft-payload-mismatch',
+      ean: '8935039500462',
+      status: 'PENDING',
+      attempts: 0,
+      last_error: null,
+      created_at: '2026-07-13 10:00:00',
+      synced_at: null,
+      server_variant_id: null,
+      category_id: null,
+      intent_payload_json: null,
+      intent_idempotency_key: null,
+      intent_dispatched_at: null,
+    }]);
+    vi.mocked(productRepo.getById).mockReturnValueOnce({
+      id: 'payload-mismatch',
+      retail_price: 1000,
+      in_stock: 2,
+      available_qty: 2,
+      vat_rate: 23,
+      category_id: null,
+    } as any);
+    vi.mocked(apiClient.scanCreate).mockRejectedValueOnce(Object.assign(
+      new Error('Idempotency payload mismatch'),
+      { status: 409, serverBody: { error: 'IDEMPOTENCY_PAYLOAD_MISMATCH' } },
+    ));
+
+    await new ProductSync().reconcileLocalVariantImports();
+
+    expect(localVariantImportsRepo.markDefinitivelyRejected).toHaveBeenCalledWith(
+      'payload-mismatch',
+      'Idempotency payload mismatch',
+    );
+    expect(localVariantImportsRepo.markAttempt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 403, code: 'FORBIDDEN', message: 'Permission denied' },
+    { status: 404, code: 'NOT_FOUND', message: 'Draft not found' },
+  ])('retains an exact scan-create intent when ambiguous failure is followed by HTTP $status', async ({
+    status,
+    code,
+    message,
+  }) => {
+    const row: any = {
+      variant_id: `sticky-${status}`,
+      draft_id: `sticky-draft-${status}`,
+      ean: `8935039510${status}`,
+      status: 'PENDING',
+      attempts: 0,
+      last_error: null,
+      created_at: '2026-07-13 10:00:00',
+      synced_at: null,
+      server_variant_id: null,
+      category_id: null,
+      intent_payload_json: null,
+      intent_idempotency_key: null,
+      intent_dispatched_at: null,
+    };
+    vi.mocked(localVariantImportsRepo.getPending).mockImplementation(() => [{ ...row }]);
+    vi.mocked(productRepo.getById).mockReturnValue({
+      id: row.variant_id,
+      retail_price: 1000,
+      in_stock: 2,
+      available_qty: 2,
+      vat_rate: 23,
+      category_id: null,
+    } as any);
+    vi.mocked(localVariantImportsRepo.storeIntent).mockImplementation((_variantId, payloadJson, key) => {
+      row.intent_payload_json = payloadJson;
+      row.intent_idempotency_key = key;
+    });
+    vi.mocked(localVariantImportsRepo.markIntentDispatched).mockImplementation(() => {
+      row.intent_dispatched_at ||= '2026-07-13 10:00:01';
+    });
+    vi.mocked(localVariantImportsRepo.markAttempt).mockImplementation((_variantId, error) => {
+      row.attempts += 1;
+      row.last_error = error;
+    });
+    vi.mocked(apiClient.scanCreate)
+      .mockRejectedValueOnce(Object.assign(new Error('Request timed out'), {
+        status: 408,
+        serverBody: { code: 'REQUEST_TIMEOUT' },
+      }))
+      .mockRejectedValueOnce(Object.assign(new Error(message), {
+        status,
+        serverBody: { code },
+      }));
+
+    const sync = new ProductSync();
+    await sync.reconcileLocalVariantImports();
+    const payloadAfterAmbiguity = row.intent_payload_json;
+    const keyAfterAmbiguity = row.intent_idempotency_key;
+    await sync.reconcileLocalVariantImports();
+
+    expect(row).toMatchObject({
+      status: 'PENDING',
+      attempts: 2,
+      intent_payload_json: payloadAfterAmbiguity,
+      intent_idempotency_key: keyAfterAmbiguity,
+    });
+    expect(payloadAfterAmbiguity).toBeTruthy();
+    expect(keyAfterAmbiguity).toMatch(/^local-import-v2-[a-f0-9]{64}$/);
+    expect(apiClient.scanCreate).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiClient.scanCreate).mock.calls[1][1])
+      .toEqual(vi.mocked(apiClient.scanCreate).mock.calls[0][1]);
+    expect(localVariantImportsRepo.markDefinitivelyRejected).not.toHaveBeenCalled();
+    expect(localVariantImportsRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 403, code: 'FORBIDDEN' },
+    { status: 404, code: 'NOT_FOUND' },
+  ])('treats a persisted prior dispatch with zero attempts as sticky before HTTP $status', async ({
+    status,
+    code,
+  }) => {
+    const scanPayload = {
+      ean: `8935039520${status}`,
+      purchasePrice: 0,
+      retailPrice: 10,
+      stockQty: 2,
+      taxRate: 23,
+      categoryId: null,
+    };
+    const variantId = `prior-dispatch-${status}`;
+    const idempotencyKey = buildLocalImportMutationKey({
+      variantId,
+      ...scanPayload,
+    });
+    const row: any = {
+      variant_id: variantId,
+      draft_id: `draft-prior-${status}`,
+      ean: scanPayload.ean,
+      status: 'PENDING',
+      attempts: 0,
+      last_error: null,
+      created_at: '2026-07-13 10:00:00',
+      synced_at: null,
+      server_variant_id: null,
+      category_id: null,
+      intent_payload_json: JSON.stringify(scanPayload),
+      intent_idempotency_key: idempotencyKey,
+      intent_dispatched_at: '2026-07-13 10:00:01',
+    };
+    vi.mocked(localVariantImportsRepo.getPending).mockReturnValueOnce([row]);
+    vi.mocked(apiClient.scanCreate).mockRejectedValueOnce(Object.assign(
+      new Error(`HTTP ${status}`),
+      { status, serverBody: { code } },
+    ));
+
+    await new ProductSync().reconcileLocalVariantImports();
+
+    expect(apiClient.scanCreate).toHaveBeenCalledWith(null, {
+      ...scanPayload,
+      idempotencyKey,
+    });
+    expect(localVariantImportsRepo.markAttempt).toHaveBeenCalledWith(variantId, `HTTP ${status}`);
+    expect(localVariantImportsRepo.markDefinitivelyRejected).not.toHaveBeenCalled();
+    expect(localVariantImportsRepo.storeIntent).not.toHaveBeenCalled();
+    expect(row).toMatchObject({
+      intent_payload_json: JSON.stringify(scanPayload),
+      intent_idempotency_key: idempotencyKey,
+      intent_dispatched_at: '2026-07-13 10:00:01',
+    });
   });
 
   it('quarantines a legacy uncertain import when lookup finds active salon stock', async () => {
@@ -514,7 +725,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     expect(apiClient.scanCreate).not.toHaveBeenCalled();
   });
 
-  it('does not replay a durable request when lookup finds active stock with an unknowable delta', async () => {
+  it('replays an exact durable request first after a crash-after-commit and consumes the canonical result', async () => {
     const payload = {
       ean: '8935039500488',
       purchasePrice: 0,
@@ -541,24 +752,27 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
       }),
       intent_dispatched_at: '2026-07-13 10:00:01',
     }]);
-    vi.mocked(apiClient.lookupByEan).mockResolvedValueOnce({
-      mode: 'RESTOCK',
-      existingProduct: {
-        variantId: 'server-existing',
-        ean: payload.ean,
-        isActive: true,
-      },
+    vi.mocked(apiClient.scanCreate).mockResolvedValueOnce({
+      mode: 'IDEMPOTENT_REPLAY',
+      variantId: 'server-existing',
     });
 
     const reconciled = await new ProductSync().reconcileLocalVariantImports();
 
-    expect(reconciled).toBe(0);
-    expect(apiClient.scanCreate).not.toHaveBeenCalled();
-    expect(localVariantImportsRepo.markSynced).not.toHaveBeenCalled();
-    expect(localVariantImportsRepo.markFailed).toHaveBeenCalledWith(
+    expect(reconciled).toBe(1);
+    expect(apiClient.lookupByEan).not.toHaveBeenCalled();
+    expect(apiClient.scanCreate).toHaveBeenCalledWith(null, {
+      ...payload,
+      idempotencyKey: buildLocalImportMutationKey({
+        variantId: 'durable-uncertain-restock',
+        ...payload,
+      }),
+    });
+    expect(localVariantImportsRepo.markSynced).toHaveBeenCalledWith(
       'durable-uncertain-restock',
-      expect.stringContaining('manual audit'),
+      'server-existing',
     );
+    expect(localVariantImportsRepo.markFailed).not.toHaveBeenCalled();
   });
 
   it('reconciles the requested import instead of the oldest pending row', async () => {

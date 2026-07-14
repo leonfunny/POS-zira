@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveName } from '../../../shared/catalog-names';
 import { generateUniqueInternalEan } from '../../../shared/internal-ean';
 import { getProductItemTypePolicy } from '../../../shared/product-stock-tracking';
+import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import type { ProductAdminCreateProductInput, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -44,22 +45,12 @@ function tOr(t: (key: string) => string, key: string, fallback: string): string 
 }
 
 function parseMoneyToGrosze(value: string): number | null {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  const grosze = Math.round(parsed * 100);
-  if (grosze < 1) return null;
-  return grosze;
+  const parsed = parseProductMoneyInputToGrosze(value, { allowZero: false });
+  return typeof parsed === 'number' ? parsed : null;
 }
 
 function parseOptionalMoneyToGrosze(value: string): number | null | undefined {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  if (!/^\d+(\.\d{0,2})?$/.test(normalized)) return undefined;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return Math.round(parsed * 100);
+  return parseProductMoneyInputToGrosze(value, { allowBlank: true, allowZero: true });
 }
 
 function decimalPlaces(value: string): number {
@@ -351,7 +342,7 @@ export default function ProductCreateDialog({
               dataUrl: attemptImage.dataUrl,
               fileName: attemptImage.fileName,
               mimeType: attemptImage.mimeType,
-              expectedUpdatedAt: createdVariant.updatedAt,
+              expectedUpdatedAt: createdVariant.canonicalUpdatedAt ?? createdVariant.updatedAt,
             });
             if (!uploadResult?.ok || !uploadResult.data) {
               const warning = uploadResult?.error

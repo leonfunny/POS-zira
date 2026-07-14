@@ -1609,4 +1609,49 @@ export const migrations: Migration[] = [
       WHERE status IN ('PENDING', 'FAILED');
     `,
   },
+  {
+    version: 55,
+    name: 'product_admin_mutation_outbox',
+    // Durable command ledger for Product Workspace mutations. Requests are
+    // flushed before HTTP dispatch and their committed response is flushed
+    // before local mirror effects, so a crash can only replay the exact same
+    // request/key or re-apply an already committed response.
+    up: `
+      CREATE TABLE IF NOT EXISTS product_admin_mutation_outbox (
+        mutation_id TEXT PRIMARY KEY,
+        tenant_key TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        mutation_type TEXT NOT NULL,
+        target_variant_id TEXT,
+        idempotency_key TEXT,
+        intent_hash TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        staged_file_path TEXT,
+        staged_file_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        outcome_ambiguous INTEGER NOT NULL DEFAULT 0,
+        dispatched_at TEXT,
+        next_attempt_at TEXT,
+        last_error_code TEXT,
+        last_error_status INTEGER,
+        last_error TEXT,
+        response_json TEXT,
+        committed_at TEXT,
+        local_effects_applied_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_pamo_tenant_idempotency
+        ON product_admin_mutation_outbox(tenant_key, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_pamo_unresolved_intent
+        ON product_admin_mutation_outbox(tenant_key, mutation_type, intent_hash)
+        WHERE status IN ('PENDING', 'IN_FLIGHT', 'COMMITTED');
+      CREATE INDEX IF NOT EXISTS idx_pamo_ready
+        ON product_admin_mutation_outbox(tenant_key, status, next_attempt_at, created_at);
+      CREATE INDEX IF NOT EXISTS idx_pamo_target
+        ON product_admin_mutation_outbox(tenant_key, target_variant_id, status);
+    `,
+  },
 ];

@@ -14,9 +14,11 @@ const PRELOAD_POS = source('src/preload/preload-pos.ts');
 const API = source('src/main/network/api-client.ts');
 const POS_MODULE = source('src/main/modules/pos.module.ts');
 const INPUT = source('src/main/pos/product-workspace-input.ts');
+const CATEGORY_RANKING = source('src/renderer/components/pos/CategoryRankingSettings.tsx');
+const CATEGORY_RANKING_STATE = source('src/renderer/components/pos/category-ranking-state.ts');
 
 describe('native product workspace infrastructure', () => {
-  it('maps the backend v3 capability and permission flags', () => {
+  it('maps the backend product-workspace capability and permission flags', () => {
     for (const flag of [
       'canViewPurchasePrice',
       'canReplaceMainImage',
@@ -25,10 +27,33 @@ describe('native product workspace infrastructure', () => {
       'supportsMainImageUpload',
       'supportsStockLots',
       'supportsLotReceiving',
+      'canReorderCategory',
+      'supportsCategoryBatchUpdate',
+      'supportsCategoryKitchenPrint',
+      'supportsCategoryDelta',
     ]) {
       expect(TYPES).toContain(flag);
       expect(API).toContain(`${flag}: raw?.${flag} === true`);
     }
+  });
+
+  it('uses the atomic category-order contract with one OCC revision per row', () => {
+    expect(TYPES).toContain('expectedUpdatedAt?: string;');
+    expect(CATEGORY_RANKING_STATE).toContain('expectedUpdatedAt: category.updated_at || undefined');
+    expect(CATEGORY_RANKING).toContain('mergePersistedCategoryOrder(');
+    expect(API).toContain("'/categories/order'");
+    expect(API).toContain('{ updates },');
+    expect(POS_MODULE).toContain('apiClient.updateProductAdminCategoryOrder(token, exactUpdates)');
+    expect(POS_MODULE).toContain('capabilities.supportsCategoryBatchUpdate !== true');
+    expect(POS_MODULE).toContain('productAdminCategoryToRow(category, productRepo.getCategoryById(category.id))');
+    expect(INPUT).toContain('return existing ? { ...existing, ...row } : row;');
+    expect(POS_MODULE).not.toContain('for (const update of updates) {\n            const response = await apiClient.updateProductAdminCategory');
+  });
+
+  it('applies the committed category-create response to the local catalog before repair sync', () => {
+    expect(INPUT).toContain('export function productAdminCategoryToRow');
+    expect(POS_MODULE).toContain('mirrorProductAdminCategory(response?.category');
+    expect(POS_MODULE).toContain("runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_category_create'");
   });
 
   it('keeps purchase price behind authenticated product-admin detail', () => {
@@ -82,7 +107,7 @@ describe('native product workspace infrastructure', () => {
 
   it('does not convert a committed server mutation into failure when local mirroring throws', () => {
     const helper = POS_MODULE.match(
-      /const withProductAdminCapability = async[\s\S]*?\n\s*};\n\n\s*const normalizeCategoryOrderUpdates/,
+      /const withProductAdminCapability = async[\s\S]*?\n\s*};\n\n\s*const currentProductAdminMutationScope/,
     )?.[0] ?? '';
 
     expect(helper).toContain('try {\n            await afterSuccess(data, isCurrentProductAdminSession);');
@@ -95,7 +120,8 @@ describe('native product workspace infrastructure', () => {
     expect(INPUT).toContain('export function requireProductAdminExpectedUpdatedAt');
     expect(INPUT).toContain("error.code = 'STALE_PRODUCT'");
     expect(INPUT).toContain('error.status = 409');
-    expect(POS_MODULE.match(/requireProductAdminExpectedUpdatedAt\(\s*capabilities,/g)).toHaveLength(5);
+    expect(POS_MODULE.match(/requireProductAdminExpectedUpdatedAt\(\s*capabilities,/g)?.length ?? 0)
+      .toBeGreaterThanOrEqual(7);
 
     for (const apiCall of [
       'apiClient.updateProductVariant',
@@ -112,7 +138,7 @@ describe('native product workspace infrastructure', () => {
 
   it('drops local effects and purchase cost when auth or tenant context changes mid-request', () => {
     const helper = POS_MODULE.match(
-      /const withProductAdminCapability = async[\s\S]*?\n\s*};\n\n\s*const normalizeCategoryOrderUpdates/,
+      /const withProductAdminCapability = async[\s\S]*?\n\s*};\n\n\s*const currentProductAdminMutationScope/,
     )?.[0] ?? '';
 
     expect(INPUT).toContain('export function captureProductAdminSessionContext');

@@ -500,6 +500,13 @@ export const productRepo = {
     );
   },
 
+  getCategoryById(categoryId: string): CategoryRow | null {
+    return database.get<CategoryRow>(
+      'SELECT * FROM categories WHERE id = ?',
+      [categoryId],
+    );
+  },
+
   /**
    * Mark all products NOT in the given set as inactive.
    * Called during full sync to handle products deleted on backend.
@@ -609,13 +616,15 @@ export const productRepo = {
 
   deleteCategoriesExcept(keepIds: Set<string>): CategoryPruneResult {
     const keep = [...keepIds].filter(Boolean);
-    if (keep.length === 0) return { removed: 0, categories: [] };
-
     const categories = database.all<Pick<CategoryRow, 'id' | 'name'>>(
-      `SELECT id, name
-       FROM categories
-       WHERE id NOT IN (${placeholders(keep.length)})
-       ORDER BY name, id`,
+      keep.length > 0
+        ? `SELECT id, name
+           FROM categories
+           WHERE id NOT IN (${placeholders(keep.length)})
+           ORDER BY name, id`
+        : `SELECT id, name
+           FROM categories
+           ORDER BY name, id`,
       keep,
     );
     if (categories.length === 0) return { removed: 0, categories: [] };

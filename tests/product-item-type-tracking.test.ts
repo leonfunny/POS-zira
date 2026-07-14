@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { getProductItemTypePolicy, isStockTracked, productItemType } from '../src/shared/product-stock-tracking';
+import { canChangeExistingProductItemType } from '../src/renderer/components/products/ProductEditForm';
 
 const root = resolve(__dirname, '..');
 const source = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -42,6 +43,20 @@ describe('product stock tracking helper', () => {
       sellBySelectable: false,
       sellBy: 'PIECE',
     });
+  });
+
+  it('keeps existing tracked products from requesting inventory-mode transitions', () => {
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'stockable')).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'service')).toBe(false);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'consumable')).toBe(false);
+    expect(canChangeExistingProductItemType(false, 'PIECE', 'stockable')).toBe(false);
+    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'service')).toBe(false);
+    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'consumable')).toBe(true);
+
+    const editForm = source('src/renderer/components/products/ProductEditForm.tsx');
+    expect(editForm).toContain('Quantity/weight mode is locked for existing products.');
+    expect(editForm).not.toContain('payload.trackInventory');
+    expect(editForm).not.toContain('sellBy,\n        isActive:');
   });
 });
 
@@ -115,7 +130,7 @@ describe('itemType/trackInventory wiring contract', () => {
 
     expect(createDialog).toContain("if (supportsItemType && itemType !== 'stockable')");
     expect(createDialog).toContain("initialStockQty: stockApplies ? validation.initialStockQty : 0");
-    expect(editForm).toContain('if (supportsItemType && itemType !== originalItemType)');
+    expect(editForm).toContain('canChangeExistingProductItemType(stockTracked, originalSellBy');
     expect(types).toContain('supportsItemType?: boolean');
     expect(types).toContain("'STOCK_NOT_TRACKED'");
     expect(types).toContain("'STOCK_MUST_BE_ZERO'");

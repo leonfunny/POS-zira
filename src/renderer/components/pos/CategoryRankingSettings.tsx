@@ -11,6 +11,10 @@ import {
   type CategoryTapCounts,
   type CategoryTier,
 } from './templates/retail/retailBrowseFilters';
+import {
+  buildCategoryOrderUpdates,
+  mergePersistedCategoryOrder,
+} from './category-ranking-state';
 
 interface CategoryRankingSettingsProps {
   /** Operator UI language for category display names. */
@@ -108,15 +112,9 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
 
     let failed = false;
     try {
-      const updates = targetOrder
-        .map((cat, i) => ({
-          id: cat.id,
-          sortOrder: i,
-          previousSortOrder: cat.sort_order ?? 0,
-        }))
-        .filter((update) => update.previousSortOrder !== update.sortOrder)
-        .map(({ id, sortOrder }) => ({ id, sortOrder }));
+      const updates = buildCategoryOrderUpdates(targetOrder);
       let written = updates.length;
+      let canonicalCategories: any[] = [];
 
       if (updates.length > 0) {
         const res: any = await window.electronAPI.pos.productAdmin.updateCategoryOrder(updates);
@@ -130,11 +128,18 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
               : `Lưu thất bại: ${code}`,
           );
         }
+        canonicalCategories = Array.isArray(res?.data?.categories) ? res.data.categories : [];
       }
 
+      const mergedOrder = mergePersistedCategoryOrder(
+        orderedRef.current,
+        targetOrder,
+        canonicalCategories,
+      );
+      orderedRef.current = mergedOrder;
+      if (mountedRef.current) setOrdered(mergedOrder);
+
       if (!pendingSaveRef.current && mountedRef.current) {
-        // Reflect the persisted ranks so follow-up auto-save skips unchanged rows.
-        setOrdered((prev) => prev.map((c, i) => ({ ...c, sort_order: i })));
         setDirty(false);
         setSavedNote(written === 0 ? 'Không có thay đổi' : `Đã lưu ${written} danh mục`);
       }
@@ -197,6 +202,7 @@ export default function CategoryRankingSettings({ lang }: CategoryRankingSetting
       const next = [...prev];
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
+      orderedRef.current = next;
       return next;
     });
     markDirty();

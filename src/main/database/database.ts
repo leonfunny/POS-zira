@@ -1,7 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import { app } from 'electron';
 import { join } from 'path';
-import { readFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'fs';
 import logger from '../logger';
 import { migrations, type Migration } from './migrations';
 import { atomicWriteFile, atomicWriteFileSync } from './atomic-write';
@@ -238,6 +238,27 @@ class Database {
   }
 
   /**
+   * Durability barrier for safety ledgers. If the periodic autosave currently
+   * owns the exporter, wait for it and then save the latest dirty version.
+   * This avoids treating a healthy, large pos.db as failed merely because its
+   * atomic write takes longer than a few hundred milliseconds.
+   */
+  async saveCoalesced(timeoutMs = 5000): Promise<BackupFlushResult> {
+    const deadline = Date.now() + Math.max(100, timeoutMs);
+    while (this.saving) {
+      if (Date.now() >= deadline) {
+        return {
+          success: false,
+          dbPath: this.dbPath || undefined,
+          error: 'Database save remained in progress past durability deadline',
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return this.save();
+  }
+
+  /**
    * Synchronous flush — only for shutdown where the event loop is about to
    * exit and an async save can't reliably complete. Repos must not call this.
    */
@@ -364,6 +385,7 @@ class Database {
       'replenishment_policies',
       'shifts',
       // Product/catalog mirrors, including local-only imports from master drafts
+      'product_admin_mutation_outbox',
       'local_variant_imports',
       'product_variants',
       'categories',
@@ -458,6 +480,18 @@ class Database {
     const flush = this.saveSync();
     if (!flush.success) {
       throw new Error(`Failed to persist cleared salon data: ${flush.error || 'unknown error'}`);
+    }
+    // Image bytes queued for a Product Workspace mutation are tenant-scoped
+    // business data too. The leaving salon DB is archived before this method
+    // runs; an explicit tenant switch intentionally discards live pending
+    // commands/assets so they can never be sent under the next salon token.
+    try {
+      rmSync(join(app.getPath('userData'), 'product-admin-pending'), {
+        recursive: true,
+        force: true,
+      });
+    } catch (error) {
+      logger.warn(`[DB] Failed to clear product-admin pending assets: ${error instanceof Error ? error.message : String(error)}`);
     }
     logger.info('[DB] Salon data cleared successfully');
   }

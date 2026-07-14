@@ -3,6 +3,7 @@ import {
   classifyProductSale,
   type ProductSaleClassifiable,
 } from '../../../shared/product-sale-classifier';
+import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import type {
   ProductAdminReceiveStockInput,
   ProductAdminReceiveStockResponse,
@@ -70,12 +71,7 @@ function parseQuantity(value: string, weighted: boolean): number | null {
 
 export function receiveUnitCostGrosze(value: string, canEnterUnitCost: boolean): number | null | undefined {
   if (!canEnterUnitCost) return null;
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  if (!/^\d+(\.\d{0,2})?$/.test(normalized)) return undefined;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return Math.round(parsed * 100);
+  return parseProductMoneyInputToGrosze(value, { allowBlank: true, allowZero: true });
 }
 
 export function isWeightedReceiptProduct(product: ProductSaleClassifiable): boolean {

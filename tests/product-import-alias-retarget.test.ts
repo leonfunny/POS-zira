@@ -51,15 +51,18 @@ describe('product-admin mutations fail closed for local import aliases', () => {
   });
 
   it('every variant-mutating product-admin API call resolves the alias first', () => {
+    expect(POS_MODULE).toContain('const resolvedVariantId = resolveVariantIdAlias(variantId);');
     expect(POS_MODULE).toContain(
-      'apiClient.updateProductVariant(\n              token,\n              resolveVariantIdAlias(variantId),',
+      'apiClient.updateProductVariant(\n              token,\n              resolvedVariantId,',
     );
     expect(POS_MODULE).toContain(
       'apiClient.deactivateProductVariant(token, resolveVariantIdAlias(variantId)',
     );
-    expect(POS_MODULE).toContain(
-      'apiClient.adjustProductStock(token, resolveVariantIdAlias(variantId), {',
-    );
+    for (const mutationType of ['ADJUST_STOCK', 'RECEIVE_STOCK', 'UPLOAD_MAIN_IMAGE']) {
+      expect(POS_MODULE).toContain(
+        `mutationType: '${mutationType}',\n              targetVariantId: resolveVariantIdAlias(variantId)`,
+      );
+    }
   });
 
   it('import-draft returns the SERVER variant once the immediate reconcile lands', () => {

@@ -174,19 +174,31 @@ describe('productRepo.deleteCategoriesExcept', () => {
     );
   });
 
-  it('does nothing when the keep set is empty', () => {
+  it('deletes every category and nullifies references for an authoritative empty snapshot', () => {
     db.run(`
       INSERT INTO categories (id, name) VALUES
         ('cat-1', 'One'),
         ('cat-2', 'Two');
+      INSERT INTO product_variants (id, category_id, is_active) VALUES
+        ('variant-1', 'cat-1', 1),
+        ('variant-2', 'cat-2', 0);
     `);
 
     const result = productRepo.deleteCategoriesExcept(new Set());
 
-    expect(result).toEqual({ removed: 0, categories: [] });
-    expect(all<{ id: string }>('SELECT id FROM categories ORDER BY id')).toEqual([
-      { id: 'cat-1' },
-      { id: 'cat-2' },
+    expect(result).toEqual({
+      removed: 2,
+      categories: [
+        { id: 'cat-1', name: 'One' },
+        { id: 'cat-2', name: 'Two' },
+      ],
+    });
+    expect(all<{ id: string }>('SELECT id FROM categories ORDER BY id')).toEqual([]);
+    expect(all<{ id: string; category_id: string | null }>(
+      'SELECT id, category_id FROM product_variants ORDER BY id',
+    )).toEqual([
+      { id: 'variant-1', category_id: null },
+      { id: 'variant-2', category_id: null },
     ]);
   });
 });

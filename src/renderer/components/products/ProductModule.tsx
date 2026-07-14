@@ -171,7 +171,7 @@ function productAdminVariantToProduct(variant: ProductAdminVariant): ProductList
     in_stock: Number(variant.totalStockQty) || 0,
     vat_rate: Number.isFinite(vatRate) && vatRate >= 0 ? vatRate : 23,
     is_active: variant.isActive === false ? 0 : 1,
-    updated_at: variant.updatedAt ?? null,
+    updated_at: variant.canonicalUpdatedAt ?? variant.updatedAt ?? null,
     available_qty: Number(variant.availableQty) || 0,
     sale_unit: saleUnit,
     sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',

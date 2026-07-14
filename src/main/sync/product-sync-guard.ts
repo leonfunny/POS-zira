@@ -22,6 +22,7 @@ export interface ProductSyncGuardInput {
   baseline: ProductSyncGuardBaseline;
   products: ProductVariantRow[];
   categories: CategoryRow[];
+  categoriesComplete?: boolean;
   deletedIds?: string[];
 }
 
@@ -134,7 +135,15 @@ export function evaluateProductSyncGuard(input: ProductSyncGuardInput): ProductS
       };
     }
 
-    if (baseline.categoryCount >= 3 && categories.length === 0 && incomingActive.length >= 20) {
+    // Older callers could not distinguish an authoritative empty category
+    // snapshot from a failed category request, so keep their collapse guard.
+    // The catalog sync now supplies categoriesComplete and can safely accept
+    // both a real zero-category salon and a partial category response (which
+    // is merged without pruning).
+    if (input.categoriesComplete === undefined
+      && baseline.categoryCount >= 3
+      && categories.length === 0
+      && incomingActive.length >= 20) {
       return {
         allowed: false,
         stats,

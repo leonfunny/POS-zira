@@ -2904,6 +2904,10 @@ export interface ProductAdminCapabilities {
   canAdjustStock: boolean;
   canCreateCategory: boolean;
   canUpdateCategory: boolean;
+  canReorderCategory?: boolean;
+  supportsCategoryBatchUpdate?: boolean;
+  supportsCategoryKitchenPrint?: boolean;
+  supportsCategoryDelta?: boolean;
   canViewPurchasePrice?: boolean;
   canReplaceMainImage?: boolean;
   canReceiveStock?: boolean;
@@ -2918,6 +2922,9 @@ export interface ProductAdminCapabilities {
   supportsLotReceiving?: boolean;
   /** Server understands itemType/trackInventory on variants (create/update/response). */
   supportsItemType?: boolean;
+  /** Opaque snapshot/keyset product-sync cursor contract. */
+  supportsProductSyncV2?: boolean;
+  productSyncVersion?: number;
   /** 4-digit salon code for minting internal EAN-13 barcodes ("2" + code + …). */
   salonCode?: string | null;
 }
@@ -2999,6 +3006,8 @@ export interface ProductAdminVariant {
   imageUrl?: string | null;
   thumbnailUrl?: string | null;
   updatedAt: string;
+  /** Canonical max(variant.updatedAt, template.updatedAt), when explicit. */
+  canonicalUpdatedAt?: string;
   version?: number;
   /** Item kind (`stockable` | `service` | `consumable` | `recipe`); absent on older servers. */
   itemType?: string;
@@ -3170,13 +3179,15 @@ export interface ProductAdminCategory {
   icon?: string | null;
   sortOrder?: number | null;
   isActive: boolean;
+  kitchenPrint?: boolean;
   updatedAt: string;
   version?: number;
 }
 
 export interface ProductAdminCategoryListResponse {
   categories: ProductAdminCategory[];
-  serverTime: string;
+  total?: number;
+  serverTime?: string;
 }
 
 export interface ProductAdminCategoryMutationInput {
@@ -3185,6 +3196,7 @@ export interface ProductAdminCategoryMutationInput {
   icon?: string | null;
   sortOrder?: number | null;
   isActive?: boolean | null;
+  kitchenPrint?: boolean | null;
   expectedUpdatedAt?: string;
   expectedVersion?: number;
   idempotencyKey?: string;
@@ -3192,12 +3204,13 @@ export interface ProductAdminCategoryMutationInput {
 
 export interface ProductAdminCategoryMutationResponse {
   category: ProductAdminCategory;
-  serverTime: string;
+  serverTime?: string;
 }
 
 export interface ProductAdminCategoryOrderUpdate {
   id: string;
   sortOrder: number;
+  expectedUpdatedAt?: string;
 }
 
 export interface ProductAdminCategoryOrderUpdateResponse {
