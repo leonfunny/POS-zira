@@ -5,6 +5,7 @@ import path from 'node:path';
 const ROOT = path.resolve(__dirname, '..');
 const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
 const TOUCH_KEYBOARD = fs.readFileSync(path.join(ROOT, 'src/renderer/components/shared/TouchKeyboard.tsx'), 'utf8');
+const KEYBOARD_MANAGER = fs.readFileSync(path.join(ROOT, 'src/renderer/hooks/useKeyboardManager.ts'), 'utf8');
 const POS_LAYOUT = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/POSLayout.tsx'), 'utf8');
 
 describe('POS touch keyboard inset', () => {
@@ -34,5 +35,12 @@ describe('POS touch keyboard inset', () => {
     expect(POS_LAYOUT).toContain("paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)'");
     expect(POS_LAYOUT).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
     expect(POS_LAYOUT).toContain('overflow-y-auto');
+  });
+
+  it('does not offer a decimal key for integer inputMode fields', () => {
+    expect(TOUCH_KEYBOARD).toContain("export type KeyboardMode = 'alpha' | 'full' | 'numeric' | 'integer'");
+    expect(TOUCH_KEYBOARD).toContain("mode === 'numeric'");
+    expect(KEYBOARD_MANAGER).toContain("inputMode === 'numeric' ? 'integer'");
+    expect(KEYBOARD_MANAGER).toContain("inputMode === 'decimal'");
   });
 });

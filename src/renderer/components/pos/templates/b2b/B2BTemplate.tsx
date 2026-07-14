@@ -37,6 +37,7 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [catalogRevision, setCatalogRevision] = useState(0);
 
   const cart = state.cart;
   const lang = language || 'pl';
@@ -58,7 +59,13 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
   // Load categories + products
   useEffect(() => {
     window.electronAPI.pos.categories.getAll().then(setCategories);
-  }, []);
+  }, [catalogRevision]);
+
+  useEffect(() => {
+    if (activeCategoryId && !categories.some((category) => category.id === activeCategoryId)) {
+      setActiveCategoryId(null);
+    }
+  }, [activeCategoryId, categories]);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -82,12 +89,11 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
       load();
     }
     return () => { cancelled = true; if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [activeCategoryId, searchQuery]);
+  }, [activeCategoryId, catalogRevision, searchQuery]);
 
   useEffect(() => {
     const unsub = window.electronAPI.pos.sync.onProductsSynced(() => {
-      window.electronAPI.pos.products.getAll().then(setProducts);
-      window.electronAPI.pos.categories.getAll().then(setCategories);
+      setCatalogRevision((revision) => revision + 1);
     });
     return unsub;
   }, []);

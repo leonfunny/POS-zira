@@ -389,20 +389,35 @@ export function decodeProductImageDataUrl(payload: ProductAdminMainImageUploadIn
   return { bytes, mimeType, fileName: `${safeStem}.${extension}` };
 }
 
+export function assertProductStockQuantity(
+  value: unknown,
+  sellBy: unknown,
+  field = 'quantity',
+  allowZero = false,
+): number {
+  const quantity = typeof value === 'number' ? value : Number.NaN;
+  const mode = String(sellBy ?? '').trim().toUpperCase() === 'WEIGHT' ? 'WEIGHT' : 'PIECE';
+  const quantityMillis = quantity * 1000;
+  const invalid = !Number.isFinite(quantity)
+    || quantity > 9_999_999
+    || (allowZero ? quantity < 0 : quantity <= 0)
+    || Math.abs(quantityMillis - Math.round(quantityMillis)) > 1e-8
+    || (mode === 'PIECE' && !Number.isInteger(quantity));
+  if (invalid) {
+    throw inputError(
+      mode === 'PIECE' ? 'piece-quantity-must-be-whole' : 'invalid-stock-quantity',
+      'INVALID_STOCK_QUANTITY',
+      field,
+    );
+  }
+  return quantity;
+}
+
 export function normalizeProductReceiptInput(
   payload: ProductAdminReceiveStockInput,
+  sellBy: unknown = 'PIECE',
 ): ProductAdminReceiveStockInput {
-  const quantity = payload?.quantity;
-  if (typeof quantity !== 'number') {
-    throw inputError('invalid-receipt-quantity', 'INVALID_STOCK_QUANTITY', 'quantity');
-  }
-  const quantityMillis = quantity * 1000;
-  if (!Number.isFinite(quantity)
-    || quantity < 0.001
-    || quantity > 9_999_999
-    || Math.abs(quantityMillis - Math.round(quantityMillis)) > 1e-8) {
-    throw inputError('invalid-receipt-quantity', 'INVALID_STOCK_QUANTITY', 'quantity');
-  }
+  const quantity = assertProductStockQuantity(payload?.quantity, sellBy, 'quantity');
 
   let unitCostGrosze: number | undefined;
   if (payload?.unitCostGrosze !== null && payload?.unitCostGrosze !== undefined) {

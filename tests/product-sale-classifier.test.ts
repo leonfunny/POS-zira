@@ -30,6 +30,14 @@ describe('product sale classifier', () => {
     });
   });
 
+  it('keeps legacy kg products weighted when sell_by is stale PIECE', () => {
+    expect(classifyProductSale({ sell_by: 'PIECE', sale_unit: 'kg' })).toMatchObject({
+      kind: 'WEIGHTED',
+      sellBy: 'WEIGHT',
+      quantityInputMode: 'decimal',
+    });
+  });
+
   it('supports camelCase backend/admin shapes too', () => {
     const product = { sellBy: 'WEIGHT', saleUnit: 'kg' };
 

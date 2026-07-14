@@ -140,6 +140,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
   const [categories, setCategories] = useState<Category[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const productGridRef = useRef<HTMLDivElement>(null);
 
   const cart = state.cart;
@@ -292,7 +293,13 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
   useEffect(() => {
     window.electronAPI.pos.categories.getAll().then(setCategories);
     window.electronAPI.pos.products.getAll().then(setAllProducts);
-  }, []);
+  }, [catalogRevision]);
+
+  useEffect(() => {
+    if (activeCategoryId && !categories.some((category) => category.id === activeCategoryId)) {
+      setActiveCategoryId(null);
+    }
+  }, [activeCategoryId, categories]);
 
   // Reset product grid scroll when category changes
   useEffect(() => {
@@ -325,16 +332,12 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
       cancelled = true;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [activeCategoryId, searchQuery]);
+  }, [activeCategoryId, catalogRevision, searchQuery]);
 
   // Refresh on sync
   useEffect(() => {
     const unsub = window.electronAPI.pos.sync.onProductsSynced(() => {
-      window.electronAPI.pos.products.getAll().then((all: any) => {
-        setAllProducts(all);
-        setProducts(all);
-      });
-      window.electronAPI.pos.categories.getAll().then(setCategories);
+      setCatalogRevision((revision) => revision + 1);
     });
     return unsub;
   }, []);

@@ -10,7 +10,7 @@ import type {
   SelectedService,
 } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
-import { calculateLineTotalGrosze, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
+import { calculateLineTotalGrosze, isValidSaleQuantity, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../shared/pos-price-guard';
 
 // === State interfaces ===
@@ -265,6 +265,11 @@ function posReducer(
 ): PosState {
   switch (action.type) {
     case 'cart/addItem': {
+      const incomingSellBy = normalizeSellBy(action.payload.sellBy);
+      if (!isValidSaleQuantity(action.payload.quantity, incomingSellBy)) {
+        logger.warn(`[PosStore] Rejected invalid ${incomingSellBy} cart quantity: ${action.payload.quantity}`);
+        return state;
+      }
       // Merge only if same variant AND same staff AND same course
       // (salon mode: different staff = separate entry; restaurant: different course = separate entry)
       const p = normalizedCartItem(action.payload);
@@ -307,6 +312,13 @@ function posReducer(
     }
 
     case 'cart/updateQuantity': {
+      const existing = state.cart.items.find((item) => item.id === action.payload.id);
+      if (!existing) return state;
+      const sellBy = normalizeSellBy(existing.sellBy);
+      if (!isValidSaleQuantity(action.payload.quantity, sellBy)) {
+        logger.warn(`[PosStore] Rejected invalid ${sellBy} cart quantity: ${action.payload.quantity}`);
+        return state;
+      }
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
           ? normalizedCartItem({ ...i, quantity: action.payload.quantity })

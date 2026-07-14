@@ -96,8 +96,16 @@ describe('native product workspace infrastructure', () => {
     expect(API).toContain('const { idempotencyKey, ...body } = payload;');
     expect(API).toContain('/receipts`');
     expect(API).toContain('body,\n      idempotencyKey,');
-    expect(POS_MODULE).toContain('normalizeProductReceiptInput(payload)');
+    expect(POS_MODULE).toContain('classifyProductSale(existingProduct ?? {}).sellBy');
     expect(INPUT).toContain("'IDEMPOTENCY_KEY_REQUIRED'");
+  });
+
+  it('validates stock quantities against canonical sellBy before durable enqueue and replay', () => {
+    expect(INPUT).toContain('export function assertProductStockQuantity');
+    expect(POS_MODULE.match(/assertProductStockQuantity\(/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(POS_MODULE.match(/classifyProductSale\(/g)?.length ?? 0).toBeGreaterThanOrEqual(6);
+    expect(POS_MODULE).toContain('classifyProductSale(requestPayload).sellBy');
+    expect(POS_MODULE).toContain('classifyProductSale(existingProduct ?? {}).sellBy');
   });
 
   it('mirrors canonical image removal rather than retaining the previous URL', () => {

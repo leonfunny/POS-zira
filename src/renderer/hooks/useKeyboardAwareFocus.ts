@@ -1,9 +1,13 @@
-import { useCallback, useEffect, type FocusEventHandler, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type FocusEventHandler, type RefObject } from 'react';
+
+const FOCUS_SETTLE_DELAY_MS = 350;
 
 export function useKeyboardAwareFocus(
   containerRef: RefObject<HTMLElement | null>,
   enabled: boolean,
 ): FocusEventHandler<HTMLElement> {
+  const frameRef = useRef(0);
+  const settleTimerRef = useRef<number | null>(null);
   const scrollFocusedFieldIntoView = useCallback(() => {
     if (!enabled) return;
     const container = containerRef.current;
@@ -13,26 +17,37 @@ export function useKeyboardAwareFocus(
     field.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
   }, [containerRef, enabled]);
 
+  const scheduleFocusedFieldIntoView = useCallback(() => {
+    if (!enabled) return;
+    window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = window.requestAnimationFrame(scrollFocusedFieldIntoView);
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(
+      scrollFocusedFieldIntoView,
+      FOCUS_SETTLE_DELAY_MS,
+    );
+  }, [enabled, scrollFocusedFieldIntoView]);
+
   useEffect(() => {
-    if (!enabled || typeof ResizeObserver === 'undefined') return undefined;
+    if (!enabled) return undefined;
     const container = containerRef.current;
     if (!container) return undefined;
 
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(scrollFocusedFieldIntoView);
-    });
-    observer.observe(container);
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleFocusedFieldIntoView);
+    observer?.observe(container);
+    window.addEventListener('resize', scheduleFocusedFieldIntoView);
+    window.visualViewport?.addEventListener('resize', scheduleFocusedFieldIntoView);
 
     return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
+      window.cancelAnimationFrame(frameRef.current);
+      if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+      observer?.disconnect();
+      window.removeEventListener('resize', scheduleFocusedFieldIntoView);
+      window.visualViewport?.removeEventListener('resize', scheduleFocusedFieldIntoView);
     };
-  }, [containerRef, enabled, scrollFocusedFieldIntoView]);
+  }, [containerRef, enabled, scheduleFocusedFieldIntoView]);
 
-  return useCallback(() => {
-    if (!enabled) return;
-    window.requestAnimationFrame(scrollFocusedFieldIntoView);
-  }, [enabled, scrollFocusedFieldIntoView]);
+  return useCallback(scheduleFocusedFieldIntoView, [scheduleFocusedFieldIntoView]);
 }

@@ -50,6 +50,19 @@ describe('native Product workspace renderer', () => {
     expect(parseStockAdjustmentQuantity('1.2345', 'WEIGHT')).toBeNull();
   });
 
+  it('offers whole-number input for PCS and decimal input for KG in every product stock form', () => {
+    for (const file of [
+      'ProductCreateDialog.tsx',
+      'ProductEditForm.tsx',
+      'StockAdjustmentDialog.tsx',
+    ]) {
+      expect(source(`src/renderer/components/products/${file}`))
+        .toContain("inputMode={sellBy === 'WEIGHT' ? 'decimal' : 'numeric'}");
+    }
+    expect(source('src/renderer/components/products/ReceiveStockDialog.tsx'))
+      .toContain("inputMode={weighted ? 'decimal' : 'numeric'}");
+  });
+
   it('gates protected cost, image upload, and lot receiving with backend permissions', () => {
     const moduleSource = source('src/renderer/components/products/ProductModule.tsx');
 

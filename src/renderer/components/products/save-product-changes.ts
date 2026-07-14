@@ -1,8 +1,14 @@
 interface MutationResult {
   ok: boolean;
-  data?: { variant?: { updatedAt?: string } };
+  data?: { variant?: { updatedAt?: string; canonicalUpdatedAt?: string } };
   error?: string;
   code?: string;
+}
+
+function mutationRevision(result: MutationResult, fallback?: string): string | undefined {
+  return result.data?.variant?.canonicalUpdatedAt
+    || result.data?.variant?.updatedAt
+    || fallback;
 }
 
 interface ExecuteProductSaveOptions {
@@ -41,7 +47,7 @@ export async function executeProductSave({
       };
     }
     productSaved = true;
-    nextExpectedUpdatedAt = productResult.data?.variant?.updatedAt || nextExpectedUpdatedAt;
+    nextExpectedUpdatedAt = mutationRevision(productResult, nextExpectedUpdatedAt);
   }
 
   if (stockDirty) {
@@ -64,7 +70,7 @@ export async function executeProductSave({
         error: stockResult.error || stockResult.code,
       };
     }
-    nextExpectedUpdatedAt = stockResult.data?.variant?.updatedAt || nextExpectedUpdatedAt;
+    nextExpectedUpdatedAt = mutationRevision(stockResult, nextExpectedUpdatedAt);
   }
 
   return {

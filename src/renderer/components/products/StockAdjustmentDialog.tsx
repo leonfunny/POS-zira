@@ -197,6 +197,7 @@ export default function StockAdjustmentDialog({
   return (
     <Modal
       open
+      keyboardAware
       size="md"
       zLayer="nested"
       title={tOr(t, 'products.stock.dialogTitle', 'Adjust stock')}
@@ -265,7 +266,7 @@ export default function StockAdjustmentDialog({
               </span>
               <input
                 type="text"
-                inputMode="decimal"
+                inputMode={sellBy === 'WEIGHT' ? 'decimal' : 'numeric'}
                 min="0"
                 step={sellBy === 'WEIGHT' ? '0.001' : '1'}
                 value={newQuantity}
@@ -281,7 +282,7 @@ export default function StockAdjustmentDialog({
               </span>
               <input
                 type="text"
-                inputMode="decimal"
+                inputMode={sellBy === 'WEIGHT' ? 'decimal' : 'numeric'}
                 min="0"
                 step={sellBy === 'WEIGHT' ? '0.001' : '1'}
                 value={quantity}

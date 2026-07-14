@@ -192,6 +192,7 @@ export default function ProductAddFlow({
   return (
     <Modal
       open
+      keyboardAware
       size="lg"
       title={tOr(t, 'products.add.title', 'Add product by barcode')}
       onClose={onClose}

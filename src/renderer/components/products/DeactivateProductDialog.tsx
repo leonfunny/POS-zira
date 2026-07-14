@@ -105,6 +105,7 @@ export default function DeactivateProductDialog({
   return (
     <Modal
       open
+      keyboardAware
       size="md"
       zLayer="nested"
       title={tOr(t, 'products.deactivate.hideTitle', 'Hide product?')}

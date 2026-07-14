@@ -104,6 +104,7 @@ export default function ProductSearchOverlay({
   return (
     <Modal
       open
+      keyboardAware
       size="full"
       title={tOr(t, 'products.search', 'Search products')}
       onClose={onClose}

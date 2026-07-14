@@ -8,7 +8,7 @@ import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import type { ProductAdminItemType, ProductAdminStockAdjustmentInput, ProductAdminUpdateVariantInput } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
-import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
+import { grossFromNet, netFromGross } from './price-vat';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 import {
   completeCommittedMutation,
@@ -838,11 +838,7 @@ export default function ProductEditForm({
               onChange={(event) => {
                 const nextVat = event.target.value;
                 setVatRate(nextVat);
-                if (parsePriceNumber(priceNet) !== null) {
-                  setPriceGross(grossFromNet(priceNet, nextVat));
-                } else {
-                  setPriceNet(netFromGross(priceGross, nextVat));
-                }
+                setPriceNet(netFromGross(priceGross, nextVat));
               }}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
@@ -1072,7 +1068,7 @@ export default function ProductEditForm({
                 : tOr(t, 'products.edit.stockPieces', 'Actual stock (pcs)')}
             </span>
             <input
-              inputMode="decimal"
+              inputMode={sellBy === 'WEIGHT' ? 'decimal' : 'numeric'}
               value={stockQty}
               onChange={(event) => setStockQty(event.target.value)}
               step={sellBy === 'WEIGHT' ? '0.001' : '1'}

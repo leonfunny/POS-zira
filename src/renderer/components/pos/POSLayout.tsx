@@ -7,7 +7,7 @@ import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName } from '../../../shared/catalog-names';
-import { normalizeSellBy } from '../../../shared/pos-sale';
+import { isValidManualWeightQuantity, normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import {
   decodeKitchenSelfOrderQr,
@@ -182,7 +182,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const weightKg = parseManualWeightInput(value);
-    if (weightKg <= 0 || weightKg > 999) {
+    if (!isValidManualWeightQuantity(weightKg)) {
       setError(tOr('pos.scale.manualWeightInvalid', 'Enter a valid weight'));
       return;
     }

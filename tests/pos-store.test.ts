@@ -117,6 +117,20 @@ describe('Cart operations', () => {
     store.destroy();
   });
 
+  it('rejects fractional piece quantities instead of silently rounding them', () => {
+    const store = new PosStore();
+    store.dispatch({
+      type: 'cart/addItem',
+      payload: sampleItem({ quantity: 2.1, sellBy: 'PIECE' }),
+    });
+    expect(store.getState().cart.items).toHaveLength(0);
+
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ quantity: 2, sellBy: 'PIECE' }) });
+    store.dispatch({ type: 'cart/updateQuantity', payload: { id: 'item-1', quantity: 3.5 } });
+    expect(store.getState().cart.items[0].quantity).toBe(2);
+    store.destroy();
+  });
+
   it('does NOT merge items with different staff (salon mode)', () => {
     const store = new PosStore();
     store.dispatch({

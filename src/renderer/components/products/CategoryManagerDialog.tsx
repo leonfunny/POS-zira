@@ -236,6 +236,7 @@ export default function CategoryManagerDialog({
   return (
     <Modal
       open
+      keyboardAware
       size="full"
       zLayer="nested"
       title={tOr(t, 'products.category.title', 'Manage categories')}

@@ -254,7 +254,7 @@ export default function ReceiveStockDialog({
             </span>
             <input
               type="text"
-              inputMode="decimal"
+              inputMode={weighted ? 'decimal' : 'numeric'}
               autoComplete="off"
               value={quantity}
               onChange={(event) => setQuantity(sanitizeDecimalText(event.target.value))}

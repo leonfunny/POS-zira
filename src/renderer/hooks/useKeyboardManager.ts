@@ -9,6 +9,12 @@ interface KeyboardManager {
   onDone: () => void;
 }
 
+function keyboardModeForInput(type: string, inputMode: string | null): KeyboardMode {
+  return inputMode === 'numeric' ? 'integer'
+    : type === 'number' || inputMode === 'decimal' ? 'numeric'
+      : 'full';
+}
+
 export function useKeyboardManager(): KeyboardManager {
   const [visible, setVisible] = useState(false);
   const [mode, setMode] = useState<KeyboardMode>('full');
@@ -38,11 +44,7 @@ export function useKeyboardManager(): KeyboardManager {
 
       // Mode detection
       const inputMode = el.getAttribute('inputmode');
-      if (type === 'number' || inputMode === 'numeric' || inputMode === 'decimal') {
-        setMode('numeric');
-      } else {
-        setMode('full');
-      }
+      setMode(keyboardModeForInput(type, inputMode));
       setVisible(true);
     };
 
@@ -73,10 +75,7 @@ export function useKeyboardManager(): KeyboardManager {
 
       const type = (el as HTMLInputElement).type || 'text';
       const inputMode = el.getAttribute('inputmode');
-      const nextMode: KeyboardMode =
-        type === 'number' || inputMode === 'numeric' || inputMode === 'decimal'
-          ? 'numeric'
-          : 'full';
+      const nextMode = keyboardModeForInput(type, inputMode);
 
       setVisible((prev) => {
         if (prev && activeElRef.current === el) {

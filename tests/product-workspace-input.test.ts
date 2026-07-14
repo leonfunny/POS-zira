@@ -4,6 +4,7 @@ import {
   captureProductAdminSessionContext,
   isProductAdminSessionContextCurrent,
   mergeProductAdminNullableMirrorFields,
+  assertProductStockQuantity,
   normalizeProductReceiptInput,
   productAdminCanonicalUpdatedAt,
   productAdminCategoryToRow,
@@ -12,6 +13,7 @@ import {
   sanitizeExistingProductInventoryModeUpdate,
   shouldApplyProductAdminVariantMirror,
 } from '../src/main/pos/product-workspace-input';
+import { classifyProductSale } from '../src/shared/product-sale-classifier';
 
 function errorCode(action: () => unknown): string | undefined {
   try {
@@ -23,6 +25,25 @@ function errorCode(action: () => unknown): string | undefined {
 }
 
 describe('product workspace IPC input boundary', () => {
+  it('rejects fractional PCS while accepting KG precision up to three decimals', () => {
+    expect(assertProductStockQuantity(2, 'PIECE', 'quantity', true)).toBe(2);
+    expect(errorCode(() => assertProductStockQuantity(2.1, 'PIECE', 'quantity', true)))
+      .toBe('INVALID_STOCK_QUANTITY');
+    expect(assertProductStockQuantity(2.1, 'WEIGHT', 'quantity', true)).toBe(2.1);
+    expect(assertProductStockQuantity(1.125, 'WEIGHT', 'quantity', true)).toBe(1.125);
+    expect(errorCode(() => assertProductStockQuantity(1.1255, 'WEIGHT', 'quantity', true)))
+      .toBe('INVALID_STOCK_QUANTITY');
+  });
+
+  it('accepts legacy kg fractions but fails closed when product metadata is missing', () => {
+    const legacyKgMode = classifyProductSale({ sell_by: 'PIECE', sale_unit: 'kg' }).sellBy;
+    const missingMetadataMode = classifyProductSale({}).sellBy;
+
+    expect(assertProductStockQuantity(1.125, legacyKgMode, 'quantity')).toBe(1.125);
+    expect(errorCode(() => assertProductStockQuantity(1.125, missingMetadataMode, 'quantity')))
+      .toBe('INVALID_STOCK_QUANTITY');
+  });
+
   it('rejects existing inventory-mode transitions and omits unchanged dangerous fields', () => {
     const trackedPiece = {
       sell_by: 'PIECE',
@@ -261,7 +282,7 @@ describe('product workspace IPC input boundary', () => {
       expirationDate: '2027-01-31',
       reason: ' delivery ',
       idempotencyKey: ' receipt-stable-key ',
-    } as any);
+    } as any, 'WEIGHT');
 
     expect(normalized).toEqual({
       quantity: 1.125,
@@ -272,6 +293,13 @@ describe('product workspace IPC input boundary', () => {
       expectedUpdatedAt: undefined,
       idempotencyKey: 'receipt-stable-key',
     });
+  });
+
+  it('defaults missing sell-by metadata to PIECE and rejects fractional stock', () => {
+    expect(errorCode(() => normalizeProductReceiptInput({
+      quantity: 1.125,
+      idempotencyKey: 'receipt-key',
+    }))).toBe('INVALID_STOCK_QUANTITY');
   });
 
   it.each([0, 0.0009, 1.0001, 10_000_000])(

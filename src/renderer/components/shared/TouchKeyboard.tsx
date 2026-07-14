@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-export type KeyboardMode = 'alpha' | 'full' | 'numeric';
+export type KeyboardMode = 'alpha' | 'full' | 'numeric' | 'integer';
 
 interface Props {
   visible: boolean;
@@ -95,7 +95,7 @@ export default function TouchKeyboard({
         ${visible ? 'max-h-[440px] opacity-100' : 'h-0 max-h-0 opacity-0 !p-0 border-t-0'}
       `}
     >
-      {mode === 'numeric' ? (
+      {mode === 'numeric' || mode === 'integer' ? (
         /* Numpad layout */
         <div className="max-w-[220px] mx-auto space-y-1.5">
           {NUMPAD_ROWS.map((row, i) => (
@@ -106,7 +106,11 @@ export default function TouchKeyboard({
             </div>
           ))}
           <div className="flex gap-1.5 justify-center">
-            <NumKey label="." onPress={() => onKey('.')} />
+            {mode === 'numeric' ? (
+              <NumKey label="." onPress={() => onKey('.')} />
+            ) : (
+              <span className="h-14 w-[68px]" aria-hidden="true" />
+            )}
             <NumKey label="0" onPress={() => onKey('0')} />
             <button
               type="button"

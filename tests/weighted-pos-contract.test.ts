@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   calculateLineTotalGrosze,
   formatSaleQuantity,
+  isValidManualWeightQuantity,
+  isValidSaleQuantity,
   normalizeSellBy,
   resolveSaleQuantity,
 } from '../src/shared/pos-sale';
@@ -83,5 +85,21 @@ describe('weighted fresh-food POS contract', () => {
     expect(resolveSaleQuantity({ sale_quantity: 0.238, sell_by: 'WEIGHT' })).toBe(0.238);
     expect(formatSaleQuantity(0.238, 'WEIGHT')).toBe('0.238');
     expect(formatSaleQuantity(1, 'WEIGHT')).toBe('1');
+  });
+
+  it('rejects fractional pieces and non-number runtime quantities', () => {
+    expect(isValidSaleQuantity(2, 'PIECE')).toBe(true);
+    expect(isValidSaleQuantity(2.1, 'PIECE')).toBe(false);
+    expect(isValidSaleQuantity(2.1, 'WEIGHT')).toBe(true);
+    expect(isValidSaleQuantity('2' as unknown, 'PIECE')).toBe(false);
+    expect(isValidSaleQuantity(null, 'PIECE')).toBe(false);
+  });
+
+  it('accepts only positive manual weights up to 999 kg with gram precision', () => {
+    expect(isValidManualWeightQuantity(0.001)).toBe(true);
+    expect(isValidManualWeightQuantity(1.125)).toBe(true);
+    expect(isValidManualWeightQuantity(1.1255)).toBe(false);
+    expect(isValidManualWeightQuantity(0)).toBe(false);
+    expect(isValidManualWeightQuantity(999.001)).toBe(false);
   });
 });

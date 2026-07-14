@@ -18,6 +18,21 @@ export function isWeightedSale(value: unknown): boolean {
   return normalizeSellBy(value) === 'WEIGHT';
 }
 
+export function isValidSaleQuantity(quantity: unknown, sellBy: SellBy): boolean {
+  if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity < 0) return false;
+  const numeric = quantity;
+  if (sellBy === 'PIECE') return Number.isInteger(numeric);
+  const millis = numeric * 1000;
+  return Math.abs(millis - Math.round(millis)) <= 1e-8;
+}
+
+export function isValidManualWeightQuantity(quantity: unknown): quantity is number {
+  return typeof quantity === 'number'
+    && isValidSaleQuantity(quantity, 'WEIGHT')
+    && quantity > 0
+    && quantity <= 999;
+}
+
 export function normalizeSaleUnit(line: SaleQuantityLike): string {
   const explicit = String(line.saleUnit ?? line.sale_unit ?? '').trim();
   if (explicit) return explicit;

@@ -36,6 +36,7 @@ import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
   decodeProductImageDataUrl,
+  assertProductStockQuantity,
   isProductAdminSessionContextCurrent,
   mergeProductAdminNullableMirrorFields,
   normalizeProductReceiptInput,
@@ -52,6 +53,7 @@ import {
 } from '../pos/product-admin-mutation-outbox';
 import type { ProductAdminMutationOutboxRow } from '../database/repos/product-admin-mutation-outbox-repo';
 import { isValidProductMoneyGrosze } from '../../shared/product-money';
+import { classifyProductSale } from '../../shared/product-sale-classifier';
 import {
   lookupExternalProductByEan,
   normalizeEan,
@@ -1781,6 +1783,12 @@ export class PosModule extends BaseModule {
             requireDurableMutationCapability(capabilities, 'canCreateProduct');
             assertProductMoney(payload.priceGrossGrosze, false, 'priceGrossGrosze');
             assertProductMoney(payload.purchasePriceGrosze, true, 'purchasePriceGrosze');
+            assertProductStockQuantity(
+              payload.initialStockQty ?? 0,
+              classifyProductSale(payload).sellBy,
+              'initialStockQty',
+              true,
+            );
             if (payload.purchasePriceGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)) {
               const error = new Error('purchase-price-unavailable') as Error & { code?: string; status?: number };
               error.code = 'UNSUPPORTED_CAPABILITY';
@@ -1810,6 +1818,14 @@ export class PosModule extends BaseModule {
               error.status = 409;
               throw error;
             }
+            const existingProduct = productRepo.getById(resolveVariantIdAlias(variantId));
+            const field = payload.mode === 'recount' ? 'newQuantity' : 'quantity';
+            assertProductStockQuantity(
+              payload[field],
+              classifyProductSale(existingProduct ?? {}).sellBy,
+              field,
+              payload.mode === 'recount',
+            );
             return apiClient.adjustProductStock(token, variantId, {
               ...payload,
               idempotencyKey: row.idempotency_key || undefined,
@@ -1823,11 +1839,12 @@ export class PosModule extends BaseModule {
               error.status = 409;
               throw error;
             }
+            const existingProduct = productRepo.getById(resolveVariantIdAlias(variantId));
             normalizeProductReceiptInput({
               ...payload,
               idempotencyKey: row.idempotency_key || '',
               expectedUpdatedAt: payload.expectedUpdatedAt,
-            });
+            }, classifyProductSale(existingProduct ?? {}).sellBy);
             requireProductAdminExpectedUpdatedAt(capabilities, payload.expectedUpdatedAt);
             if (payload.unitCostGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)) {
               const error = new Error('purchase-price-unavailable') as Error & { code?: string; status?: number };
@@ -1944,6 +1961,12 @@ export class PosModule extends BaseModule {
           async (_token, capabilities) => {
             assertProductMoney(requestPayload.priceGrossGrosze, false, 'priceGrossGrosze');
             assertProductMoney(requestPayload.purchasePriceGrosze, true, 'purchasePriceGrosze');
+            assertProductStockQuantity(
+              requestPayload.initialStockQty ?? 0,
+              classifyProductSale(requestPayload).sellBy,
+              'initialStockQty',
+              true,
+            );
             if (requestPayload.purchasePriceGrosze !== undefined
               && !canAccessProductPurchasePrice(capabilities)) {
               const error = new Error('purchase-price-unavailable') as Error & { code?: string };
@@ -2076,9 +2099,18 @@ export class PosModule extends BaseModule {
               error.status = 409;
               throw error;
             }
+            const resolvedVariantId = resolveVariantIdAlias(variantId);
+            const existingProduct = productRepo.getById(resolvedVariantId);
+            const field = requestPayload.mode === 'recount' ? 'newQuantity' : 'quantity';
+            assertProductStockQuantity(
+              requestPayload[field],
+              classifyProductSale(existingProduct ?? {}).sellBy,
+              field,
+              requestPayload.mode === 'recount',
+            );
             return productAdminMutationOutbox.execute({
               mutationType: 'ADJUST_STOCK',
-              targetVariantId: resolveVariantIdAlias(variantId),
+              targetVariantId: resolvedVariantId,
               idempotencyKey,
               request: { payload: { ...requestPayload, expectedUpdatedAt } },
             }) as Promise<ProductAdminStockAdjustmentResponse>;
@@ -2166,7 +2198,12 @@ export class PosModule extends BaseModule {
               error.code = 'UNSUPPORTED_CAPABILITY';
               throw error;
             }
-            const input = normalizeProductReceiptInput(payload);
+            const resolvedVariantId = resolveVariantIdAlias(variantId);
+            const existingProduct = productRepo.getById(resolvedVariantId);
+            const input = normalizeProductReceiptInput(
+              payload,
+              classifyProductSale(existingProduct ?? {}).sellBy,
+            );
             const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
               capabilities,
               input.expectedUpdatedAt,
@@ -2177,7 +2214,7 @@ export class PosModule extends BaseModule {
             const { idempotencyKey, ...requestPayload } = input;
             return productAdminMutationOutbox.execute({
               mutationType: 'RECEIVE_STOCK',
-              targetVariantId: resolveVariantIdAlias(variantId),
+              targetVariantId: resolvedVariantId,
               idempotencyKey,
               request: { payload: { ...requestPayload, expectedUpdatedAt } },
             }) as Promise<ProductAdminReceiveStockResponse>;

@@ -359,6 +359,7 @@ function FailedLocalVariantImportsDialog({
   return (
     <Modal
       open
+      keyboardAware
       size="full"
       title={`${tOr(t, 'products.importFailures.title', 'Cần xử lý')} (${imports.length})`}
       onClose={onClose}

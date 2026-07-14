@@ -244,6 +244,30 @@ describe('product edit concurrency baseline', () => {
     expect(edited.name !== baseline.product.name).toBe(true);
   });
 
+  it('advances each chained save step with the canonical product revision', async () => {
+    const stockTokens: Array<string | undefined> = [];
+
+    const result = await executeProductSave({
+      productDirty: true,
+      stockDirty: true,
+      expectedUpdatedAt: 'T1',
+      updateProduct: async () => ({
+        ok: true,
+        data: { variant: { updatedAt: 'T2-variant', canonicalUpdatedAt: 'T2-canonical' } },
+      }),
+      adjustStock: async (token) => {
+        stockTokens.push(token);
+        return {
+          ok: true,
+          data: { variant: { updatedAt: 'T3-variant', canonicalUpdatedAt: 'T3-canonical' } },
+        };
+      },
+    });
+
+    expect(stockTokens).toEqual(['T2-canonical']);
+    expect(result).toMatchObject({ status: 'success', expectedUpdatedAt: 'T3-canonical' });
+  });
+
   it('wires partial-save recovery into the form before refreshing product props', () => {
     const source = readFileSync(resolve(
       __dirname,

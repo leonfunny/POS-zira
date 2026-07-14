@@ -18,6 +18,8 @@ describe('product modal accessibility', () => {
     'ProductSearchOverlay.tsx',
     'ProductCreateDialog.tsx',
     'ProductAddFlow.tsx',
+    'ProductImageField.tsx',
+    'ReceiveStockDialog.tsx',
     'StockAdjustmentDialog.tsx',
     'DeactivateProductDialog.tsx',
     'CategoryManagerDialog.tsx',
@@ -27,10 +29,24 @@ describe('product modal accessibility', () => {
     expect(dialog).toContain('<Modal');
   });
 
+  it.each([
+    'ProductSearchOverlay.tsx',
+    'ProductCreateDialog.tsx',
+    'ProductAddFlow.tsx',
+    'ReceiveStockDialog.tsx',
+    'StockAdjustmentDialog.tsx',
+    'DeactivateProductDialog.tsx',
+    'CategoryManagerDialog.tsx',
+  ])('keeps input-bearing modal %s above the touch keyboard', (file) => {
+    const dialog = source(`src/renderer/components/products/${file}`);
+    expect(dialog).toContain('keyboardAware');
+  });
+
   it('uses shared Modal for failed local imports', () => {
     const moduleSource = source('src/renderer/components/products/ProductModule.tsx');
     expect(moduleSource).toContain("import Modal from '../shared/Modal'");
     expect(moduleSource).toContain('<Modal');
+    expect(moduleSource).toContain('keyboardAware');
   });
 
   it('keeps focused product fields above the measured touch keyboard', () => {
@@ -49,6 +65,9 @@ describe('product modal accessibility', () => {
     expect(editView).toContain('ref={editScrollRef}');
     expect(editView).toContain('onFocusCapture={handleKeyboardAwareFocus}');
     expect(keyboardFocusHook).toContain('ResizeObserver');
+    expect(keyboardFocusHook).toContain('window.visualViewport');
+    expect(keyboardFocusHook).toContain("window.addEventListener('resize'");
+    expect(keyboardFocusHook).toContain('FOCUS_SETTLE_DELAY_MS');
     expect(keyboardFocusHook).toContain("closest('label')");
     expect(keyboardFocusHook).toContain('scrollIntoView');
   });

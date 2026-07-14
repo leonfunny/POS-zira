@@ -11,7 +11,7 @@ import Modal from '../shared/Modal';
 import { sanitizeDecimalText } from './decimal-input';
 import ProductImageField, { isValidProductImageUrl, type PendingProductImage } from './ProductImageField';
 import { completeCommittedMutation, createMutationOutcomeTracker } from './mutation-idempotency';
-import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
+import { grossFromNet, netFromGross } from './price-vat';
 import { useProductVatRates } from './product-vat-rates';
 import { findDuplicateBarcodeSet } from './scan-match';
 import { receiptNamePreview } from './receipt-name-preview';
@@ -230,7 +230,9 @@ export default function ProductCreateDialog({
       return !normalized || normalized === 'kg' ? 'szt' : current;
     });
     if (nextSellBy === 'WEIGHT' && stockQty === '1') setStockQty('0');
-    if (nextSellBy === 'PIECE' && stockQty.includes('.')) setStockQty(String(Math.floor(Number(stockQty) || 0)));
+    if (nextSellBy === 'PIECE' && /[.,]/.test(stockQty)) {
+      setStockQty(String(Math.floor(Number(stockQty.replace(',', '.')) || 0)));
+    }
   };
 
   const changeItemType = (nextItemType: ItemType) => {
@@ -613,11 +615,7 @@ export default function ProductCreateDialog({
                 onChange={(event) => {
                   const nextVat = event.target.value;
                   setVatRate(nextVat);
-                  if (parsePriceNumber(priceNet) !== null) {
-                    setPriceGross(grossFromNet(priceNet, nextVat));
-                  } else {
-                    setPriceNet(netFromGross(priceGross, nextVat));
-                  }
+                  setPriceNet(netFromGross(priceGross, nextVat));
                 }}
                 className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
@@ -721,7 +719,7 @@ export default function ProductCreateDialog({
                   : tOr(t, 'products.create.stockPieces', 'Initial stock (pcs)')}
               </span>
               <input
-                inputMode="decimal"
+                inputMode={sellBy === 'WEIGHT' ? 'decimal' : 'numeric'}
                 value={stockQty}
                 onChange={(event) => setStockQty(event.target.value)}
                 step={sellBy === 'WEIGHT' ? '0.001' : '1'}

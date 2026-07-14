@@ -46,9 +46,9 @@ describe('POSNumpad buffer helpers', () => {
       expect(appendDecimal('50.5', 'cash')).toBe('50.5');
     });
 
-    it('allows decimal quantities', () => {
-      expect(appendDecimal('5', 'qty')).toBe('5.');
-      expect(appendDecimal('', 'qty')).toBe('0.');
+    it('does not add a decimal separator to piece quantities', () => {
+      expect(appendDecimal('5', 'qty')).toBe('5');
+      expect(appendDecimal('', 'qty')).toBe('');
     });
   });
 
@@ -161,13 +161,13 @@ describe('POSNumpad buffer helpers', () => {
       expect(parseBufferGrosze(buf)).toBe(1000000);
     });
 
-    it('qty: type 3, ., 5 = decimal quantity 3.5', () => {
+    it('qty: decimal key is ignored so piece quantity stays whole', () => {
       let buf = '';
       buf = appendDigit(buf, '3');
       buf = appendDecimal(buf, 'qty');
       buf = appendDigit(buf, '5');
-      expect(buf).toBe('3.5');
-      expect(parseBufferQuantity(buf)).toBe(3.5);
+      expect(buf).toBe('35');
+      expect(parseBufferQuantity(buf)).toBe(35);
     });
 
     it('backspace flow: 1234 → backspace twice → 12', () => {
