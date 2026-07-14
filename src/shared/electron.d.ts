@@ -101,6 +101,12 @@ import type {
   ProductAdminDeactivateVariantInput,
   ProductAdminIpcResult,
   ProductAdminProductMutationResponse,
+  ProductAdminVariantDetailResponse,
+  ProductAdminMainImageUploadInput,
+  ProductAdminMainImageUploadResponse,
+  ProductAdminLotListResponse,
+  ProductAdminReceiveStockInput,
+  ProductAdminReceiveStockResponse,
   ProductAdminStockAdjustmentInput,
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
@@ -158,6 +164,9 @@ interface LocalVariantImportFailure {
   synced_at: string | null;
   server_variant_id: string | null;
   category_id: string | null;
+  intent_payload_json: string | null;
+  intent_idempotency_key: string | null;
+  intent_dispatched_at: string | null;
   product_name: string | null;
   product_barcode: string | null;
   product_category_id: string | null;
@@ -795,7 +804,7 @@ interface ElectronAPI {
     localVariantImports: {
       listFailed: () => Promise<{ ok: boolean; count: number; imports: LocalVariantImportFailure[]; error?: string }>;
       listUnresolvedIds: () => Promise<{ ok: boolean; ids: string[]; error?: string }>;
-      requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) => Promise<{ ok: boolean; syncPending?: boolean; variant?: PosProduct | null; error?: string }>;
+      requeue: (payload: { variantId: string; ean: string; categoryId?: string | null }) => Promise<{ ok: boolean; syncPending?: boolean; variant?: PosProduct | null; error?: string; code?: string }>;
     };
     categories: {
       getAll: () => Promise<PosCategory[]>;
@@ -815,6 +824,10 @@ interface ElectronAPI {
       updateVariant: (variantId: string, payload: ProductAdminUpdateVariantInput) => Promise<ProductAdminIpcResult<ProductAdminVariantMutationResponse>>;
       deactivateVariant: (variantId: string, payload: ProductAdminDeactivateVariantInput) => Promise<ProductAdminIpcResult<ProductAdminVariantMutationResponse>>;
       adjustStock: (variantId: string, payload: ProductAdminStockAdjustmentInput) => Promise<ProductAdminIpcResult<ProductAdminStockAdjustmentResponse>>;
+      getVariant: (variantId: string) => Promise<ProductAdminIpcResult<ProductAdminVariantDetailResponse>>;
+      uploadMainImage: (variantId: string, payload: ProductAdminMainImageUploadInput) => Promise<ProductAdminIpcResult<ProductAdminMainImageUploadResponse>>;
+      listLots: (variantId: string) => Promise<ProductAdminIpcResult<ProductAdminLotListResponse>>;
+      receiveStock: (variantId: string, payload: ProductAdminReceiveStockInput) => Promise<ProductAdminIpcResult<ProductAdminReceiveStockResponse>>;
       listCategories: () => Promise<ProductAdminIpcResult<ProductAdminCategoryListResponse>>;
       createCategory: (payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
       updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;

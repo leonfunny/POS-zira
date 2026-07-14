@@ -79,6 +79,22 @@ describe('ApiClient product-admin create', () => {
     });
   });
 
+  it('sends the edit-session revision with a main-image multipart upload', async () => {
+    await new ApiClient('https://api.test').uploadProductMainImage('token-1', 'variant-1', {
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      mimeType: 'image/png',
+      fileName: 'product.png',
+      expectedUpdatedAt: '2026-07-13T10:00:00.000Z',
+    });
+
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/v1/warehouse/product-admin/variants/variant-1/main-image');
+    expect(request.headers).toMatchObject({
+      'X-Expected-Updated-At': '2026-07-13T10:00:00.000Z',
+    });
+    expect(request.body).toBeInstanceOf(FormData);
+  });
+
   it('maps legacy string error envelopes to machine-readable product-admin codes', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
       error: 'DUPLICATE_PRODUCT',

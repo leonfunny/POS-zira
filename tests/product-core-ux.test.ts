@@ -14,7 +14,7 @@ describe('Products core UX', () => {
     expect(moduleSource).toContain("products.create.success");
     expect(moduleSource).toContain("products.edit.success");
     expect(moduleSource).toContain("products.stock.successDetail");
-    expect(editForm).toContain('disabled={busy || !dirty}');
+    expect(editForm).toContain('disabled={busy || (!dirty && !stockAttemptDispatched)}');
     expect(stockDialog).toContain('onAdjusted(result.data');
   });
 

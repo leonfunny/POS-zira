@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
-import type { Migration } from '../src/main/database/migrations';
+import { migrations, type Migration } from '../src/main/database/migrations';
 
 // Mock electron + logger before importing the module under test so the
 // app.getPath call never fires and we capture log lines.
@@ -68,6 +68,30 @@ describe('Database.applyMigrations', () => {
     db = new SQL.Database();
     logger.warn.mockClear();
     logger.error.mockClear();
+  });
+
+  it('quarantines pre-snapshot unresolved imports as potentially dispatched during the intent migration', () => {
+    DatabaseClass.applyMigrations(db, migrations.filter((migration) => migration.version <= 53));
+    db.run(`
+      INSERT INTO local_variant_imports (variant_id, draft_id, ean, status)
+      VALUES
+        ('pending-legacy', 'draft-1', '8935039500400', 'PENDING'),
+        ('failed-legacy', 'draft-2', '8935039500401', 'FAILED'),
+        ('synced-legacy', 'draft-3', '8935039500402', 'SYNCED');
+    `);
+
+    DatabaseClass.applyMigrations(db, migrations);
+
+    const rows = db.exec(`
+      SELECT variant_id, intent_payload_json, intent_idempotency_key, intent_dispatched_at
+      FROM local_variant_imports
+      ORDER BY variant_id
+    `)[0].values;
+    expect(rows).toEqual([
+      ['failed-legacy', null, null, expect.any(String)],
+      ['pending-legacy', null, null, expect.any(String)],
+      ['synced-legacy', null, null, null],
+    ]);
   });
 
   it('applies pending migrations on a fresh DB and stamps (version, name)', () => {

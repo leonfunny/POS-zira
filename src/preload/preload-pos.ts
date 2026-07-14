@@ -72,6 +72,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('pos:product-admin:deactivate-variant', variantId, payload),
       adjustStock: (variantId: string, payload: any) =>
         ipcRenderer.invoke('pos:product-admin:adjust-stock', variantId, payload),
+      getVariant: (variantId: string) =>
+        ipcRenderer.invoke('pos:product-admin:get-variant', variantId),
+      uploadMainImage: (variantId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:upload-main-image', variantId, payload),
+      listLots: (variantId: string) =>
+        ipcRenderer.invoke('pos:product-admin:list-lots', variantId),
+      receiveStock: (variantId: string, payload: any) =>
+        ipcRenderer.invoke('pos:product-admin:receive-stock', variantId, payload),
       listCategories: () => ipcRenderer.invoke('pos:product-admin:categories:list'),
       createCategory: (payload: any) => ipcRenderer.invoke('pos:product-admin:categories:create', payload),
       updateCategory: (categoryId: string, payload: any) =>

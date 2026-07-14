@@ -75,7 +75,8 @@ describe('Product Admin display-name contract', () => {
     const initialPayload = editForm.match(
       /const payload: ProductAdminUpdateVariantInput = \{[\s\S]*?\n    \};/,
     )?.[0] ?? '';
-    expect(initialPayload).toContain('expectedUpdatedAt: product.updated_at || undefined');
+    expect(editForm).toContain('const expectedUpdatedAt = editBaseline.expectedUpdatedAt;');
+    expect(initialPayload).toContain('expectedUpdatedAt,');
     expect(initialPayload).not.toContain('name:');
     expect(initialPayload).not.toContain('barcode:');
   });

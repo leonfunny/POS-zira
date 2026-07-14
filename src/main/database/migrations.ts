@@ -1592,4 +1592,21 @@ export const migrations: Migration[] = [
       ALTER TABLE product_variants ADD COLUMN track_inventory INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  {
+    version: 54,
+    name: 'local_variant_import_intent_snapshot',
+    up: `
+      ALTER TABLE local_variant_imports ADD COLUMN intent_payload_json TEXT;
+      ALTER TABLE local_variant_imports ADD COLUMN intent_idempotency_key TEXT;
+      ALTER TABLE local_variant_imports ADD COLUMN intent_dispatched_at TEXT;
+
+      -- Pre-v54 retries did not persist the request body/key. Any unresolved
+      -- row may already have reached scan-create even when attempts is zero
+      -- (the app could crash after dispatch but before recording the result).
+      -- Mark those rows conservatively so new code never invents a new request.
+      UPDATE local_variant_imports
+      SET intent_dispatched_at = COALESCE(created_at, datetime('now'))
+      WHERE status IN ('PENDING', 'FAILED');
+    `,
+  },
 ];

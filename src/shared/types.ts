@@ -1296,6 +1296,10 @@ export const IPC_CHANNELS = {
   POS_PRODUCT_ADMIN_UPDATE_VARIANT: 'pos:product-admin:update-variant',
   POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT: 'pos:product-admin:deactivate-variant',
   POS_PRODUCT_ADMIN_ADJUST_STOCK: 'pos:product-admin:adjust-stock',
+  POS_PRODUCT_ADMIN_GET_VARIANT: 'pos:product-admin:get-variant',
+  POS_PRODUCT_ADMIN_UPLOAD_MAIN_IMAGE: 'pos:product-admin:upload-main-image',
+  POS_PRODUCT_ADMIN_LIST_LOTS: 'pos:product-admin:list-lots',
+  POS_PRODUCT_ADMIN_RECEIVE_STOCK: 'pos:product-admin:receive-stock',
   POS_PRODUCT_ADMIN_CATEGORIES_LIST: 'pos:product-admin:categories:list',
   POS_PRODUCT_ADMIN_CATEGORIES_CREATE: 'pos:product-admin:categories:create',
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE: 'pos:product-admin:categories:update',
@@ -2900,7 +2904,18 @@ export interface ProductAdminCapabilities {
   canAdjustStock: boolean;
   canCreateCategory: boolean;
   canUpdateCategory: boolean;
+  canViewPurchasePrice?: boolean;
+  canReplaceMainImage?: boolean;
+  canReceiveStock?: boolean;
   supportsOptimisticConcurrency: boolean;
+  /** Purchase cost is available through authenticated product-admin responses. */
+  supportsPurchasePrice?: boolean;
+  /** Authenticated main-image replacement from a local file/camera capture. */
+  supportsMainImageUpload?: boolean;
+  /** Authenticated stock-lot detail is available for this operator. */
+  supportsStockLots?: boolean;
+  /** Audited lot-aware stock receiving is available for this operator. */
+  supportsLotReceiving?: boolean;
   /** Server understands itemType/trackInventory on variants (create/update/response). */
   supportsItemType?: boolean;
   /** 4-digit salon code for minting internal EAN-13 barcodes ("2" + code + …). */
@@ -2928,7 +2943,11 @@ export type ProductAdminErrorCode =
   | 'PRICE_MINOR_UNIT_MISMATCH'
   | 'IDEMPOTENCY_CONFLICT'
   | 'STOCK_NOT_TRACKED'
-  | 'STOCK_MUST_BE_ZERO';
+  | 'STOCK_MUST_BE_ZERO'
+  | 'VARIANT_IMPORT_PENDING'
+  | 'VARIANT_IMPORT_ALIAS_BLOCKED'
+  | 'INVALID_IMAGE'
+  | 'IMAGE_TOO_LARGE';
 
 export interface ProductAdminErrorEnvelope {
   ok: false;
@@ -2953,6 +2972,8 @@ export interface ProductAdminProductTemplate {
   id: string;
   name: string;
   categoryId?: string | null;
+  purchasePrice?: number | null;
+  purchasePriceGrosze?: number | null;
 }
 
 export interface ProductAdminVariant {
@@ -2964,6 +2985,10 @@ export interface ProductAdminVariant {
   barcode?: string | null;
   retailPrice?: number | null;
   priceGrossGrosze: number;
+  /** Authenticated-only decimal PLN value; absent from public catalogue sync. */
+  purchasePrice?: number | null;
+  /** Authenticated-only integer grosze value. Prefer this over purchasePrice. */
+  purchasePriceGrosze?: number | null;
   vatRate: number;
   categoryId?: string | null;
   totalStockQty: number;
@@ -2986,6 +3011,7 @@ export interface ProductAdminCreateProductInput {
   barcode?: string | null;
   sku?: string | null;
   priceGrossGrosze?: number;
+  purchasePriceGrosze?: number;
   vatRate: number;
   initialStockQty?: number;
   categoryId?: string | null;
@@ -3003,6 +3029,7 @@ export interface ProductAdminUpdateVariantInput {
   barcode?: string | null;
   sku?: string | null;
   priceGrossGrosze?: number;
+  purchasePriceGrosze?: number;
   vatRate?: number;
   categoryId?: string | null;
   saleUnit?: string | null;
@@ -3060,6 +3087,78 @@ export interface ProductAdminVariantMutationResponse {
 
 export interface ProductAdminStockAdjustmentResponse {
   adjustment: ProductAdminStockAdjustment;
+  variant: ProductAdminVariant;
+  serverTime: string;
+}
+
+export interface ProductAdminVariantDetailResponse {
+  variant: ProductAdminVariant;
+  serverTime: string;
+}
+
+export interface ProductAdminMainImageUploadInput {
+  /** Base64 data URL. Main process validates MIME and decoded byte length. */
+  dataUrl: string;
+  fileName?: string;
+  mimeType?: 'image/jpeg' | 'image/png' | 'image/webp';
+  /** Canonical product revision seen by the edit/create session. */
+  expectedUpdatedAt?: string;
+}
+
+export interface ProductAdminMainImageUploadResponse {
+  variant: ProductAdminVariant;
+  image: {
+    url: string;
+    thumbnailUrl: string;
+  };
+  serverTime: string;
+}
+
+export type ProductAdminLotStatus = 'active' | 'expiring_soon' | 'expired';
+
+export interface ProductAdminStockLot {
+  id: string;
+  lotNumber: string;
+  expirationDate: string | null;
+  quantity: number;
+  reservedQuantity: number;
+  availableQuantity: number;
+  unitCost: number | null;
+  unitCostGrosze: number | null;
+  status: ProductAdminLotStatus;
+  updatedAt: string;
+}
+
+export interface ProductAdminLotListResponse {
+  items: ProductAdminStockLot[];
+  nearestExpiry: string | null;
+  serverTime: string;
+}
+
+export interface ProductAdminReceiveStockInput {
+  quantity: number;
+  unitCostGrosze?: number;
+  lotNumber?: string;
+  expirationDate?: string;
+  reason?: string;
+  expectedUpdatedAt?: string;
+  idempotencyKey: string;
+}
+
+export interface ProductAdminStockReceipt {
+  moveId: string;
+  documentNumber: string | null;
+  quantity: number;
+  unitCost: number | null;
+  unitCostGrosze: number | null;
+  lotId: string | null;
+  lotNumber: string | null;
+  expirationDate: string | null;
+  createdAt: string;
+}
+
+export interface ProductAdminReceiveStockResponse {
+  receipt: ProductAdminStockReceipt;
   variant: ProductAdminVariant;
   serverTime: string;
 }

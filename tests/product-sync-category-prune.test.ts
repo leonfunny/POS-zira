@@ -231,4 +231,91 @@ describe('ProductSync category pruning', () => {
     expect(upsertCategoriesMock).toHaveBeenCalledWith(categories);
     expect(deleteCategoriesExceptMock).not.toHaveBeenCalled();
   });
+
+  it('runs a queued catalog callback only after an older delta has finished applying', async () => {
+    let resolveResponse!: (value: {
+      products: ProductVariantRow[];
+      categories: CategoryRow[];
+      deletedIds: string[];
+      nextSince: string;
+    }) => void;
+    getPosProductsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveResponse = resolve;
+    }));
+    const order: string[] = [];
+    upsertManyMock.mockImplementationOnce(() => { order.push('delta-apply'); });
+    const sync = new ProductSync();
+
+    const olderDelta = sync.deltaSync();
+    await vi.waitFor(() => expect(getPosProductsMock).toHaveBeenCalledTimes(1));
+    const mirror = sync.runAfterPendingCatalogSync(() => {
+      order.push('mutation-mirror');
+      return 'mirrored';
+    });
+
+    expect(order).toEqual([]);
+    resolveResponse({
+      products: [product('p-old')],
+      categories: [],
+      deletedIds: [],
+      nextSince: 'cursor-old',
+    });
+
+    await expect(olderDelta).resolves.toBe(1);
+    await expect(mirror).resolves.toBe('mirrored');
+    expect(order).toEqual(['delta-apply', 'mutation-mirror']);
+  });
+
+  it('continues the catalog callback queue after an older delta rejects', async () => {
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [product('p-1')],
+      categories: [],
+      deletedIds: [],
+      nextSince: 'cursor-2',
+    });
+    databaseTransactionMock.mockImplementationOnce(() => {
+      throw new Error('catalog apply failed');
+    });
+    const sync = new ProductSync();
+
+    const failedDelta = sync.deltaSync();
+    const mirror = sync.runAfterPendingCatalogSync(() => 'mirrored-after-failure');
+
+    await expect(failedDelta).rejects.toThrow('catalog apply failed');
+    await expect(mirror).resolves.toBe('mirrored-after-failure');
+  });
+
+  it('serializes direct catalog sync calls across ProductSync instances', async () => {
+    let resolveFirst!: (value: {
+      products: ProductVariantRow[];
+      categories: CategoryRow[];
+      deletedIds: string[];
+      nextSince: string;
+    }) => void;
+    getPosProductsMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({
+        products: [product('p-new')],
+        categories: [],
+        deletedIds: [],
+        nextSince: 'cursor-new',
+      });
+
+    const first = new ProductSync().deltaSync();
+    await vi.waitFor(() => expect(getPosProductsMock).toHaveBeenCalledTimes(1));
+    const second = new ProductSync().deltaSync();
+    await Promise.resolve();
+    expect(getPosProductsMock).toHaveBeenCalledTimes(1);
+
+    resolveFirst({
+      products: [product('p-old')],
+      categories: [],
+      deletedIds: [],
+      nextSince: 'cursor-old',
+    });
+
+    await expect(first).resolves.toBe(1);
+    await expect(second).resolves.toBe(1);
+    expect(getPosProductsMock).toHaveBeenCalledTimes(2);
+  });
 });

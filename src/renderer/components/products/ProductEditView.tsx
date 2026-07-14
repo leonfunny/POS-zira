@@ -1,14 +1,19 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
-import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
+import type { ProductAdminReceiveStockResponse, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
 import DeactivateProductDialog from './DeactivateProductDialog';
-import ProductEditForm from './ProductEditForm';
+import ProductEditForm, {
+  productEditNavigationState,
+  runProductPostCommitBestEffort,
+} from './ProductEditForm';
+import ProductLotSummary from './ProductLotSummary';
+import ReceiveStockDialog from './ReceiveStockDialog';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
@@ -25,12 +30,17 @@ interface ProductEditViewProps {
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  canViewPurchasePrice: boolean;
+  canReplaceMainImage: boolean;
+  canViewStockLots: boolean;
+  canReceiveStock: boolean;
+  supportsLotReceiving: boolean;
   salonCode?: string | null;
   isBarcodeTaken?: (code: string) => boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
-  /** Draft import not reconciled with the server yet — mutations would 404. */
+  /** Local-import row (including a SYNCED alias) that does not own the canonical server revision. */
   importPending?: boolean;
   backLabel?: string;
   onBack: () => void;
@@ -89,6 +99,11 @@ export default function ProductEditView({
   canDeactivateProduct,
   canAdjustStock,
   supportsItemType,
+  canViewPurchasePrice,
+  canReplaceMainImage,
+  canViewStockLots,
+  canReceiveStock,
+  supportsLotReceiving,
   salonCode,
   isBarcodeTaken,
   canManageCategories,
@@ -111,10 +126,18 @@ export default function ProductEditView({
   const [stockOpen, setStockOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [reactivateBusy, setReactivateBusy] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [lotRefreshToken, setLotRefreshToken] = useState(0);
+  const [adminVariant, setAdminVariant] = useState<ProductAdminVariant | null>(null);
+  const [adminDetailError, setAdminDetailError] = useState<string | null>(null);
   const [pendingBackConfirm, setPendingBackConfirm] = useState(false);
   const editScrollRef = useRef<HTMLDivElement | null>(null);
+  const adminDetailRequestRef = useRef(0);
+  const tRef = useRef(t);
+  tRef.current = t;
   const handleKeyboardAwareFocus = useKeyboardAwareFocus(editScrollRef, editing);
 
   useEffect(() => {
@@ -123,31 +146,108 @@ export default function ProductEditView({
     setStockOpen(false);
     setEditing(false);
     setEditDirty(false);
+    setEditBusy(false);
     setDeactivateOpen(false);
     setReactivateBusy(false);
+    setReceiveOpen(false);
+    setLotRefreshToken(0);
+    setAdminVariant(null);
+    setAdminDetailError(null);
     setPendingBackConfirm(false);
   }, [product.id]);
+
+  useEffect(() => {
+    if (editBusy) setPendingBackConfirm(false);
+  }, [editBusy]);
+
+  const loadAdminDetail = useCallback(async () => {
+    const requestId = ++adminDetailRequestRef.current;
+    if (!canViewPurchasePrice || product._isDraft || importPending) {
+      setAdminVariant(null);
+      setAdminDetailError(null);
+      return;
+    }
+    setAdminDetailError(null);
+    try {
+      const result = await window.electronAPI.pos.productAdmin.getVariant(product.id);
+      if (requestId !== adminDetailRequestRef.current) return;
+      if (!result?.ok || !result.data?.variant) {
+        setAdminVariant(null);
+        setAdminDetailError(result?.error || result?.code || tOr(tRef.current, 'products.purchase.unavailable', 'Purchase price is unavailable'));
+        return;
+      }
+      setAdminVariant(result.data.variant);
+    } catch (error) {
+      if (requestId !== adminDetailRequestRef.current) return;
+      setAdminVariant(null);
+      setAdminDetailError(error instanceof Error
+        ? error.message
+        : tOr(tRef.current, 'products.purchase.unavailable', 'Purchase price is unavailable'));
+    }
+  }, [canViewPurchasePrice, importPending, product._isDraft, product.id]);
+
+  useEffect(() => {
+    void loadAdminDetail();
+  }, [loadAdminDetail]);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const displayName = resolveName(product, language) || product.name;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
   const categoryName = category ? resolveName(category, language) : '-';
   const image = product.thumbnail_url || product.image_url;
-  const stock = product.available_qty ?? product.in_stock ?? 0;
+  const stock = product.in_stock ?? product.available_qty ?? 0;
   const saleClass = classifyProductSale(product);
+  const siblingMutationsLocked = editing || editBusy || stockOpen || receiveOpen || deactivateOpen || reactivateBusy;
   const canPrintLabel = !!product.barcode && !labelBusy;
   const canEditProduct = canUpdateProduct && !product._isDraft && !importPending;
   const stockTracked = isStockTracked(product);
   const canOpenStockAdjustment = canAdjustStock && !product._isDraft && stockTracked && !importPending;
   const canStopSelling = canDeactivateProduct && !product._isDraft && product.is_active !== 0 && !productInCart && !importPending;
-  const canReactivate = canUpdateProduct && !product._isDraft && product.is_active === 0;
+  const canReactivate = canUpdateProduct && !product._isDraft && product.is_active === 0 && !importPending;
+  const canUseLots = canViewStockLots && stockTracked && !product._isDraft && !importPending;
+  const canShowPurchasePrice = canViewPurchasePrice && !product._isDraft && !importPending;
+  const purchasePriceLoading = canShowPurchasePrice && adminVariant === null && adminDetailError === null;
+  const purchasePriceGrosze = adminVariant
+    ? adminVariant.purchasePriceGrosze !== undefined
+      ? adminVariant.purchasePriceGrosze
+      : adminVariant.purchasePrice == null
+        ? null
+        : Math.round(adminVariant.purchasePrice * 100)
+    : undefined;
+  const editNavigation = productEditNavigationState(editBusy);
 
   const handleBack = () => {
+    if (editNavigation.backDisabled) return;
     if (editing && editDirty) {
       setPendingBackConfirm(true);
       return;
     }
     onBack();
+  };
+
+  const handleImportDraft = () => {
+    if (siblingMutationsLocked || !product._isDraft || !product.barcode) return;
+    onImportDraft(product);
+  };
+
+  const handleStartEditing = () => {
+    if (!canEditProduct || siblingMutationsLocked) return;
+    setEditing(true);
+  };
+
+  const handleOpenStockAdjustment = () => {
+    if (!canOpenStockAdjustment || siblingMutationsLocked) return;
+    setStockOpen(true);
+  };
+
+  const handleOpenDeactivate = () => {
+    if (!canStopSelling || siblingMutationsLocked) return;
+    setDeactivateOpen(true);
+  };
+
+  const handleOpenReceiveStock = () => {
+    if (!canReceiveStock || !canUseLots || siblingMutationsLocked) return;
+    setReceiveOpen(true);
   };
 
   const handlePrintLabel = async () => {
@@ -174,7 +274,7 @@ export default function ProductEditView({
   };
 
   const handleReactivate = async () => {
-    if (!canReactivate || reactivateBusy) return;
+    if (!canReactivate || reactivateBusy || siblingMutationsLocked) return;
     setReactivateBusy(true);
     setLabelMessage(null);
     try {
@@ -209,7 +309,8 @@ export default function ProductEditView({
         <button
           type="button"
           onClick={handleBack}
-          className="inline-flex h-11 shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          disabled={editNavigation.backDisabled}
+          className="inline-flex h-11 shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <ChevronLeft size={18} />
           {backLabel || tOr(t, 'products.back', 'Back')}
@@ -246,16 +347,17 @@ export default function ProductEditView({
               {product._isDraft && product.barcode ? (
                 <button
                   type="button"
-                  onClick={() => onImportDraft(product)}
-                  className="inline-flex h-11 items-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700"
+                  onClick={handleImportDraft}
+                  disabled={siblingMutationsLocked}
+                  className="inline-flex h-11 items-center rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {tOr(t, 'products.add.importDraft', 'Import draft')}
                 </button>
               ) : null}
               <button
                 type="button"
-                onClick={() => setEditing(true)}
-                disabled={!canEditProduct}
+                onClick={handleStartEditing}
+                disabled={!canEditProduct || siblingMutationsLocked}
                 className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Pencil size={17} />
@@ -274,8 +376,8 @@ export default function ProductEditView({
               {stockTracked ? (
                 <button
                   type="button"
-                  onClick={() => setStockOpen(true)}
-                  disabled={!canOpenStockAdjustment}
+                  onClick={handleOpenStockAdjustment}
+                  disabled={!canOpenStockAdjustment || siblingMutationsLocked}
                   className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <PackagePlus size={17} />
@@ -286,7 +388,7 @@ export default function ProductEditView({
                 <button
                   type="button"
                   onClick={() => void handleReactivate()}
-                  disabled={!canReactivate || reactivateBusy}
+                  disabled={!canReactivate || reactivateBusy || siblingMutationsLocked}
                   className="inline-flex h-11 items-center gap-2 rounded-md border border-emerald-200 bg-white px-4 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <RotateCcw size={17} className={reactivateBusy ? 'animate-spin motion-reduce:animate-none' : ''} />
@@ -297,8 +399,8 @@ export default function ProductEditView({
               ) : (
                 <button
                   type="button"
-                  onClick={() => setDeactivateOpen(true)}
-                  disabled={!canStopSelling}
+                  onClick={handleOpenDeactivate}
+                  disabled={!canStopSelling || siblingMutationsLocked}
                   className="inline-flex h-11 items-center gap-2 rounded-md border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                   title={productInCart ? tOr(t, 'products.deactivate.inCart', 'Remove this product from cart before hiding it') : undefined}
                 >
@@ -316,7 +418,7 @@ export default function ProductEditView({
 
             {importPending ? (
               <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800">
-                {tOr(t, 'products.import.pendingHint', 'Sản phẩm đang chờ đồng bộ với server — bấm Sync ở tab Products rồi thử lại.')}
+                {tOr(t, 'products.import.pendingHint', 'This local import row is not the canonical server product. Sync the catalog, then open the server product to edit it.')}
               </div>
             ) : null}
 
@@ -357,20 +459,32 @@ export default function ProductEditView({
             canManageCategories={canManageCategories}
             canAdjustStock={canAdjustStock}
             supportsItemType={supportsItemType}
+            canViewPurchasePrice={canShowPurchasePrice}
+            purchasePriceGrosze={purchasePriceGrosze}
+            purchasePriceLoaded={adminVariant !== null}
+            purchasePriceLoading={purchasePriceLoading}
+            purchasePriceError={adminDetailError}
+            onReloadAdminDetail={() => void loadAdminDetail()}
+            canReplaceMainImage={canReplaceMainImage}
             salonCode={salonCode}
             isBarcodeTaken={isBarcodeTaken}
             canEditDisplayName={canEditDisplayName}
             displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
             onManageCategories={onManageCategories}
+            onBusyChange={setEditBusy}
             onDirtyChange={setEditDirty}
             onProductChanged={onProductChanged}
             onCancel={() => {
               setEditing(false);
               setEditDirty(false);
+              setEditBusy(false);
             }}
             onSaved={async (outcome) => {
-              await onProductChanged();
               await onProductSaved(product, outcome);
+              await runProductPostCommitBestEffort([
+                onProductChanged,
+                loadAdminDetail,
+              ]);
             }}
           />
         ) : (
@@ -378,6 +492,29 @@ export default function ProductEditView({
             <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
             <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')} value={product.name} />
             <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
+            {canShowPurchasePrice ? (
+              <DetailRow
+                label={tOr(t, 'products.purchase.price', 'Purchase price')}
+                value={purchasePriceLoading
+                  ? tOr(t, 'products.purchase.loading', 'Loading...')
+                  : adminDetailError
+                    ? (
+                      <span className="inline-flex flex-wrap items-center gap-2 text-amber-700">
+                        {tOr(t, 'products.purchase.unavailable', 'Unavailable — it will not be changed')}
+                        <button
+                          type="button"
+                          onClick={() => void loadAdminDetail()}
+                          className="h-11 rounded-md border border-amber-300 bg-white px-3 text-xs font-semibold text-amber-900 hover:bg-amber-50"
+                        >
+                          {tOr(t, 'common.retry', 'Retry')}
+                        </button>
+                      </span>
+                    )
+                    : purchasePriceGrosze == null
+                      ? tOr(t, 'products.purchase.notSet', 'Not set')
+                      : formatMoney(purchasePriceGrosze, currency)}
+              />
+            ) : null}
             <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
             <DetailRow
               label={tOr(t, 'products.drawer.stock', 'Stock')}
@@ -391,16 +528,45 @@ export default function ProductEditView({
             <DetailRow label={tOr(t, 'products.drawer.updatedAt', 'Updated')} value={formatDateTime(product.updated_at)} />
           </div>
         )}
+
+        {!editing && canUseLots ? (
+          <ProductLotSummary
+            variantId={product.id}
+            canReceiveStock={canReceiveStock}
+            canViewCosts={canShowPurchasePrice}
+            refreshToken={lotRefreshToken}
+            t={t}
+            onReceive={handleOpenReceiveStock}
+          />
+        ) : null}
       </div>
+
+      {receiveOpen ? (
+        <ReceiveStockDialog
+          product={product}
+          canEnterUnitCost={canShowPurchasePrice}
+          t={t}
+          onClose={() => setReceiveOpen(false)}
+          onReceived={async (result: ProductAdminReceiveStockResponse) => {
+            setLotRefreshToken((value) => value + 1);
+            setLabelMessage({
+              ok: true,
+              text: `${tOr(t, 'products.receive.success', 'Batch received')}: +${result.receipt.quantity}`,
+            });
+            await onProductChanged();
+          }}
+        />
+      ) : null}
 
       {stockOpen ? (
         <StockAdjustmentDialog
           product={product}
+          allowReceive={!supportsLotReceiving}
           t={t}
           onClose={() => setStockOpen(false)}
           onAdjusted={async (result) => {
-            await onProductChanged();
             await onStockAdjusted(product, result);
+            await onProductChanged();
           }}
         />
       ) : null}
@@ -429,11 +595,16 @@ export default function ProductEditView({
           confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
           cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
           danger
+          busy={editBusy}
           onConfirm={() => {
+            if (editBusy) return;
             setPendingBackConfirm(false);
             onBack();
           }}
-          onCancel={() => setPendingBackConfirm(false)}
+          onCancel={() => {
+            if (editBusy) return;
+            setPendingBackConfirm(false);
+          }}
         />
       ) : null}
     </section>

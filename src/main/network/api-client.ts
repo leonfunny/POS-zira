@@ -40,10 +40,15 @@ import {
   ProductAdminCategoryMutationResponse,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
+  ProductAdminLotListResponse,
+  ProductAdminMainImageUploadResponse,
   ProductAdminProductMutationResponse,
+  ProductAdminReceiveStockInput,
+  ProductAdminReceiveStockResponse,
   ProductAdminStockAdjustmentInput,
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
+  ProductAdminVariantDetailResponse,
   ProductAdminVariantMutationResponse,
   PosScheduleDayResponse,
   PosScheduleStaffStatus,
@@ -1570,6 +1575,63 @@ export class ApiClient {
     return data as T;
   }
 
+  private async productAdminMultipartRequest<T>(
+    token: string,
+    path: string,
+    form: FormData,
+    expectedUpdatedAt?: string,
+  ): Promise<T> {
+    const salonSlug = getConfigValue('salonSlug') as string | undefined;
+    const salonCode = getConfigValue('salonCode') as string | undefined;
+    const agentId = getConfigValue('agentId') as string | undefined;
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (salonSlug) headers['X-Salon-Slug'] = salonSlug;
+    if (salonCode) headers['X-Salon-Code'] = salonCode;
+    if (agentId) headers['X-Agent-Id'] = agentId;
+    if (expectedUpdatedAt) headers['X-Expected-Updated-At'] = expectedUpdatedAt;
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/warehouse/product-admin${path}`, {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+    const raw = await response.text();
+    let data: any = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = raw;
+    }
+
+    if (!response.ok) {
+      const envelopeError = data && typeof data === 'object' && data.error && typeof data.error === 'object'
+        ? data.error
+        : null;
+      const message = envelopeError?.message
+        || (typeof data === 'object' ? data?.message : null)
+        || (typeof data === 'object' && typeof data?.error === 'string' ? data.error : null)
+        || raw
+        || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & {
+        status?: number;
+        code?: string;
+        field?: string | null;
+        details?: Record<string, unknown> | null;
+        serverBody?: unknown;
+      };
+      error.status = response.status;
+      if (data && typeof data === 'object') {
+        error.code = data.code ?? envelopeError?.code;
+        error.field = data.field ?? envelopeError?.field;
+        error.details = data.details ?? envelopeError?.details;
+        error.serverBody = data;
+      }
+      throw error;
+    }
+
+    return data as T;
+  }
+
   /**
    * Product admin runtime capabilities.
    * GET /api/v1/warehouse/product-admin/capabilities
@@ -1585,7 +1647,14 @@ export class ApiClient {
       canAdjustStock: raw?.canAdjustStock === true,
       canCreateCategory: raw?.canCreateCategory === true,
       canUpdateCategory: raw?.canUpdateCategory === true,
+      canViewPurchasePrice: raw?.canViewPurchasePrice === true,
+      canReplaceMainImage: raw?.canReplaceMainImage === true,
+      canReceiveStock: raw?.canReceiveStock === true,
       supportsOptimisticConcurrency: raw?.supportsOptimisticConcurrency === true,
+      supportsPurchasePrice: raw?.supportsPurchasePrice === true,
+      supportsMainImageUpload: raw?.supportsMainImageUpload === true,
+      supportsStockLots: raw?.supportsStockLots === true,
+      supportsLotReceiving: raw?.supportsLotReceiving === true,
       // Whitelist mapper: EVERY new capability must be mapped here or the
       // renderer never sees it (supportsItemType was silently dropped once —
       // the item-kind picker stayed hidden despite the backend advertising it).
@@ -1646,6 +1715,69 @@ export class ApiClient {
       token,
       'POST',
       `/variants/${encodeURIComponent(variantId)}/stock-adjustments`,
+      body,
+      idempotencyKey,
+    );
+  }
+
+  async getProductAdminVariant(
+    token: string,
+    variantId: string,
+  ): Promise<ProductAdminVariantDetailResponse> {
+    return this.productAdminRequest<ProductAdminVariantDetailResponse>(
+      token,
+      'GET',
+      `/variants/${encodeURIComponent(variantId)}`,
+    );
+  }
+
+  async uploadProductMainImage(
+    token: string,
+    variantId: string,
+    payload: {
+      bytes: Uint8Array;
+      mimeType: string;
+      fileName: string;
+      expectedUpdatedAt?: string;
+    },
+  ): Promise<ProductAdminMainImageUploadResponse> {
+    const form = new FormData();
+    const imageBuffer = new ArrayBuffer(payload.bytes.byteLength);
+    new Uint8Array(imageBuffer).set(payload.bytes);
+    form.append(
+      'image',
+      new Blob([imageBuffer], { type: payload.mimeType }),
+      payload.fileName,
+    );
+    return this.productAdminMultipartRequest<ProductAdminMainImageUploadResponse>(
+      token,
+      `/variants/${encodeURIComponent(variantId)}/main-image`,
+      form,
+      payload.expectedUpdatedAt,
+    );
+  }
+
+  async listProductStockLots(
+    token: string,
+    variantId: string,
+  ): Promise<ProductAdminLotListResponse> {
+    return this.productAdminRequest<ProductAdminLotListResponse>(
+      token,
+      'GET',
+      `/variants/${encodeURIComponent(variantId)}/lots`,
+    );
+  }
+
+  async receiveProductStock(
+    token: string,
+    variantId: string,
+    payload: ProductAdminReceiveStockInput,
+  ): Promise<ProductAdminReceiveStockResponse> {
+    const { idempotencyKey, ...body } = payload;
+    return this.productAdminRequest<ProductAdminReceiveStockResponse>(
+      token,
+      'POST',
+      `/variants/${encodeURIComponent(variantId)}/receipts`,
       body,
       idempotencyKey,
     );

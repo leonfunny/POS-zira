@@ -10,7 +10,13 @@ import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
 import { grossFromNet, netFromGross, parsePriceNumber } from './price-vat';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
-import { createStableMutationKeyStore } from './mutation-idempotency';
+import {
+  completeCommittedMutation,
+  createImmutableMutationAttemptStore,
+  createMutationOutcomeTracker,
+} from './mutation-idempotency';
+import { sanitizeDecimalText } from './decimal-input';
+import ProductImageField, { isValidProductImageUrl, type PendingProductImage } from './ProductImageField';
 import { useProductVatRates } from './product-vat-rates';
 import { executeProductSave } from './save-product-changes';
 import { receiptNamePreview } from './receipt-name-preview';
@@ -23,6 +29,13 @@ interface ProductEditFormProps {
   canManageCategories: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  canViewPurchasePrice?: boolean;
+  purchasePriceGrosze?: number | null;
+  purchasePriceLoaded?: boolean;
+  purchasePriceLoading?: boolean;
+  purchasePriceError?: string | null;
+  onReloadAdminDetail?: () => void;
+  canReplaceMainImage?: boolean;
   /** 4-digit salon code (capabilities.salonCode) — enables the internal-EAN generate button. */
   salonCode?: string | null;
   /** Catalog-wide code collision check supplied by ProductModule (barcode/ean/sku). */
@@ -30,10 +43,90 @@ interface ProductEditFormProps {
   canEditDisplayName: boolean;
   displayNameAffectsMultipleVariants: boolean;
   onCancel: () => void;
+  onBusyChange?: (busy: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onManageCategories: () => void;
   onProductChanged: () => Promise<void> | void;
   onSaved: (outcome: { stockBefore?: number; stockAfter?: number; vatChanged?: boolean }) => Promise<void> | void;
+}
+
+type ProductEditStockAttempt = Omit<ProductAdminStockAdjustmentInput, 'idempotencyKey'> & {
+  variantId: string;
+};
+
+export interface ProductEditBaseline {
+  readonly expectedUpdatedAt?: string;
+  readonly product: ProductListItem;
+  readonly purchasePriceInput?: string;
+}
+
+export function createProductEditBaseline(
+  product: ProductListItem,
+  purchasePriceInput?: string,
+): ProductEditBaseline {
+  const snapshot = Object.freeze({ ...product });
+  return Object.freeze({
+    expectedUpdatedAt: snapshot.updated_at || undefined,
+    product: snapshot,
+    purchasePriceInput,
+  });
+}
+
+export function advanceProductEditBaselineAfterSave(
+  baseline: ProductEditBaseline,
+  committedFields: Partial<ProductListItem>,
+  expectedUpdatedAt?: string,
+  purchasePriceInput: string | undefined = baseline.purchasePriceInput,
+  committedStock?: number,
+): ProductEditBaseline {
+  const nextExpectedUpdatedAt = expectedUpdatedAt || baseline.expectedUpdatedAt;
+  return createProductEditBaseline({
+    ...baseline.product,
+    ...committedFields,
+    id: baseline.product.id,
+    in_stock: committedStock ?? baseline.product.in_stock,
+    // Recount commits total on-hand. Available stock can differ while units are
+    // reserved, and this response path does not carry the new available value.
+    available_qty: baseline.product.available_qty,
+    updated_at: nextExpectedUpdatedAt || baseline.product.updated_at,
+  }, purchasePriceInput);
+}
+
+export function reconcileProductEditBaseline(
+  baseline: ProductEditBaseline,
+  product: ProductListItem,
+  dirty: boolean,
+): { baseline: ProductEditBaseline; conflict: boolean } {
+  if (baseline.product.id !== product.id) {
+    return { baseline: createProductEditBaseline(product), conflict: false };
+  }
+  return {
+    baseline,
+    conflict: dirty && (product.updated_at || undefined) !== baseline.expectedUpdatedAt,
+  };
+}
+
+export function productEditNavigationState(busy: boolean): {
+  cancelDisabled: boolean;
+  backDisabled: boolean;
+} {
+  return {
+    cancelDisabled: busy,
+    backDisabled: busy,
+  };
+}
+
+export async function runProductPostCommitBestEffort(
+  callbacks: Array<() => Promise<void> | void>,
+): Promise<void> {
+  for (const callback of callbacks) {
+    try {
+      await callback();
+    } catch {
+      // The canonical mutation already committed. Local mirror/detail refreshes
+      // must never turn that success into a retryable mutation failure.
+    }
+  }
 }
 
 const DISPLAY_NAME_LOCALES = ['vi', 'pl', 'en'] as const;
@@ -47,11 +140,24 @@ function moneyInputFromGrosze(value: number | null | undefined): string {
   return ((Number(value) || 0) / 100).toFixed(2);
 }
 
+function optionalMoneyInputFromGrosze(value: number | null | undefined): string {
+  return value == null ? '' : (Number(value) / 100).toFixed(2);
+}
+
 function parseMoneyToGrosze(value: string): number | null {
   const normalized = value.trim().replace(',', '.');
   if (!normalized) return null;
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
+function parseOptionalMoneyToGrosze(value: string): number | null | undefined {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return null;
+  if (!/^\d+(\.\d{0,2})?$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
   return Math.round(parsed * 100);
 }
 
@@ -72,7 +178,7 @@ function parseStockQuantity(value: string, sellBy: 'PIECE' | 'WEIGHT'): number |
 }
 
 function currentStock(product: ProductListItem): number {
-  return Number(product.available_qty ?? product.in_stock ?? 0) || 0;
+  return Number(product.in_stock ?? product.available_qty ?? 0) || 0;
 }
 
 function stockInputFromProduct(product: ProductListItem): string {
@@ -97,6 +203,31 @@ function displayNamesFromProduct(product: ProductListItem): Record<string, strin
   };
 }
 
+export function productEditFormInputsFromBaseline(baseline: ProductEditBaseline) {
+  const product = baseline.product;
+  const vatRate = String(vatRateFromProduct(product));
+  const priceGross = moneyInputFromGrosze(product.retail_price);
+  const itemType = productItemType(product);
+  const originalSellBy = productSellBy(product);
+  const sellBy = getProductItemTypePolicy(itemType, originalSellBy).sellBy;
+  return {
+    name: product.name || '',
+    priceGross,
+    priceNet: netFromGross(priceGross, vatRate),
+    purchasePrice: baseline.purchasePriceInput,
+    vatRate,
+    barcode: product.barcode || '',
+    sku: product.sku || '',
+    categoryId: product.category_id || '',
+    sellBy,
+    saleUnit: sellBy === originalSellBy ? product.sale_unit || '' : 'szt',
+    itemType,
+    stockQty: stockInputFromProduct(product),
+    imageUrl: product.image_url || '',
+    displayNames: displayNamesFromProduct(product),
+  };
+}
+
 export default function ProductEditForm({
   product,
   categories,
@@ -105,69 +236,112 @@ export default function ProductEditForm({
   canManageCategories,
   canAdjustStock,
   supportsItemType,
+  canViewPurchasePrice = false,
+  purchasePriceGrosze,
+  purchasePriceLoaded = false,
+  purchasePriceLoading = false,
+  purchasePriceError,
+  onReloadAdminDetail = () => undefined,
+  canReplaceMainImage = false,
   salonCode,
   isBarcodeTaken,
   canEditDisplayName,
   displayNameAffectsMultipleVariants,
   onCancel,
+  onBusyChange,
   onDirtyChange,
   onManageCategories,
   onProductChanged,
   onSaved,
 }: ProductEditFormProps) {
-  const originalVatRate = vatRateFromProduct(product);
-  const originalItemType = productItemType(product);
-  const originalSellBy = productSellBy(product);
+  // A same-ID catalog refresh must not replace any part of the edit session's
+  // comparison/OCC baseline while the form still contains the older values.
+  const sessionStartBaseline = useMemo(() => createProductEditBaseline(
+    product,
+    purchasePriceLoaded ? optionalMoneyInputFromGrosze(purchasePriceGrosze) : undefined,
+  ), [product.id]);
+  const [committedBaseline, setCommittedBaseline] = useState(sessionStartBaseline);
+  const editBaseline = committedBaseline.product.id === product.id
+    ? committedBaseline
+    : sessionStartBaseline;
+  const baselineProduct = editBaseline.product;
+  const originalVatRate = vatRateFromProduct(baselineProduct);
+  const originalItemType = productItemType(baselineProduct);
+  const originalSellBy = productSellBy(baselineProduct);
   const initialSellBy = getProductItemTypePolicy(originalItemType, originalSellBy).sellBy;
-  const stockTracked = isStockTracked(product);
-  const [name, setName] = useState(product.name || '');
-  const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(product.retail_price));
+  const stockTracked = isStockTracked(baselineProduct);
+  const expectedUpdatedAt = editBaseline.expectedUpdatedAt;
+  const [name, setName] = useState(baselineProduct.name || '');
+  const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(baselineProduct.retail_price));
   const [vatRate, setVatRate] = useState(String(originalVatRate));
   const [priceNet, setPriceNet] = useState(
-    netFromGross(moneyInputFromGrosze(product.retail_price), String(originalVatRate)),
+    netFromGross(moneyInputFromGrosze(baselineProduct.retail_price), String(originalVatRate)),
   );
-  const [barcode, setBarcode] = useState(product.barcode || '');
-  const [sku, setSku] = useState(product.sku || '');
-  const [categoryId, setCategoryId] = useState(product.category_id || '');
+  const [purchasePrice, setPurchasePrice] = useState(
+    purchasePriceLoaded ? optionalMoneyInputFromGrosze(purchasePriceGrosze) : '',
+  );
+  const [barcode, setBarcode] = useState(baselineProduct.barcode || '');
+  const [sku, setSku] = useState(baselineProduct.sku || '');
+  const [categoryId, setCategoryId] = useState(baselineProduct.category_id || '');
   const [sellBy, setSellBy] = useState<'PIECE' | 'WEIGHT'>(initialSellBy);
   const [saleUnit, setSaleUnit] = useState(
-    initialSellBy === originalSellBy ? product.sale_unit || '' : 'szt',
+    initialSellBy === originalSellBy ? baselineProduct.sale_unit || '' : 'szt',
   );
   const [itemType, setItemType] = useState(originalItemType);
-  const [stockQty, setStockQty] = useState(stockInputFromProduct(product));
-  const [imageUrl, setImageUrl] = useState(product.image_url || '');
-  const [displayNames, setDisplayNames] = useState<Record<string, string>>(() => displayNamesFromProduct(product));
+  const [stockQty, setStockQty] = useState(stockInputFromProduct(baselineProduct));
+  const [imageUrl, setImageUrl] = useState(baselineProduct.image_url || '');
+  const [pendingImage, setPendingImage] = useState<PendingProductImage | null>(null);
+  const [displayNames, setDisplayNames] = useState<Record<string, string>>(() => displayNamesFromProduct(baselineProduct));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockResetNotice, setStockResetNotice] = useState(false);
   const [pendingCancelConfirm, setPendingCancelConfirm] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const stockMutationKeyStore = useRef(createStableMutationKeyStore());
+  const [stockAttemptDispatched, setStockAttemptDispatched] = useState(false);
+  const stockMutationAttemptStore = useRef(createImmutableMutationAttemptStore<ProductEditStockAttempt>());
+  const stockMutationOutcomeTracker = useRef(createMutationOutcomeTracker());
   const vatRates = useProductVatRates(originalVatRate);
 
   useEffect(() => {
-    setName(product.name || '');
-    setPriceGross(moneyInputFromGrosze(product.retail_price));
-    setVatRate(String(originalVatRate));
+    const sessionProduct = sessionStartBaseline.product;
+    const sessionVatRate = vatRateFromProduct(sessionProduct);
+    const sessionItemType = productItemType(sessionProduct);
+    const sessionSellBy = productSellBy(sessionProduct);
+    setCommittedBaseline(sessionStartBaseline);
+    setName(sessionProduct.name || '');
+    setPriceGross(moneyInputFromGrosze(sessionProduct.retail_price));
+    setVatRate(String(sessionVatRate));
     setPriceNet(
-      netFromGross(moneyInputFromGrosze(product.retail_price), String(originalVatRate)),
+      netFromGross(moneyInputFromGrosze(sessionProduct.retail_price), String(sessionVatRate)),
     );
-    setBarcode(product.barcode || '');
-    setSku(product.sku || '');
-    setCategoryId(product.category_id || '');
-    const nextSellBy = getProductItemTypePolicy(originalItemType, originalSellBy).sellBy;
+    setPurchasePrice(sessionStartBaseline.purchasePriceInput || '');
+    setBarcode(sessionProduct.barcode || '');
+    setSku(sessionProduct.sku || '');
+    setCategoryId(sessionProduct.category_id || '');
+    const nextSellBy = getProductItemTypePolicy(sessionItemType, sessionSellBy).sellBy;
     setSellBy(nextSellBy);
-    setSaleUnit(nextSellBy === originalSellBy ? product.sale_unit || '' : 'szt');
-    setItemType(originalItemType);
-    setStockQty(stockInputFromProduct(product));
-    setImageUrl(product.image_url || '');
-    setDisplayNames(displayNamesFromProduct(product));
+    setSaleUnit(nextSellBy === sessionSellBy ? sessionProduct.sale_unit || '' : 'szt');
+    setItemType(sessionItemType);
+    setStockQty(stockInputFromProduct(sessionProduct));
+    setImageUrl(sessionProduct.image_url || '');
+    setPendingImage(null);
+    setDisplayNames(displayNamesFromProduct(sessionProduct));
     setBusy(false);
     setMessage(null);
     setStockResetNotice(false);
     setAdvancedOpen(false);
-    stockMutationKeyStore.current.clear();
-  }, [product.id]);
+    setStockAttemptDispatched(false);
+    stockMutationAttemptStore.current.clear();
+    stockMutationOutcomeTracker.current.clear();
+  }, [sessionStartBaseline]);
+
+  useEffect(() => {
+    if (!canViewPurchasePrice || !purchasePriceLoaded) return;
+    if (editBaseline.purchasePriceInput !== undefined) return;
+    const purchasePriceInput = optionalMoneyInputFromGrosze(purchasePriceGrosze);
+    setCommittedBaseline(Object.freeze({ ...editBaseline, purchasePriceInput }));
+    setPurchasePrice(purchasePriceInput);
+  }, [canViewPurchasePrice, editBaseline, purchasePriceGrosze, purchasePriceLoaded]);
 
   const sortedCategories = useMemo(() => {
     return [...categories].sort((a, b) =>
@@ -176,8 +350,8 @@ export default function ProductEditForm({
   }, [categories, language]);
 
   const originalDisplayNames = useMemo(
-    () => displayNamesFromProduct(product),
-    [product.id, product.name_translations],
+    () => displayNamesFromProduct(baselineProduct),
+    [baselineProduct],
   );
   const nameTranslationsPatch = useMemo(
     () => canEditDisplayName
@@ -192,35 +366,96 @@ export default function ProductEditForm({
     [displayNames, name],
   );
 
+  const purchasePriceDirty = canViewPurchasePrice
+    && purchasePriceLoaded
+    && purchasePrice !== (editBaseline.purchasePriceInput
+      ?? optionalMoneyInputFromGrosze(purchasePriceGrosze));
+  const imageUrlDirty = pendingImage === null && imageUrl !== (baselineProduct.image_url || '');
   const variantFieldsDirty = useMemo(() => (
-    name !== (product.name || '')
-    || priceGross !== moneyInputFromGrosze(product.retail_price)
+    name !== (baselineProduct.name || '')
+    || priceGross !== moneyInputFromGrosze(baselineProduct.retail_price)
     || vatRate !== String(originalVatRate)
-    || barcode !== (product.barcode || '')
-    || sku !== (product.sku || '')
-    || categoryId !== (product.category_id || '')
+    || barcode !== (baselineProduct.barcode || '')
+    || sku !== (baselineProduct.sku || '')
+    || categoryId !== (baselineProduct.category_id || '')
     || sellBy !== originalSellBy
-    || saleUnit !== (product.sale_unit || '')
-    || imageUrl !== (product.image_url || '')
+    || saleUnit !== (baselineProduct.sale_unit || '')
+    || imageUrlDirty
+    || purchasePriceDirty
     || (supportsItemType && itemType !== originalItemType)
-  ), [barcode, categoryId, imageUrl, itemType, name, originalItemType, originalSellBy, priceGross, product, saleUnit, sellBy, sku, supportsItemType, vatRate]);
+  ), [barcode, baselineProduct, categoryId, imageUrlDirty, itemType, name, originalItemType, originalSellBy, priceGross, purchasePriceDirty, saleUnit, sellBy, sku, supportsItemType, vatRate]);
 
   const productDirty = variantFieldsDirty || translationsDirty;
   // Stock is only editable while the item both IS tracked and STAYS stockable
   // in this edit — switching kind and typing stock in one save is contradictory.
   const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies;
-  const stockDirty = stockEditable && stockQty !== stockInputFromProduct(product);
-  const dirty = productDirty || stockDirty;
+  const sellByLockedByStockPermission = stockTracked
+    && currentStock(baselineProduct) !== 0
+    && !canAdjustStock;
+  const sellByChangeRequiresStockPermission = sellByLockedByStockPermission
+    && sellBy !== originalSellBy;
+  const stockDirty = stockEditable && stockQty !== stockInputFromProduct(baselineProduct);
+  const mediaDirty = pendingImage !== null;
+  const dirty = productDirty || stockDirty || mediaDirty;
+  const mutationLocked = busy || stockAttemptDispatched;
+  const navigationState = productEditNavigationState(mutationLocked);
+
+  useEffect(() => {
+    onBusyChange?.(mutationLocked);
+  }, [mutationLocked, onBusyChange]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  const applyCommittedBaselineInputs = (
+    baseline: ProductEditBaseline,
+    includeStock: boolean,
+  ) => {
+    const inputs = productEditFormInputsFromBaseline(baseline);
+    setName(inputs.name);
+    setPriceGross(inputs.priceGross);
+    setPriceNet(inputs.priceNet);
+    setVatRate(inputs.vatRate);
+    if (inputs.purchasePrice !== undefined) setPurchasePrice(inputs.purchasePrice);
+    setBarcode(inputs.barcode);
+    setSku(inputs.sku);
+    setCategoryId(inputs.categoryId);
+    setSellBy(inputs.sellBy);
+    setSaleUnit(inputs.saleUnit);
+    setItemType(inputs.itemType);
+    setImageUrl(inputs.imageUrl);
+    setDisplayNames(inputs.displayNames);
+    if (includeStock) {
+      setStockQty(inputs.stockQty);
+      setStockResetNotice(false);
+    }
+  };
 
   const validate = (): string | null => {
     if (!name.trim()) return tOr(t, 'products.edit.nameRequired', 'Enter product name');
     if (parseMoneyToGrosze(priceGross) === null) return tOr(t, 'products.edit.priceInvalid', 'Enter a valid price');
     const vat = Number(vatRate);
     if (!vatRates.includes(vat)) return tOr(t, 'products.edit.vatInvalid', 'Select a valid VAT rate');
+    if (purchasePriceDirty) {
+      const parsedPurchasePrice = parseOptionalMoneyToGrosze(purchasePrice);
+      if (parsedPurchasePrice === undefined) {
+        return tOr(t, 'products.purchase.invalid', 'Enter a valid purchase price with up to 2 decimal places');
+      }
+      if (parsedPurchasePrice === null) {
+        return tOr(t, 'products.purchase.blankUpdate', 'Enter 0 explicitly instead of leaving a changed purchase price blank');
+      }
+    }
+    if (imageUrlDirty && !isValidProductImageUrl(imageUrl)) {
+      return tOr(t, 'products.media.urlInvalid', 'Use a complete http:// or https:// image URL');
+    }
+    if (sellByChangeRequiresStockPermission) {
+      return tOr(
+        t,
+        'products.edit.sellByStockPermission',
+        'Stock adjustment permission is required to change the sale unit while this item has stock.',
+      );
+    }
     if (stockEditable && parseStockQuantity(stockQty, sellBy) === null) {
       return sellBy === 'WEIGHT'
         ? tOr(t, 'products.create.stockWeightPrecision', 'Enter kg stock with up to 3 decimal places')
@@ -230,6 +465,7 @@ export default function ProductEditForm({
   };
 
   const handleSave = async () => {
+    setPendingCancelConfirm(false);
     const validationError = validate();
     if (validationError) {
       setMessage({ ok: false, text: validationError });
@@ -242,7 +478,7 @@ export default function ProductEditForm({
     if (stockEditable && parsedStockQty === null) return;
 
     const payload: ProductAdminUpdateVariantInput = {
-      expectedUpdatedAt: product.updated_at || undefined,
+      expectedUpdatedAt,
     };
     if (variantFieldsDirty) {
       Object.assign(payload, {
@@ -254,38 +490,96 @@ export default function ProductEditForm({
         categoryId: categoryId || null,
         saleUnit: saleUnit.trim() || null,
         sellBy,
-        imageUrl: imageUrl.trim() || null,
-        isActive: product.is_active !== 0,
+        isActive: baselineProduct.is_active !== 0,
       });
+      if (imageUrlDirty) {
+        payload.imageUrl = imageUrl.trim() || null;
+      }
       if (supportsItemType && itemType !== originalItemType) {
         payload.itemType = itemType as ProductAdminItemType;
+      }
+      if (purchasePriceDirty) {
+        const parsedPurchasePrice = parseOptionalMoneyToGrosze(purchasePrice);
+        if (parsedPurchasePrice !== null && parsedPurchasePrice !== undefined) {
+          payload.purchasePriceGrosze = parsedPurchasePrice;
+        }
       }
     }
     if (translationsDirty && canEditDisplayName) {
       payload.nameTranslations = nameTranslationsPatch;
     }
 
+    const committedFields: Partial<ProductListItem> = {};
+    if (variantFieldsDirty) {
+      Object.assign(committedFields, {
+        name: name.trim(),
+        barcode: barcode.trim() || null,
+        sku: sku.trim() || null,
+        retail_price: priceGrossGrosze,
+        vat_rate: Number(vatRate),
+        category_id: categoryId || null,
+        sale_unit: saleUnit.trim() || null,
+        sell_by: sellBy,
+        is_active: baselineProduct.is_active,
+      });
+      if (imageUrlDirty) committedFields.image_url = imageUrl.trim() || null;
+      if (supportsItemType && itemType !== originalItemType) committedFields.item_type = itemType;
+    }
+    if (translationsDirty && canEditDisplayName) {
+      const committedTranslations = { ...parseTranslations(baselineProduct.name_translations) };
+      for (const locale of DISPLAY_NAME_LOCALES) {
+        const value = (displayNames[locale] || '').trim();
+        if (value) committedTranslations[locale] = value;
+        else delete committedTranslations[locale];
+      }
+      committedFields.name_translations = JSON.stringify(committedTranslations);
+    }
+
+    let committedSessionBaseline = editBaseline;
+    let committedStockQuantity = parsedStockQty ?? 0;
+    const shouldRunStockMutation = stockDirty
+      || stockMutationAttemptStore.current.current() !== null;
     setBusy(true);
     setMessage(null);
     try {
-      const stockIntent = JSON.stringify({
-        productId: product.id,
-        mode: 'recount',
-        newQuantity: parsedStockQty ?? 0,
-      });
       const result = await executeProductSave({
         productDirty,
-        stockDirty,
-        expectedUpdatedAt: product.updated_at || undefined,
-        updateProduct: () => window.electronAPI.pos.productAdmin.updateVariant(product.id, payload),
-        adjustStock: (expectedUpdatedAt) => {
-          const stockPayload: ProductAdminStockAdjustmentInput = {
-            mode: 'recount',
-            newQuantity: parsedStockQty ?? 0,
-            expectedUpdatedAt,
-            idempotencyKey: stockMutationKeyStore.current.get(stockIntent),
-          };
-          return window.electronAPI.pos.productAdmin.adjustStock(product.id, stockPayload);
+        stockDirty: shouldRunStockMutation,
+        expectedUpdatedAt,
+        updateProduct: () => window.electronAPI.pos.productAdmin.updateVariant(baselineProduct.id, payload),
+        adjustStock: async (stockExpectedUpdatedAt) => {
+          let attempt = stockMutationAttemptStore.current.current();
+          if (!attempt) {
+            attempt = stockMutationAttemptStore.current.dispatch({
+              variantId: baselineProduct.id,
+              mode: 'recount',
+              newQuantity: parsedStockQty ?? 0,
+              expectedUpdatedAt: stockExpectedUpdatedAt,
+            });
+            setStockAttemptDispatched(true);
+          }
+          committedStockQuantity = Number(attempt.newQuantity) || 0;
+          const { variantId, idempotencyKey, ...stockPayload } = attempt;
+
+          try {
+            const stockResult = await window.electronAPI.pos.productAdmin.adjustStock(variantId, {
+              ...stockPayload,
+              idempotencyKey,
+            });
+            if (stockResult?.ok) {
+              stockMutationAttemptStore.current.clear();
+              stockMutationOutcomeTracker.current.clear();
+              setStockAttemptDispatched(false);
+            } else if (stockMutationOutcomeTracker.current.shouldRelease(stockResult)) {
+              stockMutationAttemptStore.current.clear();
+              stockMutationOutcomeTracker.current.clear();
+              setStockAttemptDispatched(false);
+            }
+            return stockResult;
+          } catch (error) {
+            stockMutationOutcomeTracker.current.markAmbiguous();
+            throw error;
+          }
         },
       });
 
@@ -298,7 +592,21 @@ export default function ProductEditForm({
       }
 
       if (result.status === 'stock-failed') {
-        if (result.productSaved) await onProductChanged();
+        if (result.productSaved) {
+          const nextBaseline = advanceProductEditBaselineAfterSave(
+            editBaseline,
+            committedFields,
+            result.expectedUpdatedAt,
+            purchasePriceDirty ? purchasePrice : editBaseline.purchasePriceInput,
+          );
+          committedSessionBaseline = nextBaseline;
+          setCommittedBaseline(nextBaseline);
+          applyCommittedBaselineInputs(nextBaseline, false);
+          await runProductPostCommitBestEffort([
+            onProductChanged,
+            onReloadAdminDetail,
+          ]);
+        }
         const failure = result.error || tOr(t, 'products.stock.failed', 'Could not adjust stock');
         setMessage({
           ok: false,
@@ -309,23 +617,86 @@ export default function ProductEditForm({
         return;
       }
 
-      if (stockDirty) stockMutationKeyStore.current.clear();
+      if (result.productSaved || shouldRunStockMutation) {
+        const nextBaseline = advanceProductEditBaselineAfterSave(
+          editBaseline,
+          committedFields,
+          result.expectedUpdatedAt,
+          purchasePriceDirty ? purchasePrice : editBaseline.purchasePriceInput,
+          shouldRunStockMutation ? committedStockQuantity : undefined,
+        );
+        committedSessionBaseline = nextBaseline;
+        setCommittedBaseline(nextBaseline);
+        applyCommittedBaselineInputs(nextBaseline, shouldRunStockMutation);
+      }
+      if (pendingImage) {
+        const uploadResult = await window.electronAPI.pos.productAdmin.uploadMainImage(baselineProduct.id, {
+          dataUrl: pendingImage.dataUrl,
+          fileName: pendingImage.fileName,
+          mimeType: pendingImage.mimeType,
+          expectedUpdatedAt: result.expectedUpdatedAt,
+        });
+        if (!uploadResult?.ok || !uploadResult.data) {
+          if (result.productSaved || shouldRunStockMutation) {
+            await runProductPostCommitBestEffort([
+              onProductChanged,
+              onReloadAdminDetail,
+            ]);
+          }
+          setMessage({
+            ok: false,
+            text: (result.productSaved || shouldRunStockMutation)
+              ? `${tOr(t, 'products.media.otherChangesSaved', 'Other changes were saved, but the image upload failed')}: ${uploadResult?.error || uploadResult?.code || tOr(t, 'products.media.uploadFailed', 'Could not upload image')}`
+              : uploadResult?.error || uploadResult?.code || tOr(t, 'products.media.uploadFailed', 'Could not upload image'),
+          });
+          return;
+        }
+        const uploadedImageBaseline = advanceProductEditBaselineAfterSave(
+          committedSessionBaseline,
+          {
+            image_url: uploadResult.data.image.url,
+            thumbnail_url: uploadResult.data.image.thumbnailUrl,
+          },
+          uploadResult.data.variant.updatedAt,
+        );
+        committedSessionBaseline = uploadedImageBaseline;
+        setCommittedBaseline(uploadedImageBaseline);
+        applyCommittedBaselineInputs(uploadedImageBaseline, true);
+        setPendingImage(null);
+      }
       setMessage({ ok: true, text: tOr(t, 'products.edit.success', 'Product saved') });
-      await onSaved({
-        stockBefore: stockDirty ? currentStock(product) : undefined,
-        stockAfter: stockDirty ? parsedStockQty ?? 0 : undefined,
-        vatChanged: vatRate !== String(originalVatRate),
-      });
-      onDirtyChange?.(false);
-      onCancel();
+      await completeCommittedMutation(
+        () => onSaved({
+          stockBefore: shouldRunStockMutation ? currentStock(sessionStartBaseline.product) : undefined,
+          stockAfter: shouldRunStockMutation ? committedStockQuantity : undefined,
+          vatChanged: vatRate !== String(vatRateFromProduct(sessionStartBaseline.product)),
+        }),
+        () => {
+          onDirtyChange?.(false);
+          onCancel();
+        },
+      );
     } catch (err: any) {
-      setMessage({ ok: false, text: err?.message || tOr(t, 'products.edit.failed', 'Could not save product') });
+      const failure = err?.message || tOr(t, 'products.edit.failed', 'Could not save product');
+      if (committedSessionBaseline !== editBaseline) {
+        await runProductPostCommitBestEffort([
+          onProductChanged,
+          onReloadAdminDetail,
+        ]);
+      }
+      setMessage({
+        ok: false,
+        text: committedSessionBaseline !== editBaseline
+          ? `${tOr(t, 'products.media.otherChangesSaved', 'Other changes were saved, but the image upload failed')}: ${failure}`
+          : failure,
+      });
     } finally {
       setBusy(false);
     }
   };
 
   const handleCancel = () => {
+    if (navigationState.cancelDisabled) return;
     if (dirty) {
       setPendingCancelConfirm(true);
       return;
@@ -335,10 +706,11 @@ export default function ProductEditForm({
 
   const changeSellBy = (value: string) => {
     const nextSellBy = getProductItemTypePolicy(itemType, normalizeSellBy(value)).sellBy;
+    if (sellByLockedByStockPermission && nextSellBy !== originalSellBy) return;
     setSellBy(nextSellBy);
     if (nextSellBy === originalSellBy) {
-      setSaleUnit(product.sale_unit || (nextSellBy === 'WEIGHT' ? 'kg' : 'szt'));
-      setStockQty(stockInputFromProduct(product));
+      setSaleUnit(baselineProduct.sale_unit || (nextSellBy === 'WEIGHT' ? 'kg' : 'szt'));
+      setStockQty(stockInputFromProduct(baselineProduct));
       setStockResetNotice(false);
       return;
     }
@@ -360,7 +732,12 @@ export default function ProductEditForm({
       <div className="border-b border-slate-200 px-4 py-3">
         <h3 className="text-sm font-semibold text-slate-950">{tOr(t, 'products.edit.title', 'Edit product')}</h3>
       </div>
-      <div className="space-y-4 p-4">
+      <fieldset disabled={mutationLocked} className="min-w-0 space-y-4 border-0 p-4">
+        {stockAttemptDispatched ? (
+          <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {tOr(t, 'products.mutation.retryLocked', 'The previous request may have reached the server. Editing and closing are locked; retry the exact request.')}
+          </div>
+        ) : null}
         <label className="block">
           <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
             {tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')}
@@ -386,7 +763,7 @@ export default function ProductEditForm({
           <input
             value={displayNames.pl}
             onChange={(event) => setDisplayNames((current) => ({ ...current, pl: event.target.value }))}
-            placeholder={name.trim() || product.name}
+            placeholder={name.trim() || baselineProduct.name}
             maxLength={255}
             readOnly={!canEditDisplayName}
             className="h-11 w-full rounded-md border border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-500 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500"
@@ -437,7 +814,7 @@ export default function ProductEditForm({
                 <input
                   value={displayNames.vi}
                   onChange={(event) => setDisplayNames((current) => ({ ...current, vi: event.target.value }))}
-                  placeholder={name.trim() || product.name}
+                  placeholder={name.trim() || baselineProduct.name}
                   maxLength={255}
                   className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
@@ -449,7 +826,7 @@ export default function ProductEditForm({
                 <input
                   value={displayNames.en}
                   onChange={(event) => setDisplayNames((current) => ({ ...current, en: event.target.value }))}
-                  placeholder={name.trim() || product.name}
+                  placeholder={name.trim() || baselineProduct.name}
                   maxLength={255}
                   className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
                 />
@@ -458,7 +835,7 @@ export default function ProductEditForm({
           </div>
         ) : null}
 
-        <div className={`grid grid-cols-1 gap-3 ${advancedOpen ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {advancedOpen ? (
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
@@ -515,6 +892,47 @@ export default function ProductEditForm({
               className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
             />
           </label>
+          {canViewPurchasePrice ? (
+            <div>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
+                  {tOr(t, 'products.purchase.price', 'Purchase price')}
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={purchasePrice}
+                  onChange={(event) => setPurchasePrice(sanitizeDecimalText(event.target.value))}
+                  disabled={!purchasePriceLoaded || purchasePriceLoading}
+                  placeholder={purchasePriceLoading
+                    ? tOr(t, 'products.purchase.loading', 'Loading...')
+                    : tOr(t, 'products.purchase.notSet', 'Not set')}
+                  className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500 disabled:bg-slate-100 disabled:text-slate-500"
+                />
+              </label>
+              {purchasePriceLoading ? (
+                <div role="status" className="mt-2 text-xs text-slate-500">
+                  {tOr(t, 'products.purchase.loadingHint', 'Loading protected purchase price...')}
+                </div>
+              ) : purchasePriceError ? (
+                <div role="alert" className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <div>{tOr(t, 'products.purchase.unavailable', 'Purchase price is unavailable and will not be changed.')}</div>
+                  <button
+                    type="button"
+                    onClick={onReloadAdminDetail}
+                    className="mt-2 h-11 rounded-md border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                  >
+                    {tOr(t, 'common.retry', 'Retry')}
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-slate-500">
+                  {tOr(t, 'products.purchase.defaultHint', 'Default cost for future receiving; it does not revalue existing stock.')}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className={`grid gap-3 ${advancedOpen ? 'grid-cols-2' : 'grid-cols-1'}`}>
@@ -598,11 +1016,21 @@ export default function ProductEditForm({
               <select
                 value={sellBy}
                 onChange={(event) => changeSellBy(event.target.value)}
+                disabled={sellByLockedByStockPermission}
                 className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
               >
                 <option value="PIECE">{tOr(t, 'products.drawer.sellByPiece', 'Quantity')}</option>
                 <option value="WEIGHT">{tOr(t, 'products.drawer.sellByWeight', 'Weight (kg)')}</option>
               </select>
+              {sellByLockedByStockPermission ? (
+                <span className="mt-2 block text-xs text-slate-500">
+                  {tOr(
+                    t,
+                    'products.edit.sellByStockPermission',
+                    'Stock adjustment permission is required to change the sale unit while this item has stock.',
+                  )}
+                </span>
+              ) : null}
             </label>
           ) : null}
         </div>
@@ -652,7 +1080,7 @@ export default function ProductEditForm({
                   : tOr(t, 'products.itemType.consumableHint', 'Physical goods sold without inventory deductions.')}
               </span>
             ) : null}
-            {itemType !== 'stockable' && originalItemType === 'stockable' && (Number(product.available_qty ?? product.in_stock) || 0) !== 0 ? (
+            {itemType !== 'stockable' && originalItemType === 'stockable' && currentStock(baselineProduct) !== 0 ? (
               <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                 {tOr(t, 'products.itemType.zeroStockFirst', 'Zero this item’s stock before switching it off inventory tracking.')}
               </span>
@@ -682,18 +1110,16 @@ export default function ProductEditForm({
           </label>
         ) : null}
 
-        {advancedOpen ? (
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">
-              {tOr(t, 'products.edit.imageUrl', 'Image URL')}
-            </span>
-            <input
-              value={imageUrl}
-              onChange={(event) => setImageUrl(event.target.value)}
-              className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
-            />
-          </label>
-        ) : null}
+        <ProductImageField
+          imageUrl={imageUrl}
+          pendingImage={pendingImage}
+          supportsUpload={canReplaceMainImage}
+          showUrlError={imageUrlDirty}
+          disabled={mutationLocked}
+          t={t}
+          onImageUrlChange={setImageUrl}
+          onPendingImageChange={setPendingImage}
+        />
 
         {message ? (
           <div className={`rounded-md border px-3 py-2 text-sm ${
@@ -702,23 +1128,28 @@ export default function ProductEditForm({
             {message.text}
           </div>
         ) : null}
-      </div>
+      </fieldset>
 
       <footer className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
         <button
           type="button"
           onClick={handleCancel}
-          className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+          disabled={navigationState.cancelDisabled}
+          className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {tOr(t, 'products.edit.cancel', 'Cancel')}
         </button>
         <button
           type="button"
           onClick={() => void handleSave()}
-          disabled={busy || !dirty}
+          disabled={busy || (!dirty && !stockAttemptDispatched)}
           className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {busy ? tOr(t, 'products.edit.saving', 'Saving...') : tOr(t, 'products.edit.save', 'Save')}
+          {busy
+            ? tOr(t, 'products.edit.saving', 'Saving...')
+            : stockAttemptDispatched
+              ? tOr(t, 'products.mutation.retry', 'Retry exact request')
+              : tOr(t, 'products.edit.save', 'Save')}
         </button>
       </footer>
     </section>
@@ -731,11 +1162,16 @@ export default function ProductEditForm({
         confirmLabel={tOr(t, 'common.confirm', 'Confirm')}
         cancelLabel={tOr(t, 'common.cancel', 'Cancel')}
         danger
+        busy={mutationLocked}
         onConfirm={() => {
+          if (mutationLocked) return;
           setPendingCancelConfirm(false);
           onCancel();
         }}
-        onCancel={() => setPendingCancelConfirm(false)}
+        onCancel={() => {
+          if (mutationLocked) return;
+          setPendingCancelConfirm(false);
+        }}
       />
     )}
     </>

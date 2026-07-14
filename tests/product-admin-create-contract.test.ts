@@ -17,9 +17,9 @@ describe('Product Admin create app contract', () => {
     const createInput = types.match(/export interface ProductAdminCreateProductInput \{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(createInput).not.toContain('retailPrice?:');
 
-    // e6d6aa8 split the payload: shared fields live in basePayload, while
-    // barcode + idempotencyKey rotate inside the duplicate-retry loop.
-    const payloadBlock = dialog.match(/const basePayload: Omit<ProductAdminCreateProductInput, 'barcode' \| 'idempotencyKey'> = \{[\s\S]*?\n    \};/)?.[0] ?? '';
+    // Shared fields are snapshotted with barcode + idempotencyKey before the
+    // first dispatch. Only a confirmed generated-barcode collision may rotate.
+    const payloadBlock = dialog.match(/const basePayload: Omit<ProductAdminCreateProductInput, 'barcode' \| 'idempotencyKey'> = \{[\s\S]*?\n\s+\};/)?.[0] ?? '';
     expect(payloadBlock).toContain('priceGrossGrosze: validation.priceGrossGrosze');
     expect(payloadBlock).not.toContain('retailPrice:');
 
@@ -39,7 +39,7 @@ describe('Product Admin create app contract', () => {
     expect(dialog).toContain('product.sku?.trim() === normalizedSku');
 
     const submit = dialog.match(/const handleSubmit = async \(\) => \{[\s\S]*?\n  \};/)?.[0] ?? '';
-    const createCallIndex = submit.indexOf('window.electronAPI.pos.productAdmin.createProduct({');
+    const createCallIndex = submit.indexOf('window.electronAPI.pos.productAdmin.createProduct(createAttempt)');
     const barcodeDuplicateIndex = submit.indexOf('getDuplicateBarcodeMessage(normalizedBarcode)');
     const skuDuplicateIndex = submit.indexOf('product.sku?.trim() === normalizedSku');
     expect(createCallIndex).toBeGreaterThanOrEqual(0);

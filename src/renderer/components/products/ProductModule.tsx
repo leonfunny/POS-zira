@@ -29,6 +29,7 @@ interface ProductModuleProps {
 
 type ProductModuleToast = { kind: 'success' | 'error'; text: string };
 type ProductSaveOutcome = { stockBefore?: number; stockAfter?: number; vatChanged?: boolean };
+type ProductCreateOutcome = { warning?: string };
 type FailedLocalVariantImport = {
   variant_id: string;
   ean: string;
@@ -39,6 +40,13 @@ type FailedLocalVariantImport = {
   product_name: string | null;
   product_barcode: string | null;
   product_category_id: string | null;
+  intent_payload_json: string | null;
+  intent_idempotency_key: string | null;
+  intent_dispatched_at: string | null;
+};
+type FailedImportIntentIdentity = {
+  ean: string;
+  categoryId: string | null;
 };
 
 type ProductCategoryOption = {
@@ -49,6 +57,7 @@ type ProductCategoryOption = {
 
 const PRODUCT_KIND_FILTERS: ProductKindFilter[] = ['all', 'lowStock', 'outOfStock', 'noPrice', 'drafts', 'inactive'];
 const BACKEND_CATEGORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL_IMPORT_INTENT_KEY_RE = /^local-import-v2-[a-f0-9]{64}$/i;
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
@@ -96,12 +105,54 @@ function isBackendCategoryId(value: unknown): value is string {
   return BACKEND_CATEGORY_ID_RE.test(String(value ?? '').trim());
 }
 
+function isLegacyUncertainFailedImport(item: FailedLocalVariantImport): boolean {
+  return !!item.intent_dispatched_at
+    && item.intent_payload_json == null
+    && item.intent_idempotency_key == null;
+}
+
+function savedFailedImportIntentIdentity(
+  item: FailedLocalVariantImport,
+): FailedImportIntentIdentity | null {
+  if (!item.intent_dispatched_at || !item.intent_payload_json) return null;
+  if (!LOCAL_IMPORT_INTENT_KEY_RE.test(String(item.intent_idempotency_key ?? '').trim())) return null;
+  try {
+    const payload = JSON.parse(item.intent_payload_json);
+    if (!payload || typeof payload !== 'object') return null;
+    const ean = String(payload.ean ?? '').trim();
+    if (!/^\d{4,14}$/.test(ean)) return null;
+    const rawCategoryId = String(payload.categoryId ?? '').trim();
+    if (rawCategoryId && !isBackendCategoryId(rawCategoryId)) return null;
+    return { ean, categoryId: rawCategoryId || null };
+  } catch {
+    return null;
+  }
+}
+
+function failedImportVerificationIdentity(
+  item: FailedLocalVariantImport,
+): FailedImportIntentIdentity | null {
+  const savedIdentity = savedFailedImportIntentIdentity(item);
+  if (savedIdentity) return savedIdentity;
+  if (!isLegacyUncertainFailedImport(item)) return null;
+  return {
+    ean: String(item.ean ?? '').trim(),
+    categoryId: isBackendCategoryId(item.category_id) ? item.category_id.trim() : null,
+  };
+}
+
 function initialFailedImportCategoryId(
   item: FailedLocalVariantImport,
   categories: ProductCategoryOption[],
 ): string {
-  const candidate = String(item.category_id ?? item.product_category_id ?? '').trim();
+  const immutableIdentity = failedImportVerificationIdentity(item);
+  const candidate = String(
+    immutableIdentity
+      ? immutableIdentity.categoryId
+      : item.category_id ?? item.product_category_id ?? '',
+  ).trim();
   if (!isBackendCategoryId(candidate)) return '';
+  if (immutableIdentity) return candidate;
   return categories.some((category) => category.id === candidate) ? candidate : '';
 }
 
@@ -151,13 +202,23 @@ function FailedImportRow({
   t: (key: string) => string;
   onChanged: () => Promise<void> | void;
 }) {
-  const [ean, setEan] = useState(item.ean || item.product_barcode || '');
+  const immutableVerificationIdentity = failedImportVerificationIdentity(item);
+  const identityVerificationLocked = immutableVerificationIdentity !== null;
+  const [ean, setEan] = useState(
+    () => immutableVerificationIdentity?.ean || item.ean || item.product_barcode || '',
+  );
   const [categoryId, setCategoryId] = useState(() => initialFailedImportCategoryId(item, categories));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const retiredImmutableCategoryId = identityVerificationLocked
+    && !!categoryId
+    && !categories.some((category) => category.id === categoryId)
+    ? categoryId
+    : null;
 
   useEffect(() => {
-    setEan(item.ean || item.product_barcode || '');
+    const immutableIdentity = failedImportVerificationIdentity(item);
+    setEan(immutableIdentity?.ean || item.ean || item.product_barcode || '');
     setCategoryId(initialFailedImportCategoryId(item, categories));
     setError(null);
   }, [categories, item]);
@@ -177,6 +238,14 @@ function FailedImportRow({
         categoryId: categoryId || null,
       });
       if (!result?.ok) {
+        if (result?.code === 'LOCAL_VARIANT_IMPORT_OUTCOME_UNCERTAIN') {
+          setError(tOr(
+            t,
+            'products.importFailures.outcomeUncertain',
+            'The previous server result is unknown, so this import cannot be changed safely. Resolve the old request on the server before creating a different import intent.',
+          ));
+          return;
+        }
         setError(result?.error || tOr(t, 'products.importFailures.requeueFailed', 'Could not retry import'));
         return;
       }
@@ -215,33 +284,46 @@ function FailedImportRow({
           <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             {tOr(t, 'products.importFailures.ean', 'EAN')}
           </span>
-          <input
-            value={ean}
-            onChange={(event) => setEan(event.target.value)}
-            inputMode="numeric"
-            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-          />
+           <input
+             value={ean}
+             onChange={(event) => setEan(event.target.value)}
+             inputMode="numeric"
+             disabled={busy || identityVerificationLocked}
+             className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+           />
         </label>
         <label className="block">
           <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">
             {tOr(t, 'products.importFailures.category', 'Category')}
           </span>
-          <select
-            value={categoryId}
-            onChange={(event) => setCategoryId(event.target.value)}
-            className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-          >
-            <option value="">{tOr(t, 'products.importFailures.defaultCategory', 'Uncategorised')}</option>
+           <select
+             value={categoryId}
+             onChange={(event) => setCategoryId(event.target.value)}
+             disabled={busy || identityVerificationLocked}
+             className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-950 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+           >
+             {retiredImmutableCategoryId ? (
+               <option value={retiredImmutableCategoryId}>
+                 {tOr(t, 'products.importFailures.previousCategory', 'Previous category')}: {retiredImmutableCategoryId}
+               </option>
+             ) : null}
+             <option value="">{tOr(t, 'products.importFailures.defaultCategory', 'Uncategorised')}</option>
             {categories.filter((category) => isBackendCategoryId(category.id)).map((category) => (
               <option key={category.id} value={category.id}>
                 {resolveName(category, language) || category.name}
               </option>
             ))}
           </select>
-        </label>
-      </div>
+         </label>
+       </div>
 
-      {item.last_error ? (
+       {identityVerificationLocked ? (
+         <p className="mt-2 text-xs text-amber-800">
+           {tOr(t, 'products.importFailures.verifyExact', 'The previous request may have reached the server. Retry first verifies this exact EAN and category; they cannot be changed safely.')}
+         </p>
+       ) : null}
+
+       {item.last_error ? (
         <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
           {item.last_error}
         </div>
@@ -366,9 +448,9 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
   const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
   const [failedImportsOpen, setFailedImportsOpen] = useState(false);
-  // Draft imports still living under their local id (PENDING/FAILED): the
-  // server doesn't know these ids, so the edit view must block product-admin
-  // mutations instead of collecting 404 "Variant not found".
+  // Local import ids are never canonical product-admin revisions, including
+  // SYNCED aliases. Block their mutations so local timestamps cannot be sent
+  // against the canonical server row.
   const [unresolvedImportIds, setUnresolvedImportIds] = useState<Set<string>>(new Set());
   const consumedOpenVariantIdRef = useRef<string | null>(null);
 
@@ -536,14 +618,16 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
     || allProducts.some((product) => product.sku?.trim() === code)
   ), [allProducts]);
 
-  const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant) => {
+  const handleCreatedProduct = useCallback(async (variant: ProductAdminVariant, outcome?: ProductCreateOutcome) => {
     const createdProduct = productAdminVariantToProduct(variant);
+    setToast({
+      kind: outcome?.warning ? 'error' : 'success',
+      text: outcome?.warning
+        ? `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}. ${outcome.warning}`
+        : `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}`,
+    });
     await refresh();
     handleOpenProduct(createdProduct);
-    setToast({
-      kind: 'success',
-      text: `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}`,
-    });
   }, [handleOpenProduct, language, refresh, t]);
 
   const handleProductSaved = useCallback((product: ProductListItem, outcome: ProductSaveOutcome) => {
@@ -819,6 +903,11 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
           canAdjustStock={adminCapabilities?.canAdjustStock === true}
           supportsItemType={adminCapabilities?.supportsItemType === true}
+          canViewPurchasePrice={adminCapabilities?.supportsPurchasePrice === true && adminCapabilities?.canViewPurchasePrice === true}
+          canReplaceMainImage={adminCapabilities?.supportsMainImageUpload === true && adminCapabilities?.canReplaceMainImage === true}
+          canViewStockLots={adminCapabilities?.supportsStockLots === true && adminCapabilities?.canReceiveStock === true}
+          canReceiveStock={adminCapabilities?.supportsLotReceiving === true && adminCapabilities?.canReceiveStock === true}
+          supportsLotReceiving={adminCapabilities?.supportsLotReceiving === true}
           salonCode={adminCapabilities?.salonCode ?? null}
           isBarcodeTaken={isBarcodeTaken}
           canManageCategories={canManageCategories}
@@ -862,6 +951,8 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
         initialCategoryId={createCategoryId}
         initialBarcode={createBarcode}
         supportsItemType={adminCapabilities?.supportsItemType === true}
+        canViewPurchasePrice={adminCapabilities?.supportsPurchasePrice === true && adminCapabilities?.canViewPurchasePrice === true}
+        canReplaceMainImage={adminCapabilities?.supportsMainImageUpload === true && adminCapabilities?.canReplaceMainImage === true}
         salonCode={adminCapabilities?.salonCode ?? null}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreatedProduct}

@@ -1,14 +1,50 @@
-import React, { useMemo, useRef, useState } from 'react';
-import type { ProductAdminStockAdjustmentResponse, ProductStockAdjustmentMode } from '../../../shared/types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  ProductAdminStockAdjustmentInput,
+  ProductAdminStockAdjustmentResponse,
+  ProductStockAdjustmentMode,
+} from '../../../shared/types';
+import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import type { ProductListItem } from '../../hooks/useProducts';
 import Modal from '../shared/Modal';
-import { createStableMutationKeyStore } from './mutation-idempotency';
+import { sanitizeDecimalText } from './decimal-input';
+import {
+  completeCommittedMutation,
+  createImmutableMutationAttemptStore,
+  createMutationOutcomeTracker,
+} from './mutation-idempotency';
 
 interface StockAdjustmentDialogProps {
   product: ProductListItem;
+  allowReceive?: boolean;
   t: (key: string) => string;
   onClose: () => void;
   onAdjusted: (result: ProductAdminStockAdjustmentResponse) => Promise<void> | void;
+}
+
+interface StockAdjustmentModeOption {
+  value: ProductStockAdjustmentMode;
+  labelKey: string;
+  fallback: string;
+}
+
+type StockAdjustmentAttempt = Omit<ProductAdminStockAdjustmentInput, 'idempotencyKey'> & {
+  variantId: string;
+};
+
+export function stockAdjustmentModes({
+  allowReceive = true,
+}: {
+  allowReceive?: boolean;
+}): StockAdjustmentModeOption[] {
+  const modes: StockAdjustmentModeOption[] = [
+    { value: 'receive', labelKey: 'products.stock.mode.receive', fallback: 'Receive stock' },
+    { value: 'recount', labelKey: 'products.stock.mode.recount', fallback: 'Recount' },
+    { value: 'damage', labelKey: 'products.stock.mode.damage', fallback: 'Damaged' },
+    { value: 'loss', labelKey: 'products.stock.mode.loss', fallback: 'Lost' },
+    { value: 'return', labelKey: 'products.stock.mode.return', fallback: 'Customer return' },
+  ];
+  return allowReceive ? modes : modes.filter((mode) => mode.value !== 'receive');
 }
 
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
@@ -16,44 +52,72 @@ function tOr(t: (key: string) => string, key: string, fallback: string): string 
   return value && value !== key ? value : fallback;
 }
 
-function currentStock(product: ProductListItem): number {
-  return Number(product.available_qty ?? product.in_stock ?? 0) || 0;
+export function currentStock(product: ProductListItem): number {
+  return Number(product.in_stock ?? product.available_qty ?? 0) || 0;
+}
+
+export function parseStockAdjustmentQuantity(
+  value: string,
+  sellBy: 'PIECE' | 'WEIGHT',
+): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  if (sellBy === 'PIECE') return Number.isInteger(parsed) ? parsed : null;
+  const [, fraction = ''] = normalized.split('.');
+  if (fraction.length > 3) return null;
+  return Math.round(parsed * 1000) / 1000;
 }
 
 export default function StockAdjustmentDialog({
   product,
+  allowReceive = true,
   t,
   onClose,
   onAdjusted,
 }: StockAdjustmentDialogProps) {
-  const [mode, setMode] = useState<ProductStockAdjustmentMode>('receive');
+  const session = useRef({
+    variantId: product.id,
+    expectedUpdatedAt: product.updated_at || undefined,
+    stockBefore: currentStock(product),
+    sellBy: classifyProductSale(product).sellBy,
+  }).current;
+  const [mode, setMode] = useState<ProductStockAdjustmentMode>(allowReceive ? 'receive' : 'recount');
   const [quantity, setQuantity] = useState('1');
-  const [newQuantity, setNewQuantity] = useState(String(currentStock(product)));
+  const [newQuantity, setNewQuantity] = useState(String(session.stockBefore));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const mutationKeyStore = useRef(createStableMutationKeyStore());
+  const [attemptDispatched, setAttemptDispatched] = useState(false);
+  const mutationAttemptStore = useRef(createImmutableMutationAttemptStore<StockAdjustmentAttempt>());
+  const mutationOutcomeTracker = useRef(createMutationOutcomeTracker());
+  const sellBy = session.sellBy;
 
-  const stockBefore = currentStock(product);
+  useEffect(() => {
+    if (!attemptDispatched && !allowReceive && mode === 'receive') setMode('recount');
+  }, [allowReceive, attemptDispatched, mode]);
+
+  const stockBefore = session.stockBefore;
   const stockAfter = useMemo(() => {
-    const qty = Number(quantity);
-    const next = Number(newQuantity);
-    if (mode === 'recount') return Number.isFinite(next) ? next : stockBefore;
-    if (!Number.isFinite(qty)) return stockBefore;
+    const qty = parseStockAdjustmentQuantity(quantity, sellBy);
+    const next = parseStockAdjustmentQuantity(newQuantity, sellBy);
+    if (mode === 'recount') return next ?? stockBefore;
+    if (qty === null) return stockBefore;
     if (mode === 'receive' || mode === 'return') return stockBefore + qty;
     return stockBefore - qty;
-  }, [mode, newQuantity, quantity, stockBefore]);
+  }, [mode, newQuantity, quantity, sellBy, stockBefore]);
 
   const validate = (): string | null => {
     if (mode === 'recount') {
-      const next = Number(newQuantity);
-      if (!Number.isFinite(next) || next < 0) {
+      const next = parseStockAdjustmentQuantity(newQuantity, sellBy);
+      if (next === null) {
         return tOr(t, 'products.stock.quantityInvalid', 'Enter a valid quantity');
       }
       return null;
     }
-    const qty = Number(quantity);
-    if (!Number.isFinite(qty) || qty <= 0) {
+    const qty = parseStockAdjustmentQuantity(quantity, sellBy);
+    if (qty === null || qty <= 0) {
       return tOr(t, 'products.stock.quantityInvalid', 'Enter a valid quantity');
     }
     if (stockAfter < 0) return tOr(t, 'products.stock.negativeResult', 'Stock cannot go below zero');
@@ -61,33 +125,44 @@ export default function StockAdjustmentDialog({
   };
 
   const handleSubmit = async () => {
-    const validationError = validate();
-    if (validationError) {
-      setMessage({ ok: false, text: validationError });
-      return;
+    let attempt = mutationAttemptStore.current.current();
+    if (!attempt) {
+      const validationError = validate();
+      if (validationError) {
+        setMessage({ ok: false, text: validationError });
+        return;
+      }
+
+      const trimmedNote = note.trim();
+      const parsedQuantity = parseStockAdjustmentQuantity(quantity, sellBy);
+      const parsedNewQuantity = parseStockAdjustmentQuantity(newQuantity, sellBy);
+      attempt = mutationAttemptStore.current.dispatch({
+        variantId: session.variantId,
+        mode,
+        quantity: mode === 'recount' ? undefined : parsedQuantity ?? undefined,
+        newQuantity: mode === 'recount' ? parsedNewQuantity ?? undefined : undefined,
+        reason: trimmedNote || undefined,
+        expectedUpdatedAt: session.expectedUpdatedAt,
+      });
+      setAttemptDispatched(true);
     }
+
+    const { variantId, idempotencyKey, ...body } = attempt;
 
     setBusy(true);
     setMessage(null);
     try {
-      const trimmedNote = note.trim();
-      const intent = JSON.stringify({
-        productId: product.id,
-        mode,
-        quantity: mode === 'recount' ? undefined : Number(quantity),
-        newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
-        reason: trimmedNote || undefined,
-      });
-      const result = await window.electronAPI.pos.productAdmin.adjustStock(product.id, {
-        mode,
-        quantity: mode === 'recount' ? undefined : Number(quantity),
-        newQuantity: mode === 'recount' ? Number(newQuantity) : undefined,
-        reason: trimmedNote || undefined,
-        expectedUpdatedAt: product.updated_at || undefined,
-        idempotencyKey: mutationKeyStore.current.get(intent),
+      const result = await window.electronAPI.pos.productAdmin.adjustStock(variantId, {
+        ...body,
+        idempotencyKey,
       });
 
       if (!result?.ok) {
+        if (mutationOutcomeTracker.current.shouldRelease(result)) {
+          mutationAttemptStore.current.clear();
+          mutationOutcomeTracker.current.clear();
+          setAttemptDispatched(false);
+        }
         setMessage({
           ok: false,
           text: result?.error || result?.code || tOr(t, 'products.stock.failed', 'Could not adjust stock'),
@@ -95,24 +170,29 @@ export default function StockAdjustmentDialog({
         return;
       }
 
-      mutationKeyStore.current.clear();
       setMessage({ ok: true, text: tOr(t, 'products.stock.success', 'Stock updated') });
-      if (result.data) await onAdjusted(result.data);
-      onClose();
+      await completeCommittedMutation(
+        () => (result.data ? onAdjusted(result.data) : undefined),
+        () => {
+          mutationAttemptStore.current.clear();
+          mutationOutcomeTracker.current.clear();
+          onClose();
+        },
+      );
     } catch (err: any) {
+      mutationOutcomeTracker.current.markAmbiguous();
       setMessage({ ok: false, text: err?.message || tOr(t, 'products.stock.failed', 'Could not adjust stock') });
     } finally {
       setBusy(false);
     }
   };
 
-  const modeOptions: Array<{ value: ProductStockAdjustmentMode; label: string }> = [
-    { value: 'receive', label: tOr(t, 'products.stock.mode.receive', 'Receive stock') },
-    { value: 'recount', label: tOr(t, 'products.stock.mode.recount', 'Recount') },
-    { value: 'damage', label: tOr(t, 'products.stock.mode.damage', 'Damaged') },
-    { value: 'loss', label: tOr(t, 'products.stock.mode.loss', 'Lost') },
-    { value: 'return', label: tOr(t, 'products.stock.mode.return', 'Customer return') },
-  ];
+  const requestClose = () => {
+    if (busy || mutationAttemptStore.current.current()) return;
+    onClose();
+  };
+
+  const modeOptions = stockAdjustmentModes({ allowReceive });
 
   return (
     <Modal
@@ -120,15 +200,15 @@ export default function StockAdjustmentDialog({
       size="md"
       zLayer="nested"
       title={tOr(t, 'products.stock.dialogTitle', 'Adjust stock')}
-      onClose={onClose}
+      onClose={requestClose}
       busy={busy}
       closeLabel={tOr(t, 'products.drawer.close', 'Close')}
       footer={(
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
-            disabled={busy}
+            onClick={requestClose}
+            disabled={busy || attemptDispatched}
             className="h-11 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             {tOr(t, 'products.drawer.close', 'Close')}
@@ -139,13 +219,22 @@ export default function StockAdjustmentDialog({
             disabled={busy}
             className="h-11 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? tOr(t, 'products.stock.saving', 'Saving...') : tOr(t, 'products.stock.submit', 'Save stock')}
+            {busy
+              ? tOr(t, 'products.stock.saving', 'Saving...')
+              : attemptDispatched
+                ? tOr(t, 'products.mutation.retry', 'Retry exact request')
+                : tOr(t, 'products.stock.submit', 'Save stock')}
           </button>
         </div>
       )}
     >
 
         <div className="space-y-4 p-4">
+          {attemptDispatched ? (
+            <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {tOr(t, 'products.mutation.retryLocked', 'The previous request may have reached the server. Editing and closing are locked; retry the exact request.')}
+            </div>
+          ) : null}
           <div>
             <label className="mb-2 block text-xs font-semibold uppercase text-slate-500">
               {tOr(t, 'products.stock.mode', 'Mode')}
@@ -156,13 +245,14 @@ export default function StockAdjustmentDialog({
                   key={option.value}
                   type="button"
                   onClick={() => setMode(option.value)}
+                  disabled={attemptDispatched}
                   className={`h-11 rounded-md border px-3 text-sm font-medium transition duration-150 motion-reduce:transition-none ${
                     mode === option.value
                       ? 'border-brand-600 bg-brand-50 text-brand-700'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  {option.label}
+                  {tOr(t, option.labelKey, option.fallback)}
                 </button>
               ))}
             </div>
@@ -174,11 +264,13 @@ export default function StockAdjustmentDialog({
                 {tOr(t, 'products.stock.newQuantity', 'Actual quantity')}
               </span>
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 min="0"
-                step="1"
+                step={sellBy === 'WEIGHT' ? '0.001' : '1'}
                 value={newQuantity}
-                onChange={(event) => setNewQuantity(event.target.value)}
+                onChange={(event) => setNewQuantity(sanitizeDecimalText(event.target.value))}
+                disabled={attemptDispatched}
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
@@ -188,11 +280,13 @@ export default function StockAdjustmentDialog({
                 {tOr(t, 'products.stock.quantity', 'Quantity')}
               </span>
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 min="0"
-                step="1"
+                step={sellBy === 'WEIGHT' ? '0.001' : '1'}
                 value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
+                onChange={(event) => setQuantity(sanitizeDecimalText(event.target.value))}
+                disabled={attemptDispatched}
                 className="h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-500"
               />
             </label>
@@ -216,6 +310,7 @@ export default function StockAdjustmentDialog({
             <textarea
               value={note}
               onChange={(event) => setNote(event.target.value)}
+              disabled={attemptDispatched}
               placeholder={tOr(t, 'products.stock.notePlaceholder', 'Delivery, recount, damaged package...')}
               className="min-h-[84px] w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
             />

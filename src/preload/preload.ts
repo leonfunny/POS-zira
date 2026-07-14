@@ -62,6 +62,8 @@ import {
   ProductAdminCategoryMutationInput,
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
+  ProductAdminMainImageUploadInput,
+  ProductAdminReceiveStockInput,
   ProductAdminStockAdjustmentInput,
   ProductAdminUpdateVariantInput,
   PosScheduleAssignNextPayload,
@@ -701,6 +703,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT, variantId, payload),
       adjustStock: (variantId: string, payload: ProductAdminStockAdjustmentInput) =>
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_ADJUST_STOCK, variantId, payload),
+      getVariant: (variantId: string) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_GET_VARIANT, variantId),
+      uploadMainImage: (variantId: string, payload: ProductAdminMainImageUploadInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_UPLOAD_MAIN_IMAGE, variantId, payload),
+      listLots: (variantId: string) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_LIST_LOTS, variantId),
+      receiveStock: (variantId: string, payload: ProductAdminReceiveStockInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_RECEIVE_STOCK, variantId, payload),
       listCategories: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_LIST),
       createCategory: (payload: ProductAdminCategoryMutationInput) =>
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_CREATE, payload),

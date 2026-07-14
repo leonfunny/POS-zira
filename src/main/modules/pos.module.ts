@@ -34,6 +34,16 @@ import {
 import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
+  captureProductAdminSessionContext,
+  decodeProductImageDataUrl,
+  isProductAdminSessionContextCurrent,
+  mergeProductAdminNullableMirrorFields,
+  normalizeProductReceiptInput,
+  redactProductAdminPurchaseData,
+  requireProductAdminExpectedUpdatedAt,
+  shouldApplyProductAdminVariantMirror,
+} from '../pos/product-workspace-input';
+import {
   lookupExternalProductByEan,
   normalizeEan,
   type ExternalProductLookupOptions,
@@ -44,7 +54,12 @@ import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
 import { kitchenSelfOrderCategoryPrefsRepo } from '../database/repos/kitchen-self-order-category-prefs-repo';
 import { StaffSync } from '../sync/staff-sync';
-import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
+import {
+  getSavedLocalVariantImportIntentIdentity,
+  isExactLegacyUncertainImportRetry,
+  LocalVariantImportOutcomeUncertainError,
+  localVariantImportsRepo,
+} from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { kitchenSelfOrderRepo, type KitchenSelfOrderWithItems } from '../database/repos/kitchen-self-order-repo';
 import { buildKitchenSelfOrderMenu } from '../kitchen-self-order/menu-service';
@@ -100,11 +115,17 @@ import type {
   ProductAdminCreateProductInput,
   ProductAdminDeactivateVariantInput,
   ProductAdminIpcResult,
+  ProductAdminLotListResponse,
+  ProductAdminMainImageUploadInput,
+  ProductAdminMainImageUploadResponse,
   ProductAdminProductMutationResponse,
+  ProductAdminReceiveStockInput,
+  ProductAdminReceiveStockResponse,
   ProductAdminStockAdjustmentInput,
   ProductAdminStockAdjustmentResponse,
   ProductAdminUpdateVariantInput,
   ProductAdminVariant,
+  ProductAdminVariantDetailResponse,
   ProductAdminVariantMutationResponse,
   PosLoyaltyLookupIpcResult,
   PosScheduleAssignNextPayload,
@@ -156,7 +177,6 @@ function getExternalProductLookupOptions(): ExternalProductLookupOptions {
 }
 
 const BACKEND_CATEGORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function normalizeScanCreateEan(value: unknown): string | null {
   const code = String(value ?? '').trim().replace(/[\s-]+/g, '');
   return /^\d{4,14}$/.test(code) ? code : null;
@@ -1286,15 +1306,15 @@ export class PosModule extends BaseModule {
       count: localVariantImportsRepo.getFailedCount(),
       imports: localVariantImportsRepo.getFailed(),
     }));
-    // Ids the Products tab must treat as "not on the server yet": PENDING
-    // rows plus FAILED ones (both still carry the local draft id). The edit
-    // view blocks product-admin mutations for them instead of letting the
-    // backend answer 404 "Variant not found".
+    // Every local-import id is non-canonical for product-admin mutations.
+    // SYNCED rows are aliases too: their local updated_at must never be sent as
+    // the optimistic-concurrency token for the canonical server row.
     ipcMain.handle('pos:local-variant-imports:list-unresolved-ids', () => {
       try {
-        const pending = Array.from(localVariantImportsRepo.getPendingVariantIds());
-        const failed = localVariantImportsRepo.getFailed().map((row) => row.variant_id);
-        return { ok: true, ids: [...new Set([...pending, ...failed])] };
+        return {
+          ok: true,
+          ids: Array.from(localVariantImportsRepo.getAdminMutationBlockedVariantIds()),
+        };
       } catch (err: any) {
         return { ok: false, ids: [], error: err?.message ?? 'list-unresolved-failed' };
       }
@@ -1310,27 +1330,57 @@ export class PosModule extends BaseModule {
         const importRow = localVariantImportsRepo.getByVariantId(variantId);
         if (!importRow || importRow.status !== 'FAILED') return { ok: false, error: 'failed-import-not-found' };
 
-        const categoryResolution = resolveBackendScanCategoryId(String(payload?.categoryId ?? '').trim() || null);
+        const requestedCategoryId = String(payload?.categoryId ?? '').trim() || null;
+        const exactLegacyVerification = !!requestedCategoryId
+          && BACKEND_CATEGORY_ID_RE.test(requestedCategoryId)
+          && isExactLegacyUncertainImportRetry(importRow, ean, requestedCategoryId);
+        const savedIntentIdentity = getSavedLocalVariantImportIntentIdentity(importRow);
+        const exactSavedIntentVerification = !!savedIntentIdentity
+          && savedIntentIdentity.ean === ean
+          && savedIntentIdentity.categoryId === requestedCategoryId;
+        const categoryResolution = !!requestedCategoryId
+          && BACKEND_CATEGORY_ID_RE.test(requestedCategoryId)
+          && (exactLegacyVerification || exactSavedIntentVerification)
+          ? { ok: true, categoryId: requestedCategoryId }
+          : resolveBackendScanCategoryId(requestedCategoryId);
         if (!categoryResolution.ok) return { ok: false, error: 'invalid-category' };
 
-        database.transaction(() => {
-          productRepo.updateLocalImportIdentity(variantId, {
-            ean,
-            previousEan: importRow.ean,
-            categoryId: categoryResolution.categoryId,
+        try {
+          database.transaction(() => {
+            // Validate/requeue the durable intent first. An uncertain
+            // payload-changing retry throws before the local product row is
+            // touched; the transaction also protects the reverse failure.
+            localVariantImportsRepo.requeue(variantId, ean, categoryResolution.categoryId);
+            productRepo.updateLocalImportIdentity(variantId, {
+              ean,
+              previousEan: importRow.ean,
+              categoryId: categoryResolution.categoryId,
+            });
           });
-          localVariantImportsRepo.requeue(variantId, ean, categoryResolution.categoryId);
-        });
+        } catch (err: any) {
+          if (err instanceof LocalVariantImportOutcomeUncertainError
+            || err?.code === 'LOCAL_VARIANT_IMPORT_OUTCOME_UNCERTAIN') {
+            return {
+              ok: false,
+              error: 'local-import-outcome-uncertain',
+              code: 'LOCAL_VARIANT_IMPORT_OUTCOME_UNCERTAIN',
+            };
+          }
+          throw err;
+        }
         database.markDirty();
         notifyPosRenderers(this.container, 'pos:products-synced');
 
         let syncPending = true;
+        let resolvedVariant = productRepo.getById(variantId);
         try {
           const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
-          const reconciled = await syncMod?.reconcileLocalVariantImports?.(1);
-          if (reconciled > 0) {
+          await syncMod?.reconcileLocalVariantImports?.(1, variantId);
+          const serverId = localVariantImportsRepo.getServerVariantId(variantId);
+          if (serverId) {
             syncPending = false;
             await syncMod?.deltaSync?.();
+            resolvedVariant = productRepo.getById(serverId) ?? resolvedVariant;
             notifyPosRenderers(this.container, 'pos:products-synced');
           }
         } catch (syncErr: any) {
@@ -1340,7 +1390,7 @@ export class PosModule extends BaseModule {
         return {
           ok: true,
           syncPending,
-          variant: productRepo.getById(variantId),
+          variant: resolvedVariant,
         };
       },
     );
@@ -1357,7 +1407,14 @@ export class PosModule extends BaseModule {
       canAdjustStock: false,
       canCreateCategory: false,
       canUpdateCategory: false,
+      canViewPurchasePrice: false,
+      canReplaceMainImage: false,
+      canReceiveStock: false,
       supportsOptimisticConcurrency: false,
+      supportsPurchasePrice: false,
+      supportsMainImageUpload: false,
+      supportsStockLots: false,
+      supportsLotReceiving: false,
     });
 
     ipcMain.handle(IPC_CHANNELS.POS_PRODUCT_ADMIN_CAPABILITIES, async () => {
@@ -1384,7 +1441,7 @@ export class PosModule extends BaseModule {
       code: err?.code,
       status: typeof err?.status === 'number' ? err.status : undefined,
       field: err?.field,
-      details: err?.details,
+      details: redactProductAdminPurchaseData({ details: err?.details }).details,
     });
 
     const isProductAdminNotFound = (result: ProductAdminIpcResult<unknown>): boolean => {
@@ -1393,19 +1450,53 @@ export class PosModule extends BaseModule {
       return result.status === 404 || code === 'PRODUCT_NOT_FOUND' || error.includes('HTTP 404');
     };
 
-    const refreshProductsAfterProductAdminMutation = async (source: string) => {
+    type ProductAdminSessionGuard = () => boolean;
+
+    const refreshProductsAfterProductAdminMutation = async (
+      source: string,
+      isCurrentProductAdminSession: ProductAdminSessionGuard = () => true,
+    ) => {
+      if (!isCurrentProductAdminSession()) return;
       try {
         const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
         await syncMod?.deltaSync?.();
       } catch (syncErr: any) {
         logger.debug(`[PosModule] product-admin post-mutation sync skipped (${source}): ${syncErr?.message ?? syncErr}`);
       }
+      if (!isCurrentProductAdminSession()) return;
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source });
     };
 
-    const refreshProductsAfterProductAdminMutationInBackground = (source: string) => {
-      void refreshProductsAfterProductAdminMutation(source);
+    const refreshProductsAfterProductAdminMutationInBackground = (
+      source: string,
+      isCurrentProductAdminSession: ProductAdminSessionGuard = () => true,
+    ) => {
+      if (!isCurrentProductAdminSession()) return;
+      void refreshProductsAfterProductAdminMutation(source, isCurrentProductAdminSession);
+    };
+
+    const runProductAdminLocalMutationAfterPendingCatalogSync = async (
+      source: string,
+      operation: () => Promise<void> | void,
+      isCurrentProductAdminSession: ProductAdminSessionGuard = () => true,
+    ): Promise<void> => {
+      const guardedOperation = async () => {
+        if (!isCurrentProductAdminSession()) return;
+        await operation();
+      };
+      try {
+        const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
+        if (typeof syncMod?.runAfterPendingCatalogSync === 'function') {
+          await syncMod.runAfterPendingCatalogSync(guardedOperation);
+        } else {
+          await guardedOperation();
+        }
+      } finally {
+        // Repair from canonical catalog state, even when the immediate mirror
+        // fails. Public deltaSync joins the same FIFO after this callback.
+        refreshProductsAfterProductAdminMutationInBackground(source, isCurrentProductAdminSession);
+      }
     };
 
     const finiteNumber = (value: unknown): number | null => (
@@ -1422,45 +1513,32 @@ export class PosModule extends BaseModule {
       return Math.max(0, Math.round(Number(existing?.retail_price) || 0));
     };
 
-    const saleUnitImpliesWeight = (value: unknown): boolean => {
-      const normalized = String(value ?? '').trim().toLowerCase();
-      return normalized === 'kg' || normalized === 'kilogram' || normalized === 'kilograms';
-    };
-
-    const getProductAdminVariantSellBy = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): 'PIECE' | 'WEIGHT' => {
-      const raw = String(variant.sellBy ?? existing?.sell_by ?? '').trim().toUpperCase();
-      if (raw === 'WEIGHT' || saleUnitImpliesWeight(variant.saleUnit ?? existing?.sale_unit)) return 'WEIGHT';
-      return 'PIECE';
-    };
-
-    const encodeProductAdminNameTranslations = (variant: ProductAdminVariant, existing?: ProductVariantRow | null): string | null => {
-      if (variant.nameTranslations && typeof variant.nameTranslations === 'object') {
-        try {
-          return JSON.stringify(variant.nameTranslations);
-        } catch {
-          return existing?.name_translations ?? null;
-        }
-      }
-      return existing?.name_translations ?? null;
-    };
-
-    const mirrorProductAdminVariant = (variant: ProductAdminVariant | undefined | null, source: string) => {
-      if (!variant?.id) return;
+    const mirrorProductAdminVariant = (variant: ProductAdminVariant | undefined | null, source: string): boolean => {
+      if (!variant?.id) return false;
 
       const existing = productRepo.getById(variant.id);
+      if (!shouldApplyProductAdminVariantMirror(variant, existing)) {
+        logger.warn(
+          `[PosModule] Skipped stale product-admin variant ${variant.id} (${source}); incoming=${variant.updatedAt ?? 'missing'}, existing=${existing?.updated_at ?? 'missing'}`,
+        );
+        return false;
+      }
+      const nullableFields = mergeProductAdminNullableMirrorFields(variant, existing);
       const priceGrosze = getProductAdminVariantPriceGrosze(variant, existing);
       const totalStockQty = finiteNumber(variant.totalStockQty);
       const vatRate = finiteNumber(variant.vatRate);
       const availableQty = finiteNumber(variant.availableQty);
       const row: ProductVariantRow = {
         id: variant.id,
-        template_id: variant.templateId ?? existing?.template_id ?? null,
+        template_id: nullableFields.template_id,
         name: variant.name || existing?.name || variant.id,
-        sku: variant.sku ?? existing?.sku ?? null,
-        barcode: variant.barcode ?? existing?.barcode ?? null,
+        sku: nullableFields.sku,
+        barcode: nullableFields.barcode,
         retail_price: priceGrosze,
-        category_id: variant.categoryId ?? existing?.category_id ?? null,
-        image_url: variant.imageUrl ?? existing?.image_url ?? null,
+        category_id: nullableFields.category_id,
+        image_url: Object.prototype.hasOwnProperty.call(variant, 'imageUrl')
+          ? variant.imageUrl ?? null
+          : existing?.image_url ?? null,
         in_stock: totalStockQty ?? existing?.in_stock ?? 0,
         vat_rate: vatRate ?? existing?.vat_rate ?? 23,
         is_active: typeof variant.isActive === 'boolean'
@@ -1472,10 +1550,12 @@ export class PosModule extends BaseModule {
         price_net: existing?.price_net ?? 0,
         vat_amount: existing?.vat_amount ?? 0,
         is_on_sale: existing?.is_on_sale ?? 0,
-        thumbnail_url: variant.thumbnailUrl ?? existing?.thumbnail_url ?? null,
-        sale_unit: variant.saleUnit ?? existing?.sale_unit ?? null,
-        sell_by: getProductAdminVariantSellBy(variant, existing),
-        name_translations: encodeProductAdminNameTranslations(variant, existing),
+        thumbnail_url: Object.prototype.hasOwnProperty.call(variant, 'thumbnailUrl')
+          ? variant.thumbnailUrl ?? null
+          : existing?.thumbnail_url ?? null,
+        sale_unit: nullableFields.sale_unit,
+        sell_by: nullableFields.sell_by,
+        name_translations: nullableFields.name_translations,
         customer_display_enabled: existing?.customer_display_enabled ?? 1,
         customer_display_sort_order: existing?.customer_display_sort_order ?? null,
         kiosk_media_json: existing?.kiosk_media_json ?? null,
@@ -1494,6 +1574,7 @@ export class PosModule extends BaseModule {
       logger.info(`[PosModule] Mirrored product-admin variant ${variant.id} locally (${source}, price=${priceGrosze})`);
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: `${source}_local_mirror` });
+      return true;
     };
 
     const deactivateLocalProductAdminVariant = (variantId: string, source: string) => {
@@ -1514,36 +1595,99 @@ export class PosModule extends BaseModule {
       | 'canAdjustStock'
       | 'canCreateCategory'
       | 'canUpdateCategory'
+      | 'canViewPurchasePrice'
+      | 'canReplaceMainImage'
+      | 'canReceiveStock'
+      | 'supportsPurchasePrice'
+      | 'supportsMainImageUpload'
+      | 'supportsStockLots'
+      | 'supportsLotReceiving'
     >;
 
-    // A variant imported from a draft lives locally under the DRAFT id until
-    // ProductSync reconciles it; the server only knows the reconciled id.
-    // Every product-admin mutation must therefore retarget through the alias
-    // map, or the backend answers 404 "Variant not found". Local-mirror
-    // operations keep using the ORIGINAL id — that is the row on screen.
+    // A local-import row never owns the canonical server revision. Even after
+    // reconciliation, forwarding its expectedUpdatedAt while retargeting the id
+    // would mix two rows' concurrency tokens. Fail closed until the canonical
+    // server row is selected from the local mirror.
     const resolveVariantIdAlias = (variantId: string): string => {
+      const normalizedId = String(variantId || '').trim();
+      if (!normalizedId) {
+        const error = new Error('missing-variant-id') as Error & { code?: string; status?: number };
+        error.code = 'PRODUCT_NOT_FOUND';
+        error.status = 404;
+        throw error;
+      }
       try {
-        return localVariantImportsRepo.getServerVariantId(variantId) ?? variantId;
-      } catch {
-        return variantId;
+        if (localVariantImportsRepo.getAdminMutationBlockedVariantIds().has(normalizedId)) {
+          const error = new Error('variant-import-alias-blocked') as Error & {
+            code?: string;
+            status?: number;
+            details?: Record<string, unknown>;
+          };
+          error.code = 'VARIANT_IMPORT_ALIAS_BLOCKED';
+          error.status = 409;
+          error.details = { variantId: normalizedId };
+          throw error;
+        }
+        return normalizedId;
+      } catch (error: any) {
+        if (error?.code === 'VARIANT_IMPORT_ALIAS_BLOCKED') throw error;
+        const aliasError = new Error('variant-alias-resolution-unavailable') as Error & {
+          code?: string;
+          status?: number;
+        };
+        aliasError.code = 'VARIANT_ALIAS_UNAVAILABLE';
+        aliasError.status = 503;
+        throw aliasError;
       }
     };
+
+    const canAccessProductPurchasePrice = (capabilities: ProductAdminCapabilities): boolean =>
+      capabilities.supportsPurchasePrice === true
+      && capabilities.canViewPurchasePrice === true;
 
     const withProductAdminCapability = async <T>(
       capability: ProductAdminCapability,
       label: string,
       action: (token: string, capabilities: ProductAdminCapabilities) => Promise<T>,
-      afterSuccess?: (data: T) => Promise<void>,
+      afterSuccess?: (data: T, isCurrentProductAdminSession: ProductAdminSessionGuard) => Promise<void>,
     ): Promise<ProductAdminIpcResult<T>> => {
       const token = getSecureAuthToken();
       if (!token) return { ok: false, error: 'no-auth', code: 'UNAUTHORIZED_PRODUCT_ADMIN' };
+      const requestContext = captureProductAdminSessionContext(token, getConfig());
+      const isCurrentProductAdminSession = () => isProductAdminSessionContextCurrent(
+        requestContext,
+        getSecureAuthToken(),
+        getConfig(),
+      );
       try {
         const capabilities = await apiClient.getProductAdminCapabilities(token);
         if (capabilities[capability] !== true) {
           return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' };
         }
-        const data = await action(token, capabilities);
-        if (afterSuccess) await afterSuccess(data);
+        if (!isCurrentProductAdminSession()) {
+          return { ok: false, error: 'auth-context-changed', code: 'UNAUTHORIZED_PRODUCT_ADMIN' };
+        }
+        const rawData = await action(token, capabilities);
+        const contextCurrentAfterAction = isCurrentProductAdminSession();
+        let data = contextCurrentAfterAction && canAccessProductPurchasePrice(capabilities)
+          ? rawData
+          : redactProductAdminPurchaseData(rawData);
+        if (!contextCurrentAfterAction) {
+          logger.warn(`[PosModule] product-admin ${label} completed after auth context changed; skipped local effects`);
+          return { ok: true, data };
+        }
+        if (afterSuccess) {
+          try {
+            await afterSuccess(data, isCurrentProductAdminSession);
+          } catch (afterSuccessError: any) {
+            logger.warn(
+              `[PosModule] product-admin local after-success failed (${label}): ${afterSuccessError?.message ?? afterSuccessError}`,
+            );
+          }
+        }
+        if (!isCurrentProductAdminSession()) {
+          data = redactProductAdminPurchaseData(rawData);
+        }
         return { ok: true, data };
       } catch (err: any) {
         logger.warn(`[PosModule] product-admin ${label} failed: ${err?.message ?? err}`);
@@ -1577,11 +1721,20 @@ export class PosModule extends BaseModule {
         return withProductAdminCapability<ProductAdminProductMutationResponse>(
           'canCreateProduct',
           'create product',
-          (token) => apiClient.createProductVariant(token, input),
-          (data) => {
-            mirrorProductAdminVariant(data.variant, 'product_admin_create');
-            refreshProductsAfterProductAdminMutationInBackground('product_admin_create');
-            return Promise.resolve();
+          (token, capabilities) => {
+            if (input.purchasePriceGrosze !== undefined
+              && (capabilities.supportsPurchasePrice !== true
+                || capabilities.canViewPurchasePrice !== true)) {
+              const error = new Error('purchase-price-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            return apiClient.createProductVariant(token, input);
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_create', () => {
+              mirrorProductAdminVariant(data.variant, 'product_admin_create');
+            }, isCurrentProductAdminSession);
           },
         );
       },
@@ -1594,23 +1747,35 @@ export class PosModule extends BaseModule {
           'canUpdateProduct',
           'update variant',
           (token, capabilities) => {
-            const { nameTranslations, ...legacyPayload } = payload || {};
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            const normalizedPayload = { ...(payload || {}), expectedUpdatedAt };
+            const { nameTranslations, ...legacyPayload } = normalizedPayload;
             const canSendDisplayName = capabilities.version >= 2 && capabilities.canEditDisplayName === true;
             if (nameTranslations !== undefined && !canSendDisplayName) {
               const error = new Error('display-name-editing-unavailable') as Error & { code?: string };
               error.code = 'UNSUPPORTED_CAPABILITY';
               throw error;
             }
+            if (normalizedPayload.purchasePriceGrosze !== undefined
+              && (capabilities.supportsPurchasePrice !== true
+                || capabilities.canViewPurchasePrice !== true)) {
+              const error = new Error('purchase-price-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
             return apiClient.updateProductVariant(
               token,
               resolveVariantIdAlias(variantId),
-              canSendDisplayName ? (payload || {}) : legacyPayload,
+              canSendDisplayName ? normalizedPayload : legacyPayload,
             );
           },
-          (data) => {
-            mirrorProductAdminVariant(data.variant, 'product_admin_update');
-            refreshProductsAfterProductAdminMutationInBackground('product_admin_update');
-            return Promise.resolve();
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_update', () => {
+              mirrorProductAdminVariant(data.variant, 'product_admin_update');
+            }, isCurrentProductAdminSession);
           },
         ),
     );
@@ -1618,22 +1783,43 @@ export class PosModule extends BaseModule {
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_DEACTIVATE_VARIANT,
       async (_e, variantId: string, payload: ProductAdminDeactivateVariantInput) => {
+        const deactivateRequestContext = captureProductAdminSessionContext(getSecureAuthToken(), getConfig());
+        const isDeactivateRequestContextCurrent = () => isProductAdminSessionContextCurrent(
+          deactivateRequestContext,
+          getSecureAuthToken(),
+          getConfig(),
+        );
         const result = await withProductAdminCapability<ProductAdminVariantMutationResponse>(
           'canDeactivateProduct',
           'deactivate variant',
-          (token) => apiClient.deactivateProductVariant(token, resolveVariantIdAlias(variantId), {
-            ...(payload || {}),
-            reason: String(payload?.reason || '').trim() || 'Hidden from POS',
-          }),
-          (data) => {
-            mirrorProductAdminVariant(data.variant, 'product_admin_deactivate');
-            deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate');
-            refreshProductsAfterProductAdminMutationInBackground('product_admin_deactivate');
-            return Promise.resolve();
+          (token, capabilities) => {
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            return apiClient.deactivateProductVariant(token, resolveVariantIdAlias(variantId), {
+              ...(payload || {}),
+              expectedUpdatedAt,
+              reason: String(payload?.reason || '').trim() || 'Hidden from POS',
+            });
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_deactivate', () => {
+              const mirrorApplied = mirrorProductAdminVariant(data.variant, 'product_admin_deactivate');
+              if (mirrorApplied) deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate');
+            }, isCurrentProductAdminSession);
           },
         );
-        if (!result.ok && isProductAdminNotFound(result)) {
-          deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate_not_found');
+        if (!result.ok && isProductAdminNotFound(result) && isDeactivateRequestContextCurrent()) {
+          try {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_deactivate_not_found', () => {
+              deactivateLocalProductAdminVariant(variantId, 'product_admin_deactivate_not_found');
+            }, isDeactivateRequestContextCurrent);
+          } catch (mirrorError: any) {
+            logger.warn(
+              `[PosModule] product-admin local not-found deactivate failed: ${mirrorError?.message ?? mirrorError}`,
+            );
+          }
         }
         return result;
       },
@@ -1649,19 +1835,149 @@ export class PosModule extends BaseModule {
         return withProductAdminCapability<ProductAdminStockAdjustmentResponse>(
           'canAdjustStock',
           'adjust stock',
-          (token) => apiClient.adjustProductStock(token, resolveVariantIdAlias(variantId), input),
-          (data) => {
-            mirrorProductAdminVariant(data.variant, 'product_admin_stock_adjustment');
-            refreshProductsAfterProductAdminMutationInBackground('product_admin_stock_adjustment');
+          (token, capabilities) => {
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              input.expectedUpdatedAt,
+            );
+            if (input.mode === 'receive' && capabilities.supportsLotReceiving === true) {
+              const error = new Error('lot-aware-receiving-required') as Error & {
+                code?: string;
+                status?: number;
+              };
+              error.code = 'LOT_RECEIVING_REQUIRED';
+              error.status = 409;
+              throw error;
+            }
+            return apiClient.adjustProductStock(token, resolveVariantIdAlias(variantId), {
+              ...input,
+              expectedUpdatedAt,
+            });
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_stock_adjustment', () => {
+              mirrorProductAdminVariant(data.variant, 'product_admin_stock_adjustment');
+            }, isCurrentProductAdminSession);
+            if (!isCurrentProductAdminSession()) return;
             notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
               source: 'product_admin',
               adjustment: data.adjustment,
               variant: data.variant,
             });
-            return Promise.resolve();
           },
         );
       },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_GET_VARIANT,
+      async (_e, variantId: string) =>
+        withProductAdminCapability<ProductAdminVariantDetailResponse>(
+          'canViewPurchasePrice',
+          'get variant detail',
+          (token, capabilities) => {
+            if (capabilities.supportsPurchasePrice !== true) {
+              const error = new Error('purchase-price-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            return apiClient.getProductAdminVariant(token, resolveVariantIdAlias(variantId));
+          },
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_UPLOAD_MAIN_IMAGE,
+      async (_e, variantId: string, payload: ProductAdminMainImageUploadInput) =>
+        withProductAdminCapability<ProductAdminMainImageUploadResponse>(
+          'canReplaceMainImage',
+          'upload main image',
+          (token, capabilities) => {
+            if (capabilities.supportsMainImageUpload !== true) {
+              const error = new Error('main-image-upload-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            const image = decodeProductImageDataUrl(payload);
+            return apiClient.uploadProductMainImage(
+              token,
+              resolveVariantIdAlias(variantId),
+              {
+                ...image,
+                expectedUpdatedAt,
+              },
+            );
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_main_image', () => {
+              mirrorProductAdminVariant(data.variant, 'product_admin_main_image');
+            }, isCurrentProductAdminSession);
+          },
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_LIST_LOTS,
+      async (_e, variantId: string) =>
+        withProductAdminCapability<ProductAdminLotListResponse>(
+          'canReceiveStock',
+          'list stock lots',
+          (token, capabilities) => {
+            if (capabilities.supportsStockLots !== true) {
+              const error = new Error('stock-lots-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            return apiClient.listProductStockLots(token, resolveVariantIdAlias(variantId));
+          },
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_RECEIVE_STOCK,
+      async (_e, variantId: string, payload: ProductAdminReceiveStockInput) =>
+        withProductAdminCapability<ProductAdminReceiveStockResponse>(
+          'canReceiveStock',
+          'receive stock',
+          (token, capabilities) => {
+            if (capabilities.supportsLotReceiving !== true) {
+              const error = new Error('lot-receiving-unavailable') as Error & { code?: string };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              throw error;
+            }
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            const normalizedPayload = {
+              ...normalizeProductReceiptInput(payload),
+              expectedUpdatedAt,
+            };
+            if (!canAccessProductPurchasePrice(capabilities)) {
+              delete normalizedPayload.unitCostGrosze;
+            }
+            return apiClient.receiveProductStock(
+              token,
+              resolveVariantIdAlias(variantId),
+              normalizedPayload,
+            );
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_receive_stock', () => {
+              mirrorProductAdminVariant(data.variant, 'product_admin_receive_stock');
+            }, isCurrentProductAdminSession);
+            if (!isCurrentProductAdminSession()) return;
+            notifyPosRenderers(this.container, IPC_CHANNELS.POS_STOCK_UPDATED, {
+              source: 'product_admin_receipt',
+              receipt: data.receipt,
+              variant: data.variant,
+            });
+          },
+        ),
     );
 
     ipcMain.handle(
@@ -1696,7 +2012,10 @@ export class PosModule extends BaseModule {
           'canCreateCategory',
           'create category',
           (token) => apiClient.createProductAdminCategory(token, input),
-          () => refreshProductsAfterProductAdminMutation('product_admin_category_create'),
+          (_data, isCurrentProductAdminSession) => refreshProductsAfterProductAdminMutation(
+            'product_admin_category_create',
+            isCurrentProductAdminSession,
+          ),
         );
       },
     );
@@ -1704,28 +2023,32 @@ export class PosModule extends BaseModule {
     ipcMain.handle(
       IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE,
       async (_e, categoryId: string, payload: ProductAdminCategoryMutationInput) => {
-        const result = await withProductAdminCapability<ProductAdminCategoryMutationResponse>(
+        return withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canUpdateCategory',
           'update category',
           (token) => apiClient.updateProductAdminCategory(token, categoryId, payload || {}),
-          () => refreshProductsAfterProductAdminMutation('product_admin_category_update'),
+          async (_data, isCurrentProductAdminSession) => {
+            await refreshProductsAfterProductAdminMutation(
+              'product_admin_category_update',
+              isCurrentProductAdminSession,
+            );
+            if (!isCurrentProductAdminSession()) return;
+
+            // Kitchen self-order and order-time filtering read the local
+            // category table, so apply the committed sort without waiting for
+            // another renderer refresh.
+            if (payload && typeof payload.sortOrder === 'number' && Number.isFinite(payload.sortOrder)) {
+              try {
+                productRepo.setCategorySortOrder(categoryId, payload.sortOrder);
+                database.markDirty();
+                notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+                notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+                  source: 'product_admin_category_local_mirror',
+                });
+              } catch { /* refresh will reconcile */ }
+            }
+          },
         );
-        // Mirror local category fields right away: kitchen self-order and
-        // order-time kitchen filtering read the LOCAL categories table, and
-        // product refresh can lag or be skipped.
-        let mirroredLocalCategory = false;
-        if (payload && typeof payload.sortOrder === 'number' && Number.isFinite(payload.sortOrder) && !(result as any)?.error) {
-          try {
-            productRepo.setCategorySortOrder(categoryId, payload.sortOrder);
-            mirroredLocalCategory = true;
-          } catch { /* refresh will reconcile */ }
-        }
-        if (mirroredLocalCategory) {
-          database.markDirty();
-          notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
-          notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, { source: 'product_admin_category_local_mirror' });
-        }
-        return result;
       },
     );
 
@@ -1943,14 +2266,14 @@ export class PosModule extends BaseModule {
         let resolvedVariant = variant;
         try {
           const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
-          const reconciled = await syncMod?.reconcileLocalVariantImports?.(1);
-          if (reconciled > 0) {
+          await syncMod?.reconcileLocalVariantImports?.(1, variantId);
+          const serverId = localVariantImportsRepo.getServerVariantId(variantId);
+          if (serverId) {
             syncPending = false;
             await syncMod?.deltaSync?.();
             // Hand the renderer the SERVER row when it already exists in the
             // local mirror — opening the edit view on the draft-id alias is
             // what made every follow-up save 404 with "Variant not found".
-            const serverId = localVariantImportsRepo.getServerVariantId(variantId);
             const serverVariant = serverId ? productRepo.getById(serverId) : null;
             resolvedVariant = serverVariant ?? variant;
             notifyPosRenderers(this.container, 'pos:products-synced');

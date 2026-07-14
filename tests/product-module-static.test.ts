@@ -109,9 +109,11 @@ describe('Product module implementation contract', () => {
     expect(searchOverlay).toContain('canCreateProduct &&');
     expect(createDialog).toContain('window.electronAPI.pos.productAdmin.createProduct');
     expect(moduleSource).toContain('products={allProducts}');
-    // Barcode rides per attempt so an auto-generated duplicate can regenerate.
-    expect(createDialog).toContain("let attemptBarcode: string | null = normalizedBarcode || null");
-    expect(createDialog).toContain('barcode: attemptBarcode');
+    // The first body is immutable; only a confirmed auto-generated barcode
+    // collision replaces the retained attempt with a new barcode and key.
+    expect(createDialog).toContain('let createAttempt = dispatchedCreateAttemptRef.current');
+    expect(createDialog).toContain('barcode: normalizedBarcode || null');
+    expect(createDialog).toContain('barcode: regenerated');
     expect(createDialog).toContain('sku: normalizedSku || null');
     expect(createDialog).toContain('findDuplicateBarcodeSet(normalizedBarcode');
     expect(createDialog).toContain('products.create.duplicateBarcode');
@@ -119,7 +121,7 @@ describe('Product module implementation contract', () => {
     expect(createDialog).not.toContain('retailPrice: validation.priceGrossGrosze / 100');
     expect(createDialog).toContain('initialStockQty: stockApplies ? validation.initialStockQty : 0');
     expect(createDialog).toContain('saleUnit: unit');
-    expect(createDialog).toContain('\n      sellBy,\n');
+    expect(createDialog).toContain('sellBy,');
     expect(createDialog).toContain("setStockQty('0')");
     expect(createDialog).toContain('setIdempotencyKey(makeIdempotencyKey())');
     expect(createDialog).toContain('initialCategoryId');
@@ -134,9 +136,9 @@ describe('Product module implementation contract', () => {
     expect(editView).toContain('StockAdjustmentDialog');
     expect(editView).toContain('canOpenStockAdjustment = canAdjustStock && !product._isDraft');
     expect(stockDialog).toContain('window.electronAPI.pos.productAdmin.adjustStock');
-    expect(stockDialog).toContain('createStableMutationKeyStore');
-    expect(stockDialog).toContain('idempotencyKey: mutationKeyStore.current.get(intent)');
-    expect(stockDialog).toContain('mutationKeyStore.current.clear()');
+    expect(stockDialog).toContain('createImmutableMutationAttemptStore');
+    expect(stockDialog).toContain('mutationAttemptStore.current.dispatch');
+    expect(stockDialog).toContain('mutationAttemptStore.current.clear()');
     expect(stockDialog).toContain('expectedUpdatedAt: product.updated_at || undefined');
     expect(stockDialog).toContain("mode === 'recount'");
     expect(stockDialog).not.toContain("mode !== 'recount' && !reason.trim()");
@@ -156,31 +158,39 @@ describe('Product module implementation contract', () => {
   it('enables product edit and stop-selling only through backend product-admin IPC', () => {
     expect(editView).toContain('ProductEditForm');
     expect(editView).toContain('DeactivateProductDialog');
-    expect(editView).toContain('disabled={!canEditProduct}');
-    expect(editView).toContain('disabled={!canStopSelling}');
+    expect(editView).toContain('disabled={!canEditProduct || siblingMutationsLocked}');
+    expect(editView).toContain('disabled={!canStopSelling || siblingMutationsLocked}');
     expect(editView).toContain('productInCart');
     expect(editView).toContain('products.deactivate.hideButton');
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.updateVariant');
     expect(editForm).toContain('parseMoneyToGrosze');
     expect(editForm).toContain('priceGrossGrosze');
-    expect(editForm).toContain('expectedUpdatedAt: product.updated_at || undefined');
+    expect(editForm).toContain('const expectedUpdatedAt = editBaseline.expectedUpdatedAt;');
+    expect(editForm).toContain('      expectedUpdatedAt,\n    };');
     expect(editView).toContain('canAdjustStock={canAdjustStock}');
-    expect(editForm).toContain('stockEditable && stockQty !== stockInputFromProduct(product)');
+    expect(editForm).toContain('stockEditable && stockQty !== stockInputFromProduct(baselineProduct)');
     expect(editForm).toContain('window.electronAPI.pos.productAdmin.adjustStock');
     expect(editForm).toContain("mode: 'recount'");
     expect(editForm).toContain('newQuantity: parsedStockQty ?? 0');
     expect(editForm).toContain('executeProductSave');
-    expect(editForm).toContain('if (result.productSaved) await onProductChanged()');
-    expect(editForm).toContain('idempotencyKey: stockMutationKeyStore.current.get(stockIntent)');
+    expect(editForm).toMatch(/if \(result\.productSaved\) \{[\s\S]*?await runProductPostCommitBestEffort\(\[/);
+    expect(editForm).toContain('createImmutableMutationAttemptStore<ProductEditStockAttempt>()');
+    expect(editForm).toContain('stockMutationOutcomeTracker.current.markAmbiguous()');
     expect(editForm).toContain('classifyProductSale');
     expect(editView).toContain('classifyProductSale');
-    expect(posModule).toContain('getProductAdminVariantSellBy');
+    expect(posModule).toContain('mergeProductAdminNullableMirrorFields');
     expect(sharedTypes).toContain("sellBy?: 'PIECE' | 'WEIGHT';");
     expect(editForm).toMatch(/\n\s+sellBy,\n/);
-    expect(editForm).toContain('const originalSellBy = productSellBy(product);');
+    expect(editForm).toContain('const originalSellBy = productSellBy(baselineProduct);');
     expect(editForm).toContain("setStockQty('0')");
     expect(editForm).toContain('stockResetNotice');
     expect(editForm).toContain('products.edit.stockResetNotice');
+    expect(editForm).toContain('const sellByLockedByStockPermission =');
+    expect(editForm).toContain('if (sellByChangeRequiresStockPermission)');
+    expect(editForm).toContain('disabled={sellByLockedByStockPermission}');
+    expect(translationBlock('en')).toContain("'products.edit.sellByStockPermission':");
+    expect(translationBlock('vi')).toContain("'products.edit.sellByStockPermission':");
+    expect(translationBlock('pl')).toContain("'products.edit.sellByStockPermission':");
     expect(apiClient).not.toContain('withoutUnsupportedProductAdminSellBy');
     expect(editForm).toContain('products.edit.discardConfirm');
     expect(deactivateDialog).toContain('window.electronAPI.pos.productAdmin.deactivateVariant');

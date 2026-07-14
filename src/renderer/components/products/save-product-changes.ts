@@ -45,7 +45,17 @@ export async function executeProductSave({
   }
 
   if (stockDirty) {
-    const stockResult = await adjustStock(nextExpectedUpdatedAt);
+    let stockResult: MutationResult;
+    try {
+      stockResult = await adjustStock(nextExpectedUpdatedAt);
+    } catch (error) {
+      return {
+        status: 'stock-failed',
+        productSaved,
+        expectedUpdatedAt: nextExpectedUpdatedAt,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     if (!stockResult.ok) {
       return {
         status: 'stock-failed',
@@ -54,6 +64,7 @@ export async function executeProductSave({
         error: stockResult.error || stockResult.code,
       };
     }
+    nextExpectedUpdatedAt = stockResult.data?.variant?.updatedAt || nextExpectedUpdatedAt;
   }
 
   return {
