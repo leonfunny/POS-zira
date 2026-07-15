@@ -122,8 +122,9 @@ export function canChangeExistingProductItemType(
   nextItemType: ProductAdminItemType,
 ): boolean {
   const nextPolicy = getProductItemTypePolicy(nextItemType, currentSellBy);
-  return nextPolicy.stockApplies === currentTracked
-    && nextPolicy.sellBy === currentSellBy;
+  if (nextPolicy.sellBy !== currentSellBy) return false;
+  // Disabling tracking is validated against canonical stock by the backend.
+  return currentTracked || !nextPolicy.stockApplies;
 }
 
 export async function runProductPostCommitBestEffort(
@@ -1034,7 +1035,6 @@ export default function ProductEditForm({
             <select
               value={itemType}
               onChange={(event) => changeItemType(event.target.value)}
-              disabled={stockTracked}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
               <option value="stockable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'stockable')}>{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
@@ -1045,8 +1045,8 @@ export default function ProductEditForm({
               <span className="mt-2 block text-xs text-slate-500">
                 {tOr(
                   t,
-                  'products.edit.inventoryTrackingLocked',
-                  'Inventory tracking cannot be disabled on an existing product. Create a new product for a non-tracked item.',
+                  'products.edit.inventoryTrackingZeroRequired',
+                  'Stock must be zero before changing an existing product to a service or non-tracked consumable.',
                 )}
               </span>
             ) : null}

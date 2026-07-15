@@ -44,7 +44,7 @@ describe('product workspace IPC input boundary', () => {
       .toBe('INVALID_STOCK_QUANTITY');
   });
 
-  it('rejects existing inventory-mode transitions and omits unchanged dangerous fields', () => {
+  it('allows disabling tracking but rejects sell-by changes and tracking re-enable', () => {
     const trackedPiece = {
       sell_by: 'PIECE',
       item_type: 'stockable',
@@ -55,14 +55,18 @@ describe('product workspace IPC input boundary', () => {
       { sellBy: 'WEIGHT' },
       trackedPiece,
     )).toThrow('existing-product-inventory-mode-transition-unavailable');
-    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+    expect(sanitizeExistingProductInventoryModeUpdate(
       { itemType: 'service' },
       trackedPiece,
-    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
-    expect(errorCode(() => sanitizeExistingProductInventoryModeUpdate(
+    )).toEqual({ itemType: 'service' });
+    expect(sanitizeExistingProductInventoryModeUpdate(
+      { itemType: 'consumable' },
+      trackedPiece,
+    )).toEqual({ itemType: 'consumable' });
+    expect(sanitizeExistingProductInventoryModeUpdate(
       { trackInventory: false },
       trackedPiece,
-    ))).toBe('INVENTORY_MODE_TRANSITION_UNSUPPORTED');
+    )).toEqual({ trackInventory: false });
 
     const untrackedPiece = {
       sell_by: 'PIECE',

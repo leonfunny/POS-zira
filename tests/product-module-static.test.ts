@@ -188,11 +188,11 @@ describe('Product module implementation contract', () => {
     expect(updatePayloadBlock).not.toMatch(/\bsellBy\s*:/);
     expect(editForm).toContain('canChangeExistingProductItemType');
     expect(editForm).toContain('products.edit.inventoryModeLocked');
-    expect(editForm).toContain('products.edit.inventoryTrackingLocked');
+    expect(editForm).toContain('products.edit.inventoryTrackingZeroRequired');
     expect(posModule).toContain('sanitizeExistingProductInventoryModeUpdate');
     for (const locale of ['en', 'vi', 'pl'] as const) {
       expect(translationBlock(locale)).toContain("'products.edit.inventoryModeLocked':");
-      expect(translationBlock(locale)).toContain("'products.edit.inventoryTrackingLocked':");
+      expect(translationBlock(locale)).toContain("'products.edit.inventoryTrackingZeroRequired':");
     }
     expect(apiClient).not.toContain('withoutUnsupportedProductAdminSellBy');
     expect(editForm).toContain('products.edit.discardConfirm');

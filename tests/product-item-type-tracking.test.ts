@@ -45,16 +45,20 @@ describe('product stock tracking helper', () => {
     });
   });
 
-  it('keeps existing tracked products from requesting inventory-mode transitions', () => {
+  it('allows zero-stock disable requests while keeping incompatible transitions blocked', () => {
     expect(canChangeExistingProductItemType(true, 'PIECE', 'stockable')).toBe(true);
-    expect(canChangeExistingProductItemType(true, 'PIECE', 'service')).toBe(false);
-    expect(canChangeExistingProductItemType(true, 'PIECE', 'consumable')).toBe(false);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'service')).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'consumable')).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'service')).toBe(false);
+    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'consumable')).toBe(true);
     expect(canChangeExistingProductItemType(false, 'PIECE', 'stockable')).toBe(false);
     expect(canChangeExistingProductItemType(false, 'WEIGHT', 'service')).toBe(false);
     expect(canChangeExistingProductItemType(false, 'WEIGHT', 'consumable')).toBe(true);
 
     const editForm = source('src/renderer/components/products/ProductEditForm.tsx');
     expect(editForm).toContain('Quantity/weight mode is locked for existing products.');
+    expect(editForm).toContain('Stock must be zero before changing an existing product');
+    expect(editForm).not.toContain('disabled={stockTracked}');
     expect(editForm).not.toContain('payload.trackInventory');
     expect(editForm).not.toContain('sellBy,\n        isActive:');
   });
