@@ -588,6 +588,7 @@ export interface AgentConfig {
     fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
     labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
     labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
+    labelModuleLanguage?: 'vi' | 'pl';    // Label content language; independent from the POS UI language
     googleCustomSearchApiKey?: string;    // Optional fallback for EAN lookup when public product databases miss.
     googleCustomSearchCx?: string;        // Google Programmable Search engine id for EAN lookup.
     // Receipt seller info (Polish paragon compliance)

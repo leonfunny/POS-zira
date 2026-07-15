@@ -151,7 +151,9 @@ export function useProducts(language: string): UseProductsResult {
       if (requestId !== requestIdRef.current) return;
       rlog.warn('[useProducts] failed to load catalog', err?.message || err);
       setError(err?.message || 'products.error');
-      setAllProducts([]);
+      // Keep the last usable local mirror visible. On first load this is
+      // already empty; after a transient refresh failure, clearing it would
+      // turn a stale-but-sellable catalog into a misleading empty screen.
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }

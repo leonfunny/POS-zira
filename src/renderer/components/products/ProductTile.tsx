@@ -2,7 +2,9 @@ import React from 'react';
 import { resolveName } from '../../../shared/catalog-names';
 import { isStockTracked, productItemType } from '../../../shared/product-stock-tracking';
 import type { ProductListItem } from '../../hooks/useProducts';
+import ProductThumbnail from './ProductThumbnail';
 import { stockColor, type StockColor } from './product-stock-color';
+import { formatStockQuantity, productStockDisplay } from './product-stock-display';
 
 interface ProductTileProps {
   product: ProductListItem;
@@ -31,7 +33,7 @@ const stockBadgeClasses: Record<StockColor, string> = {
 export default function ProductTile({ product, language, t, onSelect }: ProductTileProps) {
   const displayName = resolveName(product, language) || product.name;
   const price = Number(product.retail_price) || 0;
-  const stock = Number(product.available_qty ?? product.in_stock) || 0;
+  const stock = productStockDisplay(product).available;
   const currency = tOr(t, 'pos.currency', 'zl');
   const productCode = product.sku || product.barcode || '';
   const stockTracked = isStockTracked(product);
@@ -41,7 +43,7 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
     <button
       type="button"
       onClick={() => onSelect(product)}
-      className={`relative flex min-h-[96px] w-full flex-col justify-between overflow-hidden rounded-md border border-slate-200 bg-white text-slate-950 p-3 text-left shadow-sm transition duration-150 hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 motion-reduce:transition-none ${
+      className={`relative flex min-h-[148px] w-full flex-col justify-between overflow-hidden rounded-md border border-slate-200 bg-white text-slate-950 p-3 text-left shadow-sm transition duration-150 hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 motion-reduce:transition-none ${
         price <= 0 ? 'ring-2 ring-rose-300 ring-offset-2' : ''
       }`}
       title={displayName}
@@ -49,24 +51,14 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
       {stockTracked ? (
         <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${stockStripClasses[stockBand]}`} />
       ) : null}
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <span className="min-w-0 pl-1">
-          <span className="line-clamp-2 text-sm font-semibold leading-5 text-slate-950">{displayName}</span>
+      <div className="grid min-w-0 grid-cols-[52px_minmax(0,1fr)] items-start gap-2 pl-1">
+        <ProductThumbnail product={product} alt={displayName} />
+        <span className="min-w-0 flex-1 overflow-hidden">
+          <span className="line-clamp-3 text-sm font-semibold leading-5 text-slate-950">{displayName}</span>
           {productCode ? (
             <span className="mt-1 block truncate text-xs font-medium text-slate-500">{productCode}</span>
           ) : null}
         </span>
-        {stockTracked ? (
-          <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-bold tabular-nums ${stockBadgeClasses[stockBand]}`}>
-            {stock}
-          </span>
-        ) : (
-          <span className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
-            {productItemType(product) === 'service'
-              ? tOr(t, 'products.itemType.service', 'Service')
-              : tOr(t, 'products.itemType.noStock', 'No stock')}
-          </span>
-        )}
       </div>
 
       <div className="mt-3 flex flex-wrap items-end justify-between gap-2">
@@ -74,6 +66,17 @@ export default function ProductTile({ product, language, t, onSelect }: ProductT
           {(price / 100).toFixed(2)} {currency}
         </span>
         <span className="flex flex-wrap justify-end gap-1">
+          {stockTracked ? (
+            <span className={`min-w-12 shrink-0 whitespace-nowrap rounded-md border px-2 py-1 text-center text-xs font-bold tabular-nums ${stockBadgeClasses[stockBand]}`}>
+              {formatStockQuantity(stock)}
+            </span>
+          ) : (
+            <span className="shrink-0 whitespace-nowrap rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+              {productItemType(product) === 'service'
+                ? tOr(t, 'products.itemType.service', 'Service')
+                : tOr(t, 'products.itemType.noStock', 'No stock')}
+            </span>
+          )}
           {product._isDraft ? (
             <span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">
               {tOr(t, 'products.status.draft', 'Draft')}

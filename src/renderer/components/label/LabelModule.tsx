@@ -22,7 +22,16 @@ import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
-import { formatProductLabelPriceText } from '../../utils/product-label';
+import {
+  coerceLabelLanguage,
+  filterValidLabelSelectionIds,
+  formatProductLabelPriceText,
+  isPrintableLabelProduct,
+  labelSelectionIdsEqual,
+  normalizeLabelSelectionIds,
+  toggleLabelSelectionId,
+  type LabelLanguage,
+} from '../../utils/product-label';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface LabelModuleProps {
@@ -99,6 +108,8 @@ interface LabelCopy {
   clear: string;
   noCategories: string;
   noProductsAvailable: string;
+  staleSelections: (quantity: number) => string;
+  repair: string;
   highCopyWarning: string;
   printCopies: (quantity: number) => string;
   highCopyConfirm: (quantity: number) => string;
@@ -107,13 +118,7 @@ interface LabelCopy {
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
 
-type LabelLanguage = 'vi' | 'pl';
-
 const LABEL_LANGS: LabelLanguage[] = ['vi', 'pl'];
-
-function coerceLabelLanguage(value: unknown): LabelLanguage {
-  return LABEL_LANGS.includes(value as LabelLanguage) ? (value as LabelLanguage) : 'vi';
-}
 
 const COPY: Record<string, LabelCopy> = {
   en: {
@@ -163,6 +168,8 @@ const COPY: Record<string, LabelCopy> = {
     clear: 'Clear',
     noCategories: 'No local categories found',
     noProductsAvailable: 'No products found',
+    staleSelections: (quantity) => `${quantity} saved Label selection(s) no longer exist or cannot be printed.`,
+    repair: 'Repair settings',
     highCopyWarning: 'Large copy count requires confirmation before printing.',
     printCopies: (quantity) => quantity === 1 ? 'Print label' : `Print ${quantity} labels`,
     highCopyConfirm: (quantity) => `You are about to print ${quantity} labels. Continue?`,
@@ -214,6 +221,8 @@ const COPY: Record<string, LabelCopy> = {
     clear: 'Xóa',
     noCategories: 'Không có danh mục cục bộ',
     noProductsAvailable: 'Không tìm thấy sản phẩm',
+    staleSelections: (quantity) => `${quantity} lựa chọn Label đã lưu không còn tồn tại hoặc không thể in.`,
+    repair: 'Sửa cấu hình',
     highCopyWarning: 'Số lượng lớn sẽ cần xác nhận trước khi in.',
     printCopies: (quantity) => quantity === 1 ? 'In tem' : `In ${quantity} tem`,
     highCopyConfirm: (quantity) => `Bạn sắp in ${quantity} tem. Tiếp tục?`,
@@ -265,6 +274,8 @@ const COPY: Record<string, LabelCopy> = {
     clear: 'Wyczyść',
     noCategories: 'Brak lokalnych kategorii',
     noProductsAvailable: 'Nie znaleziono produktów',
+    staleSelections: (quantity) => `${quantity} zapisanych wyborów Label już nie istnieje lub nie nadaje się do druku.`,
+    repair: 'Napraw ustawienia',
     highCopyWarning: 'Duża liczba kopii wymaga potwierdzenia przed drukiem.',
     printCopies: (quantity) => quantity === 1 ? 'Drukuj etykietę' : `Drukuj ${quantity} etyk.`,
     highCopyConfirm: (quantity) => `Zamierzasz wydrukować ${quantity} etykiet. Kontynuować?`,
@@ -279,10 +290,6 @@ function normalizeSearch(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
-}
-
-function uniqueIds(ids: string[]): string[] {
-  return Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)));
 }
 
 function clampCopies(value: unknown): number {
@@ -365,7 +372,9 @@ function BarcodePreview({ barcode }: { barcode: string }) {
 
 export default function LabelModule({ language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
-  const [labelLanguage, setLabelLanguage] = useState<LabelLanguage>(() => coerceLabelLanguage(config?.posLanguage));
+  const [labelLanguage, setLabelLanguage] = useState<LabelLanguage>(() => (
+    coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage)
+  ));
   const copy = COPY[labelLanguage] || COPY.vi;
   const t = getTranslation(language);
   const tOr = (key: string, fallback: string) => {
@@ -387,6 +396,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [optimisticProductIds, setOptimisticProductIds] = useState<string[]>([]);
   const [pendingHighCopyPrint, setPendingHighCopyPrint] = useState<PendingHighCopyPrint | null>(null);
   const [confirmingHighCopyPrint, setConfirmingHighCopyPrint] = useState(false);
+  const [repairingSettings, setRepairingSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pinSearchSectionRef = useRef<HTMLElement | null>(null);
   const statusResetTimeoutRef = useRef<number | null>(null);
@@ -403,43 +413,60 @@ export default function LabelModule({ language }: LabelModuleProps) {
   }, []);
 
   useEffect(() => {
-    setLabelLanguage(coerceLabelLanguage(config?.posLanguage));
-  }, [config?.posLanguage]);
+    setLabelLanguage(coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage));
+  }, [config?.labelModuleLanguage, config?.posLanguage]);
 
   useEffect(() => {
     if (pendingCategoryConfigSavesRef.current > 0) return;
-    setOptimisticCategoryIds(uniqueIds((config?.labelModuleCategoryIds || []) as string[]));
+    setOptimisticCategoryIds(normalizeLabelSelectionIds(config?.labelModuleCategoryIds || []));
   }, [config?.labelModuleCategoryIds]);
 
   useEffect(() => {
     if (pendingProductConfigSavesRef.current > 0) return;
-    setOptimisticProductIds(uniqueIds((config?.labelModuleProductIds || []) as string[]));
+    setOptimisticProductIds(normalizeLabelSelectionIds(config?.labelModuleProductIds || []));
   }, [config?.labelModuleProductIds]);
 
   useEffect(() => {
     return () => clearStatusResetTimeout();
   }, [clearStatusResetTimeout]);
 
-  const pinnedProductIds = useMemo(
-    () => new Set(optimisticProductIds),
-    [optimisticProductIds],
-  );
-
-  const configuredCategoryIds = useMemo(
-    () => new Set(optimisticCategoryIds),
-    [optimisticCategoryIds],
-  );
-
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const printableProducts = useMemo(
+    () => products.filter(isPrintableLabelProduct),
+    [products],
+  );
+  const printableProductIds = useMemo(
+    () => new Set(printableProducts.map((product) => product.id)),
+    [printableProducts],
+  );
+  const staleCategoryIds = useMemo(
+    () => optimisticCategoryIds.filter((id) => !categoryById.has(id)),
+    [categoryById, optimisticCategoryIds],
+  );
+  const staleProductIds = useMemo(
+    () => optimisticProductIds.filter((id) => !printableProductIds.has(id)),
+    [optimisticProductIds, printableProductIds],
+  );
+  const configuredCategoryIds = useMemo(
+    () => new Set(optimisticCategoryIds.filter((id) => categoryById.has(id))),
+    [categoryById, optimisticCategoryIds],
+  );
+  const pinnedProductIds = useMemo(
+    () => new Set(optimisticProductIds.filter((id) => printableProductIds.has(id))),
+    [optimisticProductIds, printableProductIds],
+  );
+  const staleSelectionCount = loading || error
+    ? 0
+    : staleCategoryIds.length + staleProductIds.length;
   const setupConfigured = pinnedProductIds.size > 0 || configuredCategoryIds.size > 0;
 
   const labelProducts = useMemo(() => {
     if (!setupConfigured) return [];
-    return products.filter((product) => {
+    return printableProducts.filter((product) => {
       const categorySelected = !!product.category_id && configuredCategoryIds.has(product.category_id);
       return categorySelected || pinnedProductIds.has(product.id);
     });
-  }, [configuredCategoryIds, pinnedProductIds, products, setupConfigured]);
+  }, [configuredCategoryIds, pinnedProductIds, printableProducts, setupConfigured]);
 
   const filterCategories = useMemo(() => {
     const representedCategoryIds = new Set(
@@ -499,10 +526,10 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
   const selectableProducts = useMemo(() => {
     const normalized = normalizeSearch(settingsQuery);
-    return products
+    return printableProducts
       .filter((product) => productMatches(product, normalized, categoryById, labelLanguage))
       .slice(0, 160);
-  }, [categoryById, labelLanguage, products, settingsQuery]);
+  }, [categoryById, labelLanguage, printableProducts, settingsQuery]);
 
   const selectedCategories = useMemo(
     () => categories.filter((category) => configuredCategoryIds.has(category.id)),
@@ -510,13 +537,13 @@ export default function LabelModule({ language }: LabelModuleProps) {
   );
 
   const pinnedProducts = useMemo(
-    () => products.filter((product) => pinnedProductIds.has(product.id)),
-    [pinnedProductIds, products],
+    () => printableProducts.filter((product) => pinnedProductIds.has(product.id)),
+    [pinnedProductIds, printableProducts],
   );
 
   const handleLabelLanguageChange = useCallback((next: LabelLanguage) => {
     setLabelLanguage(next);
-    saveConfig({ posLanguage: next }).catch((err: any) => {
+    saveConfig({ labelModuleLanguage: next }).catch((err: any) => {
       rlog.error('[LabelModule] Failed to save label language:', err);
     });
   }, [saveConfig]);
@@ -527,13 +554,15 @@ export default function LabelModule({ language }: LabelModuleProps) {
     if (hasCategoryIds) pendingCategoryConfigSavesRef.current += 1;
     if (hasProductIds) pendingProductConfigSavesRef.current += 1;
 
-    const saveNext = async () => {
+    const saveNext = async (): Promise<boolean> => {
       try {
         await saveConfig(partial);
+        return true;
       } catch (err: any) {
         clearStatusResetTimeout();
         rlog.error('[LabelModule] Failed to save label settings:', err);
         setStatus({ type: 'error', message: err?.message || 'Failed to save label settings' });
+        return false;
       } finally {
         if (hasCategoryIds) pendingCategoryConfigSavesRef.current = Math.max(0, pendingCategoryConfigSavesRef.current - 1);
         if (hasProductIds) pendingProductConfigSavesRef.current = Math.max(0, pendingProductConfigSavesRef.current - 1);
@@ -541,7 +570,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     };
 
     const nextSave = configSaveChainRef.current.then(saveNext, saveNext);
-    configSaveChainRef.current = nextSave.catch(() => undefined);
+    configSaveChainRef.current = nextSave.then(() => undefined, () => undefined);
     return nextSave;
   }, [clearStatusResetTimeout, saveConfig]);
 
@@ -551,14 +580,38 @@ export default function LabelModule({ language }: LabelModuleProps) {
     });
   }, []);
 
+  const repairLabelSettings = async () => {
+    if (loading || error || repairingSettings) return;
+    const previousCategoryIds = optimisticCategoryIds;
+    const previousProductIds = optimisticProductIds;
+    const nextCategoryIds = filterValidLabelSelectionIds(previousCategoryIds, new Set(categoryById.keys()));
+    const nextProductIds = filterValidLabelSelectionIds(previousProductIds, printableProductIds);
+    setOptimisticCategoryIds(nextCategoryIds);
+    setOptimisticProductIds(nextProductIds);
+    setRepairingSettings(true);
+    try {
+      const saved = await persistLabelConfig({
+        labelModuleCategoryIds: nextCategoryIds,
+        labelModuleProductIds: nextProductIds,
+      });
+      if (!saved) {
+        setOptimisticCategoryIds((current) => (
+          labelSelectionIdsEqual(current, nextCategoryIds) ? previousCategoryIds : current
+        ));
+        setOptimisticProductIds((current) => (
+          labelSelectionIdsEqual(current, nextProductIds) ? previousProductIds : current
+        ));
+      }
+    } finally {
+      setRepairingSettings(false);
+    }
+  };
+
   const toggleCategory = (categoryId: string) => {
     setOptimisticCategoryIds((current) => {
-      const next = current.includes(categoryId)
-        ? current.filter((id) => id !== categoryId)
-        : [...current, categoryId];
-      const uniqueNext = uniqueIds(next);
-      void persistLabelConfig({ labelModuleCategoryIds: uniqueNext });
-      return uniqueNext;
+      const next = toggleLabelSelectionId(current, categoryId);
+      void persistLabelConfig({ labelModuleCategoryIds: next });
+      return next;
     });
   };
 
@@ -569,12 +622,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
   const togglePinnedProduct = (productId: string) => {
     setOptimisticProductIds((current) => {
-      const next = current.includes(productId)
-        ? current.filter((id) => id !== productId)
-        : [...current, productId];
-      const uniqueNext = uniqueIds(next);
-      void persistLabelConfig({ labelModuleProductIds: uniqueNext });
-      return uniqueNext;
+      const next = toggleLabelSelectionId(current, productId);
+      void persistLabelConfig({ labelModuleProductIds: next });
+      return next;
     });
   };
 
@@ -591,6 +641,11 @@ export default function LabelModule({ language }: LabelModuleProps) {
     requestedCopies: number,
     options: { confirmHighCopy?: boolean } = {},
   ) => {
+    if (!isPrintableLabelProduct(product)) {
+      clearStatusResetTimeout();
+      setStatus({ type: 'error', message: copy.noProductsAvailable });
+      return;
+    }
     const barcode = resolveLabelCode(product);
     const quantity = clampCopies(requestedCopies);
     const displayName = resolveName(product, labelLanguage) || product.name || barcode;
@@ -657,7 +712,14 @@ export default function LabelModule({ language }: LabelModuleProps) {
     if (!pending || confirmingHighCopyPrint) return;
     setConfirmingHighCopyPrint(true);
     try {
-      await printProduct(pending.product, pending.requestedCopies, {
+      const currentProduct = products.find((product) => product.id === pending.product.id);
+      if (!currentProduct || !isPrintableLabelProduct(currentProduct)) {
+        clearStatusResetTimeout();
+        setStatus({ type: 'error', message: copy.noProductsAvailable });
+        setPendingHighCopyPrint(null);
+        return;
+      }
+      await printProduct(currentProduct, pending.requestedCopies, {
         ...pending.options,
         confirmHighCopy: false,
       });
@@ -665,7 +727,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     } finally {
       setConfirmingHighCopyPrint(false);
     }
-  }, [confirmingHighCopyPrint, pendingHighCopyPrint, printProduct]);
+  }, [clearStatusResetTimeout, confirmingHighCopyPrint, copy.noProductsAvailable, pendingHighCopyPrint, printProduct, products]);
 
   const handlePrint = useCallback(() => {
     if (!selectedProduct) {
@@ -1042,6 +1104,19 @@ export default function LabelModule({ language }: LabelModuleProps) {
                     <Tag className="mx-auto mb-3 text-slate-300" size={42} />
                     <h2 className="text-base font-extrabold text-slate-900">{copy.setupTitle}</h2>
                     <p className="mt-1 text-sm font-semibold text-slate-500">{copy.setupHint}</p>
+                    {staleSelectionCount > 0 ? (
+                      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-800">
+                        <p>{copy.staleSelections(staleSelectionCount)}</p>
+                        <button
+                          type="button"
+                          onClick={() => void repairLabelSettings()}
+                          disabled={repairingSettings}
+                          className="mt-3 min-h-11 rounded-md border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {copy.repair}
+                        </button>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => setSettingsOpen(true)}
@@ -1148,6 +1223,19 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-4">
+                  {staleSelectionCount > 0 ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-800">
+                      <p>{copy.staleSelections(staleSelectionCount)}</p>
+                      <button
+                        type="button"
+                        onClick={() => void repairLabelSettings()}
+                        disabled={repairingSettings}
+                        className="mt-2 min-h-11 rounded-md border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {copy.repair}
+                      </button>
+                    </div>
+                  ) : null}
                   <section className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <div>

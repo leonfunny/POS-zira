@@ -16,7 +16,11 @@ describe('Products drill-down components', () => {
     expect(tile).toContain('stockStripClasses[stockBand]');
     expect(tile).toContain('stockBadgeClasses[stockBand]');
     expect(tile).toContain('resolveName(product, language)');
-    expect(tile).toContain('min-h-[96px]');
+    expect(tile).toContain('min-h-[148px]');
+    expect(tile).toContain('min-w-0 flex-1 overflow-hidden');
+    expect(tile).toContain('min-w-12 shrink-0 whitespace-nowrap');
+    expect(tile).toContain('line-clamp-3');
+    expect(tile).toContain('<ProductThumbnail');
     expect(tile).toContain('product.sku || product.barcode');
     expect(tile).toContain('bg-white text-slate-950');
     expect(tile).toContain('product._isDraft');
@@ -25,17 +29,20 @@ describe('Products drill-down components', () => {
     expect(tile).toContain('onClick={() => onSelect(product)}');
   });
 
-  it('renders ProductTileGrid with touch-safe navigation, capability-gated create, and a 300 item cap', () => {
+  it('renders ProductTileGrid with touch-safe navigation, capability-gated create, and incremental loading', () => {
     const grid = source('src/renderer/components/products/ProductTileGrid.tsx');
 
-    expect(grid).toContain('products.slice(0, PRODUCT_TILE_RENDER_LIMIT)');
-    expect(grid).toContain('const PRODUCT_TILE_RENDER_LIMIT = 300');
+    expect(grid).toContain('products.slice(0, visibleLimit)');
+    expect(grid).toContain('const PRODUCT_TILE_PAGE_SIZE = 300');
+    expect(grid).toContain('useEffect(() => {');
+    expect(grid).toContain('}, [browseKey]);');
+    expect(grid).toContain("tOr(t, 'products.loadMore', 'Load more')");
     expect(grid).toContain('canCreateProduct ? (');
     expect(grid).toContain('<ProductTile');
     expect(grid).toContain('onOpenSearch');
     expect(grid).toContain('onAddByBarcode');
     expect(grid).toContain('onBack');
-    expect(grid).toContain('minmax(160px,1fr)');
+    expect(grid).toContain('minmax(220px,1fr)');
   });
 
   it('renders sorted category buttons plus all and uncategorised entries', () => {
@@ -61,6 +68,15 @@ describe('Products drill-down components', () => {
     expect(overlay).toContain("var(--touch-keyboard-inset, 0px)");
     expect(overlay).toContain('canCreateProduct && resolution.kind ===');
     expect(overlay).toContain('requestIdRef.current += 1');
+    expect(overlay).toContain('<ProductThumbnail');
+    expect(overlay).toContain('productStockDisplay(product).available');
+    expect(overlay).toContain('const SEARCH_RESULT_PAGE_SIZE = 100');
+    expect(overlay).toContain('products.slice(0, visibleLimit)');
+    expect(overlay).not.toContain('products.slice(0, 100)');
+    expect(overlay).toContain('categoryById.get(product.category_id)');
+    expect(overlay).toContain("tOr(t, 'products.loadMore', 'Load more')");
+    expect(overlay).toContain('onClick={() => void resolveCode(query)}');
+    expect(overlay).toContain("tOr(t, 'common.retry', 'Retry')");
   });
 
   it('keeps ProductDetailDrawer behavior in the full-screen ProductEditView', () => {
@@ -76,6 +92,8 @@ describe('Products drill-down components', () => {
     expect(editView).toContain('onStaleProductHidden');
     expect(editView).toContain('products.edit.discardConfirm');
     expect(editView).toContain('<ProductStatusBadge');
+    expect(editView).toContain("'products.drawer.availableStock'");
+    expect(editView).toContain("'products.drawer.physicalStock'");
   });
 
   it('routes ProductModule through categories, product tiles, edit view, and search overlay', () => {
@@ -94,6 +112,8 @@ describe('Products drill-down components', () => {
     expect(moduleSource).toContain("setAddInitialBarcode('')");
     expect(moduleSource).toContain('syncProducts');
     expect(moduleSource).toContain('setKindFilter');
+    expect(moduleSource).toContain('categoryById={categoryById}');
+    expect(moduleSource).toContain("browseKey={`${view.categoryId ?? 'UNCATEGORISED'}:${kindFilter}`}");
     expect(moduleSource).not.toContain('<ProductTable');
     expect(moduleSource).not.toContain('<ProductToolbar');
     expect(moduleSource).not.toContain('<ProductDetailDrawer');

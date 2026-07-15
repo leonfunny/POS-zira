@@ -246,7 +246,7 @@ describe('Product module implementation contract', () => {
     expect(moduleSource).toContain('usePosStore()');
     expect(moduleSource).toContain('selectedProductInCart');
     expect(moduleSource).toContain('products.deactivate.hidden');
-    expect(tileGrid).toContain('PRODUCT_TILE_RENDER_LIMIT = 300');
+    expect(tileGrid).toContain('PRODUCT_TILE_PAGE_SIZE = 300');
     expect(searchOverlay).toContain('window.electronAPI.pos.products.getByBarcode');
     expect(moduleSource).toContain('syncProducts');
     expect(moduleSource).toContain('setKindFilter');
@@ -257,6 +257,7 @@ describe('Product module implementation contract', () => {
     expect(useProducts).toContain('onCatalogUpdated');
     expect(useProducts).toContain('onStockUpdated');
     expect(useProducts).toContain('onDraftProductsSynced');
+    expect(useProducts).not.toContain('setAllProducts([])');
   });
 
   it('keeps local refresh in a secondary actions menu and compacts edit chrome', () => {
@@ -303,6 +304,7 @@ describe('Product module implementation contract', () => {
       expect(block, `${lang} missing category-grid label`).toContain("'products.categories'");
       expect(block, `${lang} missing search overlay placeholder`).toContain("'products.searchCodePlaceholder'");
       expect(block, `${lang} missing duplicate scan label`).toContain("'products.scan.duplicate'");
+      expect(block, `${lang} missing negative-stock status`).toContain("'products.status.oversold'");
       expect(block, `${lang} missing duplicate create label`).toContain("'products.create.duplicateBarcode'");
       expect(block, `${lang} missing duplicate SKU create label`).toContain("'products.create.duplicateSku'");
       expect(block, `${lang} missing uncategorised label`).toContain("'products.uncategorised'");
@@ -324,6 +326,13 @@ describe('Product module implementation contract', () => {
     expect(moduleSource).toContain('products.admin.capability.createProduct');
     expect(moduleSource).toContain('products.admin.capability.adjustStock');
     expect(moduleSource).toContain('adminSummary || tOr(t,');
+  });
+
+  it('lets operators retry catalog and capability failures in place', () => {
+    expect(moduleSource).toContain('retry: retryAdminCapabilities');
+    expect(moduleSource).toContain('onClick={retryAdminCapabilities}');
+    expect(moduleSource).toContain('onClick={() => void refresh()}');
+    expect(moduleSource).toContain("tOr(t, 'common.retry', 'Retry')");
   });
 
   it('uses existing barcode draft import flow instead of local-only product creation', () => {

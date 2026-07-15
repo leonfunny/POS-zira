@@ -445,6 +445,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
     capabilities: adminCapabilities,
     error: adminCapabilityError,
     loading: adminCapabilitiesLoading,
+    retry: retryAdminCapabilities,
   } = useProductAdminCapabilities();
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
   const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
@@ -833,8 +834,16 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
       ) : null}
 
       {error ? (
-        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {tOr(t, 'products.error', 'Could not load products')}: {error}
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <span>{tOr(t, 'products.error', 'Could not load products')}: {error}</span>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={loading}
+            className="min-h-11 rounded-md border border-rose-300 bg-white px-3 font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {tOr(t, 'common.retry', 'Retry')}
+          </button>
         </div>
       ) : null}
 
@@ -851,10 +860,21 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
             : adminBackendReady
               ? adminSummary || tOr(t, 'products.admin.ready', 'Product admin backend is available')
               : (
-                <span className="flex items-center gap-2">
-                  <AlertTriangle size={16} className="shrink-0" />
-                  {tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}
-                  {adminCapabilityError ? `: ${adminCapabilityError}` : ''}
+                <span className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <AlertTriangle size={16} className="shrink-0" />
+                    <span>
+                      {tOr(t, 'products.admin.notReady', 'Product admin backend is not available yet')}
+                      {adminCapabilityError ? `: ${adminCapabilityError}` : ''}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={retryAdminCapabilities}
+                    className="min-h-11 shrink-0 rounded-md border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                  >
+                    {tOr(t, 'common.retry', 'Retry')}
+                  </button>
                 </span>
               )}
         </div>
@@ -881,6 +901,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
       ) : view.name === 'products' ? (
         <ProductTileGrid
           products={browseProducts}
+          browseKey={`${view.categoryId ?? 'UNCATEGORISED'}:${kindFilter}`}
           categoryName={browseCategoryName}
           language={language}
           t={t}
@@ -933,6 +954,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
         query={query}
         products={searchProducts}
         allProducts={activeCatalogProducts}
+        categoryById={categoryById}
         currentCategoryId={currentCategoryId}
         language={language}
         t={t}

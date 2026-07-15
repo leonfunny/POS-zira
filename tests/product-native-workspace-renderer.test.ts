@@ -26,10 +26,10 @@ describe('native Product workspace renderer', () => {
     })).toBe(10);
 
     const editView = source('src/renderer/components/products/ProductEditView.tsx');
-    expect(editView).toContain('const stock = product.in_stock ?? product.available_qty ?? 0;');
+    expect(editView).toContain('const stock = productStockDisplay(product);');
   });
 
-  it('locks sibling product mutations for the whole edit session but keeps label printing available', () => {
+  it('locks sibling product mutations and label printing for the whole edit session', () => {
     const editView = source('src/renderer/components/products/ProductEditView.tsx');
 
     expect(editView).toContain('const siblingMutationsLocked = editing || editBusy || stockOpen || receiveOpen || deactivateOpen || reactivateBusy;');
@@ -40,7 +40,13 @@ describe('native Product workspace renderer', () => {
     expect(editView).toContain('disabled={!canOpenStockAdjustment || siblingMutationsLocked}');
     expect(editView).toContain('disabled={!canReactivate || reactivateBusy || siblingMutationsLocked}');
     expect(editView).toContain('disabled={!canStopSelling || siblingMutationsLocked}');
+    expect(editView).toContain('const canPrintLabel = !!product.barcode');
+    expect(editView).toContain('&& !siblingMutationsLocked');
+    expect(editView).toContain('&& !importPending');
+    expect(editView).toContain('&& product.is_active !== 0;');
     expect(editView).toContain('disabled={!canPrintLabel}');
+    expect(editView).toContain('formatProductLabelPriceText(product, currency)');
+    expect(editView).toContain('resolveName(product, labelLanguage)');
   });
 
   it('validates standalone stock quantities against the product sale mode', () => {

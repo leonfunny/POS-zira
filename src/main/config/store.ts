@@ -338,6 +338,7 @@ const store = new Store<AgentConfig>({
     fiscalOnCashSale: { type: 'string', enum: ['always', 'never', 'ask'], default: 'ask' },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
     labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },
+    labelModuleLanguage: { type: 'string', enum: ['vi', 'pl'] },
     googleCustomSearchApiKey: { type: 'string', default: '' },
     googleCustomSearchCx: { type: 'string', default: '' },
     // Receipt seller info (Polish paragon compliance)

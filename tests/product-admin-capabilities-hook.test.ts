@@ -14,4 +14,14 @@ describe('product-admin capabilities hook', () => {
     expect(hook).toContain('if (!enabled)');
     expect(hook).toContain('cache = next.error ? null : next');
   });
+
+  it('exposes an explicit retry that clears the cache and repeats the request', () => {
+    const hook = source('src/renderer/hooks/useProductAdminCapabilities.ts');
+
+    expect(hook).toContain('retry: () => void');
+    expect(hook).toContain('const retry = useCallback(() => {');
+    expect(hook).toContain('cache = null');
+    expect(hook).toContain('setRequestVersion((version) => version + 1)');
+    expect(hook).toContain('[enabled, requestVersion]');
+  });
 });

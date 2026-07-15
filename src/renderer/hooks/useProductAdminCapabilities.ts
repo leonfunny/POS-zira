@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ProductAdminCapabilities } from '../../shared/types';
 
 type ProductAdminCapabilitiesState = {
   capabilities: ProductAdminCapabilities | null;
   error: string | null;
   loading: boolean;
+  retry: () => void;
 };
 
 type ProductAdminCapabilitiesResult = {
@@ -20,11 +21,18 @@ export function resetProductAdminCapabilitiesCache(): void {
 }
 
 export function useProductAdminCapabilities(enabled = true): ProductAdminCapabilitiesState {
-  const [state, setState] = useState<ProductAdminCapabilitiesState>(() => ({
+  const [requestVersion, setRequestVersion] = useState(0);
+  const [state, setState] = useState<Omit<ProductAdminCapabilitiesState, 'retry'>>(() => ({
     capabilities: enabled ? cache?.capabilities ?? null : null,
     error: enabled ? cache?.error ?? null : null,
     loading: enabled && !cache,
   }));
+
+  const retry = useCallback(() => {
+    cache = null;
+    setState((current) => ({ ...current, error: null, loading: enabled }));
+    setRequestVersion((version) => version + 1);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) {
@@ -70,7 +78,7 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, requestVersion]);
 
-  return state;
+  return { ...state, retry };
 }

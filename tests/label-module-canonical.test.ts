@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  coerceLabelLanguage,
+  filterValidLabelSelectionIds,
+  isPrintableLabelProduct,
+  toggleLabelSelectionId,
+} from '../src/renderer/utils/product-label';
 
 const ROOT = path.resolve(__dirname, '..');
 const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
@@ -36,9 +42,52 @@ describe('canonical Label tab workflow', () => {
     expect(SHARED_TYPES).toContain('labelModuleCategoryIds?: string[]');
     expect(LABEL_MODULE).toContain('config?.labelModuleCategoryIds');
     expect(LABEL_MODULE).toContain('config?.labelModuleProductIds');
+    expect(LABEL_MODULE).toContain('const printableProducts = useMemo(');
+    expect(LABEL_MODULE).toContain('.filter(isPrintableLabelProduct)');
+    expect(LABEL_MODULE).toContain('const staleSelectionCount = loading || error');
+    expect(LABEL_MODULE).toContain('const setupConfigured = pinnedProductIds.size > 0 || configuredCategoryIds.size > 0;');
     expect(LABEL_MODULE).toContain('if (!setupConfigured) return [];');
     expect(LABEL_MODULE).toContain('const categorySelected = !!product.category_id && configuredCategoryIds.has(product.category_id);');
     expect(LABEL_MODULE).toContain('return categorySelected || pinnedProductIds.has(product.id);');
+  });
+
+  it('treats drafts and inactive rows as non-printable', () => {
+    expect(isPrintableLabelProduct({ is_active: 1 })).toBe(true);
+    expect(isPrintableLabelProduct({ is_active: 0 })).toBe(false);
+    expect(isPrintableLabelProduct({ is_active: 1, _isDraft: true })).toBe(false);
+    expect(LABEL_MODULE).toContain('if (!isPrintableLabelProduct(product)) {');
+  });
+
+  it('isolates the Label language from the global POS language', () => {
+    expect(coerceLabelLanguage('pl')).toBe('pl');
+    expect(coerceLabelLanguage('vi')).toBe('vi');
+    expect(coerceLabelLanguage('en')).toBe('vi');
+    expect(CONFIG_STORE).toContain("labelModuleLanguage: { type: 'string', enum: ['vi', 'pl'] }");
+    expect(SHARED_TYPES).toContain("labelModuleLanguage?: 'vi' | 'pl'");
+    expect(LABEL_MODULE).toContain('config?.labelModuleLanguage ?? config?.posLanguage');
+    expect(LABEL_MODULE).toContain('saveConfig({ labelModuleLanguage: next })');
+    expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
+  });
+
+  it('repairs stale selections only after an explicit operator action', () => {
+    expect(LABEL_MODULE).toContain('const repairLabelSettings = async () => {');
+    expect(LABEL_MODULE).toContain('if (loading || error || repairingSettings) return;');
+    expect(LABEL_MODULE).toContain('onClick={() => void repairLabelSettings()}');
+    expect(LABEL_MODULE).toContain('labelModuleCategoryIds: nextCategoryIds');
+    expect(LABEL_MODULE).toContain('labelModuleProductIds: nextProductIds');
+    expect(LABEL_MODULE).not.toContain('void repairLabelSettings();');
+    expect(LABEL_MODULE).toContain('if (!saved) {');
+    expect(LABEL_MODULE).toContain('labelSelectionIdsEqual(current, nextCategoryIds) ? previousCategoryIds : current');
+    expect(LABEL_MODULE).toContain('labelSelectionIdsEqual(current, nextProductIds) ? previousProductIds : current');
+  });
+
+  it('preserves unrelated stale IDs during normal toggles and removes them only during repair', () => {
+    expect(toggleLabelSelectionId(['stale', 'selected'], 'new')).toEqual(['stale', 'selected', 'new']);
+    expect(toggleLabelSelectionId(['stale', 'selected'], 'selected')).toEqual(['stale']);
+    expect(filterValidLabelSelectionIds(['stale', 'selected', 'selected'], new Set(['selected'])))
+      .toEqual(['selected']);
+    expect(LABEL_MODULE).toContain('toggleLabelSelectionId(current, categoryId)');
+    expect(LABEL_MODULE).toContain('toggleLabelSelectionId(current, productId)');
   });
 
   it('keeps Label settings toggles optimistic and saves canonical config payloads', () => {
@@ -48,12 +97,12 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('const pendingProductConfigSavesRef = useRef(0);');
     expect(LABEL_MODULE).toContain('if (pendingCategoryConfigSavesRef.current > 0) return;');
     expect(LABEL_MODULE).toContain('if (pendingProductConfigSavesRef.current > 0) return;');
-    expect(LABEL_MODULE).toContain('setOptimisticCategoryIds(uniqueIds((config?.labelModuleCategoryIds || []) as string[]));');
-    expect(LABEL_MODULE).toContain('setOptimisticProductIds(uniqueIds((config?.labelModuleProductIds || []) as string[]));');
+    expect(LABEL_MODULE).toContain('setOptimisticCategoryIds(normalizeLabelSelectionIds(config?.labelModuleCategoryIds || []));');
+    expect(LABEL_MODULE).toContain('setOptimisticProductIds(normalizeLabelSelectionIds(config?.labelModuleProductIds || []));');
     expect(LABEL_MODULE).toContain('setOptimisticCategoryIds((current) => {');
     expect(LABEL_MODULE).toContain('setOptimisticProductIds((current) => {');
-    expect(LABEL_MODULE).toContain('void persistLabelConfig({ labelModuleCategoryIds: uniqueNext });');
-    expect(LABEL_MODULE).toContain('void persistLabelConfig({ labelModuleProductIds: uniqueNext });');
+    expect(LABEL_MODULE).toContain('void persistLabelConfig({ labelModuleCategoryIds: next });');
+    expect(LABEL_MODULE).toContain('void persistLabelConfig({ labelModuleProductIds: next });');
     expect(LABEL_MODULE).toContain('const configSaveChainRef = useRef<Promise<void>>(Promise.resolve());');
     expect(LABEL_MODULE).toContain('configSaveChainRef.current.then(saveNext, saveNext)');
     expect(LABEL_MODULE).toContain('pendingCategoryConfigSavesRef.current = Math.max(0, pendingCategoryConfigSavesRef.current - 1);');
@@ -95,6 +144,18 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('statusResetTimeoutRef.current = window.setTimeout(() => {');
     expect(LABEL_MODULE).toContain('if (printSequenceRef.current === printToken) {');
     expect(LABEL_MODULE).toContain('statusResetTimeoutRef.current = null;');
+  });
+
+  it('re-resolves a high-copy confirmation from the current catalog row', () => {
+    expect(LABEL_MODULE).toContain('const currentProduct = products.find((product) => product.id === pending.product.id);');
+    expect(LABEL_MODULE).toContain('await printProduct(currentProduct, pending.requestedCopies');
+    expect(LABEL_MODULE).not.toContain('await printProduct(pending.product, pending.requestedCopies');
+    const printProduct = LABEL_MODULE.slice(
+      LABEL_MODULE.indexOf('const printProduct = useCallback'),
+      LABEL_MODULE.indexOf('const handleCancelHighCopyPrint'),
+    );
+    expect(printProduct).toContain('const barcode = resolveLabelCode(product);');
+    expect(printProduct).toContain('if (!barcode) {');
   });
 
   it('keeps the pinned-product settings search above the shared touch keyboard', () => {

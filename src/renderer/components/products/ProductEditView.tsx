@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Ban, ChevronLeft, Package, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Ban, ChevronLeft, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminReceiveStockResponse, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import { useConfig } from '../../hooks/useConfig';
 import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
+import { coerceLabelLanguage, formatProductLabelPriceText } from '../../utils/product-label';
 import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm, {
   productEditNavigationState,
@@ -14,8 +16,10 @@ import ProductEditForm, {
 } from './ProductEditForm';
 import ProductLotSummary from './ProductLotSummary';
 import ReceiveStockDialog from './ReceiveStockDialog';
+import ProductThumbnail from './ProductThumbnail';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
+import { formatStockQuantity, productStockDisplay } from './product-stock-display';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface ProductEditViewProps {
@@ -121,6 +125,7 @@ export default function ProductEditView({
   onProductReactivated,
   onStaleProductHidden,
 }: ProductEditViewProps) {
+  const { config } = useConfig();
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
@@ -192,13 +197,19 @@ export default function ProductEditView({
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const displayName = resolveName(product, language) || product.name;
+  const labelLanguage = coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage);
+  const labelDisplayName = resolveName(product, labelLanguage) || product.name;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
   const categoryName = category ? resolveName(category, language) : '-';
-  const image = product.thumbnail_url || product.image_url;
-  const stock = product.in_stock ?? product.available_qty ?? 0;
+  const stock = productStockDisplay(product);
   const saleClass = classifyProductSale(product);
   const siblingMutationsLocked = editing || editBusy || stockOpen || receiveOpen || deactivateOpen || reactivateBusy;
-  const canPrintLabel = !!product.barcode && !labelBusy;
+  const canPrintLabel = !!product.barcode
+    && !labelBusy
+    && !siblingMutationsLocked
+    && !importPending
+    && !product._isDraft
+    && product.is_active !== 0;
   const canEditProduct = canUpdateProduct && !product._isDraft && !importPending;
   const stockTracked = isStockTracked(product);
   const canOpenStockAdjustment = canAdjustStock && !product._isDraft && stockTracked && !importPending;
@@ -251,13 +262,13 @@ export default function ProductEditView({
   };
 
   const handlePrintLabel = async () => {
-    if (!product.barcode || labelBusy) return;
+    if (!canPrintLabel || !product.barcode) return;
     setLabelBusy(true);
     setLabelMessage(null);
     try {
-      const priceGrosze = Number(product.retail_price) || 0;
-      const result = await window.electronAPI.printLabel(product.barcode, displayName, {
-        priceText: priceGrosze > 0 ? formatMoney(priceGrosze, currency) : undefined,
+      const priceText = formatProductLabelPriceText(product, currency);
+      const result = await window.electronAPI.printLabel(product.barcode, labelDisplayName, {
+        priceText,
         sku: product.sku?.trim() || undefined,
       });
       setLabelMessage(result?.success
@@ -327,17 +338,7 @@ export default function ProductEditView({
         onFocusCapture={handleKeyboardAwareFocus}
       >
         <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row">
-          {image ? (
-            <img
-              src={image}
-              alt={displayName}
-              className="h-28 w-28 rounded-md border border-slate-200 bg-slate-100 object-cover"
-            />
-          ) : (
-            <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
-              <Package size={36} />
-            </div>
-          )}
+          <ProductThumbnail product={product} alt={displayName} className="h-28 w-28" iconSize={36} />
           <div className="min-w-0 flex-1">
             <div className="text-2xl font-bold tabular-nums text-slate-950">
               {formatMoney(product.retail_price, currency)}
@@ -517,9 +518,15 @@ export default function ProductEditView({
             ) : null}
             <DetailRow label={tOr(t, 'products.drawer.vat', 'VAT')} value={`${Number(product.vat_rate) || 0}%`} />
             <DetailRow
-              label={tOr(t, 'products.drawer.stock', 'Stock')}
-              value={stockTracked ? stock : tOr(t, 'products.itemType.noStockValue', '— (not tracked)')}
+              label={tOr(t, 'products.drawer.availableStock', 'Available to sell')}
+              value={stockTracked ? formatStockQuantity(stock.available) : tOr(t, 'products.itemType.noStockValue', '— (not tracked)')}
             />
+            {stockTracked && stock.differs ? (
+              <DetailRow
+                label={tOr(t, 'products.drawer.physicalStock', 'Physical stock')}
+                value={formatStockQuantity(stock.physical)}
+              />
+            ) : null}
             <DetailRow label={tOr(t, 'products.drawer.barcode', 'Barcode')} value={product.barcode || '-'} mono />
             <DetailRow label={tOr(t, 'products.drawer.sku', 'SKU')} value={product.sku || '-'} mono />
             <DetailRow label={tOr(t, 'products.drawer.category', 'Category')} value={categoryName} />
