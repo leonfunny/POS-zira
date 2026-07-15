@@ -29,6 +29,7 @@ interface ProductEditFormProps {
   canManageCategories: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  canChangeInventoryMode: boolean;
   canViewPurchasePrice?: boolean;
   purchasePriceGrosze?: number | null;
   purchasePriceLoaded?: boolean;
@@ -120,9 +121,13 @@ export function canChangeExistingProductItemType(
   currentTracked: boolean,
   currentSellBy: 'PIECE' | 'WEIGHT',
   nextItemType: ProductAdminItemType,
+  canChangeInventoryMode: boolean,
 ): boolean {
   const nextPolicy = getProductItemTypePolicy(nextItemType, currentSellBy);
   if (nextPolicy.sellBy !== currentSellBy) return false;
+  if (currentTracked && !nextPolicy.stockApplies) {
+    return canChangeInventoryMode;
+  }
   // Disabling tracking is validated against canonical stock by the backend.
   return currentTracked || !nextPolicy.stockApplies;
 }
@@ -239,6 +244,7 @@ export default function ProductEditForm({
   canManageCategories,
   canAdjustStock,
   supportsItemType,
+  canChangeInventoryMode,
   canViewPurchasePrice = false,
   purchasePriceGrosze,
   purchasePriceLoaded = false,
@@ -483,7 +489,7 @@ export default function ProductEditForm({
       }
       if (supportsItemType
         && itemType !== originalItemType
-        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType)) {
+        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType, canChangeInventoryMode)) {
         payload.itemType = itemType as ProductAdminItemType;
       }
       if (purchasePriceDirty) {
@@ -512,7 +518,7 @@ export default function ProductEditForm({
       if (imageUrlDirty) committedFields.image_url = imageUrl.trim() || null;
       if (supportsItemType
         && itemType !== originalItemType
-        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType)) {
+        && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType, canChangeInventoryMode)) {
         committedFields.item_type = itemType;
       }
     }
@@ -697,7 +703,7 @@ export default function ProductEditForm({
 
   const changeItemType = (value: string) => {
     const nextItemType = value as ProductAdminItemType;
-    if (!canChangeExistingProductItemType(stockTracked, originalSellBy, nextItemType)) return;
+    if (!canChangeExistingProductItemType(stockTracked, originalSellBy, nextItemType, canChangeInventoryMode)) return;
     setItemType(nextItemType);
   };
 
@@ -1037,17 +1043,23 @@ export default function ProductEditForm({
               onChange={(event) => changeItemType(event.target.value)}
               className="h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500"
             >
-              <option value="stockable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'stockable')}>{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
-              <option value="service" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'service')}>{tOr(t, 'products.itemType.service', 'Service')}</option>
-              <option value="consumable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'consumable')}>{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
+              <option value="stockable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'stockable', canChangeInventoryMode)}>{tOr(t, 'products.itemType.stockable', 'Stocked goods')}</option>
+              <option value="service" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'service', canChangeInventoryMode)}>{tOr(t, 'products.itemType.service', 'Service')}</option>
+              <option value="consumable" disabled={!canChangeExistingProductItemType(stockTracked, originalSellBy, 'consumable', canChangeInventoryMode)}>{tOr(t, 'products.itemType.consumable', 'Consumable (not counted)')}</option>
             </select>
             {stockTracked ? (
               <span className="mt-2 block text-xs text-slate-500">
-                {tOr(
-                  t,
-                  'products.edit.inventoryTrackingZeroRequired',
-                  'Stock must be zero before changing an existing product to a service or non-tracked consumable.',
-                )}
+                {canChangeInventoryMode
+                  ? tOr(
+                    t,
+                    'products.edit.inventoryTrackingZeroRequired',
+                    'Stock must be zero before changing an existing product to a service or non-tracked consumable.',
+                  )
+                  : tOr(
+                    t,
+                    'products.edit.inventoryTrackingUnavailable',
+                    'The connected server does not support changing inventory tracking for existing products.',
+                  )}
               </span>
             ) : null}
             {itemType !== 'stockable' ? (

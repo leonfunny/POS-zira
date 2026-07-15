@@ -2923,6 +2923,8 @@ export interface ProductAdminCapabilities {
   supportsLotReceiving?: boolean;
   /** Server understands itemType/trackInventory on variants (create/update/response). */
   supportsItemType?: boolean;
+  /** Server allows guarded tracked-to-untracked transitions on existing products. */
+  canChangeInventoryMode?: boolean;
   /** Opaque snapshot/keyset product-sync cursor contract. */
   supportsProductSyncV2?: boolean;
   productSyncVersion?: number;

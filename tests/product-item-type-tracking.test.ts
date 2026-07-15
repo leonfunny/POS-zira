@@ -46,14 +46,15 @@ describe('product stock tracking helper', () => {
   });
 
   it('allows zero-stock disable requests while keeping incompatible transitions blocked', () => {
-    expect(canChangeExistingProductItemType(true, 'PIECE', 'stockable')).toBe(true);
-    expect(canChangeExistingProductItemType(true, 'PIECE', 'service')).toBe(true);
-    expect(canChangeExistingProductItemType(true, 'PIECE', 'consumable')).toBe(true);
-    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'service')).toBe(false);
-    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'consumable')).toBe(true);
-    expect(canChangeExistingProductItemType(false, 'PIECE', 'stockable')).toBe(false);
-    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'service')).toBe(false);
-    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'consumable')).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'stockable', false)).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'service', false)).toBe(false);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'service', true)).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'PIECE', 'consumable', true)).toBe(true);
+    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'service', true)).toBe(false);
+    expect(canChangeExistingProductItemType(true, 'WEIGHT', 'consumable', true)).toBe(true);
+    expect(canChangeExistingProductItemType(false, 'PIECE', 'stockable', true)).toBe(false);
+    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'service', true)).toBe(false);
+    expect(canChangeExistingProductItemType(false, 'WEIGHT', 'consumable', false)).toBe(true);
 
     const editForm = source('src/renderer/components/products/ProductEditForm.tsx');
     expect(editForm).toContain('Quantity/weight mode is locked for existing products.');
@@ -100,6 +101,7 @@ describe('itemType/trackInventory wiring contract', () => {
     // The capabilities mapper whitelists fields one by one — a missing line
     // here silently hides the item-kind picker even when the backend is ready.
     expect(apiClient).toContain('supportsItemType: raw?.supportsItemType === true');
+    expect(apiClient).toContain('canChangeInventoryMode: raw?.canChangeInventoryMode === true');
   });
 
   it('gates every stock affordance on isStockTracked', () => {
@@ -135,7 +137,9 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(createDialog).toContain("if (supportsItemType && itemType !== 'stockable')");
     expect(createDialog).toContain("initialStockQty: stockApplies ? validation.initialStockQty : 0");
     expect(editForm).toContain('canChangeExistingProductItemType(stockTracked, originalSellBy');
+    expect(editForm).toContain('canChangeInventoryMode');
     expect(types).toContain('supportsItemType?: boolean');
+    expect(types).toContain('canChangeInventoryMode?: boolean');
     expect(types).toContain("'STOCK_NOT_TRACKED'");
     expect(types).toContain("'STOCK_MUST_BE_ZERO'");
   });

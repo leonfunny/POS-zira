@@ -925,6 +925,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           canDeactivateProduct={adminCapabilities?.canDeactivateProduct === true}
           canAdjustStock={adminCapabilities?.canAdjustStock === true}
           supportsItemType={adminCapabilities?.supportsItemType === true}
+          canChangeInventoryMode={adminCapabilities?.canChangeInventoryMode === true}
           canViewPurchasePrice={adminCapabilities?.supportsPurchasePrice === true && adminCapabilities?.canViewPurchasePrice === true}
           canReplaceMainImage={adminCapabilities?.supportsMainImageUpload === true && adminCapabilities?.canReplaceMainImage === true}
           canViewStockLots={adminCapabilities?.supportsStockLots === true && adminCapabilities?.canReceiveStock === true}

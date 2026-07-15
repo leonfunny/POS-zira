@@ -34,6 +34,7 @@ interface ProductEditViewProps {
   canDeactivateProduct: boolean;
   canAdjustStock: boolean;
   supportsItemType: boolean;
+  canChangeInventoryMode: boolean;
   canViewPurchasePrice: boolean;
   canReplaceMainImage: boolean;
   canViewStockLots: boolean;
@@ -103,6 +104,7 @@ export default function ProductEditView({
   canDeactivateProduct,
   canAdjustStock,
   supportsItemType,
+  canChangeInventoryMode,
   canViewPurchasePrice,
   canReplaceMainImage,
   canViewStockLots,
@@ -460,6 +462,7 @@ export default function ProductEditView({
             canManageCategories={canManageCategories}
             canAdjustStock={canAdjustStock}
             supportsItemType={supportsItemType}
+            canChangeInventoryMode={canChangeInventoryMode}
             canViewPurchasePrice={canShowPurchasePrice}
             purchasePriceGrosze={purchasePriceGrosze}
             purchasePriceLoaded={adminVariant !== null}

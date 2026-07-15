@@ -25,6 +25,7 @@ interface ProductDetailDrawerProps {
   canAdjustStock: boolean;
   /** Optional — parents that don't know capabilities keep the selector hidden. */
   supportsItemType?: boolean;
+  canChangeInventoryMode?: boolean;
   canManageCategories: boolean;
   adminBackendReady: boolean;
   productInCart: boolean;
@@ -83,6 +84,7 @@ export default function ProductDetailDrawer({
   canDeactivateProduct,
   canAdjustStock,
   supportsItemType,
+  canChangeInventoryMode = false,
   canManageCategories,
   adminBackendReady,
   productInCart,
@@ -312,6 +314,7 @@ export default function ProductDetailDrawer({
               canManageCategories={canManageCategories}
               canAdjustStock={canAdjustStock}
               supportsItemType={supportsItemType ?? false}
+              canChangeInventoryMode={canChangeInventoryMode}
               canEditDisplayName={canEditDisplayName}
               displayNameAffectsMultipleVariants={displayNameAffectsMultipleVariants}
               onManageCategories={onManageCategories}
