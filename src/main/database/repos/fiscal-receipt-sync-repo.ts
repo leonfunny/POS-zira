@@ -24,14 +24,38 @@ export interface EnqueueFiscalReceiptSyncInput {
   body: Record<string, unknown>;
 }
 
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class FiscalReceiptOrderPendingSyncError extends Error {
+  constructor(readonly localOrderId: string) {
+    super(`order ${localOrderId} has not synced to the backend yet`);
+    this.name = 'FiscalReceiptOrderPendingSyncError';
+  }
+}
+
+export function prepareFiscalReceiptSyncBody(
+  row: FiscalReceiptSyncRow,
+  backendOrderId: string | null | undefined,
+): Record<string, unknown> {
+  const normalizedBackendOrderId = backendOrderId?.trim();
+  if (!normalizedBackendOrderId || !UUID_LIKE.test(normalizedBackendOrderId)) {
+    throw new FiscalReceiptOrderPendingSyncError(row.local_order_id);
+  }
+
+  return {
+    ...(JSON.parse(row.event_body_json) as Record<string, unknown>),
+    b2bOrderId: normalizedBackendOrderId,
+  };
+}
+
 export const fiscalReceiptSyncRepo = {
   enqueue(input: EnqueueFiscalReceiptSyncInput): FiscalReceiptSyncRow {
     const existing = database.get<FiscalReceiptSyncRow>(
       `SELECT * FROM fiscal_receipt_sync_queue
-       WHERE backend_order_id = ? AND event_status = ?
+       WHERE local_order_id = ? AND event_status = ?
        ORDER BY created_at DESC
        LIMIT 1`,
-      [input.backendOrderId, input.status],
+      [input.localOrderId, input.status],
     );
     const id = existing?.id || randomUUID();
     const body = {
@@ -65,11 +89,35 @@ export const fiscalReceiptSyncRepo = {
     return database.get<FiscalReceiptSyncRow>('SELECT * FROM fiscal_receipt_sync_queue WHERE id = ?', [id])!;
   },
 
-  listPending(limit = 25): FiscalReceiptSyncRow[] {
+  listReady(limit = 25): FiscalReceiptSyncRow[] {
     return database.all<FiscalReceiptSyncRow>(
-      `SELECT * FROM fiscal_receipt_sync_queue
-       WHERE status = 'PENDING'
-       ORDER BY created_at ASC, id ASC
+      `SELECT q.*
+       FROM fiscal_receipt_sync_queue q
+       JOIN orders o ON o.id = q.local_order_id
+       WHERE q.status = 'PENDING'
+         AND o.backend_id IS NOT NULL
+         AND trim(o.backend_id) <> ''
+         AND length(trim(o.backend_id)) = 36
+         AND substr(trim(o.backend_id), 9, 1) = '-'
+         AND substr(trim(o.backend_id), 14, 1) = '-'
+         AND substr(trim(o.backend_id), 19, 1) = '-'
+         AND substr(trim(o.backend_id), 24, 1) = '-'
+         AND lower(trim(o.backend_id)) NOT GLOB '*[^0-9a-f-]*'
+         AND (
+           q.attempts = 0
+           OR datetime(
+             COALESCE(q.updated_at, q.created_at, '1970-01-01 00:00:00'),
+             CASE
+               WHEN q.attempts = 1 THEN '+1 minute'
+               WHEN q.attempts = 2 THEN '+2 minutes'
+               WHEN q.attempts = 3 THEN '+5 minutes'
+               WHEN q.attempts = 4 THEN '+15 minutes'
+               WHEN q.attempts = 5 THEN '+30 minutes'
+               ELSE '+60 minutes'
+             END
+           ) <= datetime('now')
+         )
+       ORDER BY q.created_at ASC, q.id ASC
        LIMIT ?`,
       [limit],
     );
