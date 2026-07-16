@@ -86,7 +86,12 @@ import {
 } from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
-import { fiscalReceiptSyncRepo, type FiscalReceiptSyncRow } from '../database/repos/fiscal-receipt-sync-repo';
+import {
+  FiscalReceiptOrderPendingSyncError,
+  fiscalReceiptSyncRepo,
+  prepareFiscalReceiptSyncBody,
+  type FiscalReceiptSyncRow,
+} from '../database/repos/fiscal-receipt-sync-repo';
 import {
   buildKitchenTicketLines,
   buildPickupSlipLines,
@@ -586,17 +591,18 @@ export class PosModule extends BaseModule {
     const recordFiscalReceipt = (input: FiscalReceiptJournalInput) => {
       void (async () => {
         const order = orderRepo.getById(input.orderId);
-        const backendOrderId = order?.backend_id || input.orderId;
+        const backendOrderId = order?.backend_id || null;
+        const queueOrderId = backendOrderId || input.orderId;
         const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (!uuidLike.test(backendOrderId)) {
-          logger.warn(`[PosModule] Cannot record fiscal event for ${input.orderId}: missing backend UUID`);
+        if (!uuidLike.test(queueOrderId)) {
+          logger.warn(`[PosModule] Cannot queue fiscal event for ${input.orderId}: invalid local order UUID`);
           return;
         }
 
         try {
           const eventAt = new Date().toISOString();
           const body = {
-            b2bOrderId: backendOrderId,
+            b2bOrderId: backendOrderId || undefined,
             printJobId: input.printJobId && uuidLike.test(input.printJobId) ? input.printJobId : undefined,
             status: input.status,
             source: 'POS_SYNC' as const,
@@ -619,7 +625,7 @@ export class PosModule extends BaseModule {
 
           fiscalReceiptSyncRepo.enqueue({
             localOrderId: input.orderId,
-            backendOrderId,
+            backendOrderId: queueOrderId,
             status: input.status,
             body,
           });
@@ -5076,35 +5082,61 @@ export class PosModule extends BaseModule {
     ];
   }
 
-  private async sendFiscalReceiptSyncRow(row: FiscalReceiptSyncRow): Promise<void> {
-    const body = JSON.parse(row.event_body_json) as Parameters<typeof apiClient.recordFiscalReceiptEvent>[1];
-    const apiKey = getSecureApiKey();
-    const machineId = getConfigValue('machineId') as string | undefined;
-    if (apiKey) {
-      await apiClient.recordFiscalReceiptEventWithApiKey(apiKey, body, machineId);
+  private async sendFiscalReceiptSyncRow(
+    row: FiscalReceiptSyncRow,
+    auth: {
+      apiKey: string | null | undefined;
+      token: string | null | undefined;
+      machineId: string | undefined;
+    },
+  ): Promise<void> {
+    const order = orderRepo.getById(row.local_order_id);
+    const body = prepareFiscalReceiptSyncBody(
+      row,
+      order?.backend_id,
+    ) as Parameters<typeof apiClient.recordFiscalReceiptEvent>[1];
+    if (auth.apiKey) {
+      await apiClient.recordFiscalReceiptEventWithApiKey(auth.apiKey, body, auth.machineId);
       return;
     }
 
-    const token = getSecureAuthToken();
-    if (!token) {
+    if (!auth.token) {
       throw new Error('missing auth token and print-agent API key');
     }
-    await apiClient.recordFiscalReceiptEvent(token, body);
+    await apiClient.recordFiscalReceiptEvent(auth.token, body);
   }
 
   private async flushFiscalReceiptSyncQueue(reason: string): Promise<void> {
     if (this.fiscalReceiptSyncInFlight) return;
     this.fiscalReceiptSyncInFlight = true;
     try {
-      const rows = fiscalReceiptSyncRepo.listPending(25);
+      const auth = {
+        apiKey: getSecureApiKey(),
+        token: getSecureAuthToken(),
+        machineId: getConfigValue('machineId') as string | undefined,
+      };
+      if (!auth.apiKey && !auth.token) {
+        if (reason !== 'timer') {
+          logger.info('[PosModule] Deferred fiscal receipt sync until authentication is available');
+        }
+        return;
+      }
+
+      const rows = fiscalReceiptSyncRepo.listReady(25);
       if (rows.length === 0) return;
 
       for (const row of rows) {
         try {
-          await this.sendFiscalReceiptSyncRow(row);
+          await this.sendFiscalReceiptSyncRow(row, auth);
           fiscalReceiptSyncRepo.markSynced(row.id);
           logger.info(`[PosModule] Synced fiscal receipt event ${row.id} for ${row.local_order_id} (${reason})`);
         } catch (err: any) {
+          if (err instanceof FiscalReceiptOrderPendingSyncError) {
+            if (reason !== 'timer') {
+              logger.info(`[PosModule] Deferred fiscal receipt event ${row.id} until order ${row.local_order_id} syncs`);
+            }
+            continue;
+          }
           const message = err?.message || String(err);
           fiscalReceiptSyncRepo.markFailed(row.id, message);
           logger.warn(`[PosModule] Fiscal receipt event ${row.id} pending sync for ${row.local_order_id}: ${message}`);
