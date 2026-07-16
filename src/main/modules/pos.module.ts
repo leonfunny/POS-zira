@@ -63,6 +63,7 @@ import { WindowManager } from '../windows/window-manager';
 import { productRepo, type ProductVariantRow } from '../database/repos/product-repo';
 import { draftProductRepo } from '../database/repos/draft-product-repo';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { buildLocalImportMutationKey } from '../sync/product-sync';
 import { kitchenSelfOrderCategoryPrefsRepo } from '../database/repos/kitchen-self-order-category-prefs-repo';
 import { StaffSync } from '../sync/staff-sync';
 import {
@@ -2429,7 +2430,12 @@ export class PosModule extends BaseModule {
     // master-catalog endpoint is down. A `local_variant_imports` marker
     // tracks the row so ProductSync.deactivateExcept keeps it alive and
     // OrderSync defers pushing orders that depend on it.
-    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: { ean: string; retailPriceGrosze?: number; categoryId?: string }) => {
+    ipcMain.handle('pos:master-catalog:import-draft', async (_e, payload: {
+      ean: string;
+      retailPriceGrosze?: number;
+      categoryId?: string;
+      stockQty?: number;
+    }) => {
       const ean = normalizeScanCreateEan(payload?.ean);
       if (!ean) return { ok: false, error: 'missing-ean' };
       const requestedRetailPrice = Number(payload?.retailPriceGrosze);
@@ -2441,6 +2447,17 @@ export class PosModule extends BaseModule {
         return { ok: false, error: 'invalid-category' };
       }
       const categoryId = categoryResolution.categoryId;
+      let initialStockQty: number;
+      try {
+        initialStockQty = assertProductStockQuantity(
+          payload?.stockQty ?? 0,
+          'PIECE',
+          'stockQty',
+          true,
+        );
+      } catch {
+        return { ok: false, error: 'invalid-stock-quantity' };
+      }
 
       const existing = productRepo.getByBarcode(ean);
       if (existing) {
@@ -2467,15 +2484,10 @@ export class PosModule extends BaseModule {
         }
       }
       if (!draft) return { ok: false, error: 'draft-not-found' };
-      const importRetailPrice = retailPriceGrosze != null && retailPriceGrosze >= 1
-        ? retailPriceGrosze
-        : draft.retail_price;
-      if (!(importRetailPrice >= 1)) {
+      if (retailPriceGrosze == null || retailPriceGrosze < 1) {
         return { ok: false, error: 'draft-missing-price' };
       }
-      if (!(draft.in_stock >= 1)) {
-        return { ok: false, error: 'draft-missing-stock' };
-      }
+      const importRetailPrice = retailPriceGrosze;
 
       try {
         // Reuse the draft's UUID as the variant id. Clean lineage — when
@@ -2483,6 +2495,17 @@ export class PosModule extends BaseModule {
         // can match on id (or treat it as an upsert via delta sync).
         const variantId = draft.id;
         const now = new Date().toISOString();
+        const scanCreatePayload = {
+          ean,
+          retailPrice: importRetailPrice / 100,
+          stockQty: initialStockQty,
+          taxRate: draft.vat_rate,
+          categoryId,
+        };
+        const intentIdempotencyKey = buildLocalImportMutationKey({
+          variantId,
+          ...scanCreatePayload,
+        });
 
         database.transaction(() => {
           productRepo.upsertMany([{
@@ -2494,11 +2517,11 @@ export class PosModule extends BaseModule {
             retail_price: importRetailPrice,
             category_id: categoryId,
             image_url: draft.image_url,
-            in_stock: draft.in_stock,
+            in_stock: initialStockQty,
             vat_rate: draft.vat_rate,
             is_active: 1,
             updated_at: now,
-            available_qty: draft.in_stock,
+            available_qty: initialStockQty,
             price_gross: importRetailPrice,
             price_net: Math.round(importRetailPrice * 100 / (100 + (draft.vat_rate || 0))),
             vat_amount: importRetailPrice - Math.round(importRetailPrice * 100 / (100 + (draft.vat_rate || 0))),
@@ -2507,8 +2530,19 @@ export class PosModule extends BaseModule {
             sale_unit: null,
             sell_by: 'PIECE',
             name_translations: null,
+            item_type: 'stockable',
+            track_inventory: 1,
           }]);
-          localVariantImportsRepo.create(variantId, draft.id, ean, categoryId);
+          localVariantImportsRepo.create(
+            variantId,
+            draft.id,
+            ean,
+            categoryId,
+            {
+              payloadJson: JSON.stringify(scanCreatePayload),
+              idempotencyKey: intentIdempotencyKey,
+            },
+          );
         });
         database.markDirty();
 

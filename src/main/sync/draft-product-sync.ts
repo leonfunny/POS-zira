@@ -5,6 +5,8 @@ import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
 import { fullSyncOnCooldown, markFullSync } from './full-sync-cooldown';
 
+const DRAFT_PRODUCT_MIRROR_VERSION_KEY = 'draft_products_mirror_version';
+
 /**
  * DraftProductSync — mirrors the master catalog draft_products table into
  * local SQLite. Server endpoint: GET /api/v1/master-catalog/draft-products
@@ -20,10 +22,11 @@ function toRow(p: any): DraftProductRow {
     name: String(p.name ?? ''),
     sku: p.sku ?? null,
     barcode: p.barcode ?? null,
-    retail_price: num(p.retail_price ?? p.retailPrice ?? p.purchasePrice ?? p.purchase_price, 0),
-    category_id: p.category_id ?? p.categoryId ?? null,
+    // Supplier cost/availability/category are not store catalog values.
+    retail_price: 0,
+    category_id: null,
     image_url: p.image_url ?? p.imageUrl ?? null,
-    in_stock: num(p.in_stock ?? p.inStock, 0),
+    in_stock: 0,
     vat_rate: num(p.vat_rate ?? p.vatRate, 23),
     status: String(p.status ?? 'DRAFT'),
     created_by: p.created_by ?? p.createdBy ?? null,
@@ -90,6 +93,12 @@ export class DraftProductSync {
         "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('draft_products_last_sync', ?, datetime('now'))",
         [cursor],
       );
+      if (data.mirrorVersion) {
+        database.run(
+          "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+          [DRAFT_PRODUCT_MIRROR_VERSION_KEY, String(data.mirrorVersion)],
+        );
+      }
     });
     database.markDirty();
     markFullSync('draft_products');
@@ -101,7 +110,7 @@ export class DraftProductSync {
   /** Local mirror size — used to keep the cooldown from stranding an empty mirror. */
   private getLocalDraftCount(): number {
     return database.get<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM draft_product',
+      'SELECT COUNT(*) AS n FROM draft_products',
     )?.n ?? 0;
   }
 
@@ -144,6 +153,21 @@ export class DraftProductSync {
       throw err;
     }
 
+    const storedMirrorVersion = database.get<{ value: string }>(
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      [DRAFT_PRODUCT_MIRROR_VERSION_KEY],
+    );
+    if (
+      data.mirrorVersion &&
+      Number(storedMirrorVersion?.value) !== data.mirrorVersion
+    ) {
+      logger.info(
+        `[DraftProductSync] Mirror version changed ${storedMirrorVersion?.value ?? 'none'} -> ${data.mirrorVersion}; forcing full sync`,
+      );
+      const result = await this.fullSync();
+      return result.count;
+    }
+
     const rows = sanitizeDrafts(data.drafts);
 
     database.transaction(() => {
@@ -158,6 +182,12 @@ export class DraftProductSync {
         "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('draft_products_last_sync', ?, datetime('now'))",
         [cursor],
       );
+      if (data.mirrorVersion) {
+        database.run(
+          "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+          [DRAFT_PRODUCT_MIRROR_VERSION_KEY, String(data.mirrorVersion)],
+        );
+      }
     });
     database.markDirty();
 

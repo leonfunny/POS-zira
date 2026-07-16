@@ -96,13 +96,28 @@ export function isExactLegacyUncertainImportRetry(
 
 export const localVariantImportsRepo = {
   /** Create a local-import marker without overwriting an existing intent ledger. */
-  create(variantId: string, draftId: string, ean: string, categoryId?: string | null): void {
+  create(
+    variantId: string,
+    draftId: string,
+    ean: string,
+    categoryId?: string | null,
+    intent?: { payloadJson: string; idempotencyKey: string },
+  ): void {
     const normalizedCategoryId = String(categoryId ?? '').trim() || null;
     database.run(
       `INSERT OR IGNORE INTO local_variant_imports
-         (variant_id, draft_id, ean, status, attempts, last_error, created_at, synced_at, server_variant_id, category_id)
-       VALUES (?, ?, ?, 'PENDING', 0, NULL, datetime('now'), NULL, NULL, ?)`,
-      [variantId, draftId, ean, normalizedCategoryId],
+         (variant_id, draft_id, ean, status, attempts, last_error, created_at,
+          synced_at, server_variant_id, category_id, intent_payload_json,
+          intent_idempotency_key)
+       VALUES (?, ?, ?, 'PENDING', 0, NULL, datetime('now'), NULL, NULL, ?, ?, ?)`,
+      [
+        variantId,
+        draftId,
+        ean,
+        normalizedCategoryId,
+        intent?.payloadJson ?? null,
+        intent?.idempotencyKey ?? null,
+      ],
     );
   },
 

@@ -3582,7 +3582,12 @@ export class ApiClient {
   async getDraftProducts(
     token: string,
     since?: string,
-  ): Promise<{ drafts: any[]; deletedIds: string[]; nextSince?: string }> {
+  ): Promise<{
+    drafts: any[];
+    deletedIds: string[];
+    nextSince?: string;
+    mirrorVersion?: number;
+  }> {
     const params = new URLSearchParams({ limit: '500' });
     if (since) params.set('since', since);
 
@@ -3596,6 +3601,7 @@ export class ApiClient {
     let allDrafts: any[] = [];
     let allDeletedIds: string[] = [];
     let lastNextSince: string | undefined;
+    let mirrorVersion: number | undefined;
     let page = 1;
 
     while (true) {
@@ -3613,6 +3619,9 @@ export class ApiClient {
       allDrafts = allDrafts.concat(pageDrafts);
       if (Array.isArray(raw.deletedIds)) allDeletedIds = allDeletedIds.concat(raw.deletedIds);
       if (raw.nextSince) lastNextSince = raw.nextSince;
+      if (Number.isInteger(raw.mirrorVersion) && raw.mirrorVersion > 0) {
+        mirrorVersion = raw.mirrorVersion;
+      }
 
       if (pageDrafts.length < 500 || raw.hasMore === false) break;
       page++;
@@ -3620,7 +3629,12 @@ export class ApiClient {
     }
 
     logger.info(`[ApiClient] Fetched ${allDrafts.length} draft product(s) across ${page} page(s)`);
-    return { drafts: allDrafts, deletedIds: allDeletedIds, nextSince: lastNextSince };
+    return {
+      drafts: allDrafts,
+      deletedIds: allDeletedIds,
+      nextSince: lastNextSince,
+      mirrorVersion,
+    };
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasScanImportCategoryOptions,
+  parseOptionalScanImportStock,
   resolveInitialScanImportCategoryId,
   type ScanImportCategoryOption,
   type ScanImportDraftPreview,
@@ -37,5 +38,15 @@ describe('ScanImportModal category selection', () => {
   it('hides the dropdown when the local category cache is empty', () => {
     expect(hasScanImportCategoryOptions([])).toBe(false);
     expect(resolveInitialScanImportCategoryId(preview('cat-drinks'), [])).toBe('');
+  });
+
+  it('defaults blank store stock to zero and accepts only whole non-negative pieces', () => {
+    expect(parseOptionalScanImportStock('')).toBe(0);
+    expect(parseOptionalScanImportStock('  ')).toBe(0);
+    expect(parseOptionalScanImportStock('0')).toBe(0);
+    expect(parseOptionalScanImportStock('12')).toBe(12);
+    expect(parseOptionalScanImportStock('-1')).toBeNull();
+    expect(parseOptionalScanImportStock('1.5')).toBeNull();
+    expect(parseOptionalScanImportStock('abc')).toBeNull();
   });
 });

@@ -119,6 +119,69 @@ describe('entity applicators customer display metadata', () => {
     ]);
   });
 
+  it('treats a lightweight product event as an invalidation without erasing local fields', () => {
+    vi.mocked(productRepo.getById).mockReturnValue({
+      id: 'product-1',
+      template_id: 'template-1',
+      name: 'Existing product',
+      sku: 'SKU-1',
+      barcode: '5900000000017',
+      retail_price: 1234,
+      category_id: 'category-1',
+      image_url: 'https://example.test/image.png',
+      in_stock: 7,
+      available_qty: 5,
+      vat_rate: 8,
+      is_active: 1,
+      updated_at: '2026-05-21T09:00:00.000Z',
+      price_gross: 1234,
+      price_net: 1143,
+      vat_amount: 91,
+      is_on_sale: 0,
+      thumbnail_url: 'https://example.test/thumb.png',
+      sale_unit: 'szt',
+      sell_by: 'PIECE',
+      item_type: 'stockable',
+      track_inventory: 1,
+    } as any);
+
+    const applied = applyEntry(syncEntry('product', {
+      id: 'product-1',
+      variantId: 'product-1',
+      templateId: 'template-1',
+    }, 'product-1'));
+
+    expect(applied).toBe(true);
+    expect(productRepo.upsertMany).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'product-1',
+        name: 'Existing product',
+        sku: 'SKU-1',
+        barcode: '5900000000017',
+        retail_price: 1234,
+        category_id: 'category-1',
+        in_stock: 7,
+        available_qty: 5,
+        updated_at: '2026-05-21T09:00:00.000Z',
+        item_type: 'stockable',
+        track_inventory: 1,
+      }),
+    ]);
+  });
+
+  it('does not create a blank product from an invalidation before canonical sync', () => {
+    vi.mocked(productRepo.getById).mockReturnValue(undefined as any);
+
+    const applied = applyEntry(syncEntry('product', {
+      id: 'product-1',
+      variantId: 'product-1',
+      templateId: 'template-1',
+    }, 'product-1'));
+
+    expect(applied).toBe(false);
+    expect(productRepo.upsertMany).not.toHaveBeenCalled();
+  });
+
   it('preserves category customer display metadata when sync payload omits those fields', () => {
     vi.mocked(database.get).mockReturnValue({
       name_translations: '{"pl":"Existing category"}',

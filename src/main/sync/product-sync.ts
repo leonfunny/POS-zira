@@ -53,7 +53,7 @@ async function runLocalVariantImportSingleFlight(
 
 interface LocalImportScanCreatePayload {
   ean: string;
-  purchasePrice: number;
+  purchasePrice?: number;
   retailPrice: number;
   stockQty: number;
   taxRate: number;
@@ -63,7 +63,7 @@ interface LocalImportScanCreatePayload {
 interface LocalImportMutationIntent {
   variantId: string;
   ean: string;
-  purchasePrice: number;
+  purchasePrice?: number;
   retailPrice: number;
   stockQty: number;
   taxRate: number;
@@ -74,7 +74,7 @@ export function buildLocalImportMutationKey(intent: LocalImportMutationIntent): 
   const normalized = {
     variantId: String(intent.variantId ?? '').trim(),
     ean: String(intent.ean ?? '').trim(),
-    purchasePrice: intent.purchasePrice,
+    purchasePrice: intent.purchasePrice ?? null,
     retailPrice: intent.retailPrice,
     stockQty: intent.stockQty,
     taxRate: intent.taxRate,
@@ -97,19 +97,22 @@ function parseLocalImportScanCreatePayload(payloadJson: string): LocalImportScan
     const taxRate = value.taxRate;
     const rawCategoryId = value.categoryId;
     if (!/^\d{4,14}$/.test(ean)) return null;
-    if (![purchasePrice, retailPrice, stockQty, taxRate].every(Number.isFinite)) return null;
-    if (!(retailPrice >= 0.01) || !(stockQty >= 0.001)) return null;
+    if (![retailPrice, stockQty, taxRate].every(Number.isFinite)) return null;
+    if (purchasePrice !== undefined && !Number.isFinite(purchasePrice)) return null;
+    if (purchasePrice !== undefined && purchasePrice < 0) return null;
+    if (!(retailPrice >= 0.01) || !(stockQty >= 0)) return null;
     if (rawCategoryId != null && (typeof rawCategoryId !== 'string' || !UUID_RE.test(rawCategoryId))) {
       return null;
     }
-    return {
+    const parsed: LocalImportScanCreatePayload = {
       ean,
-      purchasePrice,
       retailPrice,
       stockQty,
       taxRate,
       categoryId: rawCategoryId ?? null,
     };
+    if (purchasePrice !== undefined) parsed.purchasePrice = purchasePrice;
+    return parsed;
   } catch {
     return null;
   }
@@ -547,13 +550,14 @@ export class ProductSync {
           }
 
           const retailPrice = localVariant.retail_price / 100;
-          const stockQty = localVariant.in_stock > 0
-            ? localVariant.in_stock
-            : localVariant.available_qty;
-          if (!(retailPrice >= 0.01) || !(stockQty >= 0.001)) {
+          const stockQty = Math.max(
+            0,
+            Number(localVariant.in_stock ?? localVariant.available_qty ?? 0) || 0,
+          );
+          if (!(retailPrice >= 0.01)) {
             localVariantImportsRepo.markFailed(
               row.variant_id,
-              `scan-create requires retailPrice >= 0.01 and stockQty >= 0.001 (retailPrice=${retailPrice}, stockQty=${stockQty})`,
+              `scan-create requires retailPrice >= 0.01 (retailPrice=${retailPrice})`,
             );
             changed = true;
             return;
@@ -563,7 +567,6 @@ export class ProductSync {
           const categoryId = resolveBackendCategoryId(rawCategoryId, backendCategoryIds);
           scanCreatePayload = {
             ean: row.ean,
-            purchasePrice: 0,
             retailPrice,
             stockQty,
             taxRate: localVariant.vat_rate,

@@ -80,6 +80,18 @@ export function applyEntry(entry: SyncLogEntry): boolean {
 
 // ─── Product ────────────────────────────────────────────────
 
+function firstOwnField(
+  payload: Record<string, any>,
+  keys: string[],
+): { present: boolean; key?: string; value?: any } {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      return { present: true, key, value: payload[key] };
+    }
+  }
+  return { present: false };
+}
+
 function applyProduct(entry: SyncLogEntry): boolean {
   const p = entry.payload;
   if (!p || !entry.entity_id) return false;
@@ -89,39 +101,132 @@ function applyProduct(entry: SyncLogEntry): boolean {
     return true;
   }
 
-  // created or updated — upsert
-  const toGrosze = (v: any) => v != null ? Math.round(parseFloat(v) * 100) : 0;
+  // Product domain events are also used as lightweight invalidations. Never
+  // turn a payload such as `{ id, variantId, templateId }` into a blank local
+  // product; merge present fields into an existing row and let ProductSync pull
+  // the canonical row immediately after the event.
+  const existing = productRepo.getById(entry.entity_id);
+  const nameField = firstOwnField(p, ['name']);
+  const templateNameField = firstOwnField(p.template ?? {}, ['name']);
+  const name = nameField.present
+    ? String(nameField.value ?? '').trim()
+    : templateNameField.present
+      ? String(templateNameField.value ?? '').trim()
+      : existing?.name ?? '';
+  if (!name) {
+    logger.debug(
+      `[EntityApplicator] Product ${entry.entity_id} payload is an invalidation without a local row; awaiting ProductSync`,
+    );
+    return false;
+  }
+
+  // created or updated — presence-aware upsert
   const normalizePrice = (v: any) => v != null ? (v < 500 ? Math.round(parseFloat(v) * 100) : Math.round(parseFloat(v))) : 0;
-  const rawRetail = p.retail_price ?? p.retailPrice;
-  const retailGrosze = rawRetail != null ? normalizePrice(rawRetail) : 0;
+  const priceFieldToGrosze = (
+    field: { present: boolean; key?: string; value?: any },
+    fallback: number,
+  ): number => {
+    if (!field.present) return fallback;
+    if (field.value == null) return 0;
+    if (field.key?.endsWith('Grosze')) return Math.round(Number(field.value) || 0);
+    return normalizePrice(field.value);
+  };
+  const valueOrExisting = <T>(
+    keys: string[],
+    fallback: T,
+  ): T => {
+    const field = firstOwnField(p, keys);
+    return field.present ? field.value as T : fallback;
+  };
+  const nullableValueOrExisting = <T>(
+    keys: string[],
+    fallback: T | null,
+  ): T | null => {
+    const field = firstOwnField(p, keys);
+    return field.present ? (field.value ?? null) as T | null : fallback;
+  };
+
+  const retailField = firstOwnField(p, ['retail_price', 'retailPrice']);
+  const retailGrosze = priceFieldToGrosze(
+    retailField,
+    existing?.retail_price ?? 0,
+  );
+  const priceGrossField = firstOwnField(p, ['price_gross', 'priceGrossGrosze', 'priceGross']);
+  const priceNetField = firstOwnField(p, ['price_net', 'priceNetGrosze', 'priceNet']);
+  const vatAmountField = firstOwnField(p, ['vat_amount', 'vatAmountGrosze', 'vatAmount']);
+  const activeField = firstOwnField(p, ['is_active', 'isActive']);
+  const saleField = firstOwnField(p, ['is_on_sale', 'isOnSale']);
+  const trackingField = firstOwnField(p, ['track_inventory', 'trackInventory']);
 
   // Pull display-only translations from either the variant payload or the
   // embedded template — backend Phase 1 emits at the template level.
-  const existing = productRepo.getById(entry.entity_id);
   const productTranslations =
     encodeNameTranslations(p) ?? encodeNameTranslations(p.template) ?? existing?.name_translations ?? null;
 
   productRepo.upsertMany([{
     id: entry.entity_id,
-    template_id: p.template_id ?? p.templateId ?? null,
-    name: p.name ?? '',
-    sku: p.sku ?? null,
-    barcode: p.barcode ?? null,
+    template_id: nullableValueOrExisting(
+      ['template_id', 'templateId'],
+      existing?.template_id ?? null,
+    ),
+    name,
+    sku: nullableValueOrExisting(['sku'], existing?.sku ?? null),
+    barcode: nullableValueOrExisting(['barcode'], existing?.barcode ?? null),
     retail_price: retailGrosze,
-    category_id: p.category_id ?? p.categoryId ?? null,
-    image_url: p.image_url ?? p.imageUrl ?? null,
-    in_stock: p.in_stock ?? p.totalStockQty ?? 0,
-    vat_rate: p.vat_rate ?? p.taxRate ?? 23,
-    is_active: p.is_active ?? (p.isActive !== false ? 1 : 0),
-    updated_at: p.updated_at ?? p.updatedAt ?? entry.created_at,
-    available_qty: p.available_qty ?? p.availableQty ?? 0,
-    price_gross: p.price_gross != null ? normalizePrice(p.price_gross) : (toGrosze(p.priceGross) || retailGrosze),
-    price_net: p.price_net != null ? normalizePrice(p.price_net) : toGrosze(p.priceNet),
-    vat_amount: p.vat_amount != null ? normalizePrice(p.vat_amount) : toGrosze(p.vatAmount),
-    is_on_sale: p.is_on_sale ?? (p.isOnSale ? 1 : 0),
-    thumbnail_url: p.thumbnail_url ?? p.thumbnailUrl ?? null,
-    sale_unit: p.sale_unit ?? p.saleUnit ?? null,
-    sell_by: p.sell_by ?? p.sellBy ?? 'PIECE',
+    category_id: nullableValueOrExisting(
+      ['category_id', 'categoryId'],
+      existing?.category_id ?? null,
+    ),
+    image_url: nullableValueOrExisting(
+      ['image_url', 'imageUrl'],
+      existing?.image_url ?? null,
+    ),
+    in_stock: Number(valueOrExisting(
+      ['in_stock', 'totalStockQty'],
+      existing?.in_stock ?? 0,
+    )) || 0,
+    vat_rate: Number(valueOrExisting(
+      ['vat_rate', 'taxRate'],
+      existing?.vat_rate ?? 23,
+    )),
+    is_active: activeField.present
+      ? (activeField.value === false || activeField.value === 0 ? 0 : 1)
+      : existing?.is_active ?? 1,
+    updated_at: nullableValueOrExisting(
+      ['updated_at', 'updatedAt'],
+      existing?.updated_at ?? entry.created_at,
+    ),
+    available_qty: Number(valueOrExisting(
+      ['available_qty', 'availableQty'],
+      existing?.available_qty ?? 0,
+    )) || 0,
+    price_gross: priceFieldToGrosze(
+      priceGrossField,
+      existing?.price_gross ?? retailGrosze,
+    ),
+    price_net: priceFieldToGrosze(
+      priceNetField,
+      existing?.price_net ?? 0,
+    ),
+    vat_amount: priceFieldToGrosze(
+      vatAmountField,
+      existing?.vat_amount ?? 0,
+    ),
+    is_on_sale: saleField.present
+      ? (saleField.value ? 1 : 0)
+      : existing?.is_on_sale ?? 0,
+    thumbnail_url: nullableValueOrExisting(
+      ['thumbnail_url', 'thumbnailUrl'],
+      existing?.thumbnail_url ?? null,
+    ),
+    sale_unit: nullableValueOrExisting(
+      ['sale_unit', 'saleUnit'],
+      existing?.sale_unit ?? null,
+    ),
+    sell_by: nullableValueOrExisting(
+      ['sell_by', 'sellBy'],
+      existing?.sell_by ?? 'PIECE',
+    ),
     name_translations: productTranslations,
     customer_display_enabled: resolveDisplayEnabled(p, existing?.customer_display_enabled ?? 1),
     customer_display_sort_order: resolveNullableInteger(
@@ -138,6 +243,13 @@ function applyProduct(entry: SyncLogEntry): boolean {
       ['kioskNoteEnabled', 'kiosk_note_enabled'],
       existing?.kiosk_note_enabled ?? 0,
     ),
+    item_type: nullableValueOrExisting(
+      ['item_type', 'itemType', 'product_type', 'productType'],
+      existing?.item_type ?? null,
+    ),
+    track_inventory: trackingField.present
+      ? (trackingField.value === false || trackingField.value === 0 ? 0 : 1)
+      : existing?.track_inventory ?? 1,
   }]);
 
   return true;

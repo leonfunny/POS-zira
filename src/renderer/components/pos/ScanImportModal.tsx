@@ -29,22 +29,32 @@ interface ScanImportModalProps {
   preview: ScanImportDraftPreview | null;
   ean: string;
   categoryOptions?: ScanImportCategoryOption[];
-  onConfirm: (retailPriceGrosze: number, categoryId?: string) => void | Promise<void>;
+  onConfirm: (
+    retailPriceGrosze: number,
+    categoryId: string | undefined,
+    stockQty: number,
+  ) => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
   error?: string | null;
   t: (key: string) => string;
 }
 
-function priceInputFromGrosze(value: number | null | undefined): string {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? (n / 100).toFixed(2) : '';
-}
-
 function parsePriceInput(value: string): number | null {
   const n = Number(value.trim().replace(',', '.'));
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.round(n * 100);
+}
+
+export function parseOptionalScanImportStock(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) return 0;
+  if (!/^\d+$/.test(normalized)) return null;
+  const quantity = Number(normalized);
+  if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > 999_999_999) {
+    return null;
+  }
+  return quantity;
 }
 
 export function hasScanImportCategoryOptions(categoryOptions: ScanImportCategoryOption[]): boolean {
@@ -79,14 +89,16 @@ export default function ScanImportModal({
 }: ScanImportModalProps) {
   const [closing, setClosing] = useState(false);
   const [priceInput, setPriceInput] = useState('');
+  const [stockInput, setStockInput] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setClosing(false);
-    setPriceInput(priceInputFromGrosze(preview?.retail_price));
+    setPriceInput('');
+    setStockInput('');
     setSelectedCategoryId(resolveInitialScanImportCategoryId(preview, categoryOptions));
-  }, [open, preview?.id, preview?.barcode, preview?.retail_price, preview?.suggestedCategoryId, categoryOptions]);
+  }, [open, preview?.id, preview?.barcode, preview?.suggestedCategoryId, categoryOptions]);
 
   if (!open) return null;
 
@@ -102,12 +114,12 @@ export default function ScanImportModal({
   };
 
   const retailPriceGrosze = parsePriceInput(priceInput);
-  const priceText = preview ? (preview.retail_price / 100).toFixed(2) : '—';
+  const stockQty = parseOptionalScanImportStock(stockInput);
   const vatText = preview ? `VAT ${preview.vat_rate}%` : '';
+  const showDraftFields =
+    !!preview && isDraftCategorySelectionSource(preview.source);
   const showCategorySelect =
-    !!preview
-    && isDraftCategorySelectionSource(preview.source)
-    && hasScanImportCategoryOptions(categoryOptions);
+    showDraftFields && hasScanImportCategoryOptions(categoryOptions);
 
   return (
     <div
@@ -143,10 +155,7 @@ export default function ScanImportModal({
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-lg font-semibold text-white truncate">{preview.name}</div>
-                <div className="mt-1 text-xs text-slate-400">
-                  {tOr('pos.scanImport.draftPrice', 'Draft price')}: {priceText}
-                </div>
-                <div className="mt-0.5 text-xs text-slate-400">{vatText}</div>
+                <div className="mt-1 text-xs text-slate-400">{vatText}</div>
                 {preview.status ? (
                   <div className="mt-2 inline-flex px-2 py-0.5 rounded-md bg-brand-900/40 border border-brand-500/30 text-[10px] uppercase tracking-wide text-brand-300">
                     {preview.status}
@@ -170,6 +179,23 @@ export default function ScanImportModal({
                 {tOr('pos.scanImport.salePriceHint', 'This price will be saved to the product and used for this cart line.')}
               </div>
             </label>
+            {showDraftFields ? (
+              <label className="mt-4 block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  {tOr('pos.scanImport.stock', 'Tồn kho cửa hàng (không bắt buộc)')}
+                </span>
+                <input
+                  value={stockInput}
+                  onChange={(event) => setStockInput(event.target.value)}
+                  inputMode="numeric"
+                  className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-base font-semibold text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/30"
+                  placeholder="0"
+                />
+                <div className="mt-1 text-xs text-slate-400">
+                  {tOr('pos.scanImport.stockHint', 'Để trống sẽ lưu tồn kho cửa hàng bằng 0.')}
+                </div>
+              </label>
+            ) : null}
             {showCategorySelect ? (
               <label className="mt-4 block">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
@@ -214,10 +240,19 @@ export default function ScanImportModal({
           <button
             type="button"
             onClick={() => {
-              if (retailPriceGrosze == null) return;
-              onConfirm(retailPriceGrosze, selectedCategoryId || undefined);
+              if (retailPriceGrosze == null || stockQty == null) return;
+              onConfirm(
+                retailPriceGrosze,
+                selectedCategoryId || undefined,
+                stockQty,
+              );
             }}
-            disabled={loading || !preview || retailPriceGrosze == null}
+            disabled={
+              loading ||
+              !preview ||
+              retailPriceGrosze == null ||
+              stockQty == null
+            }
             className="flex-2 h-12 px-6 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             style={{ flex: 2 }}
           >
@@ -229,7 +264,7 @@ export default function ScanImportModal({
                 {tOr('pos.scanImport.importing', 'Importing…')}
               </>
             ) : (
-              tOr('pos.scanImport.confirm', 'Confirm + Add to stock')
+              tOr('pos.scanImport.confirm', 'Thêm sản phẩm')
             )}
           </button>
         </div>

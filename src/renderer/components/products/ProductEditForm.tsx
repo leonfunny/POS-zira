@@ -189,6 +189,10 @@ function currentStock(product: ProductListItem): number {
   return Number(product.in_stock ?? product.available_qty ?? 0) || 0;
 }
 
+function trackInventoryFlag(product: ProductListItem): boolean {
+  return product.track_inventory !== 0;
+}
+
 function stockInputFromProduct(product: ProductListItem): string {
   return String(currentStock(product));
 }
@@ -230,6 +234,7 @@ export function productEditFormInputsFromBaseline(baseline: ProductEditBaseline)
     sellBy,
     saleUnit: sellBy === originalSellBy ? product.sale_unit || '' : 'szt',
     itemType,
+    trackInventory: trackInventoryFlag(product),
     stockQty: stockInputFromProduct(product),
     imageUrl: product.image_url || '',
     displayNames: displayNamesFromProduct(product),
@@ -279,6 +284,7 @@ export default function ProductEditForm({
   const originalSellBy = productSellBy(baselineProduct);
   const initialSellBy = getProductItemTypePolicy(originalItemType, originalSellBy).sellBy;
   const stockTracked = isStockTracked(baselineProduct);
+  const originalTrackInventory = trackInventoryFlag(baselineProduct);
   const expectedUpdatedAt = editBaseline.expectedUpdatedAt;
   const [name, setName] = useState(baselineProduct.name || '');
   const [priceGross, setPriceGross] = useState(moneyInputFromGrosze(baselineProduct.retail_price));
@@ -297,6 +303,7 @@ export default function ProductEditForm({
     initialSellBy === originalSellBy ? baselineProduct.sale_unit || '' : 'szt',
   );
   const [itemType, setItemType] = useState(originalItemType);
+  const [trackInventory, setTrackInventory] = useState(originalTrackInventory);
   const [stockQty, setStockQty] = useState(stockInputFromProduct(baselineProduct));
   const [imageUrl, setImageUrl] = useState(baselineProduct.image_url || '');
   const [pendingImage, setPendingImage] = useState<PendingProductImage | null>(null);
@@ -330,6 +337,7 @@ export default function ProductEditForm({
     setSellBy(nextSellBy);
     setSaleUnit(nextSellBy === sessionSellBy ? sessionProduct.sale_unit || '' : 'szt');
     setItemType(sessionItemType);
+    setTrackInventory(trackInventoryFlag(sessionProduct));
     setStockQty(stockInputFromProduct(sessionProduct));
     setImageUrl(sessionProduct.image_url || '');
     setPendingImage(null);
@@ -368,6 +376,11 @@ export default function ProductEditForm({
   );
   const translationsDirty = Object.keys(nameTranslationsPatch).length > 0;
   const itemPolicy = getProductItemTypePolicy(itemType, sellBy);
+  const inventoryTrackingEditable = supportsItemType
+    && canChangeInventoryMode
+    && itemType === 'stockable';
+  const inventoryTrackingDirty = inventoryTrackingEditable
+    && trackInventory !== originalTrackInventory;
   const receiptPreview = useMemo(
     () => receiptNamePreview(name, displayNames),
     [displayNames, name],
@@ -389,12 +402,16 @@ export default function ProductEditForm({
     || imageUrlDirty
     || purchasePriceDirty
     || (supportsItemType && itemType !== originalItemType)
-  ), [barcode, baselineProduct, categoryId, imageUrlDirty, itemType, name, originalItemType, priceGross, purchasePriceDirty, saleUnit, sku, supportsItemType, vatRate]);
+    || inventoryTrackingDirty
+  ), [barcode, baselineProduct, categoryId, imageUrlDirty, inventoryTrackingDirty, itemType, name, originalItemType, priceGross, purchasePriceDirty, saleUnit, sku, supportsItemType, vatRate]);
 
   const productDirty = variantFieldsDirty || translationsDirty;
-  // Stock is only editable while the item both IS tracked and STAYS stockable
-  // in this edit — switching kind and typing stock in one save is contradictory.
-  const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies;
+  // Enabling tracking commits before the optional recount in executeProductSave,
+  // so a zero-stock untracked product can be enabled and initialized in one save.
+  const stockEditable = canAdjustStock
+    && itemPolicy.stockApplies
+    && itemType === 'stockable'
+    && trackInventory;
   const stockDirty = stockEditable && stockQty !== stockInputFromProduct(baselineProduct);
   const mediaDirty = pendingImage !== null;
   const dirty = productDirty || stockDirty || mediaDirty;
@@ -425,6 +442,7 @@ export default function ProductEditForm({
     setSellBy(inputs.sellBy);
     setSaleUnit(inputs.saleUnit);
     setItemType(inputs.itemType);
+    setTrackInventory(inputs.trackInventory);
     setImageUrl(inputs.imageUrl);
     setDisplayNames(inputs.displayNames);
     if (includeStock) {
@@ -492,6 +510,9 @@ export default function ProductEditForm({
         && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType, canChangeInventoryMode)) {
         payload.itemType = itemType as ProductAdminItemType;
       }
+      if (inventoryTrackingDirty) {
+        payload.trackInventory = trackInventory;
+      }
       if (purchasePriceDirty) {
         const parsedPurchasePrice = parseOptionalMoneyToGrosze(purchasePrice);
         if (parsedPurchasePrice !== null && parsedPurchasePrice !== undefined) {
@@ -520,6 +541,9 @@ export default function ProductEditForm({
         && itemType !== originalItemType
         && canChangeExistingProductItemType(stockTracked, originalSellBy, itemType as ProductAdminItemType, canChangeInventoryMode)) {
         committedFields.item_type = itemType;
+      }
+      if (inventoryTrackingDirty) {
+        committedFields.track_inventory = trackInventory ? 1 : 0;
       }
     }
     if (translationsDirty && canEditDisplayName) {
@@ -1069,6 +1093,21 @@ export default function ProductEditForm({
                   : tOr(t, 'products.itemType.consumableHint', 'Physical goods sold without inventory deductions.')}
               </span>
             ) : null}
+          </label>
+        ) : null}
+
+        {supportsItemType && itemType === 'stockable' ? (
+          <label className="flex min-h-11 items-center gap-3 rounded-md border border-slate-300 bg-white px-3 py-2">
+            <input
+              type="checkbox"
+              checked={trackInventory}
+              onChange={(event) => setTrackInventory(event.target.checked)}
+              disabled={!canChangeInventoryMode}
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:cursor-not-allowed"
+            />
+            <span className="text-sm font-semibold text-slate-800">
+              {tOr(t, 'products.edit.trackInventory', 'Track inventory')}
+            </span>
           </label>
         ) : null}
 

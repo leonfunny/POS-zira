@@ -294,12 +294,16 @@ export function sanitizeExistingProductInventoryModeUpdate(
   const nextTrackFlag = input.trackInventory ?? currentTrackFlag;
   const nextTracked = nextItemType === 'stockable' && nextTrackFlag;
 
-  // The backend owns the zero-stock check when tracking is disabled and
-  // returns STOCK_MUST_BE_ZERO against its canonical aggregate. Keep
-  // quantity/weight changes and re-enabling tracking locked locally because
-  // both require a separate stock conversion/recount workflow.
+  // The backend owns canonical stock, reservation, and sibling-variant checks
+  // for both disabling and re-enabling tracking. Existing quantity/weight mode
+  // changes and item-kind conversions into tracked stock remain unsupported.
   const enablesTracking = !currentTracked && nextTracked;
-  if (nextSellBy !== currentSellBy || enablesTracking) {
+  const enablesTrackingThroughItemType =
+    enablesTracking
+    && (currentItemType !== 'stockable' || nextItemType !== 'stockable');
+  const tracksNonStockableItem =
+    input.trackInventory === true && nextItemType !== 'stockable';
+  if (nextSellBy !== currentSellBy || enablesTrackingThroughItemType || tracksNonStockableItem) {
     const error = new Error('existing-product-inventory-mode-transition-unavailable') as Error & {
       code?: string;
       status?: number;

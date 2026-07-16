@@ -21,6 +21,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const deltaSyncMock = vi.fn();
 const fullSyncMock = vi.fn();
 const reconcileLocalVariantImportsMock = vi.fn();
+const processRealtimeEntryMock = vi.fn();
+const isModeAtLeastMock = vi.fn(() => false);
 const getSecureAuthTokenMock = vi.fn(() => 'test-token' as string | null);
 const posWindowSendMock = vi.fn();
 const isDestroyedMock = vi.fn(() => false);
@@ -91,12 +93,12 @@ vi.mock('../src/main/sync/sync-log-service', () => {
     getSyncMode = () => 'path_a';
     detectServerCapability = vi.fn();
     upgradeSyncMode = vi.fn();
-    isModeAtLeast = () => false;
+    isModeAtLeast = isModeAtLeastMock;
     pullFromServer = vi.fn();
     pushToServer = vi.fn();
     startPeriodicPull = vi.fn();
     startPeriodicPush = vi.fn();
-    processRealtimeEntry = vi.fn();
+    processRealtimeEntry = processRealtimeEntryMock;
     stop = vi.fn();
   }
   return {
@@ -184,6 +186,10 @@ describe('SyncModule.runProductSync', () => {
     fullSyncMock.mockReset();
     reconcileLocalVariantImportsMock.mockReset();
     reconcileLocalVariantImportsMock.mockResolvedValue(0);
+    processRealtimeEntryMock.mockReset();
+    processRealtimeEntryMock.mockResolvedValue(undefined);
+    isModeAtLeastMock.mockReset();
+    isModeAtLeastMock.mockReturnValue(false);
     getSecureAuthTokenMock.mockReset();
     getSecureAuthTokenMock.mockReturnValue('test-token');
     posWindowSendMock.mockReset();
@@ -228,6 +234,33 @@ describe('SyncModule.runProductSync', () => {
     expect(getWindowMock).toHaveBeenCalledWith('pos');
     expect(posWindowSendMock).toHaveBeenCalledWith('pos:products-synced', undefined);
   });
+
+  it.each(['product', 'category', 'stock'])(
+    'pulls the canonical catalog after a realtime %s invalidation',
+    async (entityType) => {
+      isModeAtLeastMock.mockReturnValue(true);
+      deltaSyncMock.mockResolvedValueOnce(1);
+      const handlers = new Map<string, (payload: any) => Promise<void> | void>();
+      const socket = {
+        on: vi.fn((event: string, handler: (payload: any) => Promise<void> | void) => {
+          handlers.set(event, handler);
+        }),
+      };
+      const m = await freshModule();
+      m.setupSocketHandlers(socket as any);
+
+      await handlers.get('sync:entry')?.({
+        seq: 1,
+        entityType,
+        entityId: 'variant-1',
+        event: 'updated',
+        payload: { id: 'variant-1' },
+      });
+
+      expect(processRealtimeEntryMock).toHaveBeenCalledTimes(1);
+      expect(deltaSyncMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('does NOT send pos:products-synced when the sync fails', async () => {
     deltaSyncMock.mockRejectedValueOnce(new Error('network'));

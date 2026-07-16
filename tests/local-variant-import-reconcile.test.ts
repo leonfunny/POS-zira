@@ -103,6 +103,12 @@ describe('buildLocalImportMutationKey', () => {
       categoryId: null,
     }));
   });
+
+  it('keeps an omitted purchase price distinct from an explicit zero cost', () => {
+    const { purchasePrice: _ignored, ...withoutPurchasePrice } = intent;
+    expect(buildLocalImportMutationKey(withoutPurchasePrice))
+      .not.toBe(buildLocalImportMutationKey(intent));
+  });
 });
 
 describe('ProductSync.reconcileLocalVariantImports', () => {
@@ -113,6 +119,52 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     vi.mocked(localVariantImportsRepo.getSyncedAliases).mockReturnValue([]);
     vi.mocked(productRepo.getAllCategories).mockReturnValue([]);
     vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true });
+  });
+
+  it('reconciles a zero-stock import without inventing a purchase price', async () => {
+    const row: any = {
+      variant_id: 'zero-stock-variant',
+      draft_id: 'zero-stock-draft',
+      ean: '8935039500400',
+      status: 'PENDING',
+      attempts: 0,
+      last_error: null,
+      created_at: '2026-07-13 10:00:00',
+      synced_at: null,
+      server_variant_id: null,
+      category_id: null,
+      intent_payload_json: null,
+      intent_idempotency_key: null,
+      intent_dispatched_at: null,
+    };
+    vi.mocked(localVariantImportsRepo.getPending).mockReturnValueOnce([row]);
+    vi.mocked(productRepo.getById).mockReturnValueOnce({
+      id: row.variant_id,
+      retail_price: 1764,
+      in_stock: 0,
+      available_qty: 0,
+      vat_rate: 5,
+      category_id: null,
+    } as any);
+    vi.mocked(apiClient.scanCreate).mockResolvedValueOnce({
+      mode: 'IMPORT_DRAFT',
+      variantId: 'server-zero-stock',
+    });
+
+    const result = await new ProductSync().reconcileLocalVariantImports();
+
+    expect(result).toBe(1);
+    expect(apiClient.scanCreate).toHaveBeenCalledWith(null, expect.objectContaining({
+      ean: row.ean,
+      retailPrice: 17.64,
+      stockQty: 0,
+      taxRate: 5,
+      categoryId: null,
+    }));
+    const request = vi.mocked(apiClient.scanCreate).mock.calls[0][1] as any;
+    expect(request).not.toHaveProperty('purchasePrice');
+    expect(localVariantImportsRepo.markSynced)
+      .toHaveBeenCalledWith(row.variant_id, 'server-zero-stock');
   });
 
   it('coalesces concurrent reconciliation of the same variant into one network mutation', async () => {
@@ -880,7 +932,7 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     );
   });
 
-  it('creates the online product with scan-create using local price, stock, and VAT', async () => {
+  it('creates the online product with local price, stock, and VAT but no invented cost', async () => {
     const backendCategoryId = '11111111-1111-1111-1111-111111111111';
     vi.mocked(productRepo.getAllCategories).mockReturnValueOnce([
       { id: backendCategoryId } as any,
@@ -931,7 +983,6 @@ describe('ProductSync.reconcileLocalVariantImports', () => {
     expect(reconciled).toBe(1);
     expect(apiClient.scanCreate).toHaveBeenCalledWith(null, {
       ean: '8935039500400',
-      purchasePrice: 0,
       retailPrice: 17.64,
       stockQty: 24,
       taxRate: 5,

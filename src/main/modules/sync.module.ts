@@ -605,6 +605,22 @@ export class SyncModule extends BaseModule {
         const entityType = entry.entityType ?? entry.entity_type;
         const entityId = entry.entityId ?? entry.entity_id;
 
+        // Product/category sync-log payloads are often lightweight
+        // invalidations, not complete catalogue rows. Pull the canonical HTTP
+        // mirror before notifying renderers so this terminal and other POS
+        // devices converge on the same fields without blanking absent values.
+        if (entityType === 'product' || entityType === 'category' || entityType === 'stock') {
+          const result = await this.runProductSync({
+            bypassBackoff: true,
+            reason: `sync-entry-${entityType}`,
+          });
+          if (!result.success && result.error !== 'no-auth') {
+            logger.debug(
+              `[SyncModule] Canonical refresh after ${entityType} event failed: ${result.error ?? 'unknown'}`,
+            );
+          }
+        }
+
         // Targeted notification based on entity type.
         if (entityType === 'product' || entityType === 'category') {
           notifyPosRenderers(this.container, 'pos:products-synced');

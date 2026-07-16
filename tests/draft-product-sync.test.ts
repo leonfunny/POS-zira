@@ -92,7 +92,9 @@ describe('DraftProductSync', () => {
       expect.objectContaining({
         id: 'ok-1',
         name: 'Tea',
-        retail_price: 1200,
+        retail_price: 0,
+        category_id: null,
+        in_stock: 0,
       }),
     ]);
     expect(loggerWarnMock).toHaveBeenCalledWith(
@@ -119,7 +121,9 @@ describe('DraftProductSync', () => {
       expect.objectContaining({
         id: 'ok-2',
         name: 'Coffee',
-        retail_price: 2500,
+        retail_price: 0,
+        category_id: null,
+        in_stock: 0,
       }),
     ]);
     expect(softDeleteByIdsMock).toHaveBeenCalledWith(['gone-1']);
@@ -169,5 +173,65 @@ describe('DraftProductSync', () => {
     expect(result).toBe(1);
     expect(getDraftProductsMock).toHaveBeenCalledTimes(1); // full sweep still runs
     expect(clearAllMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('forces a full refresh when the backend draft mirror contract version changes', async () => {
+    databaseGetMock.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes("key = 'draft_products_last_sync'")) {
+        return { value: 'cursor-old' };
+      }
+      if (params?.[0] === 'draft_products_mirror_version') {
+        return { value: '1' };
+      }
+      return undefined;
+    });
+    getDraftProductsMock
+      .mockResolvedValueOnce({
+        drafts: [],
+        deletedIds: [],
+        nextSince: 'cursor-delta',
+        mirrorVersion: 2,
+      })
+      .mockResolvedValueOnce({
+        drafts: [{ id: 'fresh-1', name: 'Fresh draft', inStock: 999 }],
+        deletedIds: [],
+        nextSince: 'cursor-full',
+        mirrorVersion: 2,
+      });
+
+    const sync = new DraftProductSync();
+    const result = await sync.deltaSync();
+
+    expect(result).toBe(1);
+    expect(getDraftProductsMock).toHaveBeenCalledTimes(2);
+    expect(clearAllMock).toHaveBeenCalledTimes(1);
+    expect(upsertManyMock).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        id: 'fresh-1',
+        retail_price: 0,
+        category_id: null,
+        in_stock: 0,
+      }),
+    ]);
+    expect(databaseRunMock).toHaveBeenCalledWith(
+      expect.stringContaining('sync_metadata'),
+      ['draft_products_mirror_version', '2'],
+    );
+  });
+
+  it('counts rows from the real draft_products table when evaluating cooldown safety', async () => {
+    databaseGetMock.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes("key = 'draft_products_last_sync'")) return undefined;
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { n: 4 };
+      if (params?.[0] === 'draft_products_last_full_sync') return { value: new Date().toISOString() };
+      return undefined;
+    });
+
+    const sync = new DraftProductSync();
+    await sync.deltaSync();
+
+    expect(databaseGetMock).toHaveBeenCalledWith(
+      'SELECT COUNT(*) AS n FROM draft_products',
+    );
   });
 });

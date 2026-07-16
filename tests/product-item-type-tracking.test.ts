@@ -60,7 +60,8 @@ describe('product stock tracking helper', () => {
     expect(editForm).toContain('Quantity/weight mode is locked for existing products.');
     expect(editForm).toContain('Stock must be zero before changing an existing product');
     expect(editForm).not.toContain('disabled={stockTracked}');
-    expect(editForm).not.toContain('payload.trackInventory');
+    expect(editForm).toContain('payload.trackInventory = trackInventory');
+    expect(editForm).toContain("tOr(t, 'products.edit.trackInventory', 'Track inventory')");
     expect(editForm).not.toContain('sellBy,\n        isActive:');
   });
 });
@@ -117,7 +118,8 @@ describe('itemType/trackInventory wiring contract', () => {
     expect(editView).toContain('&& stockTracked');
     expect(drawer).toContain('&& isStockTracked(product)');
     expect(tile).toContain('const stockTracked = isStockTracked(product)');
-    expect(editForm).toContain('const stockEditable = canAdjustStock && stockTracked && itemPolicy.stockApplies');
+    expect(editForm).toContain("&& itemType === 'stockable'");
+    expect(editForm).toContain('&& trackInventory;');
   });
 
   it('never marks non-tracked items sold-out on the sale grid', () => {

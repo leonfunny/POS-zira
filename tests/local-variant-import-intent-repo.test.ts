@@ -64,6 +64,34 @@ describe('localVariantImportsRepo durable intent', () => {
     `);
   });
 
+  it('creates the marker and exact scan-create intent in one insert', () => {
+    const payloadJson = JSON.stringify({
+      ean: '8935039500400',
+      retailPrice: 17.64,
+      stockQty: 0,
+      taxRate: 5,
+      categoryId: null,
+    });
+    const intentKey = `local-import-v2-${'c'.repeat(64)}`;
+
+    localVariantImportsRepo.create(
+      'variant-atomic',
+      'draft-atomic',
+      '8935039500400',
+      null,
+      { payloadJson, idempotencyKey: intentKey },
+    );
+
+    expect(localVariantImportsRepo.getByVariantId('variant-atomic')).toMatchObject({
+      status: 'PENDING',
+      attempts: 0,
+      category_id: null,
+      intent_payload_json: payloadJson,
+      intent_idempotency_key: intentKey,
+      intent_dispatched_at: null,
+    });
+  });
+
   it('preserves the first intent and rejects a payload-changing requeue after dispatch', () => {
     const categoryId = '11111111-1111-1111-1111-111111111111';
     const payloadJson = JSON.stringify({

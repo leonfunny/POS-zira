@@ -74,8 +74,8 @@ function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
     id: draft.id,
     name: draft.name,
     barcode: draft.barcode,
-    retail_price: Number(draft.retail_price) || 0,
-    stock_qty: Number(draft.in_stock) || 0,
+    retail_price: 0,
+    stock_qty: 0,
     vat_rate: Number(draft.vat_rate) || 23,
     image_url: draft.image_url,
     status: draft.status,
@@ -537,7 +537,7 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
     setScanImportCategories([]);
     setScanImport({ open: true, ean: code, preview: null, loading: true, error: null });
     try {
-      const categoryRowsPromise = window.electronAPI.pos.categories.getAll()
+      const categoryRowsPromise = window.electronAPI.pos.categories.getAllIncludingEmpty()
         .catch((err: any) => {
           rlog.warn('[POSLayout] scan-import category load failed', err?.message);
           return [];
@@ -679,13 +679,19 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
     setShowQuickAddCamera(false);
   }, [dispatch, language, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
-  const confirmScanImport = useCallback(async (retailPriceGrosze: number, categoryId?: string) => {
+  const confirmScanImport = useCallback(async (
+    retailPriceGrosze: number,
+    categoryId: string | undefined,
+    stockQty: number,
+  ) => {
     const ean = scanImport.ean;
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
       const isExternal = isExternalScanImportSource(scanImport.preview?.source);
-      const draftPayload = categoryId ? { ean, retailPriceGrosze, categoryId } : { ean, retailPriceGrosze };
+      const draftPayload = categoryId
+        ? { ean, retailPriceGrosze, categoryId, stockQty }
+        : { ean, retailPriceGrosze, stockQty };
       // Drafts keep their existing local-first path. External EAN hits go
       // through backend quick-add so the new product exists online too.
       const result = isExternal
