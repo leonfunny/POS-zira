@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Folder, FolderX, Grid3X3, Plus, ScanBarcode, Search, Tags } from 'lucide-react';
+import { Folder, FolderX, Grid3X3, Plus, Search, Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -16,7 +16,6 @@ interface CategoryGridProps {
   onOpenCategory: (categoryId: ProductCategorySelection) => void;
   onOpenSearch: () => void;
   onAddProduct: () => void;
-  onAddByBarcode: () => void;
   onManageCategories: () => void;
 }
 
@@ -74,7 +73,6 @@ export default function CategoryGrid({
   onOpenCategory,
   onOpenSearch,
   onAddProduct,
-  onAddByBarcode,
   onManageCategories,
 }: CategoryGridProps) {
   const sortedCategories = useMemo(() => sortCategories(categories, language), [categories, language]);
@@ -107,14 +105,6 @@ export default function CategoryGrid({
           >
             <Search size={18} />
             {tOr(t, 'products.search', 'Search')}
-          </button>
-          <button
-            type="button"
-            onClick={onAddByBarcode}
-            className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          >
-            <ScanBarcode size={18} />
-            {tOr(t, 'products.scanBarcode', 'Scan barcode')}
           </button>
           {canCreateProduct ? (
             <button

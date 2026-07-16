@@ -600,11 +600,6 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
     setCreateOpen(true);
   }, [adminCapabilities?.canCreateProduct]);
 
-  const handleOpenAddByBarcode = useCallback(() => {
-    setAddInitialBarcode('');
-    setAddOpen(true);
-  }, []);
-
   const returnFromEdit = useCallback(() => {
     const shouldExitExternal = isExternalEdit(view);
     setSelectedProduct(null);
@@ -895,7 +890,6 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           onOpenCategory={(categoryId) => setView({ name: 'products', categoryId })}
           onOpenSearch={() => setSearchOpen(true)}
           onAddProduct={() => handleOpenCreate(null)}
-          onAddByBarcode={handleOpenAddByBarcode}
           onManageCategories={() => setCategoryManagerOpen(true)}
         />
       ) : view.name === 'products' ? (
@@ -908,7 +902,6 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           canCreateProduct={adminCapabilities?.canCreateProduct === true}
           onBack={() => setView({ name: 'categories' })}
           onAddProduct={() => handleOpenCreate(currentCategoryId)}
-          onAddByBarcode={handleOpenAddByBarcode}
           onOpenSearch={() => setSearchOpen(true)}
           onSelect={handleOpenProduct}
         />

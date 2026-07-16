@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, Plus, ScanBarcode, Search } from 'lucide-react';
+import { ChevronLeft, Plus, Search } from 'lucide-react';
 import type { ProductListItem } from '../../hooks/useProducts';
 import ProductTile from './ProductTile';
 
@@ -12,7 +12,6 @@ interface ProductTileGridProps {
   canCreateProduct: boolean;
   onBack: () => void;
   onAddProduct: () => void;
-  onAddByBarcode: () => void;
   onOpenSearch: () => void;
   onSelect: (product: ProductListItem) => void;
 }
@@ -33,7 +32,6 @@ export default function ProductTileGrid({
   canCreateProduct,
   onBack,
   onAddProduct,
-  onAddByBarcode,
   onOpenSearch,
   onSelect,
 }: ProductTileGridProps) {
@@ -74,15 +72,6 @@ export default function ProductTileGrid({
             aria-label={tOr(t, 'products.search', 'Search')}
           >
             <Search size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={onAddByBarcode}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-            title={tOr(t, 'products.scanBarcode', 'Scan barcode')}
-            aria-label={tOr(t, 'products.scanBarcode', 'Scan barcode')}
-          >
-            <ScanBarcode size={18} />
           </button>
           {canCreateProduct ? (
             <button

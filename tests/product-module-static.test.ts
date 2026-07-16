@@ -251,11 +251,13 @@ describe('Product module implementation contract', () => {
     expect(moduleSource).toContain('products.deactivate.hidden');
     expect(tileGrid).toContain('PRODUCT_TILE_PAGE_SIZE = 300');
     expect(searchOverlay).toContain('window.electronAPI.pos.products.getByBarcode');
+    expect(searchOverlay).toContain('window.electronAPI.onBarcodeScanned');
     expect(moduleSource).toContain('syncProducts');
     expect(moduleSource).toContain('setKindFilter');
-    expect(moduleSource).toContain("setAddInitialBarcode('')");
-    expect(categoryGrid).toContain('onAddByBarcode');
-    expect(tileGrid).toContain('onAddByBarcode');
+    expect(moduleSource).toContain('<ProductAddFlow');
+    expect(moduleSource).not.toContain('handleOpenAddByBarcode');
+    expect(categoryGrid).not.toContain('onAddByBarcode');
+    expect(tileGrid).not.toContain('onAddByBarcode');
     expect(useProducts).toContain('onProductsSynced');
     expect(useProducts).toContain('onCatalogUpdated');
     expect(useProducts).toContain('onStockUpdated');
@@ -338,7 +340,8 @@ describe('Product module implementation contract', () => {
     expect(moduleSource).toContain("tOr(t, 'common.retry', 'Retry')");
   });
 
-  it('uses existing barcode draft import flow instead of local-only product creation', () => {
+  it('keeps barcode draft import available from draft details', () => {
+    expect(moduleSource).toContain('setAddInitialBarcode(product.barcode)');
     expect(addFlow).toContain('pos.products.getByBarcode');
     expect(addFlow).toContain('pos.draftProducts.getByBarcode');
     expect(addFlow).toContain('pos.masterCatalog.lookupByEan');

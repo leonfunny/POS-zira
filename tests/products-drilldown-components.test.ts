@@ -29,7 +29,7 @@ describe('Products drill-down components', () => {
     expect(tile).toContain('onClick={() => onSelect(product)}');
   });
 
-  it('renders ProductTileGrid with touch-safe navigation, capability-gated create, and incremental loading', () => {
+  it('renders ProductTileGrid with one search/scan entry point, touch-safe navigation, capability-gated create, and incremental loading', () => {
     const grid = source('src/renderer/components/products/ProductTileGrid.tsx');
 
     expect(grid).toContain('products.slice(0, visibleLimit)');
@@ -40,12 +40,13 @@ describe('Products drill-down components', () => {
     expect(grid).toContain('canCreateProduct ? (');
     expect(grid).toContain('<ProductTile');
     expect(grid).toContain('onOpenSearch');
-    expect(grid).toContain('onAddByBarcode');
+    expect(grid).not.toContain('onAddByBarcode');
+    expect(grid).not.toContain('products.scanBarcode');
     expect(grid).toContain('onBack');
     expect(grid).toContain('minmax(220px,1fr)');
   });
 
-  it('renders sorted category buttons plus all and uncategorised entries', () => {
+  it('renders sorted category buttons plus all and uncategorised entries with one search/scan entry point', () => {
     const grid = source('src/renderer/components/products/CategoryGrid.tsx');
 
     expect(grid).toContain('sortCategories(categories, language)');
@@ -54,7 +55,9 @@ describe('Products drill-down components', () => {
     expect(grid).toContain('product.category_id == null');
     expect(grid).toContain('canCreateProduct ? (');
     expect(grid).toContain('canManageCategories ? (');
-    expect(grid).toContain('onAddByBarcode');
+    expect(grid).toContain('onOpenSearch');
+    expect(grid).not.toContain('onAddByBarcode');
+    expect(grid).not.toContain('products.scanBarcode');
   });
 
   it('uses the POS barcode resolver, duplicate warning, scanner bridge, and keyboard inset in search', () => {
@@ -109,7 +112,9 @@ describe('Products drill-down components', () => {
     expect(moduleSource).toContain('<ProductEditView');
     expect(moduleSource).toContain('<ProductSearchOverlay');
     expect(moduleSource).toContain('canCreateProduct={adminCapabilities?.canCreateProduct === true}');
-    expect(moduleSource).toContain("setAddInitialBarcode('')");
+    expect(moduleSource).toContain('<ProductAddFlow');
+    expect(moduleSource).not.toContain('handleOpenAddByBarcode');
+    expect(moduleSource).toContain('setAddInitialBarcode(product.barcode)');
     expect(moduleSource).toContain('syncProducts');
     expect(moduleSource).toContain('setKindFilter');
     expect(moduleSource).toContain('categoryById={categoryById}');
