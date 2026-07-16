@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  decodeCategoryImageDataUrl,
   decodeProductImageDataUrl,
   captureProductAdminSessionContext,
   isProductAdminSessionContextCurrent,
@@ -10,7 +11,9 @@ import {
   productAdminCategoryToRow,
   redactProductAdminPurchaseData,
   requireProductAdminExpectedUpdatedAt,
+  sanitizeProductAdminCategoryJsonMutation,
   sanitizeExistingProductInventoryModeUpdate,
+  shouldApplyProductAdminCategoryMirror,
   shouldApplyProductAdminVariantMirror,
 } from '../src/main/pos/product-workspace-input';
 import { classifyProductSale } from '../src/shared/product-sale-classifier';
@@ -174,6 +177,7 @@ describe('product workspace IPC input boundary', () => {
     expect(productAdminCategoryToRow({
       id: 'category-1',
       name: ' Tea ',
+      imageUrl: 'https://img.test/categories/tea.webp',
       icon: 'DR',
       color: '#2563eb',
       sortOrder: 4,
@@ -183,6 +187,7 @@ describe('product workspace IPC input boundary', () => {
     })).toEqual({
       id: 'category-1',
       name: 'Tea',
+      image_url: 'https://img.test/categories/tea.webp',
       icon: 'DR',
       color: '#2563eb',
       sort_order: 4,
@@ -195,6 +200,7 @@ describe('product workspace IPC input boundary', () => {
     const existing = {
       id: 'category-1',
       name: 'Tea',
+      image_url: 'https://img.test/categories/tea-old.webp',
       icon: 'DR',
       color: '#2563eb',
       sort_order: 7,
@@ -210,12 +216,67 @@ describe('product workspace IPC input boundary', () => {
     expect(productAdminCategoryToRow({
       id: 'category-1',
       name: 'Tea',
+      imageUrl: null,
       isActive: true,
       updatedAt: '2026-07-14T10:01:00.000Z',
     } as any, existing)).toEqual({
       ...existing,
+      image_url: null,
       updated_at: '2026-07-14T10:01:00.000Z',
     });
+  });
+
+  it('allows only capability-authorized null category image removal through JSON', () => {
+    const base = {
+      name: 'Tea',
+      expectedUpdatedAt: '2026-07-14T10:00:00.000Z',
+    };
+
+    expect(sanitizeProductAdminCategoryJsonMutation(
+      { ...base, imageUrl: null },
+      { canReplaceCategoryImage: true },
+      { allowImageRemoval: true },
+    )).toEqual({ ...base, imageUrl: null });
+
+    expect(sanitizeProductAdminCategoryJsonMutation(
+      { ...base, imageUrl: null },
+      { canReplaceCategoryImage: true },
+      { allowImageRemoval: false },
+    )).toEqual(base);
+
+    expect(errorCode(() => sanitizeProductAdminCategoryJsonMutation(
+      { ...base, imageUrl: null },
+      { canReplaceCategoryImage: false },
+      { allowImageRemoval: true },
+    ))).toBe('UNSUPPORTED_CAPABILITY');
+
+    expect(errorCode(() => sanitizeProductAdminCategoryJsonMutation(
+      { ...base, imageUrl: 'https://unvalidated.test/category.jpg' },
+      { canReplaceCategoryImage: true },
+      { allowImageRemoval: true },
+    ))).toBe('INVALID_IMAGE');
+  });
+
+  it('rejects a stale or unversioned category mutation response mirror', () => {
+    const existing = { updated_at: '2026-07-14T10:00:03.000Z' } as any;
+
+    expect(shouldApplyProductAdminCategoryMirror(
+      { updatedAt: '2026-07-14T10:00:02.000Z' },
+      existing,
+    )).toBe(false);
+    expect(shouldApplyProductAdminCategoryMirror(
+      { updatedAt: '2026-07-14T10:00:03.000Z' },
+      existing,
+    )).toBe(true);
+    expect(shouldApplyProductAdminCategoryMirror(
+      { updatedAt: '2026-07-14T10:00:04.000Z' },
+      existing,
+    )).toBe(true);
+    expect(shouldApplyProductAdminCategoryMirror({}, existing)).toBe(false);
+    expect(shouldApplyProductAdminCategoryMirror(
+      { updatedAt: '2026-07-14T10:00:04.000Z' },
+      null,
+    )).toBe(true);
   });
 
   it('fails closed before an existing-variant API call when OCC requires a revision token', () => {
@@ -284,6 +345,33 @@ describe('product workspace IPC input boundary', () => {
     const fake = Buffer.from('not actually a png');
     expect(errorCode(() => decodeProductImageDataUrl({
       dataUrl: `data:image/png;base64,${fake.toString('base64')}`,
+      mimeType: 'image/png',
+    }))).toBe('INVALID_IMAGE');
+  });
+
+  it('detects and sanitizes a category image data URL', () => {
+    const webp = Buffer.concat([
+      Buffer.from('RIFF', 'ascii'),
+      Buffer.from([0x04, 0x00, 0x00, 0x00]),
+      Buffer.from('WEBP', 'ascii'),
+      Buffer.from([0x00]),
+    ]);
+    const decoded = decodeCategoryImageDataUrl({
+      dataUrl: `data:image/webp;base64,${webp.toString('base64')}`,
+      fileName: '..\\unsafe image.exe',
+      mimeType: 'image/webp',
+    });
+
+    expect(decoded.mimeType).toBe('image/webp');
+    expect(decoded.fileName).toBe('unsafe-image.webp');
+    expect(Buffer.from(decoded.bytes)).toEqual(webp);
+  });
+
+  it('rejects non-image bytes from a category image data URL', () => {
+    const fake = Buffer.from('not actually an image');
+    expect(errorCode(() => decodeCategoryImageDataUrl({
+      dataUrl: `data:image/png;base64,${fake.toString('base64')}`,
+      fileName: 'not-image.png',
       mimeType: 'image/png',
     }))).toBe('INVALID_IMAGE');
   });

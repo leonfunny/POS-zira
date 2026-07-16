@@ -94,6 +94,30 @@ describe('Database.applyMigrations', () => {
     ]);
   });
 
+  it('moves legacy category image URLs out of icon without touching glyph icons', () => {
+    DatabaseClass.applyMigrations(db, migrations.filter((migration) => migration.version <= 55));
+    db.run(`
+      INSERT INTO categories (id, name, icon, color, sort_order) VALUES
+        ('url-cat', 'URL', 'https://img.test/category.jpg', NULL, 0),
+        ('relative-cat', 'Relative', '/uploads/category.webp', NULL, 1),
+        ('glyph-cat', 'Glyph', '🥬', NULL, 2);
+    `);
+
+    DatabaseClass.applyMigrations(db, migrations);
+
+    expect(columnExists(db, 'categories', 'image_url')).toBe(true);
+    expect(db.exec(`
+      SELECT id, image_url, icon
+      FROM categories
+      WHERE id IN ('url-cat', 'relative-cat', 'glyph-cat')
+      ORDER BY id
+    `)[0].values).toEqual([
+      ['glyph-cat', null, '🥬'],
+      ['relative-cat', '/uploads/category.webp', null],
+      ['url-cat', 'https://img.test/category.jpg', null],
+    ]);
+  });
+
   it('applies pending migrations on a fresh DB and stamps (version, name)', () => {
     const v2: Migration = {
       version: 2,

@@ -41,6 +41,7 @@ export interface Product {
 export interface Category {
   id: string;
   name: string;
+  image_url: string | null;
   icon: string | null;
   color: string | null;
   sort_order: number;

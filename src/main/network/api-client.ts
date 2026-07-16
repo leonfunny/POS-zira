@@ -35,6 +35,9 @@ import {
   WarehouseInventoryCountLineInput,
   WarehousePrintPayload,
   ProductAdminCapabilities,
+  ProductAdminCategory,
+  ProductAdminCategoryDeleteResponse,
+  ProductAdminCategoryImageUploadResponse,
   ProductAdminCategoryListResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
@@ -482,6 +485,76 @@ function normalizeTelegramTokenResponse(data: any): TelegramLoginTokenResponse {
   }
 
   return { token, expiresAt, deepLink };
+}
+
+function unwrapProductAdminData(raw: any): any {
+  return raw?.data && typeof raw.data === 'object' ? raw.data : raw;
+}
+
+function legacyCategoryImageUrl(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) return null;
+  return /^(https?:)?\/\//i.test(normalized) || normalized.startsWith('/')
+    ? normalized
+    : null;
+}
+
+function normalizeProductAdminCategory(raw: any): ProductAdminCategory | null {
+  const id = String(raw?.id ?? '').trim();
+  const name = String(raw?.name ?? '').trim();
+  if (!id || !name) return null;
+
+  const rawIcon = typeof raw?.icon === 'string' ? raw.icon.trim() : '';
+  const hasExplicitImageUrl = Object.prototype.hasOwnProperty.call(raw, 'imageUrl')
+    || Object.prototype.hasOwnProperty.call(raw, 'image_url');
+  const rawImageUrl = raw?.imageUrl ?? raw?.image_url;
+  const imageUrl = hasExplicitImageUrl
+    ? (typeof rawImageUrl === 'string' ? rawImageUrl.trim() || null : null)
+    : legacyCategoryImageUrl(rawIcon);
+  const sortOrderValue = raw?.sortOrder ?? raw?.sort_order ?? raw?.displayOrder ?? raw?.display_order;
+  const sortOrder = Number.isFinite(Number(sortOrderValue))
+    ? Math.max(0, Math.floor(Number(sortOrderValue)))
+    : null;
+  const versionValue = Number(raw?.version);
+  const productCountValue = Number(raw?.productCount ?? raw?.product_count);
+
+  return {
+    id,
+    name,
+    imageUrl,
+    productCount: Number.isFinite(productCountValue)
+      ? Math.max(0, Math.floor(productCountValue))
+      : undefined,
+    color: typeof raw?.color === 'string' ? raw.color : null,
+    icon: legacyCategoryImageUrl(rawIcon) ? null : rawIcon || null,
+    sortOrder,
+    isActive: raw?.isActive === false || raw?.is_active === false || raw?.is_active === 0
+      ? false
+      : true,
+    kitchenPrint: typeof (raw?.kitchenPrint ?? raw?.kitchen_print) === 'boolean'
+      ? Boolean(raw.kitchenPrint ?? raw.kitchen_print)
+      : undefined,
+    updatedAt: String(raw?.updatedAt ?? raw?.updated_at ?? '').trim(),
+    version: Number.isFinite(versionValue) ? versionValue : undefined,
+  };
+}
+
+function normalizeProductAdminCategoryMutationResponse(raw: any): ProductAdminCategoryMutationResponse {
+  const data = unwrapProductAdminData(raw);
+  const category = normalizeProductAdminCategory(data?.category ?? data);
+  if (!category) {
+    const error = new Error('Invalid product-admin category response') as Error & { code?: string };
+    error.code = 'INVALID_CATEGORY';
+    throw error;
+  }
+  return {
+    category,
+    serverTime: typeof data?.serverTime === 'string'
+      ? data.serverTime
+      : typeof data?.server_time === 'string'
+        ? data.server_time
+        : undefined,
+  };
 }
 
 /**
@@ -1516,6 +1589,7 @@ export class ApiClient {
     path: string,
     body?: any,
     idempotencyKey?: string,
+    expectedUpdatedAt?: string,
   ): Promise<T> {
     const salonSlug = getConfigValue('salonSlug') as string | undefined;
     const salonCode = getConfigValue('salonCode') as string | undefined;
@@ -1528,6 +1602,7 @@ export class ApiClient {
     if (salonCode) headers['X-Salon-Code'] = salonCode;
     if (agentId) headers['X-Agent-Id'] = agentId;
     if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (expectedUpdatedAt) headers['X-Expected-Updated-At'] = expectedUpdatedAt;
 
     const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/warehouse/product-admin${path}`, {
       method,
@@ -1649,6 +1724,9 @@ export class ApiClient {
       canAdjustStock: raw?.canAdjustStock === true,
       canCreateCategory: raw?.canCreateCategory === true,
       canUpdateCategory: raw?.canUpdateCategory === true,
+      canDeleteCategory: raw?.canDeleteCategory === true,
+      canReplaceCategoryImage: raw?.canReplaceCategoryImage === true,
+      supportsCategoryImageUpload: raw?.supportsCategoryImageUpload === true,
       canReorderCategory: raw?.canReorderCategory === true,
       supportsCategoryBatchUpdate: raw?.supportsCategoryBatchUpdate === true,
       supportsCategoryKitchenPrint: raw?.supportsCategoryKitchenPrint === true,
@@ -1794,20 +1872,28 @@ export class ApiClient {
   }
 
   async listProductAdminCategories(token: string): Promise<ProductAdminCategoryListResponse> {
-    const raw = await this.productAdminRequest<any>(
+    const response = await this.productAdminRequest<any>(
       token,
       'GET',
       '/categories',
     );
+    const raw = unwrapProductAdminData(response);
     const categories = Array.isArray(raw?.categories)
       ? raw.categories
       : Array.isArray(raw?.items)
         ? raw.items
         : [];
+    const normalizedCategories = categories
+      .map(normalizeProductAdminCategory)
+      .filter((category: ProductAdminCategory | null): category is ProductAdminCategory => category !== null);
     return {
-      categories,
-      total: Number.isFinite(Number(raw?.total)) ? Number(raw.total) : categories.length,
-      serverTime: typeof raw?.serverTime === 'string' ? raw.serverTime : undefined,
+      categories: normalizedCategories,
+      total: Number.isFinite(Number(raw?.total)) ? Number(raw.total) : normalizedCategories.length,
+      serverTime: typeof raw?.serverTime === 'string'
+        ? raw.serverTime
+        : typeof raw?.server_time === 'string'
+          ? raw.server_time
+          : undefined,
     };
   }
 
@@ -1816,13 +1902,14 @@ export class ApiClient {
     payload: ProductAdminCategoryMutationInput,
   ): Promise<ProductAdminCategoryMutationResponse> {
     const { idempotencyKey, ...body } = payload;
-    return this.productAdminRequest<ProductAdminCategoryMutationResponse>(
+    const response = await this.productAdminRequest<any>(
       token,
       'POST',
       '/categories',
       body,
       idempotencyKey,
     );
+    return normalizeProductAdminCategoryMutationResponse(response);
   }
 
   async updateProductAdminCategory(
@@ -1830,24 +1917,153 @@ export class ApiClient {
     categoryId: string,
     payload: Partial<ProductAdminCategoryMutationInput>,
   ): Promise<ProductAdminCategoryMutationResponse> {
-    return this.productAdminRequest<ProductAdminCategoryMutationResponse>(
+    const response = await this.productAdminRequest<any>(
       token,
       'PATCH',
       `/categories/${encodeURIComponent(categoryId)}`,
       payload,
     );
+    return normalizeProductAdminCategoryMutationResponse(response);
   }
 
   async updateProductAdminCategoryOrder(
     token: string,
     updates: ProductAdminCategoryOrderUpdate[],
   ): Promise<ProductAdminCategoryOrderUpdateResponse> {
-    return this.productAdminRequest<ProductAdminCategoryOrderUpdateResponse>(
+    const response = await this.productAdminRequest<any>(
       token,
       'PATCH',
       '/categories/order',
       { updates },
     );
+    const raw = unwrapProductAdminData(response);
+    const categories = (Array.isArray(raw?.categories) ? raw.categories : [])
+      .map(normalizeProductAdminCategory)
+      .filter((category: ProductAdminCategory | null): category is ProductAdminCategory => category !== null);
+    return {
+      categories,
+      updated: Number.isFinite(Number(raw?.updated)) ? Number(raw.updated) : categories.length,
+      serverTime: typeof raw?.serverTime === 'string'
+        ? raw.serverTime
+        : typeof raw?.server_time === 'string'
+          ? raw.server_time
+          : undefined,
+    };
+  }
+
+  async uploadProductAdminCategoryImage(
+    token: string,
+    categoryId: string,
+    payload: {
+      bytes: Uint8Array;
+      mimeType: string;
+      fileName: string;
+      expectedUpdatedAt?: string;
+    },
+  ): Promise<ProductAdminCategoryImageUploadResponse> {
+    const form = new FormData();
+    const imageBuffer = new ArrayBuffer(payload.bytes.byteLength);
+    new Uint8Array(imageBuffer).set(payload.bytes);
+    form.append(
+      'image',
+      new Blob([imageBuffer], { type: payload.mimeType }),
+      payload.fileName,
+    );
+    const response = await this.productAdminMultipartRequest<any>(
+      token,
+      `/categories/${encodeURIComponent(categoryId)}/image`,
+      form,
+      payload.expectedUpdatedAt,
+    );
+    const raw = unwrapProductAdminData(response);
+    const category = normalizeProductAdminCategory(raw?.category);
+    const imageUrl = typeof (raw?.image?.url ?? category?.imageUrl) === 'string'
+      ? String(raw.image?.url ?? category?.imageUrl).trim()
+      : '';
+    if (!category || category.id !== categoryId || !imageUrl) {
+      const error = new Error('Invalid product-admin category image response') as Error & { code?: string };
+      error.code = 'INVALID_IMAGE';
+      throw error;
+    }
+    return {
+      category: {
+        ...category,
+        imageUrl,
+      },
+      image: { url: imageUrl },
+      serverTime: typeof raw?.serverTime === 'string'
+        ? raw.serverTime
+        : typeof raw?.server_time === 'string'
+          ? raw.server_time
+          : undefined,
+    };
+  }
+
+  async deleteProductAdminCategory(
+    token: string,
+    categoryId: string,
+    expectedUpdatedAt?: string,
+  ): Promise<ProductAdminCategoryDeleteResponse> {
+    let response: any;
+    try {
+      response = await this.productAdminRequest<any>(
+        token,
+        'DELETE',
+        `/categories/${encodeURIComponent(categoryId)}`,
+        undefined,
+        undefined,
+        expectedUpdatedAt,
+      );
+    } catch (error: any) {
+      const code = String(error?.code ?? '').trim().toUpperCase();
+      if (error?.status === 404 || code === 'CATEGORY_NOT_FOUND') {
+        // Idempotent delete reconciliation: the backend is already missing the
+        // category, but main still needs a success envelope so the same local
+        // prune/null-reference path runs before renderer refresh.
+        return {
+          deletedId: categoryId,
+          categoryId,
+          affectedProductCount: 0,
+          reassignedProducts: 0,
+        };
+      }
+      throw error;
+    }
+    const raw = unwrapProductAdminData(response);
+    const deletedId = String(
+      raw?.deletedId
+      ?? raw?.deleted_id
+      ?? raw?.categoryId
+      ?? raw?.category_id
+      ?? raw?.category?.id
+      ?? categoryId,
+    ).trim();
+    const affectedProductCountValue = Number(
+      raw?.affectedProductCount
+      ?? raw?.affected_product_count
+      ?? raw?.reassignedProducts
+      ?? raw?.reassigned_products
+      ?? 0,
+    );
+    const affectedProductCount = Number.isFinite(affectedProductCountValue)
+      ? Math.max(0, Math.floor(affectedProductCountValue))
+      : 0;
+    if (!deletedId || deletedId !== categoryId) {
+      const error = new Error('Invalid product-admin category delete response') as Error & { code?: string };
+      error.code = 'INVALID_CATEGORY';
+      throw error;
+    }
+    return {
+      deletedId,
+      categoryId: deletedId,
+      affectedProductCount,
+      reassignedProducts: affectedProductCount,
+      serverTime: typeof raw?.serverTime === 'string'
+        ? raw.serverTime
+        : typeof raw?.server_time === 'string'
+          ? raw.server_time
+          : undefined,
+    };
   }
 
   /**
@@ -2015,10 +2231,18 @@ export class ApiClient {
 
     const normalizeCategory = (cat: any): any | null => {
       if (!cat?.id || !cat?.name) return null;
+      const icon = typeof cat.icon === 'string' ? cat.icon.trim() : '';
+      const hasExplicitImageUrl = Object.prototype.hasOwnProperty.call(cat, 'imageUrl')
+        || Object.prototype.hasOwnProperty.call(cat, 'image_url');
+      const rawImageUrl = cat.imageUrl ?? cat.image_url;
+      const imageUrl = hasExplicitImageUrl
+        ? (typeof rawImageUrl === 'string' ? rawImageUrl.trim() || null : null)
+        : legacyCategoryImageUrl(icon);
       return {
         id: cat.id,
         name: cat.name,
-        icon: cat.imageUrl ?? cat.icon ?? null,
+        image_url: imageUrl,
+        icon: legacyCategoryImageUrl(icon) ? null : icon || null,
         color: cat.color ?? null,
         sort_order: cat.displayOrder ?? cat.sortOrder ?? cat.sort_order ?? 0,
         updated_at: cat.updatedAt ?? cat.updated_at ?? null,

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Folder, FolderX, Grid3X3, Plus, Search, Tags } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FolderX, Grid3X3, Image as ImageIcon, Plus, Search, Tags } from 'lucide-react';
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
@@ -39,21 +39,33 @@ function CategoryButton({
   label,
   count,
   icon,
+  imageUrl,
   onClick,
 }: {
   label: string;
   count: number;
   icon: React.ReactNode;
+  imageUrl?: string | null;
   onClick: () => void;
 }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [imageUrl]);
+
   return (
     <button
       type="button"
       onClick={onClick}
       className="flex min-h-[104px] w-full items-center gap-3 rounded-md border border-slate-200 bg-white p-4 text-left shadow-sm transition duration-150 hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 motion-reduce:transition-none"
     >
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600">
-        {icon}
+      <span className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 text-slate-500">
+        {imageUrl && !imageFailed ? (
+          <img
+            src={imageUrl}
+            alt=""
+            onError={() => setImageFailed(true)}
+            className="h-full w-full object-cover"
+          />
+        ) : icon}
       </span>
       <span className="min-w-0">
         <span className="line-clamp-2 text-sm font-semibold text-slate-950">{label}</span>
@@ -61,6 +73,15 @@ function CategoryButton({
       </span>
     </button>
   );
+}
+
+export function categoryImageUrl(category: Category): string | null {
+  const imageUrl = String(category.image_url || '').trim();
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+  // One-release compatibility for old POS mirrors that stored category image
+  // URLs in `icon` before the dedicated `categories.image_url` column existed.
+  const legacyIconUrl = String(category.icon || '').trim();
+  return /^https?:\/\//i.test(legacyIconUrl) ? legacyIconUrl : null;
 }
 
 export default function CategoryGrid({
@@ -148,7 +169,8 @@ export default function CategoryGrid({
               key={category.id}
               label={resolveName(category, language)}
               count={productCounts.get(category.id) || 0}
-              icon={<Folder size={22} />}
+              imageUrl={categoryImageUrl(category)}
+              icon={<ImageIcon size={24} />}
               onClick={() => onOpenCategory(category.id)}
             />
           ))}

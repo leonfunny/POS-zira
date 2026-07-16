@@ -6,11 +6,11 @@ import { staffRepo, StaffRow } from './repos/staff-repo';
 import logger from '../logger';
 
 const SEED_CATEGORIES: CategoryRow[] = [
-  { id: 'cat-1', name: 'Paznokcie', icon: '💅', color: '#8B5CF6', sort_order: 1, updated_at: null },
-  { id: 'cat-2', name: 'Włosy', icon: '💇', color: '#EC4899', sort_order: 2, updated_at: null },
-  { id: 'cat-3', name: 'Kosmetyki', icon: '🧴', color: '#06B6D4', sort_order: 3, updated_at: null },
-  { id: 'cat-4', name: 'Akcesoria', icon: '✨', color: '#F59E0B', sort_order: 4, updated_at: null },
-  { id: 'cat-5', name: 'Usługi', icon: '💆', color: '#10B981', sort_order: 5, updated_at: null },
+  { id: 'cat-1', name: 'Paznokcie', image_url: null, icon: '💅', color: '#8B5CF6', sort_order: 1, updated_at: null },
+  { id: 'cat-2', name: 'Włosy', image_url: null, icon: '💇', color: '#EC4899', sort_order: 2, updated_at: null },
+  { id: 'cat-3', name: 'Kosmetyki', image_url: null, icon: '🧴', color: '#06B6D4', sort_order: 3, updated_at: null },
+  { id: 'cat-4', name: 'Akcesoria', image_url: null, icon: '✨', color: '#F59E0B', sort_order: 4, updated_at: null },
+  { id: 'cat-5', name: 'Usługi', image_url: null, icon: '💆', color: '#10B981', sort_order: 5, updated_at: null },
 ];
 
 // Helper to add enriched field defaults to seed products

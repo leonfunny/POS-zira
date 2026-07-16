@@ -45,6 +45,7 @@ function category(id = 'cat-1'): CategoryRow {
   return {
     id,
     name: `Category ${id}`,
+    image_url: null,
     icon: null,
     color: null,
     sort_order: 0,

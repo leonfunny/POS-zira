@@ -86,6 +86,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('pos:product-admin:categories:update', categoryId, payload),
       updateCategoryOrder: (updates: any[]) =>
         ipcRenderer.invoke('pos:product-admin:categories:update-order', updates),
+      uploadCategoryImage: (categoryId: string, payload: {
+        dataUrl: string;
+        fileName?: string;
+        mimeType?: 'image/jpeg' | 'image/png' | 'image/webp';
+        expectedUpdatedAt?: string;
+      }) =>
+        ipcRenderer.invoke('pos:product-admin:categories:upload-image', categoryId, payload),
+      deleteCategory: (categoryId: string, payload: { expectedUpdatedAt: string }) =>
+        ipcRenderer.invoke('pos:product-admin:categories:delete', categoryId, payload),
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),

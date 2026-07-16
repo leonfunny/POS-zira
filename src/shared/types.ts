@@ -1305,6 +1305,8 @@ export const IPC_CHANNELS = {
   POS_PRODUCT_ADMIN_CATEGORIES_CREATE: 'pos:product-admin:categories:create',
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE: 'pos:product-admin:categories:update',
   POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER: 'pos:product-admin:categories:update-order',
+  POS_PRODUCT_ADMIN_CATEGORIES_UPLOAD_IMAGE: 'pos:product-admin:categories:upload-image',
+  POS_PRODUCT_ADMIN_CATEGORIES_DELETE: 'pos:product-admin:categories:delete',
   POS_KITCHEN_CATEGORY_SET_PRINT_ENABLED: 'pos:kitchen-category:set-print-enabled',
   POS_KITCHEN_CATEGORIES_GET_ALL: 'pos:kitchen-categories:getAll',
   POS_KITCHEN_CATEGORIES_UPDATE_ORDER: 'pos:kitchen-categories:update-order',
@@ -2905,6 +2907,9 @@ export interface ProductAdminCapabilities {
   canAdjustStock: boolean;
   canCreateCategory: boolean;
   canUpdateCategory: boolean;
+  canDeleteCategory?: boolean;
+  canReplaceCategoryImage?: boolean;
+  supportsCategoryImageUpload?: boolean;
   canReorderCategory?: boolean;
   supportsCategoryBatchUpdate?: boolean;
   supportsCategoryKitchenPrint?: boolean;
@@ -3178,6 +3183,8 @@ export interface ProductAdminReceiveStockResponse {
 export interface ProductAdminCategory {
   id: string;
   name: string;
+  imageUrl?: string | null;
+  productCount?: number;
   color?: string | null;
   icon?: string | null;
   sortOrder?: number | null;
@@ -3195,6 +3202,7 @@ export interface ProductAdminCategoryListResponse {
 
 export interface ProductAdminCategoryMutationInput {
   name: string;
+  imageUrl?: string | null;
   color?: string | null;
   icon?: string | null;
   sortOrder?: number | null;
@@ -3219,6 +3227,33 @@ export interface ProductAdminCategoryOrderUpdate {
 export interface ProductAdminCategoryOrderUpdateResponse {
   categories: ProductAdminCategory[];
   updated: number;
+  serverTime?: string;
+}
+
+export interface ProductAdminCategoryImageUploadInput {
+  dataUrl: string;
+  fileName?: string;
+  mimeType?: 'image/jpeg' | 'image/png' | 'image/webp';
+  expectedUpdatedAt?: string;
+}
+
+export interface ProductAdminCategoryImageUploadResponse {
+  category: ProductAdminCategory;
+  image: {
+    url: string;
+  };
+  serverTime?: string;
+}
+
+export interface ProductAdminCategoryDeleteInput {
+  expectedUpdatedAt: string;
+}
+
+export interface ProductAdminCategoryDeleteResponse {
+  deletedId: string;
+  categoryId: string;
+  affectedProductCount: number;
+  reassignedProducts: number;
   serverTime?: string;
 }
 

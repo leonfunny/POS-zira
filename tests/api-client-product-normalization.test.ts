@@ -181,7 +181,8 @@ describe('ApiClient product normalization', () => {
     expect(result.categories).toEqual([expect.objectContaining({
       id: 'cat-empty',
       name: 'test',
-      icon: 'https://img.test/cat.png',
+      image_url: 'https://img.test/cat.png',
+      icon: null,
       color: '#d97706',
       sort_order: 7,
       updated_at: '2026-06-30T10:00:00.000Z',
@@ -306,24 +307,71 @@ describe('ApiClient product normalization', () => {
     const api = new ApiClient('https://api.test');
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        items: [{ id: 'legacy-cat', name: 'Legacy' }],
+        items: [{
+          id: 'legacy-cat',
+          name: 'Legacy',
+          icon: 'https://img.test/legacy.jpg',
+          updated_at: '2026-07-14T09:00:00.000Z',
+        }],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        categories: [{ id: 'canonical-cat', name: 'Canonical' }],
+        categories: [{
+          id: 'canonical-cat',
+          name: 'Canonical',
+          image_url: 'https://img.test/canonical.jpg',
+          product_count: 12,
+          sort_order: 3,
+          is_active: true,
+          updated_at: '2026-07-14T09:30:00.000Z',
+        }],
         total: 1,
         serverTime: '2026-07-14T10:00:00.000Z',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     await expect(api.listProductAdminCategories('token-1')).resolves.toEqual({
-      categories: [{ id: 'legacy-cat', name: 'Legacy' }],
+      categories: [expect.objectContaining({
+        id: 'legacy-cat',
+        name: 'Legacy',
+        imageUrl: 'https://img.test/legacy.jpg',
+        icon: null,
+        updatedAt: '2026-07-14T09:00:00.000Z',
+      })],
       total: 1,
       serverTime: undefined,
     });
     await expect(api.listProductAdminCategories('token-1')).resolves.toEqual({
-      categories: [{ id: 'canonical-cat', name: 'Canonical' }],
+      categories: [expect.objectContaining({
+        id: 'canonical-cat',
+        name: 'Canonical',
+        imageUrl: 'https://img.test/canonical.jpg',
+        productCount: 12,
+        sortOrder: 3,
+        updatedAt: '2026-07-14T09:30:00.000Z',
+      })],
       total: 1,
       serverTime: '2026-07-14T10:00:00.000Z',
     });
+  });
+
+  it('preserves an explicit category image removal instead of reviving a legacy icon URL', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      categories: [{
+        id: 'cat-removed-image',
+        name: 'No image',
+        imageUrl: null,
+        icon: 'https://img.test/legacy-should-not-return.jpg',
+        updatedAt: '2026-07-14T10:00:00.000Z',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(new ApiClient('https://api.test').listProductAdminCategories('token-1'))
+      .resolves.toMatchObject({
+        categories: [{
+          id: 'cat-removed-image',
+          imageUrl: null,
+          icon: null,
+        }],
+      });
   });
 
   it('maps the capabilities-v4 cursor fields explicitly', async () => {
@@ -335,6 +383,9 @@ describe('ApiClient product normalization', () => {
       supportsCategoryBatchUpdate: true,
       supportsCategoryKitchenPrint: true,
       supportsCategoryDelta: true,
+      supportsCategoryImageUpload: true,
+      canReplaceCategoryImage: true,
+      canDeleteCategory: true,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     await expect(new ApiClient('https://api.test').getProductAdminCapabilities('token-1'))
@@ -346,9 +397,11 @@ describe('ApiClient product normalization', () => {
         supportsCategoryBatchUpdate: true,
         supportsCategoryKitchenPrint: true,
         supportsCategoryDelta: true,
+        supportsCategoryImageUpload: true,
+        canReplaceCategoryImage: true,
+        canDeleteCategory: true,
       });
   });
-
   it('sends category reorders through the atomic batch endpoint with each OCC revision', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
       categories: [{
@@ -380,4 +433,99 @@ describe('ApiClient product normalization', () => {
       }),
     );
   });
+
+  it('uploads a category image as multipart with the OCC header', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      category: {
+        id: 'cat-1',
+        name: 'Tea',
+        is_active: true,
+        updated_at: '2026-07-14T10:00:01.000Z',
+      },
+      image: { url: 'https://img.test/categories/tea.webp' },
+      serverTime: '2026-07-14T10:00:01.000Z',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(new ApiClient('https://api.test').uploadProductAdminCategoryImage(
+      'token-1',
+      'cat-1',
+      {
+        bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        mimeType: 'image/png',
+        fileName: 'tea.png',
+        expectedUpdatedAt: '2026-07-14T10:00:00.000Z',
+      },
+    )).resolves.toMatchObject({
+      category: {
+        id: 'cat-1',
+        imageUrl: 'https://img.test/categories/tea.webp',
+      },
+      image: { url: 'https://img.test/categories/tea.webp' },
+    });
+
+    const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(request).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        'X-Expected-Updated-At': '2026-07-14T10:00:00.000Z',
+      }),
+    });
+    expect(request.body).toBeInstanceOf(FormData);
+    expect((request.body as FormData).get('image')).toBeInstanceOf(Blob);
+  });
+
+  it('deletes a category with OCC and normalizes affected-product aliases', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      deletedId: 'cat-1',
+      affectedProductCount: 24,
+      serverTime: '2026-07-14T10:00:01.000Z',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(new ApiClient('https://api.test').deleteProductAdminCategory(
+      'token-1',
+      'cat-1',
+      '2026-07-14T10:00:00.000Z',
+    )).resolves.toEqual({
+      deletedId: 'cat-1',
+      categoryId: 'cat-1',
+      affectedProductCount: 24,
+      reassignedProducts: 24,
+      serverTime: '2026-07-14T10:00:01.000Z',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.test/api/v1/warehouse/product-admin/categories/cat-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          'X-Expected-Updated-At': '2026-07-14T10:00:00.000Z',
+        }),
+        body: undefined,
+      }),
+    );
+  });
+
+  it.each([
+    [404, { message: 'Category not found' }],
+    [409, { error: { code: 'CATEGORY_NOT_FOUND', message: 'Category not found' } }],
+  ])(
+    'reconciles an already-missing category delete as idempotent success (HTTP %s)',
+    async (status, body) => {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+      await expect(new ApiClient('https://api.test').deleteProductAdminCategory(
+        'token-1',
+        'cat-already-gone',
+        '2026-07-14T10:00:00.000Z',
+      )).resolves.toEqual({
+        deletedId: 'cat-already-gone',
+        categoryId: 'cat-already-gone',
+        affectedProductCount: 0,
+        reassignedProducts: 0,
+      });
+    },
+  );
 });

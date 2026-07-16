@@ -10,7 +10,7 @@ import {
 } from '../src/renderer/components/pos/templates/retail/retailBrowseFilters';
 
 const cat = (id: string, name: string, sort_order: number): Category =>
-  ({ id, name, icon: null, color: null, sort_order, updated_at: null } as Category);
+  ({ id, name, image_url: null, icon: null, color: null, sort_order, updated_at: null } as Category);
 
 const prod = (id: string, category_id: string | null, barcode: string | null): Product =>
   ({ id, name: id, category_id, barcode } as Product);
@@ -98,20 +98,27 @@ describe('suggestCategoryOrder', () => {
 });
 
 describe('categoryImageUrl', () => {
-  const withIcon = (icon: string | null): Category =>
-    ({ id: 'c', name: 'C', icon, color: null, sort_order: 0, updated_at: null } as Category);
+  const category = (image_url: string | null, icon: string | null): Category =>
+    ({ id: 'c', name: 'C', image_url, icon, color: null, sort_order: 0, updated_at: null } as Category);
 
-  it('returns the url when icon holds an http(s) image url', () => {
-    expect(categoryImageUrl(withIcon('https://img.zira.pl/quick-add/chesaigon/categories/cat-1.jpg')))
+  it('prefers the canonical image_url field', () => {
+    expect(categoryImageUrl(category(
+      'https://img.zira.pl/categories/canonical.jpg',
+      'https://img.zira.pl/categories/legacy.jpg',
+    ))).toBe('https://img.zira.pl/categories/canonical.jpg');
+  });
+
+  it('falls back when a legacy icon holds an image url', () => {
+    expect(categoryImageUrl(category(null, 'https://img.zira.pl/quick-add/chesaigon/categories/cat-1.jpg')))
       .toBe('https://img.zira.pl/quick-add/chesaigon/categories/cat-1.jpg');
-    expect(categoryImageUrl(withIcon('//img.zira.pl/x.jpg'))).toBe('//img.zira.pl/x.jpg');
-    expect(categoryImageUrl(withIcon('/uploads/x.jpg'))).toBe('/uploads/x.jpg');
+    expect(categoryImageUrl(category(null, '//img.zira.pl/x.jpg'))).toBe('//img.zira.pl/x.jpg');
+    expect(categoryImageUrl(category(null, '/uploads/x.jpg'))).toBe('/uploads/x.jpg');
   });
 
   it('returns null for emoji / short glyphs / empty', () => {
-    expect(categoryImageUrl(withIcon('🥬'))).toBeNull();
-    expect(categoryImageUrl(withIcon('AB'))).toBeNull();
-    expect(categoryImageUrl(withIcon(''))).toBeNull();
-    expect(categoryImageUrl(withIcon(null))).toBeNull();
+    expect(categoryImageUrl(category(null, '🥬'))).toBeNull();
+    expect(categoryImageUrl(category(null, 'AB'))).toBeNull();
+    expect(categoryImageUrl(category(null, ''))).toBeNull();
+    expect(categoryImageUrl(category(null, null))).toBeNull();
   });
 });

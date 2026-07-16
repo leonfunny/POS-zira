@@ -92,6 +92,10 @@ import type {
   WarehouseInventoryCountLineInput,
   WarehousePrintPayload,
   ProductAdminCapabilities,
+  ProductAdminCategoryDeleteInput,
+  ProductAdminCategoryDeleteResponse,
+  ProductAdminCategoryImageUploadInput,
+  ProductAdminCategoryImageUploadResponse,
   ProductAdminCategoryListResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
@@ -146,6 +150,7 @@ interface PosProduct {
 interface PosCategory {
   id: string;
   name: string;
+  image_url: string | null;
   icon: string | null;
   color: string | null;
   sort_order: number;
@@ -832,6 +837,8 @@ interface ElectronAPI {
       createCategory: (payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
       updateCategory: (categoryId: string, payload: ProductAdminCategoryMutationInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryMutationResponse>>;
       updateCategoryOrder: (updates: ProductAdminCategoryOrderUpdate[]) => Promise<ProductAdminIpcResult<ProductAdminCategoryOrderUpdateResponse>>;
+      uploadCategoryImage: (categoryId: string, payload: ProductAdminCategoryImageUploadInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryImageUploadResponse>>;
+      deleteCategory: (categoryId: string, payload: ProductAdminCategoryDeleteInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryDeleteResponse>>;
     };
     orders: {
       create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;

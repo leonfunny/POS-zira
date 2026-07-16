@@ -1654,4 +1654,26 @@ export const migrations: Migration[] = [
         ON product_admin_mutation_outbox(tenant_key, target_variant_id, status);
     `,
   },
+  {
+    version: 56,
+    name: 'category_image_url',
+    // Category media is a first-class field. Older POS builds stored backend
+    // image URLs in `icon`; migrate only values that clearly look like URLs so
+    // emoji/glyph icons remain untouched for backward compatibility.
+    up: `
+      ALTER TABLE categories ADD COLUMN image_url TEXT;
+
+      UPDATE categories
+      SET image_url = TRIM(icon),
+          icon = NULL
+      WHERE (image_url IS NULL OR TRIM(image_url) = '')
+        AND icon IS NOT NULL
+        AND (
+          LOWER(TRIM(icon)) LIKE 'http://%'
+          OR LOWER(TRIM(icon)) LIKE 'https://%'
+          OR TRIM(icon) LIKE '//%'
+          OR LOWER(TRIM(icon)) LIKE '/uploads/%'
+        );
+    `,
+  },
 ];

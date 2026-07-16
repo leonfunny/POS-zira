@@ -71,7 +71,9 @@ function hasAnyAdminCapability(capabilities: ProductAdminCapabilities | null): b
     || capabilities.canDeactivateProduct
     || capabilities.canAdjustStock
     || capabilities.canCreateCategory
-    || capabilities.canUpdateCategory;
+    || capabilities.canUpdateCategory
+    || capabilities.canDeleteCategory === true
+    || capabilities.canReplaceCategoryImage === true;
 }
 
 function adminCapabilitySummary(t: (key: string) => string, capabilities: ProductAdminCapabilities | null): string {
@@ -85,7 +87,10 @@ function adminCapabilitySummary(t: (key: string) => string, capabilities: Produc
   if (capabilities.canDeactivateProduct) enabled.push(tOr(t, 'products.admin.capability.deactivateProduct', 'stop selling'));
   if (capabilities.canAdjustStock) enabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
   else disabled.push(tOr(t, 'products.admin.capability.adjustStock', 'adjust stock'));
-  if (capabilities.canCreateCategory || capabilities.canUpdateCategory) {
+  if (capabilities.canCreateCategory
+    || capabilities.canUpdateCategory
+    || capabilities.canDeleteCategory === true
+    || capabilities.canReplaceCategoryImage === true) {
     enabled.push(tOr(t, 'products.admin.capability.categories', 'categories'));
   }
 
@@ -469,13 +474,24 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
   );
   const failedImportCount = failedImports.length;
   const adminBackendReady = hasAnyAdminCapability(adminCapabilities);
-  const canManageCategories = adminCapabilities?.canCreateCategory === true || adminCapabilities?.canUpdateCategory === true;
+  const canManageCategories = adminCapabilities?.canCreateCategory === true
+    || adminCapabilities?.canUpdateCategory === true
+    || adminCapabilities?.canDeleteCategory === true
+    || adminCapabilities?.canReplaceCategoryImage === true;
   const canEditDisplayName = !!adminCapabilities && adminCapabilities.version >= 2 && adminCapabilities.canEditDisplayName === true;
   const adminSummary = adminCapabilitySummary(t, adminCapabilities);
   const filteredAllProducts = useMemo(
     () => allProducts.filter((product) => matchesProductKind(product, kindFilter)),
     [allProducts, kindFilter],
   );
+  const localProductCountsByCategory = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const product of allProducts) {
+      if (!product.category_id) continue;
+      counts[product.category_id] = (counts[product.category_id] || 0) + 1;
+    }
+    return counts;
+  }, [allProducts]);
 
   const browseProducts = useMemo(() => {
     if (view.name !== 'products') return [];
@@ -1005,7 +1021,11 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           canCreateCategory={adminCapabilities?.canCreateCategory === true}
           canUpdateCategory={adminCapabilities?.canUpdateCategory === true}
           canReorderCategory={adminCapabilities?.canReorderCategory === true && adminCapabilities?.supportsCategoryBatchUpdate === true}
+          canDeleteCategory={adminCapabilities?.canDeleteCategory === true}
+          canReplaceCategoryImage={adminCapabilities?.canReplaceCategoryImage === true}
+          supportsCategoryImageUpload={adminCapabilities?.supportsCategoryImageUpload === true}
           localCategoryCount={categories.length}
+          localProductCounts={localProductCountsByCategory}
           onClose={() => setCategoryManagerOpen(false)}
           onChanged={refresh}
         />

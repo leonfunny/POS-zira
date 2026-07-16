@@ -35,6 +35,7 @@ import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
+  decodeCategoryImageDataUrl,
   decodeProductImageDataUrl,
   assertProductStockQuantity,
   isProductAdminSessionContextCurrent,
@@ -42,7 +43,9 @@ import {
   normalizeProductReceiptInput,
   redactProductAdminPurchaseData,
   requireProductAdminExpectedUpdatedAt,
+  sanitizeProductAdminCategoryJsonMutation,
   shouldApplyProductAdminVariantMirror,
+  shouldApplyProductAdminCategoryMirror,
   productAdminCanonicalUpdatedAt,
   productAdminCategoryToRow,
   sanitizeExistingProductInventoryModeUpdate,
@@ -118,6 +121,10 @@ import {
 } from '../config/store';
 import type {
   ProductAdminCategoryListResponse,
+  ProductAdminCategoryDeleteInput,
+  ProductAdminCategoryDeleteResponse,
+  ProductAdminCategoryImageUploadInput,
+  ProductAdminCategoryImageUploadResponse,
   ProductAdminCategoryMutationInput,
   ProductAdminCategoryMutationResponse,
   ProductAdminCategoryOrderUpdate,
@@ -1421,6 +1428,9 @@ export class PosModule extends BaseModule {
       canAdjustStock: false,
       canCreateCategory: false,
       canUpdateCategory: false,
+      canDeleteCategory: false,
+      canReplaceCategoryImage: false,
+      supportsCategoryImageUpload: false,
       canViewPurchasePrice: false,
       canReplaceMainImage: false,
       canReceiveStock: false,
@@ -1597,8 +1607,16 @@ export class PosModule extends BaseModule {
       source: string,
     ): boolean => {
       if (!category?.id) return false;
+      const existing = productRepo.getCategoryById(category.id);
+      if (!shouldApplyProductAdminCategoryMirror(category, existing)) {
+        logger.warn(
+          `[PosModule] Skipped stale product-admin category ${category.id} (${source}); `
+          + `incoming=${category.updatedAt || 'missing'}, existing=${existing?.updated_at || 'missing'}`,
+        );
+        return false;
+      }
       productRepo.upsertCategories([
-        productAdminCategoryToRow(category, productRepo.getCategoryById(category.id)),
+        productAdminCategoryToRow(category, existing),
       ]);
       database.markDirty();
       notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
@@ -1606,6 +1624,28 @@ export class PosModule extends BaseModule {
         source: `${source}_local_mirror`,
       });
       return true;
+    };
+
+    const reconcileDeletedProductAdminCategoryLocally = (
+      requestedCategoryId: string,
+      data: ProductAdminCategoryDeleteResponse,
+    ) => {
+      const deletedId = data.categoryId || data.deletedId || requestedCategoryId;
+      const keepIds = new Set(
+        productRepo.getAllCategories()
+          .map((category) => category.id)
+          .filter((id) => id !== deletedId),
+      );
+      const pruned = productRepo.deleteCategoriesExcept(keepIds);
+      database.markDirty();
+      logger.info(
+        `[PosModule] Pruned deleted product-admin category ${deletedId} locally `
+        + `(categories=${pruned.removed}, reassignedProducts=${data.reassignedProducts})`,
+      );
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
+      notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
+        source: 'product_admin_category_delete_local_mirror',
+      });
     };
 
     const deactivateLocalProductAdminVariant = (variantId: string, source: string) => {
@@ -1626,6 +1666,8 @@ export class PosModule extends BaseModule {
       | 'canAdjustStock'
       | 'canCreateCategory'
       | 'canUpdateCategory'
+      | 'canDeleteCategory'
+      | 'canReplaceCategoryImage'
       | 'canReorderCategory'
       | 'canViewPurchasePrice'
       | 'canReplaceMainImage'
@@ -1801,12 +1843,18 @@ export class PosModule extends BaseModule {
               idempotencyKey: row.idempotency_key || undefined,
             });
           }
-          case 'CREATE_CATEGORY':
+          case 'CREATE_CATEGORY': {
             requireDurableMutationCapability(capabilities, 'canCreateCategory');
+            const categoryPayload = sanitizeProductAdminCategoryJsonMutation(
+              payload,
+              capabilities,
+              { allowImageRemoval: false },
+            );
             return apiClient.createProductAdminCategory(token, {
-              ...payload,
+              ...categoryPayload,
               idempotencyKey: row.idempotency_key || undefined,
             });
+          }
           case 'ADJUST_STOCK': {
             requireDurableMutationCapability(capabilities, 'canAdjustStock');
             requireProductAdminExpectedUpdatedAt(
@@ -2233,7 +2281,10 @@ export class PosModule extends BaseModule {
         }
         try {
           const capabilities = await apiClient.getProductAdminCapabilities(token);
-          if (!capabilities.canCreateCategory && !capabilities.canUpdateCategory) {
+          if (!capabilities.canCreateCategory
+            && !capabilities.canUpdateCategory
+            && !capabilities.canDeleteCategory
+            && !capabilities.canReplaceCategoryImage) {
             return { ok: false, error: 'unsupported-capability', code: 'UNSUPPORTED_CAPABILITY' } as ProductAdminIpcResult<ProductAdminCategoryListResponse>;
           }
           const data = await apiClient.listProductAdminCategories(token);
@@ -2252,15 +2303,22 @@ export class PosModule extends BaseModule {
           ...(payload || {}),
           idempotencyKey: payload?.idempotencyKey || randomUUID(),
         } as ProductAdminCategoryMutationInput;
-        const { idempotencyKey, ...requestPayload } = input;
         return withProductAdminCapability<ProductAdminCategoryMutationResponse>(
           'canCreateCategory',
           'create category',
-          async () => productAdminMutationOutbox.execute({
-            mutationType: 'CREATE_CATEGORY',
-            idempotencyKey,
-            request: { payload: requestPayload },
-          }) as Promise<ProductAdminCategoryMutationResponse>,
+          async (_token, capabilities) => {
+            const sanitizedInput = sanitizeProductAdminCategoryJsonMutation(
+              input,
+              capabilities,
+              { allowImageRemoval: false },
+            );
+            const { idempotencyKey, ...requestPayload } = sanitizedInput;
+            return productAdminMutationOutbox.execute({
+              mutationType: 'CREATE_CATEGORY',
+              idempotencyKey,
+              request: { payload: requestPayload },
+            }) as Promise<ProductAdminCategoryMutationResponse>;
+          },
         );
       },
     );
@@ -2272,7 +2330,12 @@ export class PosModule extends BaseModule {
           'canUpdateCategory',
           'update category',
           (token, capabilities) => {
-            if (payload?.kitchenPrint !== undefined
+            const sanitizedPayload = sanitizeProductAdminCategoryJsonMutation(
+              payload || ({} as ProductAdminCategoryMutationInput),
+              capabilities,
+              { allowImageRemoval: true },
+            );
+            if (sanitizedPayload.kitchenPrint !== undefined
               && capabilities.supportsCategoryKitchenPrint !== true) {
               const error = new Error('category-kitchen-print-unavailable') as Error & { code?: string };
               error.code = 'UNSUPPORTED_CAPABILITY';
@@ -2280,33 +2343,21 @@ export class PosModule extends BaseModule {
             }
             const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
               capabilities,
-              payload?.expectedUpdatedAt,
+              sanitizedPayload.expectedUpdatedAt,
             );
             return apiClient.updateProductAdminCategory(token, categoryId, {
-              ...(payload || {}),
+              ...sanitizedPayload,
               expectedUpdatedAt,
             });
           },
-          async (_data, isCurrentProductAdminSession) => {
-            await refreshProductsAfterProductAdminMutation(
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync(
               'product_admin_category_update',
+              () => {
+                mirrorProductAdminCategory(data.category, 'product_admin_category_update');
+              },
               isCurrentProductAdminSession,
             );
-            if (!isCurrentProductAdminSession()) return;
-
-            // Kitchen self-order and order-time filtering read the local
-            // category table, so apply the committed sort without waiting for
-            // another renderer refresh.
-            if (payload && typeof payload.sortOrder === 'number' && Number.isFinite(payload.sortOrder)) {
-              try {
-                productRepo.setCategorySortOrder(categoryId, payload.sortOrder);
-                database.markDirty();
-                notifyPosRenderers(this.container, IPC_CHANNELS.POS_PRODUCTS_SYNCED);
-                notifyPosRenderers(this.container, IPC_CHANNELS.POS_CATALOG_UPDATED, {
-                  source: 'product_admin_category_local_mirror',
-                });
-              } catch { /* refresh will reconcile */ }
-            }
           },
         );
       },
@@ -2346,11 +2397,6 @@ export class PosModule extends BaseModule {
             await runProductAdminLocalMutationAfterPendingCatalogSync(
               'product_admin_category_order',
               () => {
-                // Preserve the exact requested sort as a compatibility
-                // fallback, then hydrate fresh OCC revisions from the atomic
-                // batch response so the next reorder does not reuse stale
-                // category.updatedAt values.
-                productRepo.setCategorySortOrders(updates);
                 for (const category of data.categories || []) {
                   mirrorProductAdminCategory(category, 'product_admin_category_order');
                 }
@@ -2361,6 +2407,77 @@ export class PosModule extends BaseModule {
           },
         );
       },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPLOAD_IMAGE,
+      async (
+        _e,
+        categoryId: string,
+        payload: ProductAdminCategoryImageUploadInput,
+      ) =>
+        withProductAdminCapability<ProductAdminCategoryImageUploadResponse>(
+          'canReplaceCategoryImage',
+          'upload category image',
+          async (token, capabilities) => {
+            if (capabilities.supportsCategoryImageUpload !== true) {
+              const error = new Error('category-image-upload-unavailable') as Error & {
+                code?: string;
+                status?: number;
+              };
+              error.code = 'UNSUPPORTED_CAPABILITY';
+              error.status = 409;
+              throw error;
+            }
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            const image = decodeCategoryImageDataUrl(payload);
+            return apiClient.uploadProductAdminCategoryImage(token, categoryId, {
+              ...image,
+              expectedUpdatedAt,
+            });
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync(
+              'product_admin_category_image',
+              () => {
+                mirrorProductAdminCategory(data.category, 'product_admin_category_image');
+              },
+              isCurrentProductAdminSession,
+            );
+          },
+        ),
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_DELETE,
+      async (
+        _e,
+        categoryId: string,
+        payload: ProductAdminCategoryDeleteInput,
+      ) =>
+        withProductAdminCapability<ProductAdminCategoryDeleteResponse>(
+          'canDeleteCategory',
+          'delete category',
+          (token, capabilities) => {
+            const expectedUpdatedAt = requireProductAdminExpectedUpdatedAt(
+              capabilities,
+              payload?.expectedUpdatedAt,
+            );
+            return apiClient.deleteProductAdminCategory(token, categoryId, expectedUpdatedAt);
+          },
+          async (data, isCurrentProductAdminSession) => {
+            await runProductAdminLocalMutationAfterPendingCatalogSync(
+              'product_admin_category_delete',
+              () => {
+                reconcileDeletedProductAdminCategoryLocally(categoryId, data);
+              },
+              isCurrentProductAdminSession,
+            );
+          },
+        ),
     );
 
     ipcMain.handle(IPC_CHANNELS.POS_KITCHEN_CATEGORIES_GET_ALL, () => getKitchenSelfOrderCategories());

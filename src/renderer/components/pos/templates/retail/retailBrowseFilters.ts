@@ -82,15 +82,22 @@ export function getVisibleRetailCategories(
 // ---------------------------------------------------------------------------
 
 /**
- * The POS sync stores a category's image URL in its `icon` field
- * (api-client maps backend `category.imageUrl` → local `icon`). Emoji icons
- * are ≤2 code points; anything that looks like a URL is treated as an image.
- * Returns the image URL when `icon` is one, else null (caller shows a glyph).
+ * New mirrors store category media in `image_url`. Keep the URL-in-icon
+ * fallback for one upgrade window so an old local DB can still render images
+ * before migration/catalog refresh has repaired the row.
  */
-export function categoryImageUrl(cat: { icon?: string | null }): string | null {
-  const v = (cat.icon || '').trim();
-  if (!v) return null;
-  return /^https?:\/\//i.test(v) || v.startsWith('//') || v.startsWith('/') ? v : null;
+export function categoryImageUrl(
+  cat: { image_url?: string | null; icon?: string | null },
+): string | null {
+  const imageUrl = (cat.image_url || '').trim();
+  if (imageUrl) return imageUrl;
+  const legacyIcon = (cat.icon || '').trim();
+  if (!legacyIcon) return null;
+  return /^https?:\/\//i.test(legacyIcon)
+    || legacyIcon.startsWith('//')
+    || legacyIcon.startsWith('/')
+    ? legacyIcon
+    : null;
 }
 
 export type CategoryTier = 'big' | 'medium' | 'small';

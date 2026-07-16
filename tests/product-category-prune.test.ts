@@ -104,6 +104,25 @@ describe('productRepo.deleteCategoriesExcept', () => {
         is_active INTEGER DEFAULT 1,
         FOREIGN KEY (category_id) REFERENCES categories(id)
       );
+      CREATE TABLE draft_products (
+        id TEXT PRIMARY KEY,
+        category_id TEXT
+      );
+      CREATE TABLE local_variant_imports (
+        variant_id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL,
+        ean TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        synced_at TEXT,
+        server_variant_id TEXT,
+        category_id TEXT,
+        intent_payload_json TEXT,
+        intent_idempotency_key TEXT,
+        intent_dispatched_at TEXT
+      );
       CREATE TABLE services (
         id TEXT PRIMARY KEY,
         category_id TEXT
@@ -172,6 +191,81 @@ describe('productRepo.deleteCategoriesExcept', () => {
       expect.stringContaining('forecast_recommendations'),
       expect.objectContaining({ rows: 1 }),
     );
+  });
+
+  it('uncategorizes drafts and preserves immutable local-import intent safety', () => {
+    const savedPayload = '{"ean":"5901234567890","categoryId":"ghost-cat"}';
+    const savedKey = `local-import-v2-${'a'.repeat(64)}`;
+    db.run(`
+      INSERT INTO categories (id, name) VALUES
+        ('keep-cat', 'Keep'),
+        ('ghost-cat', 'Ghost');
+      INSERT INTO draft_products (id, category_id) VALUES
+        ('draft-1', 'ghost-cat');
+      INSERT INTO local_variant_imports (
+        variant_id, draft_id, ean, status, attempts, category_id,
+        intent_payload_json, intent_idempotency_key, intent_dispatched_at
+      ) VALUES
+        ('fresh-intent', 'draft-1', '5901234567890', 'PENDING', 0, 'ghost-cat',
+          '${savedPayload}', '${savedKey}', NULL),
+        ('durable-intent', 'draft-1', '5901234567891', 'PENDING', 0, 'ghost-cat',
+          '${savedPayload}', '${savedKey}', '2026-07-16T20:00:00.000Z'),
+        ('legacy-uncertain', 'draft-1', '5901234567892', 'PENDING', 0, 'ghost-cat',
+          NULL, NULL, '2026-07-16T20:00:00.000Z'),
+        ('synced-import', 'draft-1', '5901234567893', 'SYNCED', 0, 'ghost-cat',
+          NULL, NULL, NULL);
+    `);
+
+    productRepo.deleteCategoriesExcept(new Set(['keep-cat']));
+
+    expect(get<{ category_id: string | null }>(
+      "SELECT category_id FROM draft_products WHERE id = 'draft-1'",
+    )?.category_id).toBeNull();
+    expect(all<{ variant_id: string; category_id: string | null }>(
+      'SELECT variant_id, category_id FROM local_variant_imports ORDER BY variant_id',
+    )).toEqual([
+      { variant_id: 'durable-intent', category_id: null },
+      { variant_id: 'fresh-intent', category_id: null },
+      { variant_id: 'legacy-uncertain', category_id: null },
+      { variant_id: 'synced-import', category_id: null },
+    ]);
+
+    expect(get<{
+      status: string;
+      intent_payload_json: string | null;
+      intent_idempotency_key: string | null;
+      intent_dispatched_at: string | null;
+    }>("SELECT status, intent_payload_json, intent_idempotency_key, intent_dispatched_at FROM local_variant_imports WHERE variant_id = 'fresh-intent'"))
+      .toEqual({
+        status: 'PENDING',
+        intent_payload_json: null,
+        intent_idempotency_key: null,
+        intent_dispatched_at: null,
+      });
+    expect(get<{
+      status: string;
+      intent_payload_json: string | null;
+      intent_idempotency_key: string | null;
+      intent_dispatched_at: string | null;
+    }>("SELECT status, intent_payload_json, intent_idempotency_key, intent_dispatched_at FROM local_variant_imports WHERE variant_id = 'durable-intent'"))
+      .toEqual({
+        status: 'PENDING',
+        intent_payload_json: savedPayload,
+        intent_idempotency_key: savedKey,
+        intent_dispatched_at: '2026-07-16T20:00:00.000Z',
+      });
+    expect(get<{
+      status: string;
+      attempts: number;
+      last_error: string | null;
+      intent_dispatched_at: string | null;
+    }>("SELECT status, attempts, last_error, intent_dispatched_at FROM local_variant_imports WHERE variant_id = 'legacy-uncertain'"))
+      .toEqual({
+        status: 'FAILED',
+        attempts: 1,
+        last_error: expect.stringContaining('ghost-cat'),
+        intent_dispatched_at: '2026-07-16T20:00:00.000Z',
+      });
   });
 
   it('deletes every category and nullifies references for an authoritative empty snapshot', () => {

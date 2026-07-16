@@ -2,6 +2,8 @@ import * as path from 'path';
 import type {
   ProductAdminCapabilities,
   ProductAdminCategory,
+  ProductAdminCategoryImageUploadInput,
+  ProductAdminCategoryMutationInput,
   ProductAdminMainImageUploadInput,
   ProductAdminReceiveStockInput,
   ProductAdminUpdateVariantInput,
@@ -11,6 +13,7 @@ import type { CategoryRow, ProductVariantRow } from '../database/repos/product-r
 import { isValidProductMoneyGrosze } from '../../shared/product-money';
 
 export const PRODUCT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const CATEGORY_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 const PRODUCT_ADMIN_PURCHASE_COST_FIELDS = [
   'purchasePrice',
@@ -28,6 +31,27 @@ const PRODUCT_IMAGE_MIME_EXTENSION: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
+
+function imageBytesMatchMime(bytes: Buffer, mimeType: string): boolean {
+  return mimeType === 'image/jpeg'
+    ? bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    : mimeType === 'image/png'
+      ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      : mimeType === 'image/webp'
+        && bytes.length >= 12
+        && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+        && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+}
+
+function safeImageFileName(requestedName: unknown, mimeType: string, fallback: string): string {
+  const extension = PRODUCT_IMAGE_MIME_EXTENSION[mimeType];
+  const normalizedName = String(requestedName ?? '').trim();
+  const safeStem = path.basename(normalizedName, path.extname(normalizedName))
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64) || fallback;
+  return `${safeStem}.${extension}`;
+}
 
 function inputError(message: string, code: string, field?: string): Error {
   const error = new Error(message) as Error & { code?: string; field?: string };
@@ -236,6 +260,42 @@ function productAdminRevision(value: unknown): number | null {
   return Number.isFinite(revision) ? revision : null;
 }
 
+export function sanitizeProductAdminCategoryJsonMutation(
+  input: ProductAdminCategoryMutationInput,
+  capabilities: Pick<ProductAdminCapabilities, 'canReplaceCategoryImage'>,
+  options: { allowImageRemoval: boolean },
+): ProductAdminCategoryMutationInput {
+  const sanitized = { ...(input || {}) } as ProductAdminCategoryMutationInput;
+  if (!hasOwn(sanitized, 'imageUrl')) return sanitized;
+
+  if (capabilities.canReplaceCategoryImage !== true) {
+    const error = new Error('category-image-permission-required') as Error & {
+      code?: string;
+      status?: number;
+      field?: string;
+    };
+    error.code = 'UNSUPPORTED_CAPABILITY';
+    error.status = 403;
+    error.field = 'imageUrl';
+    throw error;
+  }
+
+  if (sanitized.imageUrl !== null) {
+    const error = new Error('category-image-url-must-use-upload') as Error & {
+      code?: string;
+      status?: number;
+      field?: string;
+    };
+    error.code = 'INVALID_IMAGE';
+    error.status = 400;
+    error.field = 'imageUrl';
+    throw error;
+  }
+
+  if (!options.allowImageRemoval) delete sanitized.imageUrl;
+  return sanitized;
+}
+
 export function productAdminCategoryToRow(
   category: ProductAdminCategory,
   existing?: CategoryRow | null,
@@ -248,6 +308,9 @@ export function productAdminCategoryToRow(
   const row: CategoryRow = {
     id,
     name,
+    image_url: hasOwn(category, 'imageUrl')
+      ? category.imageUrl ?? null
+      : existing?.image_url ?? null,
     icon: hasOwn(category, 'icon') ? category.icon ?? null : existing?.icon ?? null,
     color: hasOwn(category, 'color') ? category.color ?? null : existing?.color ?? null,
     sort_order: typeof category.sortOrder === 'number' && Number.isFinite(category.sortOrder)
@@ -262,6 +325,19 @@ export function productAdminCategoryToRow(
   // columns supplied by catalog sync. INSERT OR REPLACE would reset those
   // columns unless the existing local row is merged first.
   return existing ? { ...existing, ...row } : row;
+}
+
+export function shouldApplyProductAdminCategoryMirror(
+  category: Partial<ProductAdminCategory>,
+  existing?: Partial<CategoryRow> | null,
+): boolean {
+  if (!existing) return true;
+
+  const incomingRevision = productAdminRevision(category.updatedAt);
+  if (incomingRevision === null) return false;
+
+  const existingRevision = productAdminRevision(existing.updated_at);
+  return existingRevision === null || incomingRevision >= existingRevision;
 }
 
 export function productAdminCanonicalUpdatedAt(
@@ -379,23 +455,73 @@ export function decodeProductImageDataUrl(payload: ProductAdminMainImageUploadIn
     );
   }
 
-  const matchesMagic = mimeType === 'image/jpeg'
-    ? bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-    : mimeType === 'image/png'
-      ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-      : bytes.length >= 12
-        && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
-        && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
-  if (!matchesMagic) {
+  if (!imageBytesMatchMime(bytes, mimeType)) {
     throw inputError('image-content-type-mismatch', 'INVALID_IMAGE', 'dataUrl');
   }
 
-  const requestedName = String(payload.fileName ?? '').trim();
-  const safeStem = path.basename(requestedName, path.extname(requestedName))
-    .replace(/[^a-z0-9_-]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64) || 'product-image';
-  return { bytes, mimeType, fileName: `${safeStem}.${extension}` };
+  return {
+    bytes,
+    mimeType,
+    fileName: safeImageFileName(payload.fileName, mimeType, 'product-image'),
+  };
+}
+
+function decodeImageDataUrl(
+  payload: ProductAdminMainImageUploadInput | ProductAdminCategoryImageUploadInput,
+  maxBytes: number,
+  fallbackName: string,
+): {
+  bytes: Uint8Array;
+  mimeType: string;
+  fileName: string;
+} {
+  const dataUrl = typeof payload?.dataUrl === 'string' ? payload.dataUrl.trim() : '';
+  if (!dataUrl || dataUrl.length > Math.ceil(maxBytes * 4 / 3) + 256) {
+    throw inputError(
+      dataUrl ? 'image-too-large' : 'invalid-image-data',
+      dataUrl ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE',
+      'dataUrl',
+    );
+  }
+
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(dataUrl);
+  const mimeType = match?.[1]?.toLowerCase() ?? '';
+  const extension = PRODUCT_IMAGE_MIME_EXTENSION[mimeType];
+  if (!match || !extension || (payload.mimeType && payload.mimeType !== mimeType)) {
+    throw inputError('unsupported-image-type', 'INVALID_IMAGE', 'mimeType');
+  }
+
+  const base64 = match[2].replace(/[\r\n]/g, '');
+  if (base64.length % 4 !== 0) {
+    throw inputError('invalid-image-data', 'INVALID_IMAGE', 'dataUrl');
+  }
+  const bytes = Buffer.from(base64, 'base64');
+  if (bytes.length === 0 || bytes.length > maxBytes) {
+    throw inputError(
+      bytes.length > maxBytes ? 'image-too-large' : 'invalid-image-data',
+      bytes.length > maxBytes ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE',
+      'dataUrl',
+    );
+  }
+  if (!imageBytesMatchMime(bytes, mimeType)) {
+    throw inputError('image-content-type-mismatch', 'INVALID_IMAGE', 'dataUrl');
+  }
+
+  return {
+    bytes,
+    mimeType,
+    fileName: safeImageFileName(payload.fileName, mimeType, fallbackName),
+  };
+}
+
+export function decodeCategoryImageDataUrl(
+  payload: ProductAdminCategoryImageUploadInput,
+): {
+  bytes: Uint8Array;
+  mimeType: string;
+  fileName: string;
+} {
+  return decodeImageDataUrl(payload, CATEGORY_IMAGE_MAX_BYTES, 'category-image');
 }
 
 export function assertProductStockQuantity(

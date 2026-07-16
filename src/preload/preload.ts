@@ -58,6 +58,8 @@ import {
   WarehouseDocumentUpdateInput,
   WarehouseInventoryCountCreateInput,
   WarehouseInventoryCountLineInput,
+  ProductAdminCategoryDeleteInput,
+  ProductAdminCategoryImageUploadInput,
   ProductAdminCategoryOrderUpdate,
   ProductAdminCategoryMutationInput,
   ProductAdminCreateProductInput,
@@ -718,6 +720,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE, categoryId, payload),
       updateCategoryOrder: (updates: ProductAdminCategoryOrderUpdate[]) =>
         ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPDATE_ORDER, updates),
+      uploadCategoryImage: (categoryId: string, payload: ProductAdminCategoryImageUploadInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_UPLOAD_IMAGE, categoryId, payload),
+      deleteCategory: (categoryId: string, payload: ProductAdminCategoryDeleteInput) =>
+        ipcRenderer.invoke(IPC_CHANNELS.POS_PRODUCT_ADMIN_CATEGORIES_DELETE, categoryId, payload),
     },
     orders: {
       create: (order: any, items: any[]) => ipcRenderer.invoke(IPC_CHANNELS.POS_ORDERS_CREATE, order, items),

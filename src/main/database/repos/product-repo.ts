@@ -176,6 +176,7 @@ export interface ProductVariantRow {
 export interface CategoryRow {
   id: string;
   name: string;
+  image_url: string | null;
   icon: string | null;
   color: string | null;
   sort_order: number;
@@ -639,6 +640,57 @@ export const productRepo = {
       ids,
     );
 
+    database.run(
+      `UPDATE draft_products
+       SET category_id = NULL
+       WHERE category_id IN (${idPlaceholders})`,
+      ids,
+    );
+
+    // Local-import intent safety:
+    // - exact dispatched payload/key bytes are immutable and remain replayable;
+    //   only the convenience category_id mirror is cleared;
+    // - undispatched intents may be regenerated safely without the deleted
+    //   category, so release their saved payload/key;
+    // - legacy dispatched rows have no exact replay bytes. Shelf pending rows
+    //   for explicit lookup/manual audit instead of silently reconstructing a
+    //   different request after their only category reference disappears.
+    const legacyImportError =
+      `Category deleted while legacy local-import outcome was uncertain (${ids.join(', ')}); `
+      + 'read-only lookup/manual audit required before retry';
+    database.run(
+      `UPDATE local_variant_imports
+       SET category_id = NULL,
+           status = CASE WHEN status = 'PENDING' THEN 'FAILED' ELSE status END,
+           attempts = CASE WHEN status = 'PENDING' THEN attempts + 1 ELSE attempts END,
+           last_error = CASE
+             WHEN status = 'PENDING' THEN ?
+             ELSE COALESCE(last_error, ?)
+           END
+       WHERE category_id IN (${idPlaceholders})
+         AND status IN ('PENDING', 'FAILED')
+         AND intent_dispatched_at IS NOT NULL
+         AND intent_payload_json IS NULL
+         AND intent_idempotency_key IS NULL`,
+      [legacyImportError, legacyImportError, ...ids],
+    );
+    database.run(
+      `UPDATE local_variant_imports
+       SET category_id = NULL,
+           intent_payload_json = CASE
+             WHEN status IN ('PENDING', 'FAILED') AND intent_dispatched_at IS NULL
+               THEN NULL
+             ELSE intent_payload_json
+           END,
+           intent_idempotency_key = CASE
+             WHEN status IN ('PENDING', 'FAILED') AND intent_dispatched_at IS NULL
+               THEN NULL
+             ELSE intent_idempotency_key
+           END
+       WHERE category_id IN (${idPlaceholders})`,
+      ids,
+    );
+
     for (const table of CATEGORY_PRUNE_BELT_CHECK_TABLES) {
       const row = database.get<{ count: number }>(
         `SELECT COUNT(*) as count
@@ -676,17 +728,17 @@ export const productRepo = {
         // kitchen_print: COALESCE keeps the locally-known flag when an older
         // backend payload omits it (NULL), instead of silently resetting it.
         `INSERT OR REPLACE INTO categories (
-          id, name, icon, color, sort_order, updated_at, name_translations,
+          id, name, image_url, icon, color, sort_order, updated_at, name_translations,
           customer_display_enabled, customer_display_section,
           customer_display_sort_order, kitchen_print, kiosk_modifier_groups_json
         )
          VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           COALESCE(?, (SELECT kitchen_print FROM categories WHERE id = ?), 0),
           COALESCE(?, (SELECT kiosk_modifier_groups_json FROM categories WHERE id = ?))
         )`,
         [
-          c.id, c.name, c.icon, c.color, c.sort_order ?? 0, c.updated_at,
+          c.id, c.name, c.image_url, c.icon, c.color, c.sort_order ?? 0, c.updated_at,
           c.name_translations ?? null, c.customer_display_enabled ?? 1,
           c.customer_display_section ?? null, c.customer_display_sort_order ?? null,
           c.kitchen_print ?? null, c.id,

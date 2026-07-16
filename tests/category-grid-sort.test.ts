@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Category } from '../src/renderer/hooks/usePosDb';
-import { sortCategories } from '../src/renderer/components/products/CategoryGrid';
+import { categoryImageUrl, sortCategories } from '../src/renderer/components/products/CategoryGrid';
 
 function category(id: string, name: string, sortOrder: number): Category {
   return {
@@ -10,6 +10,7 @@ function category(id: string, name: string, sortOrder: number): Category {
     sort_order: sortOrder,
     color: null,
     icon: null,
+    image_url: null,
     updated_at: null,
   };
 }
@@ -23,5 +24,15 @@ describe('CategoryGrid sorting', () => {
     ];
 
     expect(sortCategories(rows, 'en').map((row) => row.id)).toEqual(['a', 'b', 'z']);
+  });
+
+  it('uses the dedicated category image and keeps one-release legacy icon fallback', () => {
+    const canonical = { ...category('a', 'Apples', 0), image_url: 'https://img.example/apples.webp' };
+    const legacy = { ...category('b', 'Bread', 1), icon: 'https://img.example/bread.webp' };
+    const glyphOnly = { ...category('c', 'Coffee', 2), icon: '☕' };
+
+    expect(categoryImageUrl(canonical)).toBe('https://img.example/apples.webp');
+    expect(categoryImageUrl(legacy)).toBe('https://img.example/bread.webp');
+    expect(categoryImageUrl(glyphOnly)).toBeNull();
   });
 });

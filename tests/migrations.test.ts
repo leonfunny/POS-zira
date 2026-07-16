@@ -78,4 +78,15 @@ describe('database migrations', () => {
     expect(migration!.up).toContain('change_amount > 0');
     expect(migration!.up).toContain('payment_amount <= total');
   });
+
+  it('adds a dedicated category image column and migrates only legacy URL icons', () => {
+    const migration = migrations.find((m) => m.name === 'category_image_url');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(56);
+    expect(migration!.up).toContain('ALTER TABLE categories ADD COLUMN image_url TEXT');
+    expect(migration!.up).toContain('SET image_url = TRIM(icon)');
+    expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE 'https://%'");
+    expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE '/uploads/%'");
+  });
 });

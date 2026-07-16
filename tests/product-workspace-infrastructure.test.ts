@@ -31,6 +31,9 @@ describe('native product workspace infrastructure', () => {
       'supportsCategoryBatchUpdate',
       'supportsCategoryKitchenPrint',
       'supportsCategoryDelta',
+      'supportsCategoryImageUpload',
+      'canReplaceCategoryImage',
+      'canDeleteCategory',
     ]) {
       expect(TYPES).toContain(flag);
       expect(API).toContain(`${flag}: raw?.${flag} === true`);
@@ -45,8 +48,10 @@ describe('native product workspace infrastructure', () => {
     expect(API).toContain('{ updates },');
     expect(POS_MODULE).toContain('apiClient.updateProductAdminCategoryOrder(token, exactUpdates)');
     expect(POS_MODULE).toContain('capabilities.supportsCategoryBatchUpdate !== true');
-    expect(POS_MODULE).toContain('productAdminCategoryToRow(category, productRepo.getCategoryById(category.id))');
+    expect(POS_MODULE).toContain('shouldApplyProductAdminCategoryMirror(category, existing)');
+    expect(POS_MODULE).toContain('productAdminCategoryToRow(category, existing)');
     expect(INPUT).toContain('return existing ? { ...existing, ...row } : row;');
+    expect(POS_MODULE).not.toContain('productRepo.setCategorySortOrders(updates)');
     expect(POS_MODULE).not.toContain('for (const update of updates) {\n            const response = await apiClient.updateProductAdminCategory');
   });
 
@@ -54,6 +59,32 @@ describe('native product workspace infrastructure', () => {
     expect(INPUT).toContain('export function productAdminCategoryToRow');
     expect(POS_MODULE).toContain('mirrorProductAdminCategory(response?.category');
     expect(POS_MODULE).toContain("runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_category_create'");
+  });
+
+  it('keeps category images and deletion behind capability-gated canonical IPC paths', () => {
+    for (const method of ['uploadCategoryImage', 'deleteCategory']) {
+      expect(DTS).toContain(`${method}:`);
+      expect(PRELOAD).toContain(`${method}:`);
+      expect(PRELOAD_POS).toContain(`${method}:`);
+    }
+    expect(TYPES).toContain("POS_PRODUCT_ADMIN_CATEGORIES_UPLOAD_IMAGE: 'pos:product-admin:categories:upload-image'");
+    expect(TYPES).toContain("POS_PRODUCT_ADMIN_CATEGORIES_DELETE: 'pos:product-admin:categories:delete'");
+    expect(API).toContain('uploadProductAdminCategoryImage(');
+    expect(API).toContain('deleteProductAdminCategory(');
+    expect(API).toContain("headers['X-Expected-Updated-At'] = expectedUpdatedAt");
+    expect(API).toContain('category: {\n        ...category,\n        imageUrl,');
+    expect(INPUT).toContain("image_url: hasOwn(category, 'imageUrl')");
+    expect(INPUT).toContain('export function sanitizeProductAdminCategoryJsonMutation');
+    expect(POS_MODULE.match(/sanitizeProductAdminCategoryJsonMutation\(/g)?.length ?? 0)
+      .toBeGreaterThanOrEqual(3);
+    expect(POS_MODULE).toContain("'canReplaceCategoryImage',\n          'upload category image'");
+    expect(POS_MODULE).toContain("'canDeleteCategory',\n          'delete category'");
+    expect(API).toContain("error?.status === 404 || code === 'CATEGORY_NOT_FOUND'");
+    expect(POS_MODULE).toContain('const reconcileDeletedProductAdminCategoryLocally = (');
+    expect(POS_MODULE).toContain('reconcileDeletedProductAdminCategoryLocally(categoryId, data)');
+    expect(POS_MODULE).toContain('productRepo.deleteCategoriesExcept(keepIds)');
+    expect(POS_MODULE).toContain("runProductAdminLocalMutationAfterPendingCatalogSync(\n              'product_admin_category_image'");
+    expect(POS_MODULE).toContain("runProductAdminLocalMutationAfterPendingCatalogSync(\n              'product_admin_category_delete'");
   });
 
   it('keeps purchase price behind authenticated product-admin detail', () => {
