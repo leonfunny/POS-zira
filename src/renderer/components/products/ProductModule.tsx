@@ -1004,6 +1004,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           t={t}
           canCreateCategory={adminCapabilities?.canCreateCategory === true}
           canUpdateCategory={adminCapabilities?.canUpdateCategory === true}
+          canReorderCategory={adminCapabilities?.canReorderCategory === true && adminCapabilities?.supportsCategoryBatchUpdate === true}
           localCategoryCount={categories.length}
           onClose={() => setCategoryManagerOpen(false)}
           onChanged={refresh}
