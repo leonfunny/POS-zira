@@ -19,6 +19,7 @@
     "build": "npm run typecheck:renderer && npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
+    "build:metadata": "node scripts/generate-build-metadata.mjs",
     "build:android:web": "vite build --config vite.android.config.ts",
     "start": "electron .",
     "pack": "electron-builder --dir",
@@ -43,6 +44,9 @@
     "test:android:manifests": "node scripts/verify-android-manifests.mjs",
     "test:android:instrumentation": "node scripts/run-android-instrumentation.mjs",
     "test:android:reinstall": "node scripts/run-android-reinstall-probe.mjs",
+    "test:build-metadata": "vitest run tests/build-metadata.test.ts",
+    "test:ci:build-only-policy": "vitest run tests/build-only-ci-policy.test.ts && node scripts/verify-build-only-ci.mjs",
+    "test:ci:windows-package-preflight": "node scripts/verify-build-only-ci.mjs --json --fail-on-r12",
     "test:watch": "vitest",
     "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose",
     "check:design": "bash scripts/check-design-tokens.sh"
@@ -87,7 +91,8 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "yaml": "2.9.0"
   },
   "build": {
     "appId": "com.zira-ai.agent",

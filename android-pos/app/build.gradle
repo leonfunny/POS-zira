@@ -1,4 +1,23 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
+
+def productVersion = new JsonSlurper().parse(rootProject.file('../package.json')).version.toString()
+if (!(productVersion ==~ /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)) {
+    throw new GradleException("package.json version is not semantic: ${productVersion}")
+}
+
+def androidBuildNumberText = (findProperty('ziraAndroidBuildNumber')
+    ?: System.getenv('ZIRA_ANDROID_BUILD_NUMBER')
+    ?: '1').toString()
+if (!(androidBuildNumberText ==~ /^[1-9]\d*$/)) {
+    throw new GradleException('Android build number must be a positive integer')
+}
+def androidBuildNumberLong = Long.parseLong(androidBuildNumberText)
+if (androidBuildNumberLong > 2100000000L) {
+    throw new GradleException('Android build number exceeds the supported versionCode range')
+}
+def androidBuildNumber = androidBuildNumberLong.toInteger()
 
 android {
     namespace = "com.ziraai.posdiagnostics.dev"
@@ -7,8 +26,8 @@ android {
         applicationId "com.ziraai.posdiagnostics.dev"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode androidBuildNumber
+        versionName productVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

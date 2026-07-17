@@ -43,6 +43,8 @@ describe('Android Stage 1 native policy', () => {
     );
     expect(manifestVerifier).toContain('unexpected uses-permission');
     expect(manifestVerifier).toContain('unexpected permission declaration');
+    expect(manifestVerifier).toContain('versionName does not match package product version');
+    expect(manifestVerifier).toContain('versionCode does not match Android build number');
   });
 
   test('pins the reviewed native toolchain and development identity', async () => {
@@ -62,6 +64,11 @@ describe('Android Stage 1 native policy', () => {
     expect(wrapper).toContain('gradle-8.14.3-all.zip');
     expect(wrapper).toContain('distributionSha256Sum=ed1a8d686605fd7c23bdf62c7fc7add1c5b23b2bbc3721e661934ef4a4911d7c');
     expect(appBuild).toContain('applicationId "com.ziraai.posdiagnostics.dev"');
+    expect(appBuild).toContain("rootProject.file('../package.json')");
+    expect(appBuild).toContain("System.getenv('ZIRA_ANDROID_BUILD_NUMBER')");
+    expect(appBuild).toContain('versionName productVersion');
+    expect(appBuild).toContain('versionCode androidBuildNumber');
+    expect(appBuild).toContain('2100000000L');
     expect(appBuild).toMatch(/debug\s*\{\s*debuggable false/);
     expect(appBuild).not.toMatch(/signingConfigs\s*\{/);
     expect(appBuild).not.toContain('google-services.json');

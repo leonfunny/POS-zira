@@ -6,6 +6,8 @@ import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const ANDROID_ROOT = resolve(ROOT, 'android-pos');
+const PRODUCT_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version;
+const EXPECTED_BUILD_NUMBER = process.env.ZIRA_ANDROID_BUILD_NUMBER || '1';
 const wrapper = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
 const gradle = spawnSync(
   wrapper,
@@ -38,7 +40,15 @@ function attribute(attributes, name) {
 
 function verifyManifest(variant, relativePath) {
   const manifest = readFileSync(resolve(ROOT, relativePath), 'utf8');
+  const manifestAttributes = /<manifest\b([^>]*)>/.exec(manifest)?.[1] || '';
   const application = /<application\b([^>]*)>/.exec(manifest)?.[1] || '';
+
+  if (attribute(manifestAttributes, 'versionName') !== PRODUCT_VERSION) {
+    failures.push(`${variant}: versionName does not match package product version ${PRODUCT_VERSION}`);
+  }
+  if (attribute(manifestAttributes, 'versionCode') !== EXPECTED_BUILD_NUMBER) {
+    failures.push(`${variant}: versionCode does not match Android build number ${EXPECTED_BUILD_NUMBER}`);
+  }
 
   if (/android\.permission\.INTERNET/.test(manifest)) failures.push(`${variant}: INTERNET permission present`);
   if (attribute(application, 'allowBackup') !== 'false') failures.push(`${variant}: allowBackup is not false`);
