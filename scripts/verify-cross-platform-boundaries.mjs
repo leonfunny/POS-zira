@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -55,6 +55,23 @@ const FORBIDDEN_NODE_GLOBAL_MEMBERS = new Set([
   'process',
   'require',
 ]);
+const FORBIDDEN_NETWORK_GLOBALS = new Set([
+  'EventSource',
+  'WebSocket',
+  'XMLHttpRequest',
+  'fetch',
+]);
+const BUILT_BUNDLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.mjs']);
+const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
+  { label: 'Electron bridge', pattern: /electronAPI/i },
+  { label: 'Electron package', pattern: /(?:from\s*|import\s*\(|require\s*\()\s*["']electron(?:[\/"'])/i },
+  { label: 'Node builtin', pattern: /["']node:(?:assert|buffer|child_process|crypto|fs|module|net|os|path|process|stream|tls|url|util|worker_threads)(?:[\/"'])/i },
+  { label: 'Node global', pattern: /\b(?:__dirname|__filename)\b|\bprocess\s*\.|\bBuffer\s*[.(]/ },
+  { label: 'Windows/native package', pattern: /@nut-tree-fork\/nut-js|@serialport\/|\b(?:ffi-napi|node-hid|ref-napi|serialport)\b/i },
+  { label: 'print-agent credential or route', pattern: /\bpa_[A-Za-z0-9_-]+|\/print-agent\/|x-print-agent-/i },
+  { label: 'network API', pattern: /\bfetch\s*\(|\b(?:new\s+)?(?:EventSource|WebSocket|XMLHttpRequest)\s*\(|\.sendBeacon\s*\(/ },
+  { label: 'HTTP endpoint', pattern: /https?:\/\/[^\s"'<>]+/i },
+];
 
 function packageName(specifier) {
   if (specifier.startsWith('@')) return specifier.split('/').slice(0, 2).join('/');
@@ -523,6 +540,31 @@ function directUsageViolations(sourceFile) {
           node,
           message: `Node global "${node.text}" is forbidden in cross-platform core`,
         });
+      } else if (FORBIDDEN_NETWORK_GLOBALS.has(node.text)) {
+        violations.push({
+          rule: 'FORBIDDEN_NETWORK_API',
+          node,
+          message: `Network global "${node.text}" is forbidden in the Android/shared source graph`,
+        });
+      }
+    }
+
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const member = ts.isPropertyAccessExpression(node)
+        ? node.name.text
+        : staticStringValue(node.argumentExpression);
+      const receiver = unwrapExpression(node.expression);
+      if (
+        member === 'sendBeacon'
+        && ts.isIdentifier(receiver)
+        && receiver.text === 'navigator'
+        && !isLexicallyShadowed(receiver)
+      ) {
+        violations.push({
+          rule: 'FORBIDDEN_NETWORK_API',
+          node,
+          message: 'navigator.sendBeacon is forbidden in the Android/shared source graph',
+        });
       }
     }
 
@@ -694,11 +736,40 @@ function diagnosticKey(diagnostic) {
   return `${diagnostic.rule}:${diagnostic.file}:${diagnostic.offset}:${diagnostic.message}`;
 }
 
+function fileExtension(file) {
+  const match = /\.[^.\/\\]+$/.exec(file);
+  return match?.[0]?.toLowerCase() || '';
+}
+
+async function listBundleFiles(directory) {
+  const files = [];
+  const visit = async (current) => {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const target = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        await visit(target);
+      } else if (entry.isFile() && BUILT_BUNDLE_EXTENSIONS.has(fileExtension(target))) {
+        files.push(target);
+      }
+    }
+  };
+  await visit(directory);
+  return files.sort();
+}
+
+function sourcePosition(source, offset) {
+  const prefix = source.slice(0, offset);
+  const lines = prefix.split('\n');
+  return { line: lines.length, column: lines.at(-1).length + 1 };
+}
+
 export async function verifyCrossPlatformBoundaries({
   entries,
   root = process.cwd(),
   tsconfigPath,
   allowedPackages = [],
+  bundleDirs = [],
 }) {
   const absoluteRoot = resolve(root);
   const entryFiles = entries.map((entry) => resolve(entry));
@@ -707,6 +778,7 @@ export async function verifyCrossPlatformBoundaries({
   const diagnostics = [];
   const diagnosticKeys = new Set();
   const visited = new Set();
+  const visitedBundleFiles = new Set();
 
   const addDiagnostic = (diagnostic) => {
     const key = diagnosticKey(diagnostic);
@@ -874,6 +946,68 @@ export async function verifyCrossPlatformBoundaries({
     await visit(entry, [entry]);
   }
 
+  for (const bundleDir of bundleDirs) {
+    const absoluteBundleDir = resolve(bundleDir);
+    if (!insideRoot(absoluteRoot, absoluteBundleDir)) {
+      addDiagnostic({
+        rule: 'BUNDLE_OUTSIDE_BOUNDARY_ROOT',
+        file: absoluteBundleDir,
+        line: 1,
+        column: 1,
+        offset: 0,
+        message: `Bundle directory is outside boundary root: ${bundleDir}`,
+        chain: [absoluteBundleDir],
+      });
+      continue;
+    }
+
+    let bundleFiles;
+    try {
+      bundleFiles = await listBundleFiles(absoluteBundleDir);
+    } catch (error) {
+      addDiagnostic({
+        rule: 'UNREADABLE_BUNDLE',
+        file: absoluteBundleDir,
+        line: 1,
+        column: 1,
+        offset: 0,
+        message: `Cannot read built bundle: ${error?.message || String(error)}`,
+        chain: [absoluteBundleDir],
+      });
+      continue;
+    }
+
+    if (bundleFiles.length === 0) {
+      addDiagnostic({
+        rule: 'EMPTY_BUILT_BUNDLE',
+        file: absoluteBundleDir,
+        line: 1,
+        column: 1,
+        offset: 0,
+        message: 'Built bundle contains no scannable web assets',
+        chain: [absoluteBundleDir],
+      });
+      continue;
+    }
+
+    for (const bundleFile of bundleFiles) {
+      visitedBundleFiles.add(bundleFile);
+      const source = await readFile(bundleFile, 'utf8');
+      for (const { label, pattern } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
+        const match = pattern.exec(source);
+        if (!match) continue;
+        addDiagnostic({
+          rule: 'FORBIDDEN_BUILT_BUNDLE_CONTENT',
+          file: bundleFile,
+          ...sourcePosition(source, match.index),
+          offset: match.index,
+          message: `${label} is forbidden in the built Android web bundle`,
+          chain: [bundleFile],
+        });
+      }
+    }
+  }
+
   diagnostics.sort((left, right) => (
     left.file.localeCompare(right.file)
     || left.line - right.line
@@ -887,13 +1021,17 @@ export async function verifyCrossPlatformBoundaries({
     entries: entryFiles,
     tsconfigPath: config.configPath,
     visitedFiles: [...visited].sort(),
+    visitedBundleFiles: [...visitedBundleFiles].sort(),
     diagnostics,
   };
 }
 
 export function formatBoundaryResult(result) {
   if (result.ok) {
-    return `PASS cross-platform boundaries: ${result.visitedFiles.length} file(s) scanned from ${result.entries.length} entry point(s)`;
+    const bundleSummary = result.visitedBundleFiles.length > 0
+      ? `; ${result.visitedBundleFiles.length} built bundle file(s) scanned`
+      : '';
+    return `PASS cross-platform boundaries: ${result.visitedFiles.length} source file(s) scanned from ${result.entries.length} entry point(s)${bundleSummary}`;
   }
   const lines = [
     `FAIL cross-platform boundaries: ${result.diagnostics.length} violation(s) in ${result.visitedFiles.length} scanned file(s)`,
@@ -916,12 +1054,14 @@ function usage() {
     '  --entry <file>          Repeat for every application entry point',
     '  --tsconfig <file>       TypeScript config used for aliases/module resolution',
     '  --allow-package <name>  Repeat for reviewed cross-platform bare packages',
+    '  --bundle-dir <path>      Repeat for built web bundle directories to scan',
   ].join('\n');
 }
 
 function parseCliArgs(argv) {
   const entries = [];
   const allowedPackages = [];
+  const bundleDirs = [];
   let root = process.cwd();
   let tsconfigPath;
   for (let index = 0; index < argv.length; index += 1) {
@@ -942,14 +1082,18 @@ function parseCliArgs(argv) {
       if (!argv[index + 1]) throw new Error('--allow-package requires a package name');
       allowedPackages.push(argv[index + 1]);
       index += 1;
+    } else if (argument === '--bundle-dir') {
+      if (!argv[index + 1]) throw new Error('--bundle-dir requires a path');
+      bundleDirs.push(argv[index + 1]);
+      index += 1;
     } else if (argument === '--help' || argument === '-h') {
-      return { help: true, entries, root, tsconfigPath, allowedPackages };
+      return { help: true, entries, root, tsconfigPath, allowedPackages, bundleDirs };
     } else {
       throw new Error(`Unknown argument: ${argument}`);
     }
   }
   if (entries.length === 0) throw new Error('At least one --entry is required');
-  return { help: false, entries, root, tsconfigPath, allowedPackages };
+  return { help: false, entries, root, tsconfigPath, allowedPackages, bundleDirs };
 }
 
 const invokedAsScript = process.argv[1]

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Zira POS Android Diagnostics</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="diagnostic-shell" aria-labelledby="diagnostic-title">
+      <section class="diagnostic-card">
+        <p class="eyebrow">Zira POS Android · development shell</p>
+        <h1 id="diagnostic-title">Stage 1 diagnostic</h1>
+        <p class="summary">
+          Shell tĩnh dùng để xác minh toolchain. Không kết nối mạng và không có luồng ghi POS.
+        </p>
+        <dl class="status-grid">
+          <div><dt>Runtime</dt><dd>Capacitor 8</dd></div>
+          <div><dt>Target SDK</dt><dd>36</dd></div>
+          <div><dt>Network</dt><dd class="safe">Disabled</dd></div>
+          <div><dt>Business writes</dt><dd class="safe">Disabled</dd></div>
+        </dl>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -133,6 +133,7 @@ describe('cross-platform boundary verifier', () => {
     ['forbidden-unresolved-alias', 'UNRESOLVED_INTERNAL_ALIAS'],
     ['forbidden-bare-package', 'NON_ALLOWLISTED_BARE_PACKAGE'],
     ['forbidden-dynamic-template', 'FORBIDDEN_NODE_BUILTIN'],
+    ['forbidden-network-apis', 'FORBIDDEN_NETWORK_API'],
   ]) {
     test(`rejects ${fixture}`, async () => {
       const result = await verifyFixture(fixture);
@@ -175,6 +176,49 @@ describe('cross-platform boundary verifier', () => {
       diagnostic.chain.map((file: string) => basename(file)),
       ['entry.ts', 'middle.ts', 'leaf.ts'],
     );
+  });
+
+  test('scans the final built web bundle when requested', async () => {
+    const root = resolve(FIXTURES, 'positive');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      bundleDirs: [resolve(root, 'bundle')],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.visitedBundleFiles).toHaveLength(1);
+  });
+
+  test('rejects forbidden content in the final built web bundle', async () => {
+    const root = resolve(FIXTURES, 'forbidden-built-bundle');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      bundleDirs: [resolve(root, 'bundle')],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_BUILT_BUNDLE_CONTENT',
+    )).toBe(true);
+  });
+
+  test('rejects network APIs and HTTP endpoints in the final built web bundle', async () => {
+    const root = resolve(FIXTURES, 'forbidden-built-network');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      bundleDirs: [resolve(root, 'bundle')],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.filter(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_BUILT_BUNDLE_CONTENT',
+    ).length).toBeGreaterThanOrEqual(2);
   });
 
   test('does not execute a dormant instance field initializer at module load', async () => {
