@@ -28,6 +28,7 @@
     "scrape:fb:ts": "npx ts-node scripts/facebook-scraper.ts",
     "scrape:fb:stealth": "node scripts/facebook-scraper-stealth.js",
     "test": "vitest run",
+    "test:boundaries": "vitest run tests/cross-platform-boundary-verifier.test.ts",
     "test:watch": "vitest",
     "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose",
     "check:design": "bash scripts/check-design-tokens.sh"
