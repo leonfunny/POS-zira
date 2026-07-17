@@ -63,6 +63,15 @@ import {
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
 
+export function normalizeOpenShiftResponse(value: unknown): { shiftId: string } {
+  const response = value as { id?: unknown; shiftId?: unknown } | null;
+  const candidate = response?.shiftId ?? response?.id;
+  if (typeof candidate !== 'string' || candidate.trim().length === 0) {
+    throw new Error('Invalid open shift response: missing shift id');
+  }
+  return { shiftId: candidate.trim() };
+}
+
 export interface ServerOrderListParams {
   period?: string;
   from?: string;
@@ -3035,7 +3044,7 @@ export class ApiClient {
    */
   async openPosShift(
     token: string,
-    data: { staffId: string; openingCash: number; machineId?: string | null },
+    data: { shiftId?: string; staffId: string; openingCash: number; machineId?: string | null },
   ): Promise<{ shiftId: string }> {
     const url = `${this.baseUrl}/api/v1/pos/shifts/open`;
     const machineId = String(data.machineId ?? getConfigValue('machineId') ?? '').trim();
@@ -3055,7 +3064,7 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    return normalizeOpenShiftResponse(await response.json());
   }
 
   /**

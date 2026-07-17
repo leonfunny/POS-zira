@@ -1690,4 +1690,18 @@ export const migrations: Migration[] = [
       WHERE key IN ('products_sync_cursor_v2', 'products_last_full_sync');
     `,
   },
+  {
+    version: 58,
+    name: 'pos_refund_cashflow_indexes',
+    // RefundIssued rows are retained as the immutable local financial journal.
+    // Keep daily/shift scans and legacy residual lookups bounded as it grows.
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_occurred
+        ON pos_event_outbox(event_type, occurred_at);
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_local_order
+        ON pos_event_outbox(event_type, local_order_id);
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_shift
+        ON pos_event_outbox(event_type, shift_id);
+    `,
+  },
 ];

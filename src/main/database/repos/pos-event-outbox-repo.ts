@@ -197,8 +197,10 @@ export const posEventOutboxRepo = {
   },
 
   /**
-   * Keep acked rows for shift reconciliation/diagnostics, then prune old ones so
-   * the table never grows unbounded. Never touches pending/dead_letter rows.
+   * Keep acked rows for reconciliation/diagnostics, then prune old operational
+   * rows so the table never grows unbounded. RefundIssued is an immutable local
+   * financial journal used by daily and shift reports, so it is retained
+   * indefinitely. Never touches pending/dead_letter rows.
    */
   pruneAcked(olderThanDays = 30): number {
     const before = database.get<{ n: number }>(
@@ -208,6 +210,7 @@ export const posEventOutboxRepo = {
       `DELETE FROM pos_event_outbox
        WHERE status = 'acked'
          AND acknowledged_at IS NOT NULL
+         AND event_type <> 'RefundIssued'
          AND acknowledged_at < datetime('now', ?)`,
       [`-${Math.max(1, olderThanDays)} days`],
     );

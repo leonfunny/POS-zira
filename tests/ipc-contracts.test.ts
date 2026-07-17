@@ -296,7 +296,9 @@ describe('Refund payload passes lines[] end-to-end', () => {
   });
 
   it('main IPC handler forwards lines to apiClient', () => {
-    expect(posModule).toContain('toRefundBackendPayload(refundPayload)');
+    expect(posModule).toContain(
+      'toRefundBackendPayload(refundPayload, {\n          shiftId: backendShiftId ?? activeShift.id,\n        })',
+    );
   });
 
   it('main IPC handler maps lines explicitly without orderItemId', () => {
@@ -385,6 +387,27 @@ describe('Refund payload passes lines[] end-to-end', () => {
       refundRequestId: 'refund-request-3',
       amount: 12.34,
     });
+  });
+
+  it('main payload sends the backend shift id while the local event keeps the local id', () => {
+    const data = {
+      type: 'PARTIAL' as const,
+      refundRequestId: 'refund-request-shift-1',
+      amount: 1234,
+    };
+
+    expect(toRefundBackendPayload(data, { shiftId: 'shift-backend-1' })).toMatchObject({
+      refundRequestId: 'refund-request-shift-1',
+      shiftId: 'shift-backend-1',
+      amount: 12.34,
+    });
+    expect(toRefundBackendPayload(data)).not.toHaveProperty('shiftId');
+    expect(posModule).toContain('database.get<{ id: string; backend_id: string | null; staff_id: string | null }>(');
+    expect(posModule).toContain("'SELECT id, backend_id, staff_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1'");
+    expect(posModule).toContain('let backendShiftId = activeShift.backend_id');
+    expect(posModule).toContain("'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL'");
+    expect(posModule).toContain('shiftId: backendShiftId ?? activeShift.id');
+    expect(posModule).toContain('refundedAt: refundOccurredAt,\n          shiftId: activeShift.id,');
   });
 
   it('main payload includes explicit partial amount converted from grosze to PLN', () => {

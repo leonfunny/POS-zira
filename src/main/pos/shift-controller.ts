@@ -59,6 +59,25 @@ function isTransferMethod(method: string | null | undefined): boolean {
   return method === 'TRANSFER' || method === 'BANK_TRANSFER';
 }
 
+export function canReconcileActiveShift(
+  localShiftId: string,
+  localStaffId: string | null | undefined,
+  serverShift: { id?: string | null; staffId?: string | null } | null | undefined,
+  configuredMachineId: string | null | undefined,
+): boolean {
+  if (!serverShift?.id) return false;
+  if (serverShift.id === localShiftId) return true;
+
+  // Staff identity is only safe after the backend active-shift lookup was
+  // scoped to this machine. A salon may have the same cashier on two POSes.
+  return Boolean(
+    String(configuredMachineId ?? '').trim()
+    && serverShift.staffId
+    && localStaffId
+    && serverShift.staffId === localStaffId,
+  );
+}
+
 export class ShiftController {
   constructor(
     private getPrinter: (type: string) => PrinterDriver | null,
@@ -108,6 +127,7 @@ export class ShiftController {
     const orders = orderRepo.getByShift(shiftId);
     const salesOrders = fiscalOnly ? orders.filter((o) => o.has_fiscal === 1) : orders;
     const grossSales = salesOrders.reduce((sum, o) => sum + o.total, 0);
+    const closedAt = new Date().toISOString();
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
@@ -137,42 +157,17 @@ export class ShiftController {
     }
 
     const totalDiscounts = salesOrders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
-    const totalRefunds = salesOrders.reduce(
-      (sum, o) => sum + (o.refund_amount && o.refund_amount > 0 ? o.refund_amount : 0),
-      0,
+    const refundCashflow = orderRepo.getRefundCashflowBetween(
+      shift.opened_at,
+      closedAt,
+      fiscalOnly,
+      shiftId,
     );
-
-    for (const o of paymentOrders) {
-      if (o.refund_amount && o.refund_amount > 0) {
-        const tendersJson = o.payment_tenders;
-        if (tendersJson) {
-          try {
-            const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
-            const orderTotal = tenders.reduce((s, t) => s + t.amount, 0);
-            if (orderTotal > 0) {
-              let distributed = 0;
-              for (let i = 0; i < tenders.length; i++) {
-                const isLast = i === tenders.length - 1;
-                const share = isLast
-                  ? o.refund_amount - distributed
-                  : Math.round(o.refund_amount * (tenders[i].amount / orderTotal));
-                distributed += share;
-                if (tenders[i].method === 'CASH') cashTotal -= share;
-                else if (tenders[i].method === 'CARD') cardTotal -= share;
-                else if (tenders[i].method === 'BLIK') blikTotal -= share;
-                else if (isTransferMethod(tenders[i].method)) transferTotal -= share;
-              }
-              continue;
-            }
-          } catch { /* fall through to single method */ }
-        }
-
-        if (o.payment_method === 'CASH') cashTotal -= o.refund_amount;
-        else if (o.payment_method === 'CARD') cardTotal -= o.refund_amount;
-        else if (o.payment_method === 'BLIK') blikTotal -= o.refund_amount;
-        else if (isTransferMethod(o.payment_method)) transferTotal -= o.refund_amount;
-      }
-    }
+    const totalRefunds = refundCashflow.refund_total;
+    cashTotal -= refundCashflow.cash_refund_total;
+    cardTotal -= refundCashflow.card_refund_total;
+    blikTotal -= refundCashflow.blik_refund_total;
+    transferTotal -= refundCashflow.transfer_refund_total;
 
     const totalSales = grossSales - totalRefunds - totalDiscounts;
     const difference = closingCash - (shift.opening_cash + cashTotal);
@@ -187,7 +182,7 @@ export class ShiftController {
       shiftId,
       staffName: shift.staff_name,
       openedAt: shift.opened_at,
-      closedAt: new Date().toISOString(),
+      closedAt,
       openingCash: shift.opening_cash,
       closingCash,
       totalSales,
@@ -270,7 +265,10 @@ export class ShiftController {
 
       try {
         database.run('UPDATE shifts SET sync_attempts = COALESCE(sync_attempts, 0) + 1 WHERE id = ?', [shift.id]);
+        // Release contract: backend OpenShiftDto must accept this client UUID
+        // before a POS build containing this request is distributed.
         const result = await apiClient.openPosShift(token, {
+          shiftId: shift.id,
           staffId: shift.staff_id,
           openingCash: shift.opening_cash,
           machineId: this.getMachineId(),
@@ -358,7 +356,14 @@ export class ShiftController {
     if (!token) return;
 
     try {
-      const result = await apiClient.openPosShift(token, { staffId, openingCash, machineId: this.getMachineId() });
+      // Release contract: backend OpenShiftDto accepts the client UUID and
+      // returns the PosShift entity as `{ id }` (normalized by apiClient).
+      const result = await apiClient.openPosShift(token, {
+        shiftId,
+        staffId,
+        openingCash,
+        machineId: this.getMachineId(),
+      });
       database.run('UPDATE shifts SET backend_id = ?, synced = 1 WHERE id = ?', [
         result.shiftId,
         shiftId,

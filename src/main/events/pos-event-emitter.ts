@@ -195,30 +195,43 @@ export const posEventEmitter = {
     backendOrderId?: string | null;
     amountMinor: number;
     method: string | null;
+    tenderAllocations?: Array<{ method: string; amount: number }>;
     reason?: string | null;
+    refundRequestId?: string | null;
     refundedAt: string;
+    shiftId?: string | null;
     items?: unknown;
     approvedByStaffId?: string | null;
   }): void {
     safe(() => {
       if (!input.amountMinor || input.amountMinor <= 0) return;
       const occurredAt = toIso(input.refundedAt);
+      const refundFactId = input.refundRequestId || occurredAt;
+      const tenderAllocations = (input.tenderAllocations ?? [])
+        .map((tender) => ({
+          method: normalizeMethod(tender?.method),
+          amountMinor: Math.round(Number(tender?.amount)),
+        }))
+        .filter((tender) => tender.amountMinor > 0);
       posEventOutboxRepo.enqueue({
-        dedupeKey: `RefundIssued:${input.localOrderId}:${occurredAt}`,
+        dedupeKey: `RefundIssued:${input.localOrderId}:${refundFactId}`,
         eventType: 'RefundIssued',
         reliabilityClass: RELIABILITY.RefundIssued,
         salonId: salonId(),
         deviceId: deviceId(),
         localOrderId: input.localOrderId,
+        shiftId: input.shiftId ?? null,
         correlationId: input.localOrderId,
         occurredAt,
         payload: {
-          refundId: `${input.localOrderId}:refund:${occurredAt}`,
+          refundId: `${input.localOrderId}:refund:${refundFactId}`,
           originalLocalOrderId: input.localOrderId,
           originalServerOrderId: input.backendOrderId ?? null,
           currency: 'PLN',
           amountMinor: input.amountMinor,
           method: normalizeMethod(input.method),
+          tenderAllocations,
+          refundRequestId: input.refundRequestId ?? null,
           reason: input.reason ?? null,
           items: input.items ?? [],
           approvedByStaffId: input.approvedByStaffId ?? null,

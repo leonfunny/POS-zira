@@ -28,6 +28,10 @@ export interface RefundIpcPayload {
   manualAdjustmentAmount?: number;
 }
 
+export interface RefundBackendPayloadContext {
+  shiftId?: string;
+}
+
 export interface LocalRefundLine {
   orderItemId?: string;
   variantId?: string;
@@ -341,7 +345,10 @@ export function allocateRefundTenders(
     .filter((t): t is RefundTenderAllocation => t !== null);
 }
 
-export function toRefundBackendPayload(data: RefundIpcPayload): Record<string, any> {
+export function toRefundBackendPayload(
+  data: RefundIpcPayload,
+  context: RefundBackendPayloadContext = {},
+): Record<string, any> {
   const lines = (data.lines ?? []).map(l => ({
     variantId: l.variantId,
     sku: l.sku,
@@ -360,6 +367,10 @@ export function toRefundBackendPayload(data: RefundIpcPayload): Record<string, a
 
   if (data.refundRequestId) {
     backendPayload.refundRequestId = data.refundRequestId;
+  }
+
+  if (context.shiftId) {
+    backendPayload.shiftId = context.shiftId;
   }
 
   if (lines.length > 0) {
