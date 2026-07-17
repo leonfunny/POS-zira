@@ -2,7 +2,6 @@ package com.ziraai.posdiagnostics.dev;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import androidx.test.core.app.ActivityScenario;
@@ -32,11 +31,13 @@ public class ExampleInstrumentedTest {
                     }
                 );
             });
-            assertTrue("WebView diagnostic callback timed out", callback.await(1, TimeUnit.SECONDS));
-            if ("\"Stage 1 diagnostic\"".equals(title.get())) return;
+            if (callback.await(1, TimeUnit.SECONDS)
+                && "\"Stage 1 diagnostic\"".equals(title.get())) {
+                return;
+            }
             Thread.sleep(250);
         }
-        assertEquals("\"Stage 1 diagnostic\"", title.get());
+        assertEquals("WebView diagnostic did not load before the deadline", "\"Stage 1 diagnostic\"", title.get());
     }
 
     @Test

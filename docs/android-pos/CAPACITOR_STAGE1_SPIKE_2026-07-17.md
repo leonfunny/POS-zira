@@ -1,7 +1,7 @@
 # Capacitor Android B1 Stage 1 spike
 
 Date: 2026-07-17
-Status: development-only static diagnostic shell; runtime recreation test blocked by the current host
+Status: Stage 1 accepted for development after two API 36 runtime passes; production remains locked
 
 ## Pinned toolchain
 
@@ -78,7 +78,7 @@ It launches the real `MainActivity`, verifies the static diagnostic DOM, calls `
 
 The source graph and final Vite web assets must both pass. A source-only result is insufficient.
 
-## Verification evidence and remaining blocker
+## Verification evidence
 
 The following gates passed on the Linux build host:
 
@@ -93,4 +93,21 @@ The following gates passed on the Linux build host:
 
 The B1 `package.json` and lockfile were also copied to an isolated Windows checkout at `C:\Users\pc\POS-zira-b1-win-baseline-20260717`. Under Node `22.23.1`/npm `10.9.8`, `npm ci` and `npm run build` passed. The full Windows suite passed 237 test files and 2059 tests with 13 skips; the only failed suite was the pre-existing E2E harness incompatibility where nested `npx tsc` returns npm `EUSAGE`. The installed counter app and live source checkout were not changed or restarted.
 
-`connectedDebugAndroidTest` was attempted twice on the isolated API 36 `rf_pixel_36` AVD. This host has no `/dev/kvm`; the software-emulated AVD did not reach `sys.boot_completed`, and ddmlib reported `ShellCommandUnresponsive`/unknown API level before executing a test. The recreation test is compiled into the AndroidTest APK but has not passed at runtime. B1 must remain development-only and cannot unlock Stage 2 or any production lane until that test passes on a hardware-accelerated emulator or a real test tablet.
+The Linux host's isolated API 36 `rf_pixel_36` AVD could not boot because that host has no `/dev/kvm`. Runtime validation was therefore moved to the Alienware test machine, where Android Emulator `36.6.11`, API 36 `default;x86_64`, and WHPX hardware acceleration were verified. No source build ran there because its default Node/JDK versions differ from the pinned B1 toolchain.
+
+The exact Linux-built APKs used for runtime validation were:
+
+- app: `86156286f7144cacd56200671faa4ce8a9fae9ef1e61c1d2805501a7e86d9f57`;
+- AndroidTest after the lifecycle polling fix: `eca8de412b1305bee05d505967890295619bff44a809f94819d1644959e5e6f5`.
+
+The first hardware-accelerated run exposed a real synchronization defect in the test: it failed immediately when the first one-second JavaScript callback missed its deadline instead of continuing the documented bounded polling loop. The test was fixed to keep polling and to assert only after the overall deadline.
+
+After that fix, both a running-emulator install and a second cold `-wipe-data` boot with fresh APK installs passed:
+
+- device API: `36`;
+- package: `com.ziraai.posdiagnostics.dev`;
+- tests: `OK (2 tests)`;
+- instrumentation result: `INSTRUMENTATION_CODE: -1`;
+- covered behavior: development app ID, diagnostic DOM load, `ActivityScenario.recreate()`, and diagnostic DOM load after recreation.
+
+This closes the Stage 1 runtime blocker and permits Stage 2 development of fake/read-only catalog UI under the existing boundary gates. It does not authorize production publication, real authentication, order/payment writes, printing, fiscal operations, production signing, or an update lane.
