@@ -21,9 +21,11 @@ describe('Android Stage 1 native policy', () => {
       '--bundle-dir android-pos/app/src/main/assets/public',
     );
     expect(scripts['android:sync']).toBe(
-      'npm run test:android:boundaries && cap sync android && npm run test:android:boundaries:native-assets',
+      'npm run test:android:boundaries && cap sync android && node scripts/normalize-android-generated.mjs && npm run test:android:boundaries:native-assets',
     );
-    expect(scripts['android:build:verify']).toBe('node scripts/run-android-build.mjs');
+    expect(scripts['android:build:verify']).toBe(
+      'npm run android:sync && npm run test:android:stage2 && npm run test:android:responsive && node scripts/run-android-build.mjs',
+    );
 
     const buildRunner = await source('scripts/run-android-build.mjs');
     expect(buildRunner).toContain("'--no-daemon'");

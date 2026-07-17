@@ -177,7 +177,7 @@ Acceptance:
 ### GLM-B1 — Capacitor 8 toolchain and read-only shell spike
 
 Owner: `claude_glm_android`
-Status: Stage 1 ACCEPTED for development after A3b and two API 36 recreation passes; Stage 2 read-only work is eligible
+Status: Stage 1 and Stage 2 synthetic catalog ACCEPTED for development after A3b and API 36 recreation passes; production and real data remain locked
 Runtime impact: development-only Android shell; no production application ID/signing
 
 Prerequisites:

@@ -16,28 +16,31 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class ExampleInstrumentedTest {
 
-    private void assertStaticDiagnosticLoaded(ActivityScenario<MainActivity> scenario) throws Exception {
-        AtomicReference<String> title = new AtomicReference<>();
+    private void assertSyntheticCatalogLoaded(ActivityScenario<MainActivity> scenario) throws Exception {
+        AtomicReference<String> catalogState = new AtomicReference<>();
         for (int attempt = 0; attempt < 20; attempt += 1) {
             CountDownLatch callback = new CountDownLatch(1);
             scenario.onActivity(activity -> {
                 assertNotNull(activity.getBridge());
                 assertNotNull(activity.getBridge().getWebView());
                 activity.getBridge().getWebView().evaluateJavascript(
-                    "document.getElementById('diagnostic-title')?.textContent",
+                    "document.getElementById('catalog-title')?.textContent === 'Danh mục mẫu'"
+                        + " && document.body.dataset.mode === 'synthetic-read-only'"
+                        + " && document.querySelectorAll('[data-synthetic-record]').length === 6"
+                        + " && document.getElementById('checkout-lock')?.disabled === true",
                     value -> {
-                        title.set(value);
+                        catalogState.set(value);
                         callback.countDown();
                     }
                 );
             });
             if (callback.await(1, TimeUnit.SECONDS)
-                && "\"Stage 1 diagnostic\"".equals(title.get())) {
+                && "true".equals(catalogState.get())) {
                 return;
             }
             Thread.sleep(250);
         }
-        assertEquals("WebView diagnostic did not load before the deadline", "\"Stage 1 diagnostic\"", title.get());
+        assertEquals("Synthetic catalog did not load safely before the deadline", "true", catalogState.get());
     }
 
     @Test
@@ -50,9 +53,9 @@ public class ExampleInstrumentedTest {
     @Test
     public void staticShellSurvivesActivityRecreation() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            assertStaticDiagnosticLoaded(scenario);
+            assertSyntheticCatalogLoaded(scenario);
             scenario.recreate();
-            assertStaticDiagnosticLoaded(scenario);
+            assertSyntheticCatalogLoaded(scenario);
         }
     }
 }

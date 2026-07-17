@@ -64,9 +64,9 @@ npm run android:sync
 npm run android:build:verify
 ```
 
-`android:sync` is intentionally fail-closed: it reruns the source and Vite-bundle gates, rebuilds the web output, copies it into the native project, and then scans `android-pos/app/src/main/assets/public`. This prevents a stale or different web bundle from being packaged after a green source-only check.
+`android:sync` is intentionally fail-closed: it reruns the source and Vite-bundle gates, rebuilds the web output, copies it into the native project, normalizes the generated Cordova XML deterministically, and then scans `android-pos/app/src/main/assets/public`. This prevents a stale or different web bundle from being packaged after a green source-only check and keeps repeat syncs diff-clean.
 
-`android:build:verify` intentionally runs only `:app:test`, `:app:assembleDebug`, and `:app:assembleDebugAndroidTest`, with Gradle daemon and parallel execution disabled. Do not replace these with unqualified aggregate tasks: `assembleDebugAndroidTest` also selects the generated empty Cordova module's test APK and currently fails its unrelated duplicate-Kotlin-class check.
+`android:build:verify` first invokes the fail-closed sync above, then intentionally runs only `:app:test`, `:app:assembleDebug`, and `:app:assembleDebugAndroidTest`, with Gradle daemon and parallel execution disabled. This prevents a verified source tree from packaging stale native web assets. Do not replace the scoped tasks with unqualified aggregate tasks: `assembleDebugAndroidTest` also selects the generated empty Cordova module's test APK and currently fails its unrelated duplicate-Kotlin-class check.
 
 With the isolated API 36 emulator online, the activity-recreation test is:
 
