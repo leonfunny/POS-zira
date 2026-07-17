@@ -42,6 +42,7 @@
     "android:preflight": "node scripts/verify-android-toolchain.mjs",
     "test:android:manifests": "node scripts/verify-android-manifests.mjs",
     "test:android:instrumentation": "node scripts/run-android-instrumentation.mjs",
+    "test:android:reinstall": "node scripts/run-android-reinstall-probe.mjs",
     "test:watch": "vitest",
     "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose",
     "check:design": "bash scripts/check-design-tokens.sh"

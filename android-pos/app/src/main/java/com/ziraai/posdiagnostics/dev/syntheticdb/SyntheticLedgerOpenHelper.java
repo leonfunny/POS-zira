@@ -11,6 +11,7 @@ public final class SyntheticLedgerOpenHelper extends SQLiteOpenHelper {
 
     private final int targetVersion;
     private final boolean failV2MigrationForTest;
+    private final SyntheticCorruptionHandler corruptionHandler;
 
     public SyntheticLedgerOpenHelper(Context context, String databaseName) {
         this(context, databaseName, SCHEMA_V2, false);
@@ -22,10 +23,40 @@ public final class SyntheticLedgerOpenHelper extends SQLiteOpenHelper {
         int targetVersion,
         boolean failV2MigrationForTest
     ) {
-        super(context, databaseName, null, targetVersion);
+        this(
+            context,
+            databaseName,
+            targetVersion,
+            failV2MigrationForTest,
+            new SyntheticCorruptionHandler(context, databaseName)
+        );
+    }
+
+    private SyntheticLedgerOpenHelper(
+        Context context,
+        String databaseName,
+        int targetVersion,
+        boolean failV2MigrationForTest,
+        SyntheticCorruptionHandler corruptionHandler
+    ) {
+        super(context, databaseName, null, targetVersion, corruptionHandler);
         this.targetVersion = targetVersion;
         this.failV2MigrationForTest = failV2MigrationForTest;
+        this.corruptionHandler = corruptionHandler;
+        corruptionHandler.assertNotLocked();
         setWriteAheadLoggingEnabled(true);
+    }
+
+    @Override
+    public SQLiteDatabase getWritableDatabase() {
+        corruptionHandler.assertNotLocked();
+        return super.getWritableDatabase();
+    }
+
+    @Override
+    public SQLiteDatabase getReadableDatabase() {
+        corruptionHandler.assertNotLocked();
+        return super.getReadableDatabase();
     }
 
     @Override

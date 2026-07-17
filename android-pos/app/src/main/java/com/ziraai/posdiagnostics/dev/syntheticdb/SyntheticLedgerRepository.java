@@ -8,6 +8,18 @@ import java.util.List;
 
 /** Feature-oriented synthetic repository. It deliberately exposes no raw-SQL or generic bridge API. */
 public final class SyntheticLedgerRepository {
+    public static final class WalCheckpointResult {
+        public final int busyStatus;
+        public final int logFrames;
+        public final int checkpointedFrames;
+
+        WalCheckpointResult(int busyStatus, int logFrames, int checkpointedFrames) {
+            this.busyStatus = busyStatus;
+            this.logFrames = logFrames;
+            this.checkpointedFrames = checkpointedFrames;
+        }
+    }
+
     public static final class FakeItem {
         public final String catalogId;
         public final int quantity;
@@ -64,6 +76,7 @@ public final class SyntheticLedgerRepository {
 
         SQLiteDatabase database = helper.getWritableDatabase();
         database.beginTransaction();
+        RuntimeException primaryFailure = null;
         try {
             ContentValues order = new ContentValues();
             order.put("local_order_id", localOrderId);
@@ -92,8 +105,16 @@ public final class SyntheticLedgerRepository {
             database.insertOrThrow("fake_order_upload_journal", null, journal);
 
             database.setTransactionSuccessful();
+        } catch (RuntimeException error) {
+            primaryFailure = error;
+            throw error;
         } finally {
-            database.endTransaction();
+            try {
+                database.endTransaction();
+            } catch (RuntimeException endError) {
+                if (primaryFailure == null) throw endError;
+                primaryFailure.addSuppressed(endError);
+            }
         }
     }
 
@@ -156,6 +177,20 @@ public final class SyntheticLedgerRepository {
     public String journalMode() {
         try (Cursor cursor = helper.getReadableDatabase().rawQuery("PRAGMA journal_mode", null)) {
             cursor.moveToFirst();
+            return cursor.getString(0);
+        }
+    }
+
+    public WalCheckpointResult checkpointWalFully() {
+        try (Cursor cursor = helper.getWritableDatabase().rawQuery("PRAGMA wal_checkpoint(FULL)", null)) {
+            if (!cursor.moveToFirst()) throw new IllegalStateException("WAL checkpoint returned no result");
+            return new WalCheckpointResult(cursor.getInt(0), cursor.getInt(1), cursor.getInt(2));
+        }
+    }
+
+    public String integrityCheck() {
+        try (Cursor cursor = helper.getReadableDatabase().rawQuery("PRAGMA integrity_check", null)) {
+            if (!cursor.moveToFirst()) throw new IllegalStateException("Integrity check returned no result");
             return cursor.getString(0);
         }
     }
