@@ -14,6 +14,7 @@ vi.mock('../src/main/database/repos/product-repo', () => ({
   productRepo: {
     getById: vi.fn(),
     upsertMany: vi.fn(),
+    applySyncTombstones: vi.fn(),
   },
 }));
 
@@ -68,6 +69,18 @@ function syncEntry(
 describe('entity applicators customer display metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('keeps deleted product events as hidden local tombstones', () => {
+    const deleted = syncEntry('product', {}, 'deleted-product');
+    deleted.event = 'deleted';
+
+    expect(applyEntry(deleted)).toBe(true);
+    expect(productRepo.applySyncTombstones).toHaveBeenCalledWith([{
+      id: 'deleted-product',
+      reason: 'LEGACY_DELETED',
+      canonicalUpdatedAt: deleted.created_at,
+    }]);
   });
 
   it('preserves product customer display metadata when sync payload omits those fields', () => {

@@ -97,7 +97,11 @@ function applyProduct(entry: SyncLogEntry): boolean {
   if (!p || !entry.entity_id) return false;
 
   if (entry.event === 'deleted') {
-    database.run('UPDATE product_variants SET is_active = 0 WHERE id = ?', [entry.entity_id]);
+    productRepo.applySyncTombstones([{
+      id: entry.entity_id,
+      reason: 'LEGACY_DELETED',
+      canonicalUpdatedAt: entry.created_at,
+    }]);
     return true;
   }
 

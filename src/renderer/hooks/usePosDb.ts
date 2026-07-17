@@ -27,6 +27,10 @@ export interface Product {
   // 'service'/'consumable' (or track_inventory=0) hide every stock affordance.
   item_type?: string | null;
   track_inventory?: number | null;
+  // Backend tombstones are excluded from catalog reads; these fields remain
+  // optional for diagnostic/internal row shapes.
+  sync_tombstone_reason?: string | null;
+  sync_tombstoned_at?: string | null;
   // Translation map (migration v28). JSON string of `{lang: name}`.
   // Orders/fiscal payloads use canonical `name`; paper receipts localize
   // separately at print time.

@@ -222,6 +222,12 @@ describe('ApiClient product normalization', () => {
           canonicalUpdatedAt: '2026-07-14T09:05:00.000Z',
         }],
         deletedIds: ['deleted-1'],
+        events: [{
+          operation: 'TOMBSTONE',
+          id: 'deleted-1',
+          tombstoneReason: 'PRODUCT_DELETED',
+          canonicalUpdatedAt: '2026-07-14T09:06:00.000Z',
+        }],
         hasMore: true,
         nextPageCursor: 'page-cursor-2',
         serverTime: '2026-07-14T10:00:00.000Z',
@@ -234,6 +240,12 @@ describe('ApiClient product normalization', () => {
           updatedAt: '2026-07-14T09:10:00.000Z',
         }],
         deletedIds: ['deleted-1', 'deleted-2'],
+        events: [{
+          operation: 'TOMBSTONE',
+          id: 'deleted-2',
+          tombstoneReason: 'VARIANT_INACTIVE',
+          canonicalUpdatedAt: '2026-07-14T09:11:00.000Z',
+        }],
         hasMore: false,
         nextSyncCursor: 'snapshot-cursor-next',
         serverTime: '2026-07-14T10:00:01.000Z',
@@ -259,6 +271,18 @@ describe('ApiClient product normalization', () => {
       nextSyncCursor: 'snapshot-cursor-next',
       serverTime: '2026-07-14T10:00:01.000Z',
       deletedIds: ['deleted-1', 'deleted-2'],
+      tombstones: [
+        {
+          id: 'deleted-1',
+          reason: 'PRODUCT_DELETED',
+          canonicalUpdatedAt: '2026-07-14T09:06:00.000Z',
+        },
+        {
+          id: 'deleted-2',
+          reason: 'VARIANT_INACTIVE',
+          canonicalUpdatedAt: '2026-07-14T09:11:00.000Z',
+        },
+      ],
     });
     expect(result.products.map((product) => product.id)).toEqual([
       'variant-page-1',

@@ -1673,7 +1673,21 @@ export const migrations: Migration[] = [
           OR LOWER(TRIM(icon)) LIKE 'https://%'
           OR TRIM(icon) LIKE '//%'
           OR LOWER(TRIM(icon)) LIKE '/uploads/%'
-        );
+      );
+    `,
+  },
+  {
+    version: 57,
+    name: 'product_sync_tombstone_state',
+    // Keep backend-deleted catalog rows as local tombstones instead of
+    // physical deletes: historical orders and offline queues still reference
+    // variant ids. Clearing the v2 cursor forces one authoritative replay so
+    // rows tombstoned before this migration are classified on the next sync.
+    up: `
+      ALTER TABLE product_variants ADD COLUMN sync_tombstone_reason TEXT;
+      ALTER TABLE product_variants ADD COLUMN sync_tombstoned_at TEXT;
+      DELETE FROM sync_metadata
+      WHERE key IN ('products_sync_cursor_v2', 'products_last_full_sync');
     `,
   },
 ];

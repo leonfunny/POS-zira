@@ -89,4 +89,15 @@ describe('database migrations', () => {
     expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE 'https://%'");
     expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE '/uploads/%'");
   });
+
+  it('adds durable product tombstone state and invalidates the old product cursor', () => {
+    const migration = migrations.find((m) => m.name === 'product_sync_tombstone_state');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(57);
+    expect(migration!.up).toContain('ADD COLUMN sync_tombstone_reason TEXT');
+    expect(migration!.up).toContain('ADD COLUMN sync_tombstoned_at TEXT');
+    expect(migration!.up).toContain("'products_sync_cursor_v2'");
+    expect(migration!.up).toContain("'products_last_full_sync'");
+  });
 });

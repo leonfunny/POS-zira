@@ -79,6 +79,12 @@ export interface ServerOrderListParams {
   limit?: number;
 }
 
+export interface PosProductTombstone {
+  id: string;
+  reason: string;
+  canonicalUpdatedAt?: string;
+}
+
 export interface NailTurnStaffSummary {
   staff_profile_id: string;
   user_id?: string | null;
@@ -2082,6 +2088,7 @@ export class ApiClient {
     nextSyncCursor?: string;
     serverTime?: string;
     deletedIds?: string[];
+    tombstones?: PosProductTombstone[];
   }> {
     const baseParams = new URLSearchParams({ limit: '100' });
     if (options.cursorV2) {
@@ -2109,6 +2116,7 @@ export class ApiClient {
     let finalNextSyncCursor: string | undefined;
     let lastServerTime: string | undefined;
     let deletedIds: string[] = [];
+    const tombstonesById = new Map<string, PosProductTombstone>();
     let pageCursor: string | undefined;
 
     while (true) {
@@ -2170,6 +2178,22 @@ export class ApiClient {
       if (raw.nextSyncCursor) finalNextSyncCursor = raw.nextSyncCursor;
       if (raw.serverTime) lastServerTime = raw.serverTime;
       if (Array.isArray(raw.deletedIds)) deletedIds = deletedIds.concat(raw.deletedIds);
+      if (options.cursorV2 && Array.isArray(raw.events)) {
+        for (const event of raw.events) {
+          if (event?.operation !== 'TOMBSTONE' || typeof event?.id !== 'string' || !event.id.trim()) {
+            continue;
+          }
+          tombstonesById.set(event.id, {
+            id: event.id,
+            reason: typeof event.tombstoneReason === 'string' && event.tombstoneReason.trim()
+              ? event.tombstoneReason.trim().toUpperCase()
+              : 'UNKNOWN',
+            canonicalUpdatedAt: typeof event.canonicalUpdatedAt === 'string'
+              ? event.canonicalUpdatedAt
+              : undefined,
+          });
+        }
+      }
 
       if (options.cursorV2) {
         const hasMore = raw.hasMore === true;
@@ -2461,6 +2485,16 @@ export class ApiClient {
       );
     }
 
+    // Legacy product sync exposes only deletedIds. Cursor-v2 additionally
+    // exposes typed TOMBSTONE events; retain a conservative fallback for
+    // older or partially upgraded backends without confusing it with a
+    // normal VARIANT_INACTIVE event.
+    for (const id of deletedIds) {
+      if (!tombstonesById.has(id)) {
+        tombstonesById.set(id, { id, reason: 'LEGACY_DELETED' });
+      }
+    }
+
     return {
       products,
       categories: Array.from(categoryMap.values()),
@@ -2469,6 +2503,7 @@ export class ApiClient {
       nextSyncCursor: finalNextSyncCursor,
       serverTime: lastServerTime,
       deletedIds: deletedIds.length > 0 ? Array.from(new Set(deletedIds)) : undefined,
+      tombstones: tombstonesById.size > 0 ? Array.from(tombstonesById.values()) : undefined,
     };
   }
 
