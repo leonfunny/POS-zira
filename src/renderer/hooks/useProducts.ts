@@ -104,9 +104,10 @@ function matchesKind(product: ProductListItem, filter: ProductKindFilter): boole
   }
 }
 
-function mergeProductsWithDrafts(products: ProductListItem[], drafts: any[]): ProductListItem[] {
-  const realBarcodes = new Set(products.map((p) => p.barcode).filter((v): v is string => !!v));
-  const realSkus = new Set(products.map((p) => p.sku).filter((v): v is string => !!v));
+export function mergeProductsWithDrafts(products: ProductListItem[], drafts: any[]): ProductListItem[] {
+  const activeProducts = products.filter((product) => product.is_active !== 0);
+  const realBarcodes = new Set(activeProducts.map((p) => p.barcode).filter((v): v is string => !!v));
+  const realSkus = new Set(activeProducts.map((p) => p.sku).filter((v): v is string => !!v));
   const draftItems = drafts
     .map(draftToProduct)
     .filter((d) => {
