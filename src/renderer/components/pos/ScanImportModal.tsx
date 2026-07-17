@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
 
 export interface ScanImportDraftPreview {
   id?: string;
@@ -91,6 +92,8 @@ export default function ScanImportModal({
   const [priceInput, setPriceInput] = useState('');
   const [stockInput, setStockInput] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const handleKeyboardAwareFocus = useKeyboardAwareFocus(panelRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -123,12 +126,16 @@ export default function ScanImportModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 py-4"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onClick={handleCancel}
     >
       <div
-        className="bg-slate-800 rounded-2xl w-full max-w-md mx-4 shadow-2xl border border-brand-500/40 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        ref={panelRef}
+        className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-brand-500/40 bg-slate-800 shadow-2xl"
+        style={{ maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
+        onClick={(event) => event.stopPropagation()}
+        onFocusCapture={handleKeyboardAwareFocus}
       >
         <div className="px-5 py-4 border-b border-slate-700 bg-gradient-to-r from-emerald-700/30 to-brand-700/30">
           <div className="text-xs uppercase tracking-wider text-emerald-300 font-semibold">
@@ -137,8 +144,9 @@ export default function ScanImportModal({
           <div className="mt-1 text-xs text-slate-400 font-mono">{ean}</div>
         </div>
 
-        {preview ? (
-          <div className="p-5">
+        <div className="min-h-0 overflow-y-auto">
+          {preview ? (
+            <div className="p-5">
             <div className="flex gap-4 items-start">
               {preview.image_url ? (
                 <img
@@ -215,20 +223,21 @@ export default function ScanImportModal({
                 </select>
               </label>
             ) : null}
-          </div>
-        ) : (
-          <div className="p-8 text-center text-sm text-slate-400">
-            {tOr('pos.scanImport.notFound', 'No draft found for this code.')}
-          </div>
-        )}
+            </div>
+          ) : (
+            <div className="p-8 text-center text-sm text-slate-400">
+              {tOr('pos.scanImport.notFound', 'No draft found for this code.')}
+            </div>
+          )}
 
-        {error ? (
-          <div className="mx-5 mb-3 px-3 py-2 rounded-md bg-red-900/40 border border-red-500/30 text-xs text-red-200">
-            {error}
-          </div>
-        ) : null}
+          {error ? (
+            <div className="mx-5 mb-3 px-3 py-2 rounded-md bg-red-900/40 border border-red-500/30 text-xs text-red-200">
+              {error}
+            </div>
+          ) : null}
+        </div>
 
-        <div className="flex gap-3 p-4 border-t border-slate-700 bg-slate-900/40">
+        <div className="flex shrink-0 gap-3 border-t border-slate-700 bg-slate-900/40 p-4">
           <button
             type="button"
             onClick={handleCancel}
