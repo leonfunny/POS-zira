@@ -16,6 +16,7 @@ import { database } from '../database/database';
 import {
   adaptServerOrder,
   adaptServerOrderItem,
+  mergeRefundLineMetadataJson,
   toGrosze,
   normalizeRefundLinesJson,
 } from './pos-order-adapter';
@@ -376,17 +377,21 @@ function applyOrder(entry: SyncLogEntry): boolean {
   if (p.refundAmount !== undefined) {
     const refundGrosze = toGrosze(p.refundAmount);
     if (refundGrosze > 0) {
+      const localRefundRow = database.get<{ total: number; refund_lines: string | null }>(
+        'SELECT total, refund_lines FROM orders WHERE id = ?',
+        [localId],
+      );
       let totalGrosze =
         p.total !== undefined ? toGrosze(p.total) : 0;
       if (totalGrosze <= 0) {
-        const localRow = database.get<{ total: number }>(
-          'SELECT total FROM orders WHERE id = ?',
-          [localId],
-        );
-        totalGrosze = localRow?.total ?? 0;
+        totalGrosze = localRefundRow?.total ?? 0;
       }
       const hasRefundedLines = Array.isArray(p.refundedLines) && p.refundedLines.length > 0;
-      const refundLinesJson = normalizeRefundLinesJson(p.refundedLines);
+      const incomingRefundLinesJson = normalizeRefundLinesJson(p.refundedLines);
+      const refundLinesJson = mergeRefundLineMetadataJson(
+        localRefundRow?.refund_lines,
+        incomingRefundLinesJson,
+      );
       const refundSyncError = totalGrosze > 0 && refundGrosze > totalGrosze
         ? REFUND_OVER_TOTAL_SYNC_ERROR
         : !hasRefundedLines

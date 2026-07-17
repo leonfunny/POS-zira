@@ -515,7 +515,24 @@ export const orderRepo = {
   /**
    * Mark an order as refunded (full or partial).
    */
-  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string}>): void {
+  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{
+    orderItemId?: string;
+    variantId?: string;
+    name?: string;
+    quantity: number;
+    unit?: string;
+    saleUnit?: string;
+    sellBy?: string;
+    unitPrice: number;
+    refundAmount: number;
+    vatRate?: number;
+    sku?: string;
+    restock?: boolean;
+    refundedAt?: string;
+    refundRequestId?: string;
+    reason?: string;
+    refundMethod?: string;
+  }>): void {
     const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
     database.run(
       "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now'), refund_lines = ? WHERE id = ?",

@@ -3825,10 +3825,27 @@ export class PosModule extends BaseModule {
         // Update local DB from backend response
         const refundedAmount = validation.refundedAmountGrosze ?? 0;
         const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
-        const backendRefundLinesJson = normalizeRefundLinesJson(result.refundedLines);
-        const deltaRefundLines = backendRefundLinesJson ? JSON.parse(backendRefundLinesJson) : [];
-        const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
         const refundReason = result.refundReason || data.reason || '';
+        const refundOccurredAt = new Date().toISOString();
+        const refundMethods = Array.from(new Set(
+          (refundPayload.tenderAllocations ?? [])
+            .map((allocation) => allocation.method)
+            .filter((method): method is string => Boolean(method)),
+        ));
+        const refundMethod = refundMethods.length > 1
+          ? 'SPLIT'
+          : refundMethods[0] || order.payment_method || undefined;
+        const backendRefundLinesJson = normalizeRefundLinesJson(result.refundedLines);
+        const deltaRefundLines = backendRefundLinesJson
+          ? JSON.parse(backendRefundLinesJson).map((line: any) => ({
+              ...line,
+              refundedAt: line.refundedAt || refundOccurredAt,
+              refundRequestId: line.refundRequestId || data.refundRequestId,
+              reason: line.reason || refundReason,
+              refundMethod: line.refundMethod || refundMethod,
+            }))
+          : [];
+        const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
         orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined);
         database.markDirty();
 
@@ -3839,7 +3856,7 @@ export class PosModule extends BaseModule {
           amountMinor: validation.refundAmountGrosze ?? requestedAmountGrosze,
           method: order.payment_method,
           reason: refundReason,
-          refundedAt: new Date().toISOString(),
+          refundedAt: refundOccurredAt,
           items: deltaRefundLines,
         });
 

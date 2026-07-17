@@ -21,6 +21,7 @@ export interface RefundIpcPayload {
   type: RefundType;
   refundRequestId?: string;
   reason?: string;
+  refundMethod?: string;
   amount?: number;
   lines?: RefundIpcLine[];
   tenderAllocations?: RefundTenderAllocation[];
@@ -28,14 +29,22 @@ export interface RefundIpcPayload {
 }
 
 export interface LocalRefundLine {
+  orderItemId?: string;
   variantId?: string;
-  name: string;
+  name?: string;
   quantity: number;
   unit?: string;
+  saleUnit?: string;
+  sellBy?: string;
   unitPrice: number;
   refundAmount: number;
   vatRate?: number;
   sku?: string;
+  restock?: boolean;
+  refundedAt?: string;
+  refundRequestId?: string;
+  reason?: string;
+  refundMethod?: string;
 }
 
 export interface RefundBackendResult {

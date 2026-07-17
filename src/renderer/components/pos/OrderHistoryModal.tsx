@@ -15,11 +15,12 @@ import {
 } from './order-history-time';
 import { deriveReceiptOutcome } from './receipt-outcome';
 import {
+  getRefundEvents,
   getItemRefundBreakdowns,
-  getRefundBreakdownLines,
   type RefundBreakdownLine,
 } from './refund-breakdown';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import Modal from '../shared/Modal';
 import { buildConfirmCopy, type ConfirmActionKind } from './confirm-action-copy';
 import {
   calculateRefundLineAmount,
@@ -89,7 +90,7 @@ type RefundSuccessSummary = {
   amount: number;
   lines: RefundBreakdownLine[];
   remainingTotal: number;
-  remainingUnits: number;
+  hasRemainingItems: boolean;
   receiptPrinted: boolean;
   printWarning: string | null;
 };
@@ -238,18 +239,44 @@ function toGrosze(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Math.round(n * 100) : fallback;
 }
 
-function getRefundSuccessLines(result: any, fallbackLines: Array<{ name?: string; quantity: number; refundAmount: number; vatRate?: number; sku?: string; variantId?: string }>): RefundBreakdownLine[] {
+type RefundFallbackLine = {
+  name?: string;
+  quantity: number;
+  refundAmount: number;
+  vatRate?: number;
+  sku?: string;
+  variantId?: string;
+  unit?: string;
+};
+
+function getRefundSuccessLines(result: any, fallbackLines: RefundFallbackLine[]): RefundBreakdownLine[] {
   if (Array.isArray(result?.refundedLines) && result.refundedLines.length > 0) {
     return result.refundedLines
-      .map((line: any): RefundBreakdownLine => ({
-        variantId: line.variantId ?? line.variant_id ?? null,
-        sku: line.sku ?? null,
-        name: String(line.name ?? ''),
-        quantity: typeof line.quantity === 'number' ? line.quantity : parseFloat(String(line.quantity ?? '')) || 0,
-        refundAmount: toGrosze(line.refundAmount),
-        vatRate: line.taxRate ?? line.vatRate,
-      }))
-      .filter((line: RefundBreakdownLine) => line.name && line.quantity > 0 && line.refundAmount > 0);
+      .map((line: any): RefundBreakdownLine => {
+        const variantId = line.variantId ?? line.variant_id ?? null;
+        const sku = line.sku ?? null;
+        const fallback = fallbackLines.find((candidate) => (
+          (variantId && candidate.variantId === variantId)
+          || (sku && candidate.sku === sku)
+          || (line.name && candidate.name === line.name)
+        ));
+        return {
+          orderItemId: line.orderItemId ?? line.order_item_id ?? null,
+          variantId,
+          sku: sku ?? fallback?.sku ?? null,
+          name: String(line.name ?? fallback?.name ?? '').trim(),
+          quantity: typeof line.quantity === 'number' ? line.quantity : parseFloat(String(line.quantity ?? '')) || 0,
+          refundAmount: toGrosze(line.refundAmount),
+          vatRate: line.taxRate ?? line.vatRate ?? fallback?.vatRate,
+          unit: line.unit ?? line.saleUnit ?? line.sale_unit ?? fallback?.unit ?? null,
+          saleUnit: line.saleUnit ?? line.sale_unit ?? line.unit ?? fallback?.unit ?? null,
+          sellBy: line.sellBy ?? line.sell_by ?? null,
+          restock: typeof line.restock === 'boolean' ? line.restock : undefined,
+          refundedAt: line.refundedAt ?? line.refunded_at ?? null,
+          refundRequestId: line.refundRequestId ?? line.refund_request_id ?? null,
+        };
+      })
+      .filter((line: RefundBreakdownLine) => line.quantity > 0 && line.refundAmount > 0);
   }
 
   return fallbackLines.map((line): RefundBreakdownLine => ({
@@ -259,7 +286,9 @@ function getRefundSuccessLines(result: any, fallbackLines: Array<{ name?: string
     quantity: line.quantity,
     refundAmount: Math.max(0, Math.round(Number(line.refundAmount) || 0)),
     vatRate: line.vatRate,
-  })).filter((line: RefundBreakdownLine) => line.name && line.quantity > 0 && line.refundAmount > 0);
+    unit: line.unit ?? null,
+    saleUnit: line.unit ?? null,
+  })).filter((line: RefundBreakdownLine) => line.quantity > 0 && line.refundAmount > 0);
 }
 
 function getRefundSuccessAmount(result: any, lines: RefundBreakdownLine[], fallbackAmount: number): number {
@@ -277,17 +306,51 @@ function getOrderLabel(order: OrderRow): string {
   return order.order_number || order.id.substring(0, 8);
 }
 
-function paymentLabel(method: string | null | undefined): string {
+function paymentLabel(method: string | null | undefined, t: (key: string) => string): string {
   switch (method) {
-    case 'CASH': return 'Cash';
-    case 'CARD': return 'Card';
-    case 'BLIK': return 'BLIK';
-    case 'TRANSFER': return 'Transfer';
-    case 'BANK_TRANSFER': return 'Bank Transfer';
-    case 'SPLIT': return 'Split';
-    case 'INVOICE': return 'Invoice';
-    default: return 'Unknown';
+    case 'CASH': return tOr(t, 'pos.payment.cash', 'Cash');
+    case 'CARD': return tOr(t, 'pos.payment.card', 'Card');
+    case 'BLIK': return tOr(t, 'pos.payment.blik', 'BLIK');
+    case 'TRANSFER':
+    case 'BANK_TRANSFER':
+      return tOr(t, 'pos.payment.transfer', 'Transfer');
+    case 'SPLIT': return tOr(t, 'pos.payment.split', 'Split');
+    case 'INVOICE': return tOr(t, 'pos.payment.invoice', 'Invoice');
+    case 'CREDIT': return tOr(t, 'pos.payment.credit', 'Credit');
+    default: return tOr(t, 'pos.history.unknown', 'Unknown');
   }
+}
+
+function localizeRefundReason(reason: string | null | undefined, t: (key: string) => string): string {
+  const value = String(reason ?? '').trim();
+  if (!value) return '-';
+  for (const option of REFUND_REASONS) {
+    const key = `pos.refund.${option.key}`;
+    const isKnownTranslation = Object.values(translations).some((dictionary) => dictionary[key] === value);
+    if (value === option.key || isKnownTranslation) return tOr(t, key, option.fallback);
+  }
+  return value;
+}
+
+function getRefundLineSellBy(line: Pick<RefundBreakdownLine, 'sellBy' | 'unit' | 'saleUnit'>): 'PIECE' | 'WEIGHT' {
+  const unit = String(line.unit ?? line.saleUnit ?? '').trim().toLowerCase();
+  return normalizeSellBy(line.sellBy ?? (unit === 'kg' ? 'WEIGHT' : 'PIECE'));
+}
+
+function displaySaleUnit(unit: string | null | undefined, sellBy: 'PIECE' | 'WEIGHT', t: (key: string) => string): string {
+  const raw = String(unit ?? '').trim();
+  if (sellBy === 'WEIGHT') return raw || 'kg';
+  if (!raw || /^(szt\.?|pcs?|pieces?)$/i.test(raw)) return tOr(t, 'pos.numpad.unit', 'pcs');
+  return raw;
+}
+
+function formatRefundLineQuantity(line: Pick<RefundBreakdownLine, 'quantity' | 'sellBy' | 'unit' | 'saleUnit'>, t: (key: string) => string): string {
+  const sellBy = getRefundLineSellBy(line);
+  return `${formatSaleQuantity(line.quantity, sellBy)} ${displaySaleUnit(line.unit ?? line.saleUnit, sellBy, t)}`;
+}
+
+function getRefundLineName(line: Pick<RefundBreakdownLine, 'name' | 'sku'>, t: (key: string) => string): string {
+  return line.name || line.sku || tOr(t, 'pos.refund.unknownProduct', 'Unknown product');
 }
 
 function getRefundStatus(order: OrderRow): RefundStatus {
@@ -346,7 +409,7 @@ function StatusBadge({ order, t }: { order: OrderRow; t: (key: string) => string
 
   return (
     <span className="inline-flex h-7 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700">
-      Completed
+      {tOr(t, 'pos.history.completed', 'Completed')}
     </span>
   );
 }
@@ -403,6 +466,7 @@ function RefundPanel({
 }) {
   const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>('FULL');
   const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
+  const [weightQtyDrafts, setWeightQtyDrafts] = useState<Record<string, string>>({});
   const [restock, setRestock] = useState(true);
   const [reason, setReason] = useState('customerRequest');
   const [customReason, setCustomReason] = useState('');
@@ -475,6 +539,7 @@ function RefundPanel({
     } else {
       setSelectedQtys({});
     }
+    setWeightQtyDrafts({});
   };
 
   const setItemQty = (itemId: string, qty: number, max: number) => {
@@ -482,6 +547,30 @@ function RefundPanel({
     setSelectedQtys(prev => ({ ...prev, [itemId]: Math.max(0, Math.min(qty, max)) }));
     setConfirmStep(false);
     setError(null);
+  };
+
+  const setWeightItemQtyDraft = (itemId: string, rawValue: string, max: number) => {
+    const draft = rawValue.trim();
+    if (!/^\d*(?:[.,]\d{0,3})?$/.test(draft)) return;
+
+    const normalized = draft.replace(',', '.');
+    const parsed = normalized === '' || normalized === '.' ? 0 : Number(normalized);
+    if (!Number.isFinite(parsed)) return;
+
+    const bounded = Math.max(0, Math.min(parsed, max));
+    setWeightQtyDrafts((previous) => ({
+      ...previous,
+      [itemId]: parsed > max ? formatSaleQuantity(max, 'WEIGHT') : draft,
+    }));
+    setItemQty(itemId, bounded, max);
+  };
+
+  const commitWeightItemQtyDraft = (itemId: string) => {
+    const quantity = selectedQtys[itemId] ?? 0;
+    setWeightQtyDrafts((previous) => ({
+      ...previous,
+      [itemId]: quantity > 0 ? formatSaleQuantity(quantity, 'WEIGHT') : '',
+    }));
   };
 
   const handleConfirm = async () => {
@@ -494,7 +583,7 @@ function RefundPanel({
     try {
       const reasonText = reason === 'other' && customReason.trim()
         ? customReason.trim()
-        : translations.pl[`pos.refund.${reason}`] || tOr(t, `pos.refund.${reason}`, reason);
+        : tOr(t, `pos.refund.${reason}`, reason);
       let refundItems = selectedRefundLines as any[];
       if (refundType === 'FULL') {
         refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => {
@@ -527,13 +616,14 @@ function RefundPanel({
         const refundLines = getRefundSuccessLines(result, refundItems);
         const refundAmount = getRefundSuccessAmount(result, refundLines, computedRefundTotal);
         const outcome = deriveReceiptOutcome(result, t);
-        const refundedUnits = refundItems.reduce((sum, line) => sum + line.quantity, 0);
-        const remainingUnits = Math.max(0, refundableItems.reduce((sum, item) => sum + item.maxQty, 0) - refundedUnits);
+        const hasRemainingItems = refundType === 'PARTIAL' && refundableItems.some(
+          (item) => item.maxQty - (selectedQtys[item.id] ?? 0) > 0.000001,
+        );
         setSuccessSummary({
           amount: refundAmount,
           lines: refundLines,
           remainingTotal: Math.max(0, remainingTotal - refundAmount),
-          remainingUnits,
+          hasRemainingItems,
           receiptPrinted: outcome.receiptPrinted,
           printWarning: outcome.warning,
         });
@@ -573,32 +663,56 @@ function RefundPanel({
   };
 
   if (successSummary) {
-    const canRefundMore = successSummary.remainingTotal > 0 && successSummary.remainingUnits > 0;
+    const canRefundMore = successSummary.remainingTotal > 0 && successSummary.hasRemainingItems;
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-        <div className="text-sm font-bold text-emerald-800">{tOr(t, 'pos.refund.success', 'Refund processed')}</div>
-        <div className="mt-2 text-2xl font-extrabold tabular-nums text-emerald-900">-{formatMoney(successSummary.amount, currency)}</div>
+      <Modal
+        title={tOr(t, 'pos.refund.success', 'Refund processed')}
+        onClose={() => onComplete()}
+        size="full"
+        zLayer="nested"
+        busy={reprintingRefundReceipt}
+        closeLabel={tOr(t, 'pos.refund.close', 'Close')}
+        panelClassName="sm:max-w-[760px]"
+        bodyClassName="bg-slate-50 p-5"
+      >
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
+          <div className="text-xs font-bold uppercase tracking-wide text-emerald-700">
+            {tOr(t, 'pos.refund.refundedNow', 'Refunded now')}
+          </div>
+          <div className="mt-2 text-3xl font-extrabold tabular-nums text-emerald-900">-{formatMoney(successSummary.amount, currency)}</div>
+        </div>
 
         {successSummary.lines.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {successSummary.lines.map((line, index) => (
-              <div key={`${line.variantId || line.sku || line.name}-${index}`} className="rounded-md border border-emerald-200 bg-white px-3 py-2">
-                <div className="truncate text-sm font-bold text-slate-950">{line.name}</div>
-                <div className="mt-1 flex justify-between gap-3 text-xs font-bold text-slate-600">
-                  <span>x{line.quantity}</span>
-                  <span className="tabular-nums text-red-700">-{formatMoney(line.refundAmount, currency)}</span>
+          <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-600">
+              {tOr(t, 'pos.refund.refundedItems', 'Refunded items')}
+            </div>
+            <div className="divide-y divide-slate-100">
+              {successSummary.lines.map((line, index) => (
+                <div key={`${line.variantId || line.sku || line.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_120px_130px] items-center gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="whitespace-normal break-words text-sm font-bold text-slate-950">{getRefundLineName(line, t)}</div>
+                    {line.sku && <div className="mt-1 text-xs font-medium text-slate-500">{line.sku}</div>}
+                  </div>
+                  <div className="text-right text-sm font-bold tabular-nums text-slate-700">
+                    {formatRefundLineQuantity(line, t)}
+                  </div>
+                  <div className="text-right text-sm font-extrabold tabular-nums text-red-700">
+                    -{formatMoney(line.refundAmount, currency)}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-900">
-          Remaining: {successSummary.remainingUnits} units - {formatMoney(successSummary.remainingTotal, currency)}
+        <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <span className="text-sm font-bold text-slate-600">{tOr(t, 'pos.history.remainingTotal', 'Remaining')}</span>
+          <span className="text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(successSummary.remainingTotal, currency)}</span>
         </div>
 
         <div
-          className={`mt-3 rounded-md border px-3 py-2 text-xs font-bold ${
+          className={`mt-4 rounded-lg border px-4 py-3 text-sm font-bold ${
             successSummary.receiptPrinted
               ? 'border-emerald-200 bg-white text-emerald-800'
               : 'border-amber-200 bg-amber-50 text-amber-800'
@@ -613,9 +727,11 @@ function RefundPanel({
           <button
             onClick={handlePrintRefundReceipt}
             disabled={reprintingRefundReceipt}
-            className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg border border-amber-300 bg-white px-4 text-sm font-extrabold text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-amber-300 bg-white px-4 text-sm font-extrabold text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {reprintingRefundReceipt ? 'Sending...' : 'Print refund receipt'}
+            {reprintingRefundReceipt
+              ? tOr(t, 'pos.refund.sending', 'Sending...')
+              : tOr(t, 'pos.refund.printReceipt', 'Print refund receipt')}
           </button>
         )}
 
@@ -631,81 +747,105 @@ function RefundPanel({
           </div>
         )}
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-5 grid grid-cols-2 gap-3">
           {canRefundMore && (
             <button
               onClick={() => onComplete({ keepRefundOpen: true })}
-              className="min-h-10 rounded-lg border border-emerald-300 bg-white px-3 text-sm font-extrabold text-emerald-800 hover:bg-emerald-50"
+              className="min-h-11 rounded-lg border border-emerald-300 bg-white px-4 text-sm font-extrabold text-emerald-800 hover:bg-emerald-50"
             >
-              Refund next
+              {tOr(t, 'pos.refund.refundNext', 'Refund next')}
             </button>
           )}
           <button
             onClick={() => onComplete()}
-            className={`${canRefundMore ? '' : 'col-span-2'} min-h-10 rounded-lg bg-emerald-700 px-3 text-sm font-extrabold text-white hover:bg-emerald-800`}
+            className={`${canRefundMore ? '' : 'col-span-2'} min-h-11 rounded-lg bg-emerald-700 px-4 text-sm font-extrabold text-white hover:bg-emerald-800`}
           >
-            Close
+            {tOr(t, 'pos.refund.close', 'Close')}
           </button>
         </div>
-      </div>
+      </Modal>
     );
   }
 
   return (
-    <section className="rounded-lg border border-red-200 bg-red-50/60 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-extrabold text-red-900">{tOr(t, 'pos.refund.title', 'Refund Order')}</h3>
-          <p className="mt-1 text-xs font-medium text-red-700">Maximum: {formatMoney(remainingTotal, currency)}</p>
+    <Modal
+      title={tOr(t, 'pos.refund.title', 'Refund Order')}
+      onClose={() => { resetRefundRequestId(); onCancel(); }}
+      size="full"
+      zLayer="nested"
+      busy={loading}
+      closeLabel={tOr(t, 'pos.cancel', 'Cancel')}
+      panelClassName="sm:max-w-[820px]"
+      bodyClassName="bg-slate-50 p-5"
+      keyboardAware
+    >
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tOr(t, 'pos.history.originalTotal', 'Original total')}</div>
+          <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.total, currency)}</div>
         </div>
-        <button onClick={() => { resetRefundRequestId(); onCancel(); }} disabled={loading}
-          className="h-10 rounded-lg border border-red-200 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200">
-          Cancel
-        </button>
+        <div className="rounded-lg border border-red-200 bg-white p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-red-600">{tOr(t, 'pos.history.refundedTotal', 'Refunded')}</div>
+          <div className="mt-2 text-xl font-extrabold tabular-nums text-red-700">-{formatMoney(order.refund_amount ?? 0, currency)}</div>
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-amber-700">{tOr(t, 'pos.refund.maximum', 'Maximum')}</div>
+          <div className="mt-2 text-xl font-extrabold tabular-nums text-amber-900">{formatMoney(remainingTotal, currency)}</div>
+        </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-3">
         <button onClick={() => setType('FULL')}
-          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
+          className={`min-h-14 rounded-lg border px-4 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
             refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
           <span className="mt-0.5 block text-xs opacity-85">{formatMoney(remainingTotal, currency)}</span>
         </button>
         <button onClick={() => setType('PARTIAL')}
-          className={`min-h-12 rounded-lg border px-3 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 ${
+          className={`min-h-14 rounded-lg border px-4 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 ${
             refundType === 'PARTIAL' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.partial', 'Partial Refund')}</span>
-          <span className="mt-0.5 block text-xs opacity-85">Select items</span>
+          <span className="mt-0.5 block text-xs opacity-85">{tOr(t, 'pos.refund.selectItems', 'Select items')}</span>
         </button>
       </div>
 
-      {refundType === 'PARTIAL' && (
-        <div className="mt-4 space-y-2">
-          <div className="text-xs font-bold uppercase tracking-wide text-slate-600">Select items to refund</div>
-          {refundableItems.map(item => {
+      <section className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-4 py-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-600">{tOr(t, 'pos.refund.selectItemsTitle', 'Items to refund')}</div>
+          <div className="text-xs font-bold text-slate-500">{refundableItems.filter((item) => item.maxQty > 0).length}</div>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {refundableItems.filter((item) => item.maxQty > 0).map(item => {
             const qty = selectedQtys[item.id] ?? 0;
             const sellBy = normalizeSellBy(item.sell_by);
             const unit = normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy });
             const refundAmountItem = getRefundAmountItem(item);
+            const effectiveQty = refundType === 'FULL' ? item.maxQty : qty;
             return (
-              <div key={item.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-slate-900 truncate">{item.name}</div>
-                  <div className="text-xs text-slate-500">
-                    {formatMoney(getRefundLineUnitPrice(refundAmountItem), currency)} x {formatSaleQuantity(item.maxQty, sellBy)} {unit}
+              <div key={item.id} className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_170px_120px] items-center gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
+                  <div className="mt-1 text-xs font-medium text-slate-500">
+                    {item.sku ? `${item.sku} · ` : ''}{formatMoney(getRefundLineUnitPrice(refundAmountItem), currency)} / {displaySaleUnit(unit, sellBy, t)} · {tOr(t, 'pos.refund.available', 'Available')} {formatSaleQuantity(item.maxQty, sellBy)} {displaySaleUnit(unit, sellBy, t)}
                   </div>
                 </div>
-                {sellBy === 'WEIGHT' ? (
+                {refundType === 'FULL' ? (
+                  <div className="text-right text-sm font-extrabold tabular-nums text-slate-800">
+                    {formatSaleQuantity(item.maxQty, sellBy)} {displaySaleUnit(unit, sellBy, t)}
+                  </div>
+                ) : sellBy === 'WEIGHT' ? (
                   <input
-                    value={qty > 0 ? formatSaleQuantity(qty, sellBy) : ''}
-                    onChange={(e) => setItemQty(item.id, parseFloat(e.target.value.replace(',', '.')) || 0, item.maxQty)}
+                    value={weightQtyDrafts[item.id] ?? (qty > 0 ? formatSaleQuantity(qty, sellBy) : '')}
+                    onChange={(e) => setWeightItemQtyDraft(item.id, e.target.value, item.maxQty)}
+                    onBlur={() => commitWeightItemQtyDraft(item.id)}
                     inputMode="decimal"
-                    className="h-9 w-20 rounded-md border border-slate-300 bg-white px-2 text-right text-sm font-extrabold tabular-nums text-slate-900"
+                    aria-label={`${tOr(t, 'pos.refund.quantity', 'Quantity')} ${item.name}`}
+                    className="ml-auto h-11 w-28 rounded-md border border-slate-300 bg-white px-3 text-right text-sm font-extrabold tabular-nums text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
                   />
                 ) : (
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="ml-auto flex items-center gap-2">
                     <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
                       disabled={qty <= 0}
                       className="w-11 h-11 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
@@ -719,46 +859,45 @@ function RefundPanel({
                     </button>
                   </div>
                 )}
-                <div className="text-sm font-bold tabular-nums text-slate-900 w-20 text-right">
-                  {qty > 0 ? formatMoney(calculateRefundLineAmount(refundAmountItem, qty), currency) : '-'}
+                <div className="text-right text-sm font-extrabold tabular-nums text-slate-950">
+                  {effectiveQty > 0 ? formatMoney(calculateRefundLineAmount(refundAmountItem, effectiveQty), currency) : '-'}
                 </div>
               </div>
             );
           })}
         </div>
-      )}
+      </section>
 
       {refundOverage && (
-        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
-          Backend refund amount exceeds this order total. Further refunds are blocked.
+        <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+          {tOr(t, 'pos.refund.overageBlocked', 'Refund data exceeds the order total. Further refunds are blocked.')}
         </div>
       )}
 
       {refundBlockedByMissingLines && (
-        <div className="mt-4 rounded-lg border border-amber-300 bg-white px-3 py-3 text-sm font-bold text-amber-800">
-          Cannot safely refund more; server refund details are missing.
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          {tOr(t, 'pos.refund.missingDetailsBlocked', 'Refund details are incomplete. Refresh the order before refunding again.')}
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-3">
-        <label className="flex items-center gap-2 cursor-pointer text-sm font-bold text-slate-700">
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)] gap-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div>
+          <label htmlFor="refund-reason" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
+            {tOr(t, 'pos.refund.reason', 'Reason')}
+          </label>
+          <select id="refund-reason" value={reason}
+            onChange={(e) => { resetRefundRequestId(); setReason(e.target.value); setCustomReason(''); setConfirmStep(false); setError(null); }}
+            className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
+            {REFUND_REASONS.map((r) => (
+              <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
+            ))}
+          </select>
+        </div>
+        <label className="flex min-h-12 cursor-pointer items-center gap-3 self-end rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-700">
           <input type="checkbox" checked={restock} onChange={e => { resetRefundRequestId(); setRestock(e.target.checked); }}
-            className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
-          Restock items to inventory
+            className="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
+          {tOr(t, 'pos.refund.restock', 'Restock items to inventory')}
         </label>
-      </div>
-
-      <div className="mt-4">
-        <label htmlFor="refund-reason" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600">
-          {tOr(t, 'pos.refund.reason', 'Reason')}
-        </label>
-        <select id="refund-reason" value={reason}
-          onChange={(e) => { resetRefundRequestId(); setReason(e.target.value); setCustomReason(''); setConfirmStep(false); setError(null); }}
-          className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
-          {REFUND_REASONS.map((r) => (
-            <option key={r.key} value={r.key}>{tOr(t, `pos.refund.${r.key}`, r.fallback)}</option>
-          ))}
-        </select>
       </div>
 
       {reason === 'other' && (
@@ -777,9 +916,10 @@ function RefundPanel({
       )}
 
       {confirmStep && (
-        <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">
-          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} This will refund {formatMoney(computedRefundTotal, currency)}
-          {restock ? ' and restock items.' : ' (no restock).'}
+        <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} · {tOr(t, 'pos.refund.amount', 'Refund amount')}: {formatMoney(computedRefundTotal, currency)} · {restock
+            ? tOr(t, 'pos.refund.willRestock', 'Items will be restocked')
+            : tOr(t, 'pos.refund.willNotRestock', 'Items will not be restocked')}
         </div>
       )}
 
@@ -787,17 +927,28 @@ function RefundPanel({
         <div className="mt-4 rounded-lg border border-red-300 bg-white px-3 py-3 text-sm font-bold text-red-800">{error}</div>
       )}
 
-      <button onClick={handleConfirm} disabled={!isValid || loading}
-        className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
-          loading ? 'cursor-not-allowed bg-slate-200 text-slate-500'
-            : confirmStep ? 'bg-red-700 text-white hover:bg-red-800'
-            : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
-        }`}>
-        {loading ? 'Processing...'
-          : confirmStep ? `Confirm refund (${formatMoney(computedRefundTotal, currency)})`
-          : `Review refund (${formatMoney(computedRefundTotal, currency)})`}
-      </button>
-    </section>
+      <div className="mt-5 grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+        <button
+          onClick={() => { resetRefundRequestId(); onCancel(); }}
+          disabled={loading}
+          className="min-h-12 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {tOr(t, 'pos.cancel', 'Cancel')}
+        </button>
+        <button onClick={handleConfirm} disabled={!isValid || loading}
+          className={`flex min-h-12 items-center justify-center rounded-lg px-4 text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
+            loading ? 'cursor-not-allowed bg-slate-200 text-slate-500'
+              : confirmStep ? 'bg-red-700 text-white hover:bg-red-800'
+              : 'bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500'
+          }`}>
+          {loading
+            ? tOr(t, 'pos.refund.processing', 'Processing...')
+            : confirmStep
+              ? `${tOr(t, 'pos.refund.confirm', 'Confirm Refund')} (${formatMoney(computedRefundTotal, currency)})`
+              : `${tOr(t, 'pos.refund.review', 'Review refund')} (${formatMoney(computedRefundTotal, currency)})`}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1326,7 +1477,12 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     () => Array.from(new Set(orders.map((o) => o.staff_name).filter((name): name is string => Boolean(name)))).sort(),
     [orders],
   );
-  const pageTotal = useMemo(() => orders.reduce((sum, o) => sum + o.total, 0), [orders]);
+  const pageOriginalTotal = useMemo(() => orders.reduce((sum, o) => sum + o.total, 0), [orders]);
+  const pageRefundedTotal = useMemo(() => orders.reduce((sum, o) => sum + (o.refund_amount ?? 0), 0), [orders]);
+  const pageRemainingTotal = useMemo(
+    () => orders.reduce((sum, order) => sum + getSafeRemainingTotal(order), 0),
+    [orders],
+  );
 
   const loadOrders = useCallback(async () => {
     const loadSeq = loadSeqRef.current + 1;
@@ -1755,7 +1911,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const hasRefundableItem = detailRefundableResult.items.some((item) => item.maxQty > 0);
     const itemRefundBreakdowns = getItemRefundBreakdowns(order, items);
     const itemRefundBreakdownById = new Map(itemRefundBreakdowns.map((breakdown) => [breakdown.item.id, breakdown]));
-    const refundBreakdownLines = getRefundBreakdownLines(order);
+    const refundEvents = getRefundEvents(order, items);
     const canRefund = Boolean(order.backend_id)
       && order.status !== 'CANCELLED'
       && refundStatus !== 'full'
@@ -1818,8 +1974,8 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               </div>
               <p className="mt-1 text-sm font-medium text-slate-500">
                 {formatDate(order.created_at)} {formatTime(order.created_at)} - {(() => {
-                  try { const t2 = order.payment_tenders ? JSON.parse(order.payment_tenders) : null; if (Array.isArray(t2) && t2.length > 1) return 'Split'; } catch {}
-                  return paymentLabel(order.payment_method);
+                  try { const t2 = order.payment_tenders ? JSON.parse(order.payment_tenders) : null; if (Array.isArray(t2) && t2.length > 1) return paymentLabel('SPLIT', t); } catch {}
+                  return paymentLabel(order.payment_method, t);
                 })()}
                 {order.staff_name ? ` - ${order.staff_name}` : ''}
               </p>
@@ -1832,52 +1988,55 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
           <main className="min-h-0 overflow-y-auto p-5">
             <div className="grid grid-cols-4 gap-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Total</div>
-                <div className={`mt-2 text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-slate-950'}`}>{formatMoney(remainingTotal, currency)}</div>
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tOr(t, 'pos.history.originalTotal', 'Original total')}</div>
+                <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.total, currency)}</div>
+              </div>
+              <div className={`rounded-lg border bg-white p-4 shadow-sm ${(order.refund_amount ?? 0) > 0 ? 'border-red-200' : 'border-slate-200'}`}>
+                <div className={`text-xs font-bold uppercase tracking-wide ${(order.refund_amount ?? 0) > 0 ? 'text-red-600' : 'text-slate-500'}`}>{tOr(t, 'pos.history.refundedTotal', 'Refunded')}</div>
+                <div className={`mt-2 text-xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-red-700' : 'text-slate-500'}`}>-{formatMoney(order.refund_amount ?? 0, currency)}</div>
+              </div>
+              <div className={`rounded-lg border p-4 shadow-sm ${(order.refund_amount ?? 0) > 0 ? 'border-amber-200 bg-amber-50' : 'border-brand-200 bg-brand-50'}`}>
+                <div className={`text-xs font-bold uppercase tracking-wide ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-brand-700'}`}>{tOr(t, 'pos.history.remainingTotal', 'Remaining')}</div>
+                <div className={`mt-2 text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-900' : 'text-brand-800'}`}>{formatMoney(remainingTotal, currency)}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Paid</div>
-                <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.payment_amount, currency)}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Tax</div>
-                <div className="mt-2 text-xl font-extrabold tabular-nums text-slate-950">{formatMoney(order.tax, currency)}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Staff</div>
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tOr(t, 'pos.history.staff', 'Staff')}</div>
                 <div className="mt-2 truncate text-xl font-extrabold text-slate-950">{order.staff_name || '-'}</div>
               </div>
             </div>
 
             <section className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
-                <h3 className="text-sm font-extrabold text-slate-900">Items</h3>
-                <span className="text-xs font-bold text-slate-500">{items.length} rows</span>
+                <h3 className="text-sm font-extrabold text-slate-900">{tOr(t, 'pos.history.items', 'Items')}</h3>
+                <span className="text-xs font-bold text-slate-500">{items.length} {tOr(t, 'pos.history.itemRows', 'rows')}</span>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_132px_80px_120px] gap-3 border-b border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-                <span>Product</span>
-                <span className="text-right">Qty</span>
+              <div className="grid grid-cols-[minmax(0,1fr)_180px_70px_120px] gap-3 border-b border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                <span>{tOr(t, 'pos.history.product', 'Product')}</span>
+                <span className="text-right">{tOr(t, 'pos.history.quantity', 'Qty')}</span>
                 <span className="text-right">VAT</span>
-                <span className="text-right">Total</span>
+                <span className="text-right">{tOr(t, 'pos.cart.total', 'Total')}</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {items.map((item) => {
                   const refundInfo = itemRefundBreakdownById.get(item.id);
                   const hasItemRefund = Boolean(refundInfo && refundInfo.refundedQty > 0);
+                  const sellBy = normalizeSellBy(item.sell_by);
+                  const unit = displaySaleUnit(item.sale_unit, sellBy, t);
                   return (
-                    <div key={item.id} className={`grid min-h-14 grid-cols-[minmax(0,1fr)_132px_80px_120px] items-center gap-3 px-4 py-3 ${hasItemRefund ? 'bg-amber-50/45' : ''}`}>
+                    <div key={item.id} className={`grid min-h-14 grid-cols-[minmax(0,1fr)_180px_70px_120px] items-center gap-3 px-4 py-3 ${hasItemRefund ? 'bg-amber-50/45' : ''}`}>
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-bold text-slate-950">{item.name}</div>
+                        <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
                         <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
                       </div>
                       <div className="text-right">
                         <div className="text-sm font-bold tabular-nums text-slate-700">
-                          {formatSaleQuantity(item.quantity, normalizeSellBy(item.sell_by))}
-                          {item.sale_unit ? ` ${item.sale_unit}` : ''}
+                          {formatSaleQuantity(item.quantity, sellBy)} {unit}
                         </div>
                         {hasItemRefund && refundInfo && (
-                          <div className="mt-1 inline-flex whitespace-nowrap rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[11px] font-bold text-amber-800">
-                            {refundInfo.refundedQty} refunded - {refundInfo.remainingQty} remaining
+                          <div className="mt-1 text-[11px] font-bold leading-4 text-amber-800">
+                            {tOr(t, 'pos.history.refundedShort', 'Refunded')} {formatSaleQuantity(refundInfo.refundedQty, sellBy)} {unit}
+                            <span className="px-1 text-slate-300">·</span>
+                            {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatSaleQuantity(refundInfo.remainingQty, sellBy)} {unit}
                           </div>
                         )}
                       </div>
@@ -1885,7 +2044,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                       <div className="text-right">
                         <div className="text-sm font-extrabold tabular-nums text-slate-950">{formatMoney(item.total, currency)}</div>
                         {hasItemRefund && refundInfo && (
-                          <div className="mt-1 text-xs font-bold tabular-nums text-red-700">Refunded -{formatMoney(refundInfo.refundedAmount, currency)}</div>
+                          <div className="mt-1 text-xs font-bold tabular-nums text-red-700">-{formatMoney(refundInfo.refundedAmount, currency)}</div>
                         )}
                       </div>
                     </div>
@@ -1894,36 +2053,76 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
               </div>
             </section>
 
-            {refundBreakdownLines.length > 0 && (
-              <section className="mt-4 rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-sm font-extrabold text-slate-900">Refund breakdown</h3>
-                    {order.refund_reason && (
-                      <p className="mt-1 text-xs font-bold text-slate-500">Reason: {order.refund_reason}</p>
-                    )}
-                  </div>
-                  <div className="text-right text-sm font-extrabold tabular-nums text-red-700">
-                    -{formatMoney(refundBreakdownLines.reduce((sum, line) => sum + line.refundAmount, 0), currency)}
+            {(order.refund_amount ?? 0) > 0 && (
+              <section className="mt-4 overflow-hidden rounded-lg border border-amber-200 bg-white shadow-sm">
+                <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-amber-50 px-4 py-3">
+                  <h3 className="text-sm font-extrabold text-slate-950">{tOr(t, 'pos.history.refundHistory', 'Refund history')}</h3>
+                  <div className="text-right">
+                    <div className="text-xs font-bold uppercase tracking-wide text-red-600">{tOr(t, 'pos.history.refundedTotal', 'Refunded')}</div>
+                    <div className="mt-1 text-lg font-extrabold tabular-nums text-red-700">-{formatMoney(order.refund_amount ?? 0, currency)}</div>
                   </div>
                 </div>
-                <div className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
-                  {refundBreakdownLines.map((line, index) => (
-                    <div key={`${line.variantId || line.sku || line.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_64px_110px] gap-3 px-3 py-2 text-sm">
-                      <div className="min-w-0">
-                        <div className="truncate font-bold text-slate-900">{line.name}</div>
-                        {line.sku && <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{line.sku}</div>}
-                      </div>
-                      <div className="text-right font-bold tabular-nums text-slate-700">x{line.quantity}</div>
-                      <div className="text-right font-extrabold tabular-nums text-red-700">-{formatMoney(line.refundAmount, currency)}</div>
-                    </div>
-                  ))}
-                </div>
+
+                {refundEvents.length > 0 ? (
+                  <div className="space-y-3 p-4">
+                    {refundEvents.map((event, eventIndex) => {
+                      const eventTime = event.refundedAt || (refundEvents.length === 1 ? order.refunded_at ?? null : null);
+                      const eventReason = event.reason || (eventIndex === refundEvents.length - 1 ? order.refund_reason : null);
+                      const restockValues = event.lines.map((line) => line.restock).filter((value): value is boolean => typeof value === 'boolean');
+                      return (
+                        <div key={event.key} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                          <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-slate-50 px-4 py-3">
+                            <div>
+                              <div className="text-sm font-extrabold text-slate-900">
+                                {tOr(t, 'pos.history.refundEvent', 'Refund')} #{eventIndex + 1}
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-slate-500">
+                                {eventTime && <span>{formatDate(eventTime)} {formatTime(eventTime)}</span>}
+                                {event.refundMethod && <span>{paymentLabel(event.refundMethod, t)}</span>}
+                                {restockValues.length > 0 && (
+                                  <span>{restockValues.every(Boolean)
+                                    ? tOr(t, 'pos.refund.restocked', 'Restocked')
+                                    : restockValues.every((value) => !value)
+                                      ? tOr(t, 'pos.refund.notRestocked', 'Not restocked')
+                                      : tOr(t, 'pos.refund.mixedRestock', 'Partially restocked')}</span>
+                                )}
+                              </div>
+                              {eventReason && (
+                                <div className="mt-1 text-xs font-bold text-slate-600">
+                                  {tOr(t, 'pos.refund.reason', 'Reason')}: {localizeRefundReason(eventReason, t)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-base font-extrabold tabular-nums text-red-700">-{formatMoney(event.refundAmount, currency)}</div>
+                          </div>
+                          <div className="divide-y divide-slate-100">
+                            {event.lines.map((line, lineIndex) => (
+                              <div key={`${line.orderItemId || line.variantId || line.sku || line.name}-${lineIndex}`} className="grid grid-cols-[minmax(0,1fr)_120px_120px] items-center gap-4 px-4 py-3 text-sm">
+                                <div className="min-w-0">
+                                  <div className="whitespace-normal break-words font-bold text-slate-900">{getRefundLineName(line, t)}</div>
+                                  {line.sku && <div className="mt-0.5 text-xs font-medium text-slate-500">{line.sku}</div>}
+                                </div>
+                                <div className="text-right font-bold tabular-nums text-slate-700">{formatRefundLineQuantity(line, t)}</div>
+                                <div className="text-right font-extrabold tabular-nums text-red-700">-{formatMoney(line.refundAmount, currency)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 text-sm font-bold text-amber-800">
+                    <div>{tOr(t, 'pos.refund.missingItemDetails', 'Product details are unavailable for this older refund.')}</div>
+                    {order.refunded_at && <div className="mt-1 text-xs font-medium text-slate-600">{formatDate(order.refunded_at)} {formatTime(order.refunded_at)}</div>}
+                    {order.refund_reason && <div className="mt-1 text-xs text-slate-700">{tOr(t, 'pos.refund.reason', 'Reason')}: {localizeRefundReason(order.refund_reason, t)}</div>}
+                  </div>
+                )}
               </section>
             )}
 
             <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-extrabold text-slate-900">Payment and totals</h3>
+              <h3 className="text-sm font-extrabold text-slate-900">{tOr(t, 'pos.history.paymentAndTotals', 'Payment and totals')}</h3>
               <div className="mt-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
                 <div className="flex justify-between gap-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.subtotal', 'Subtotal')}</span>
@@ -1945,11 +2144,11 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   if (tenders && tenders.length > 1) {
                     return (
                       <div className="space-y-1">
-                        <span className="font-medium text-slate-500">Payment split</span>
-                        {tenders.map((t, i) => (
+                        <span className="font-medium text-slate-500">{tOr(t, 'pos.history.paymentSplit', 'Payment split')}</span>
+                        {tenders.map((tender, i) => (
                           <div key={i} className="flex justify-between gap-4 pl-2">
-                            <span className="text-slate-600">{paymentLabel(t.method)}</span>
-                            <span className="font-bold tabular-nums text-slate-900">{formatMoney(t.amount, currency)}</span>
+                            <span className="text-slate-600">{paymentLabel(tender.method, t)}</span>
+                            <span className="font-bold tabular-nums text-slate-900">{formatMoney(tender.amount, currency)}</span>
                           </div>
                         ))}
                       </div>
@@ -1957,40 +2156,32 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                   }
                   return (
                     <div className="flex justify-between gap-4">
-                      <span className="font-medium text-slate-500">Method</span>
-                      <span className="font-bold text-slate-900">{paymentLabel(order.payment_method)}</span>
+                      <span className="font-medium text-slate-500">{tOr(t, 'pos.history.method', 'Method')}</span>
+                      <span className="font-bold text-slate-900">{paymentLabel(order.payment_method, t)}</span>
                     </div>
                   );
                 })()}
                 <div className="flex justify-between gap-4">
-                  <span className="font-medium text-slate-500">Paid amount</span>
+                  <span className="font-medium text-slate-500">{tOr(t, 'pos.history.paidAmount', 'Paid amount')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.payment_amount, currency)}</span>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <span className="font-medium text-slate-500">Change</span>
+                  <span className="font-medium text-slate-500">{tOr(t, 'pos.payment.change', 'Change')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.change_amount, currency)}</span>
                 </div>
-                {(order.refund_amount ?? 0) > 0 && (
-                  <>
-                    <div className="flex justify-between gap-4">
-                      <span className="font-medium text-red-700">{tOr(t, 'pos.history.refunded', 'Refunded')}</span>
-                      <span className="font-bold tabular-nums text-red-700">-{formatMoney(order.refund_amount ?? 0, currency)}</span>
-                    </div>
-                    <div className="flex justify-between gap-4">
-                      <span className="font-medium text-slate-500">{tOr(t, 'pos.refund.reason', 'Reason')}</span>
-                      <span className="truncate font-bold text-slate-900">{order.refund_reason || '-'}</span>
-                    </div>
-                  </>
-                )}
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-3">
-                <span className="text-base font-extrabold text-slate-950">{tOr(t, 'pos.cart.total', 'Total')}</span>
+                <span className="text-base font-extrabold text-slate-950">
+                  {(order.refund_amount ?? 0) > 0
+                    ? tOr(t, 'pos.history.remainingTotal', 'Remaining')
+                    : tOr(t, 'pos.cart.total', 'Total')}
+                </span>
                 <span className={`text-2xl font-extrabold tabular-nums ${(order.refund_amount ?? 0) > 0 ? 'text-amber-700' : 'text-brand-700'}`}>{formatMoney(remainingTotal, currency)}</span>
               </div>
             </section>
             {refundOverage && (
               <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
-                Backend refund amount exceeds the order total. Remaining total is clamped to zero and further refunds are blocked.
+                {tOr(t, 'pos.refund.overageBlocked', 'Refund data exceeds the order total. Further refunds are blocked.')}
               </div>
             )}
             {refundSyncError && (
@@ -2000,15 +2191,15 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             )}
             {refundBlockedByMissingLines && !refundSyncError && (
               <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
-                Cannot safely refund more; server refund details are missing.
+                {tOr(t, 'pos.refund.missingDetailsBlocked', 'Refund details are incomplete. Refresh the order before refunding again.')}
               </div>
             )}
           </main>
 
           <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
             <div className="border-b border-slate-200 px-5 py-4">
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Operations</div>
-              <div className="mt-1 text-lg font-extrabold text-slate-950">Receipt and refund</div>
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tOr(t, 'pos.history.operations', 'Operations')}</div>
+              <div className="mt-1 text-lg font-extrabold text-slate-950">{tOr(t, 'pos.history.receiptAndRefund', 'Receipt and refund')}</div>
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
@@ -2132,28 +2323,6 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 )}
               </section>
 
-              <section className="rounded-lg border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-extrabold text-slate-900">Refund availability</h3>
-                <div className="mt-3 space-y-2 text-sm">
-                  <div className="flex justify-between gap-4">
-                    <span className="font-medium text-slate-500">Backend sync</span>
-                    <span className={`font-bold ${order.backend_id ? 'text-emerald-700' : 'text-amber-800'}`}>
-                      {order.backend_id ? 'Ready' : 'Not ready'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span className="font-medium text-slate-500">Refund status</span>
-                    <span className="font-bold text-slate-900">
-                      {refundStatus === 'none'
-                        ? canRefund ? 'Available' : 'Blocked'
-                        : refundStatus === 'full'
-                          ? tOr(t, 'pos.history.refunded', 'Refunded')
-                          : canRefund ? 'Available' : tOr(t, 'pos.history.partialRefund', 'Partial refund')}
-                    </span>
-                  </div>
-                </div>
-              </section>
-
               {canRefund && !showRefund && (
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) setShowRefund(true); }}
@@ -2239,7 +2408,9 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
               {refundStatus !== 'none' && !canRefund && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                  {tOr(t, 'pos.refund.alreadyRefunded', 'Already refunded')}
+                  {refundStatus === 'full'
+                    ? tOr(t, 'pos.refund.alreadyRefunded', 'Already refunded')
+                    : tOr(t, 'pos.refund.noFurtherRefund', 'No further refund is currently available for this order.')}
                 </div>
               )}
 
@@ -2269,7 +2440,10 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
         <div className="min-w-0">
           <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            {PERIOD_LABELS[selectedPeriod] || 'Today'} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} — page total {formatMoney(pageTotal, currency)}
+            {PERIOD_LABELS[selectedPeriod] || 'Today'} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')}
+            <span className="ml-2 font-bold text-slate-600">
+              {tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(pageOriginalTotal, currency)} · {tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(pageRefundedTotal, currency)} · {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(pageRemainingTotal, currency)}
+            </span>
             <span className={`ml-2 inline-flex items-center gap-1 text-xs font-bold ${dataSource === 'local+server' ? 'text-emerald-600' : dataSource === 'server-unreachable' ? 'text-amber-600' : 'text-slate-400'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: 'currentColor' }} />
               {dataSource === 'local+server' ? 'Local + Server' : dataSource === 'server-unreachable' ? 'Server unreachable — showing local data' : 'Local only (offline)'}
@@ -2333,13 +2507,13 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col bg-white">
-        <div className="grid h-11 shrink-0 grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 border-b border-slate-200 bg-slate-100 px-5 text-xs font-extrabold uppercase tracking-wide text-slate-600">
-          <span>Order</span>
-          <span>Time</span>
-          <span className="text-right">Total</span>
-          <span>Payment</span>
-          <span>Staff</span>
-          <span>Status</span>
+        <div className="grid h-11 shrink-0 grid-cols-[minmax(180px,1.2fr)_80px_175px_105px_110px_125px_44px] items-center gap-3 border-b border-slate-200 bg-slate-100 px-5 text-xs font-extrabold uppercase tracking-wide text-slate-600">
+          <span>{tOr(t, 'pos.history.order', 'Order')}</span>
+          <span>{tOr(t, 'pos.history.time', 'Time')}</span>
+          <span className="text-right">{tOr(t, 'pos.history.amounts', 'Amounts')}</span>
+          <span>{tOr(t, 'pos.history.payment', 'Payment')}</span>
+          <span>{tOr(t, 'pos.history.staff', 'Staff')}</span>
+          <span>{tOr(t, 'pos.history.status', 'Status')}</span>
           <span />
         </div>
 
@@ -2368,35 +2542,55 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
                 const refundStatus = getRefundStatus(order);
                 const displayNumber = getHistoryDisplayNumber(order, (page - 1) * PAGE_SIZE + index, hideNonFiscalOrders, totalOrders);
                 const realOrderNumber = getRealHistoryOrderNumber(order);
+                const previewItems = serverItemsMap[order.id] || (order.backend_id ? serverItemsMap[order.backend_id] : undefined) || [];
+                const itemPreview = previewItems.length > 0
+                  ? `${previewItems[0].name}${previewItems.length > 1 ? ` +${previewItems.length - 1}` : ''}`
+                  : '';
+                const identityPreview = order.customer_name || itemPreview;
+                const dateLabel = hideNonFiscalOrders ? `${realOrderNumber} - ${formatDate(order.created_at)}` : formatDate(order.created_at);
+                const orderRemaining = getSafeRemainingTotal(order);
                 return (
                   <button
                     key={order.id}
                     onClick={() => handleSelectOrder(order.id)}
-                    className="grid min-h-[64px] w-full grid-cols-[minmax(150px,1.15fr)_90px_120px_130px_minmax(120px,1fr)_120px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300"
+                    className="grid min-h-[76px] w-full grid-cols-[minmax(180px,1.2fr)_80px_175px_105px_110px_125px_44px] items-center gap-3 px-5 text-left transition-colors hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300"
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-extrabold text-slate-950" title={hideNonFiscalOrders ? `Real order number: ${realOrderNumber}` : undefined}>
                         {displayNumber}
                       </span>
                       <span className="mt-0.5 block truncate text-xs font-medium text-slate-500">
-                        {hideNonFiscalOrders ? `${realOrderNumber} - ${formatDate(order.created_at)}` : formatDate(order.created_at)}
+                        {dateLabel}{identityPreview ? ` · ${identityPreview}` : ''}
                       </span>
                     </span>
                     <span className="text-sm font-bold tabular-nums text-slate-700">{formatTime(order.created_at)}</span>
-                    <span className={`text-right text-base font-extrabold tabular-nums ${refundStatus === 'none' ? 'text-slate-950' : 'text-slate-500 line-through'}`}>
-                      {formatMoney(order.total, currency)}
+                    <span className="text-right tabular-nums">
+                      {refundStatus === 'none' ? (
+                        <span className="text-base font-extrabold text-slate-950">{formatMoney(order.total, currency)}</span>
+                      ) : (
+                        <span className="space-y-0.5">
+                          <span className="block text-xs font-bold text-slate-500">{tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(order.total, currency)}</span>
+                          <span className="block text-xs font-bold text-red-700">{tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(order.refund_amount ?? 0, currency)}</span>
+                          <span className="block text-sm font-extrabold text-amber-800">{tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(orderRemaining, currency)}</span>
+                        </span>
+                      )}
                     </span>
                     <span className="inline-flex h-8 max-w-full items-center justify-center truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-extrabold text-slate-700">
                       {(() => {
                         try {
                           const t2 = order.payment_tenders ? JSON.parse(order.payment_tenders) : null;
-                          if (Array.isArray(t2) && t2.length > 1) return 'Split';
+                          if (Array.isArray(t2) && t2.length > 1) return paymentLabel('SPLIT', t);
                         } catch {}
-                        return paymentLabel(order.payment_method);
+                        return paymentLabel(order.payment_method, t);
                       })()}
                     </span>
                     <span className="truncate text-sm font-bold text-slate-700">{order.staff_name || '-'}</span>
-                    <StatusBadge order={order} t={t} />
+                    <span className="min-w-0">
+                      <StatusBadge order={order} t={t} />
+                      {refundStatus !== 'none' && order.refunded_at && (
+                        <span className="mt-1 block truncate text-[11px] font-medium text-slate-500">{formatDate(order.refunded_at)} {formatTime(order.refunded_at)}</span>
+                      )}
+                    </span>
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400">
                       {detailLoadingId === order.id ? (
                         <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" aria-hidden="true" />
@@ -2415,7 +2609,7 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
 
         <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
           <div className="text-sm font-bold text-slate-600">
-            {totalOrders} {tOr(t, 'pos.history.orders', 'orders')} - {formatMoney(pageTotal, currency)} on this page
+            {tOr(t, 'pos.history.pageTotals', 'This page')}: {tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(pageOriginalTotal, currency)} · {tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(pageRefundedTotal, currency)} · {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(pageRemainingTotal, currency)}
           </div>
           <div className="flex items-center gap-2">
             <button

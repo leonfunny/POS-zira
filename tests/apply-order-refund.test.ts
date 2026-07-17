@@ -216,6 +216,48 @@ describe('applyOrder refund normalisation', () => {
     ]);
   });
 
+  it('preserves local refund event metadata when the inbound snapshot omits it', () => {
+    vi.mocked(database.get).mockReturnValueOnce({
+      total: 2000,
+      refund_lines: JSON.stringify([{
+        variantId: 'variant-kg',
+        sku: 'GINGER',
+        name: 'Gừng tươi',
+        quantity: 0.75,
+        refundAmount: 1500,
+        refundedAt: '2026-07-17T10:00:00.000Z',
+        refundRequestId: 'refund-kg-1',
+        reason: 'customerRequest',
+        refundMethod: 'SPLIT',
+      }]),
+    } as any);
+
+    applyEntry(entry({
+      refundAmount: '15.00',
+      total: '20.00',
+      refundedLines: [{
+        orderItemId: 'server-item-kg',
+        variantId: 'variant-kg',
+        sku: 'GINGER',
+        name: 'Gừng tươi',
+        quantity: 0.75,
+        unit: 'kg',
+        unitPrice: '20.00',
+        refundAmount: '15.00',
+      }],
+    }));
+
+    const params = findRunCall(/UPDATE orders[\s\S]*refund_amount/i)![1] as unknown[];
+    expect(JSON.parse(params[2] as string)).toEqual([expect.objectContaining({
+      orderItemId: 'server-item-kg',
+      unit: 'kg',
+      refundedAt: '2026-07-17T10:00:00.000Z',
+      refundRequestId: 'refund-kg-1',
+      reason: 'customerRequest',
+      refundMethod: 'SPLIT',
+    })]);
+  });
+
   it('leaves refund_lines untouched (COALESCE) when the payload omits refundedLines', () => {
     applyEntry(entry({ refundAmount: '7.00', refundReason: 'admin' }));
     const refundUpdate = findRunCall(/UPDATE orders[\s\S]*refund_amount/i);
@@ -318,8 +360,8 @@ describe('applyOrder refund normalisation', () => {
     // status_changed payloads frequently omit total. Look up the
     // local row to decide REFUNDED vs PARTIAL_REFUND.
     vi.mocked(database.get).mockImplementation(((sql: string) => {
-      if (/SELECT\s+total\s+FROM\s+orders/i.test(sql)) {
-        return { total: 1234 } as any;
+      if (/SELECT\s+total\s*,\s*refund_lines\s+FROM\s+orders/i.test(sql)) {
+        return { total: 1234, refund_lines: null } as any;
       }
       return undefined;
     }) as any);
