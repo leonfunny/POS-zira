@@ -227,4 +227,31 @@ describe('cross-platform boundary verifier', () => {
     expect(result.ok).toBe(true);
     expect(result.diagnostics).toHaveLength(0);
   });
+
+  // Parity-port S2: window.electronAPI is allowed ONLY when the entry graph
+  // includes the shim installer. The negative case (electronAPI forbidden
+  // without the shim) is covered by the `forbidden-electron-api` fixture above.
+  test('allows window.electronAPI behind the shim installer in the real Android POS graph', async () => {
+    const result = await verifyCrossPlatformBoundaries({
+      root: REPOSITORY_ROOT,
+      entries: [resolve(REPOSITORY_ROOT, 'src/renderer/android-pos/main.ts')],
+      tsconfigPath: resolve(REPOSITORY_ROOT, 'tsconfig.android.json'),
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(true);
+    // The relaxed surface must not leak Node globals / network / electron
+    // imports — only electronAPI / window namespace / renderer packages.
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  test('keeps window.electronAPI forbidden when the shim installer is absent', async () => {
+    const result = await verifyFixture('forbidden-electron-api');
+
+    expect(result.graphIncludesShim).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_ELECTRON_API_GLOBAL',
+    )).toBe(true);
+  });
 });

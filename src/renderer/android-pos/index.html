@@ -8,99 +8,10 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light" />
-    <title>Zira POS Android · Synthetic Catalog</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <title>Zira POS Android</title>
   </head>
-  <body data-mode="synthetic-read-only">
-    <header class="app-bar">
-      <a class="brand" href="#catalog-title" aria-label="Zira POS Android catalog demo">
-        <span class="brand-mark" aria-hidden="true">Z</span>
-        <span><strong>Zira POS</strong><small>Android development</small></span>
-      </a>
-      <div class="guard-badge" role="status">
-        <span aria-hidden="true"></span>
-        Dữ liệu mẫu · Offline
-      </div>
-    </header>
-
-    <main class="catalog-workspace" aria-labelledby="catalog-title">
-      <section class="catalog-panel">
-        <div class="catalog-heading">
-          <div>
-            <p class="eyebrow">Stage 2 · synthetic read-only</p>
-            <h1 id="catalog-title">Danh mục mẫu</h1>
-            <p class="summary">Khám phá bố cục tablet bằng dữ liệu giả. Không có kết nối salon hoặc thao tác bán hàng.</p>
-          </div>
-          <dl class="runtime-status" aria-label="Trạng thái an toàn">
-            <div><dt>Mạng</dt><dd>Tắt</dd></div>
-            <div><dt>Ghi dữ liệu</dt><dd>Tắt</dd></div>
-          </dl>
-        </div>
-
-        <div class="category-filter" role="radiogroup" aria-label="Lọc danh mục mẫu">
-          <input class="filter-control" type="radio" name="category" id="category-all" checked />
-          <label for="category-all">Tất cả <span>6</span></label>
-          <input class="filter-control" type="radio" name="category" id="category-gel" />
-          <label for="category-gel">Sơn gel <span>2</span></label>
-          <input class="filter-control" type="radio" name="category" id="category-builder" />
-          <label for="category-builder">Builder <span>2</span></label>
-          <input class="filter-control" type="radio" name="category" id="category-care" />
-          <label for="category-care">Chăm sóc <span>2</span></label>
-        </div>
-
-        <div class="product-grid" id="catalog-grid" aria-label="Sáu sản phẩm mẫu">
-          <article class="product-card" data-category="gel" data-synthetic-record="DEMO-001">
-            <div class="product-art art-lavender" aria-hidden="true"><span>LC</span></div>
-            <div class="product-copy"><p>Sơn gel</p><h2>Lavender Calm</h2><small>DEMO-001 · 15 ml</small></div>
-            <footer><strong>49,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-          <article class="product-card" data-category="gel" data-synthetic-record="DEMO-002">
-            <div class="product-art art-ruby" aria-hidden="true"><span>RG</span></div>
-            <div class="product-copy"><p>Sơn gel</p><h2>Ruby Glow</h2><small>DEMO-002 · 15 ml</small></div>
-            <footer><strong>52,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-          <article class="product-card" data-category="builder" data-synthetic-record="DEMO-003">
-            <div class="product-art art-nude" aria-hidden="true"><span>BN</span></div>
-            <div class="product-copy"><p>Builder</p><h2>Builder Nude</h2><small>DEMO-003 · 30 ml</small></div>
-            <footer><strong>65,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-          <article class="product-card" data-category="builder" data-synthetic-record="DEMO-004">
-            <div class="product-art art-pearl" aria-hidden="true"><span>CP</span></div>
-            <div class="product-copy"><p>Builder</p><h2>Chrome Pearl</h2><small>DEMO-004 · 30 ml</small></div>
-            <footer><strong>59,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-          <article class="product-card" data-category="care" data-synthetic-record="DEMO-005">
-            <div class="product-art art-citrus" aria-hidden="true"><span>CC</span></div>
-            <div class="product-copy"><p>Chăm sóc</p><h2>Cuticle Citrus</h2><small>DEMO-005 · 10 ml</small></div>
-            <footer><strong>29,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-          <article class="product-card" data-category="care" data-synthetic-record="DEMO-006">
-            <div class="product-art art-mint" aria-hidden="true"><span>BS</span></div>
-            <div class="product-copy"><p>Chăm sóc</p><h2>Base Strong</h2><small>DEMO-006 · 12 ml</small></div>
-            <footer><strong>45,00 zł</strong><span>Chỉ xem</span></footer>
-          </article>
-        </div>
-      </section>
-
-      <aside class="order-panel" aria-labelledby="order-title">
-        <div class="order-heading">
-          <p class="eyebrow">Preview only</p>
-          <h2 id="order-title">Đơn hàng bị khóa</h2>
-        </div>
-        <div class="empty-order">
-          <span aria-hidden="true">⌁</span>
-          <h3>Chưa thể thêm sản phẩm</h3>
-          <p>Stage 2 chỉ kiểm tra danh mục và bố cục. Cart, tồn kho và thanh toán đều chưa được nối.</p>
-        </div>
-        <dl class="order-summary">
-          <div><dt>Tạm tính</dt><dd>0,00 zł</dd></div>
-          <div><dt>Thuế</dt><dd>—</dd></div>
-          <div class="total"><dt>Tổng</dt><dd>0,00 zł</dd></div>
-        </dl>
-        <button id="checkout-lock" type="button" disabled>Thanh toán đã khóa</button>
-        <p class="lock-note">Không đăng nhập · Không API · Không fiscal · Không in</p>
-      </aside>
-    </main>
+  <body>
+    <div id="root"></div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

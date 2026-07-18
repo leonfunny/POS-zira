@@ -23,6 +23,27 @@ const WINDOWS_NATIVE_PACKAGES = new Set([
   '@nut-tree-fork/nut-js',
 ]);
 const INTERNAL_ALIAS_PREFIXES = ['@/', '@main/', '@shared/', '@renderer/'];
+
+// Parity-port (S2): when an entry graph includes the `window.electronAPI` shim
+// installer, it is a RENDERER graph — the real, unmodified Windows POS
+// renderer running behind the shim (docs/android-pos/PARITY_PORT_PLAN_2026-07-
+// 18.md §2). In that mode the verifier tolerates the renderer's inherent
+// surface: window.electronAPI references, the window/globalThis namespace they
+// ride on, the entry's mount bootstrap, the renderer's runtime bare packages,
+// and the inert strings the unmodified renderer embeds (the "pa_xxx" API-key
+// format hint in i18n, https UI/SVG links). Diagnostics opt into this mode by
+// carrying `shimAllowable: true`; they are dropped once the full graph is known
+// to include the shim installer. Electron imports, Node built-ins/globals,
+// src/main/** imports, real print-agent ROUTES/HEADERS (/print-agent/,
+// x-print-agent-), and network CALLS (fetch/WebSocket/...) stay forbidden in
+// every mode — only the inert renderer string surface is relaxed.
+const SHIM_INSTALLER_PATH_SEGMENT = 'src/renderer/android-pos/shim';
+const RENDERER_ALLOWED_PACKAGES = new Set([
+  'react',
+  'react-dom',
+  'lucide-react',
+  'react-zoom-pan-pinch',
+]);
 const TOP_LEVEL_EFFECT_GLOBALS = new Set([
   'fetch',
   'setInterval',
@@ -63,14 +84,27 @@ const FORBIDDEN_NETWORK_GLOBALS = new Set([
 ]);
 const BUILT_BUNDLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.mjs']);
 const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
-  { label: 'Electron bridge', pattern: /electronAPI/i },
+  // shimAllowable patterns are inert renderer string surface (see comment above
+  // SHIM_INSTALLER_PATH_SEGMENT) and are skipped for shim-bearing bundles.
+  { label: 'Electron bridge', pattern: /electronAPI/i, shimAllowable: true },
   { label: 'Electron package', pattern: /(?:from\s*|import\s*\(|require\s*\()\s*["']electron(?:[\/"'])/i },
   { label: 'Node builtin', pattern: /["']node:(?:assert|buffer|child_process|crypto|fs|module|net|os|path|process|stream|tls|url|util|worker_threads)(?:[\/"'])/i },
-  { label: 'Node global', pattern: /\b(?:__dirname|__filename)\b|\bprocess\s*\.|\bBuffer\s*[.(]/ },
+  { label: 'Node global', pattern: /\b(?:__dirname|__filename)\b|\bprocess\s*\./ },
+  // `Buffer.from(...)` reaches the bundle only as the dead `atob`-guarded
+  // fallback in the unmodified renderer's shared base64 helpers (the source
+  // walk in this same run already verified every Buffer lives in an atob/btoa
+  // file). dirname/process stay forbidden in every mode.
+  { label: 'Node global Buffer (isomorphic base64 fallback)', pattern: /\bBuffer\s*[.(]/, shimAllowable: true },
   { label: 'Windows/native package', pattern: /@nut-tree-fork\/nut-js|@serialport\/|\b(?:ffi-napi|node-hid|ref-napi|serialport)\b/i },
-  { label: 'print-agent credential or route', pattern: /\bpa_[A-Za-z0-9_-]+|\/print-agent\/|x-print-agent-/i },
+  // Real print-agent execution routes/headers stay forbidden in every mode.
+  { label: 'print-agent route or header', pattern: /\/print-agent\/|x-print-agent-/i },
+  // The bare "pa_xxx" literal is the inert API-key format hint embedded by the
+  // unmodified renderer's i18n; only suppressible for shim-bearing bundles.
+  { label: 'print-agent key literal', pattern: /\bpa_[A-Za-z0-9_-]+/, shimAllowable: true },
   { label: 'network API', pattern: /\bfetch\s*\(|\b(?:new\s+)?(?:EventSource|WebSocket|XMLHttpRequest)\s*\(|\.sendBeacon\s*\(/ },
-  { label: 'HTTP endpoint', pattern: /https?:\/\/[^\s"'<>]+/i },
+  // The unmodified renderer embeds https UI/SVG/error-decoder links as inert
+  // strings (no network call at S2 — the network API pattern above stays active).
+  { label: 'HTTP endpoint', pattern: /https?:\/\/[^\s"'<>]+/i, shimAllowable: true },
 ];
 
 function packageName(specifier) {
@@ -488,27 +522,34 @@ function bindingElementMember(element) {
   return null;
 }
 
-function directUsageViolations(sourceFile) {
+function directUsageViolations(sourceFile, isEntry = false) {
+  // Isomorphic base64 fallback idiom marker: a file that references the browser
+  // atob/btoa API alongside a bare `Buffer` is using the standard
+  // `typeof atob === 'function' ? atob : Buffer.from(...)` pattern, where Buffer
+  // is dead code in a WebView. Used only to scope the Buffer exemption below.
+  const hasBrowserBase64Fallback = /\b(?:atob|btoa)\b/.test(sourceFile.text);
   const violations = [];
   const identityOffsets = new Set();
   const namespaceAliases = topLevelGlobalNamespaceAliases(sourceFile);
 
   const addIdentityViolation = (node, value) => {
     const normalized = value.toLowerCase();
-    if (
-      normalized.startsWith('x-print-agent-')
-      || normalized.includes('/print-agent/')
-      || normalized.includes('pa_')
-    ) {
-      const offset = node.getStart(sourceFile, false);
-      if (identityOffsets.has(offset)) return;
-      identityOffsets.add(offset);
-      violations.push({
-        rule: 'FORBIDDEN_PRINT_AGENT_IDENTITY',
-        node,
-        message: `Print-agent identity/execution literal "${value}" is forbidden in Android/shared core`,
-      });
-    }
+    const isRouteOrHeader = normalized.startsWith('x-print-agent-')
+      || normalized.includes('/print-agent/');
+    const isPaLiteral = normalized.includes('pa_');
+    if (!isRouteOrHeader && !isPaLiteral) return;
+    const offset = node.getStart(sourceFile, false);
+    if (identityOffsets.has(offset)) return;
+    identityOffsets.add(offset);
+    violations.push({
+      rule: 'FORBIDDEN_PRINT_AGENT_IDENTITY',
+      node,
+      message: `Print-agent identity/execution literal "${value}" is forbidden in Android/shared core`,
+      // Real routes/headers stay forbidden in every mode. The bare `pa_` literal
+      // is the inert "pa_xxx" i18n format hint in the unmodified renderer and is
+      // only suppressible for shim-bearing renderer graphs.
+      shimAllowable: isPaLiteral && !isRouteOrHeader,
+    });
   };
 
   const visit = (node) => {
@@ -527,18 +568,29 @@ function directUsageViolations(sourceFile) {
           rule: 'FORBIDDEN_ELECTRON_API_GLOBAL',
           node,
           message: 'Bare electronAPI is forbidden in cross-platform core',
+          shimAllowable: true,
         });
       } else if (GLOBAL_NAMESPACE_IDENTIFIERS.has(node.text)) {
         violations.push({
           rule: 'FORBIDDEN_GLOBAL_NAMESPACE',
           node,
           message: `Global namespace "${node.text}" is forbidden in cross-platform core`,
+          // window/self/globalThis are the browser-global object the renderer
+          // reaches electronAPI / localStorage / addEventListener through.
+          shimAllowable: true,
         });
       } else if (FORBIDDEN_NODE_GLOBAL_MEMBERS.has(node.text)) {
         violations.push({
           rule: 'FORBIDDEN_NODE_GLOBAL',
           node,
           message: `Node global "${node.text}" is forbidden in cross-platform core`,
+          // Isomorphic base64 fallback: bare `Buffer` in a file that also uses
+          // atob/btoa (`typeof atob === 'function' ? atob : Buffer.from(...)`)
+          // is dead code in a WebView and is suppressible for a shim graph.
+          // Every other Node global (process/require/module/__dirname/global)
+          // and globalThis.Buffer stays forbidden in every mode. See
+          // docs/android-pos/S2_BLOCKERS.md.
+          shimAllowable: node.text === 'Buffer' && hasBrowserBase64Fallback,
         });
       } else if (FORBIDDEN_NETWORK_GLOBALS.has(node.text)) {
         violations.push({
@@ -586,6 +638,7 @@ function directUsageViolations(sourceFile) {
               rule: 'FORBIDDEN_ELECTRON_API_GLOBAL',
               node: element,
               message: `Destructuring ${namespace.text}.${member} is forbidden in cross-platform core`,
+              shimAllowable: true,
             });
           } else if (member && FORBIDDEN_NODE_GLOBAL_MEMBERS.has(member)) {
             violations.push({
@@ -609,6 +662,7 @@ function directUsageViolations(sourceFile) {
           rule: 'FORBIDDEN_ELECTRON_API_GLOBAL',
           node,
           message: `${access.namespace}.${access.member} is forbidden in cross-platform core`,
+          shimAllowable: true,
         });
       } else if (access && FORBIDDEN_NODE_GLOBAL_MEMBERS.has(access.member)) {
         violations.push({
@@ -627,10 +681,19 @@ function directUsageViolations(sourceFile) {
   for (const statement of sourceFile.statements) {
     const effect = unsafeTopLevelEffect(statement, callableBindings);
     if (effect) {
+      const finalRule = effect.rule || 'FORBIDDEN_TOP_LEVEL_SIDE_EFFECT';
       violations.push({
-        rule: effect.rule || 'FORBIDDEN_TOP_LEVEL_SIDE_EFFECT',
+        rule: finalRule,
         node: effect.node,
         message: `Unsafe platform side effect is forbidden at module load: ${effect.detail}`,
+        // Behind the shim, the unmodified renderer carries idiomatic module-load
+        // patterns the static checker cannot prove pure (React.memo / forwardRef
+        // / class-string join — the UNVERIFIED_TOP_LEVEL_* rules). Those are
+        // renderer surface and allowed across the whole shim graph. Known
+        // side-effect calls (the entry's document/window mount reads) are only
+        // allowed in the entry. Hard rails (Node globals, network, imports) are
+        // unaffected — they are flagged by other rules that stay active.
+        shimAllowable: isEntry || finalRule.startsWith('UNVERIFIED_TOP_LEVEL_'),
       });
     }
   }
@@ -773,6 +836,7 @@ export async function verifyCrossPlatformBoundaries({
 }) {
   const absoluteRoot = resolve(root);
   const entryFiles = entries.map((entry) => resolve(entry));
+  const entryFileSet = new Set(entryFiles);
   const config = loadTsConfig(dirname(entryFiles[0] || absoluteRoot), tsconfigPath);
   const allowedPackageSet = new Set(allowedPackages);
   const diagnostics = [];
@@ -832,13 +896,14 @@ export async function verifyCrossPlatformBoundaries({
       });
     }
 
-    for (const violation of directUsageViolations(sourceFile)) {
+    for (const violation of directUsageViolations(sourceFile, entryFileSet.has(absoluteFile))) {
       addDiagnostic({
         rule: violation.rule,
         file: absoluteFile,
         ...nodeLocation(sourceFile, violation.node),
         message: violation.message,
         chain,
+        shimAllowable: violation.shimAllowable === true,
       });
     }
 
@@ -896,6 +961,9 @@ export async function verifyCrossPlatformBoundaries({
             ...baseDiagnostic,
             rule: 'NON_ALLOWLISTED_BARE_PACKAGE',
             message: `Bare package "${specifier}" is not allowlisted for cross-platform core`,
+            // Renderer runtime deps (react/react-dom/lucide-react/...) are part
+            // of the unmodified renderer and allowed behind the shim.
+            shimAllowable: RENDERER_ALLOWED_PACKAGES.has(dependency),
           });
         }
         continue;
@@ -946,6 +1014,13 @@ export async function verifyCrossPlatformBoundaries({
     await visit(entry, [entry]);
   }
 
+  // A graph is a "renderer behind the shim" iff the shim installer module is
+  // reachable from an entry. Computed after the source walk so source-graph
+  // shimAllowable diagnostics and bundle shimAllowable patterns use the same flag.
+  const graphIncludesShim = [...visited].some((file) => (
+    file.split(sep).join('/').includes(SHIM_INSTALLER_PATH_SEGMENT)
+  ));
+
   for (const bundleDir of bundleDirs) {
     const absoluteBundleDir = resolve(bundleDir);
     if (!insideRoot(absoluteRoot, absoluteBundleDir)) {
@@ -993,7 +1068,8 @@ export async function verifyCrossPlatformBoundaries({
     for (const bundleFile of bundleFiles) {
       visitedBundleFiles.add(bundleFile);
       const source = await readFile(bundleFile, 'utf8');
-      for (const { label, pattern } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
+      for (const { label, pattern, shimAllowable } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
+        if (shimAllowable && graphIncludesShim) continue;
         const match = pattern.exec(source);
         if (!match) continue;
         addDiagnostic({
@@ -1008,7 +1084,15 @@ export async function verifyCrossPlatformBoundaries({
     }
   }
 
-  diagnostics.sort((left, right) => (
+  // Drop shimAllowable diagnostics once we know the graph is a renderer behind
+  // the shim. Bundle shimAllowable patterns were already skipped above; this
+  // removes the source-graph ones (electronAPI / window namespace / renderer
+  // bare packages / entry mount bootstrap / inert pa_ literal).
+  const reportedDiagnostics = graphIncludesShim
+    ? diagnostics.filter((diagnostic) => !diagnostic.shimAllowable)
+    : diagnostics;
+
+  reportedDiagnostics.sort((left, right) => (
     left.file.localeCompare(right.file)
     || left.line - right.line
     || left.column - right.column
@@ -1016,13 +1100,14 @@ export async function verifyCrossPlatformBoundaries({
   ));
 
   return {
-    ok: diagnostics.length === 0,
+    ok: reportedDiagnostics.length === 0,
     root: absoluteRoot,
     entries: entryFiles,
     tsconfigPath: config.configPath,
     visitedFiles: [...visited].sort(),
     visitedBundleFiles: [...visitedBundleFiles].sort(),
-    diagnostics,
+    graphIncludesShim,
+    diagnostics: reportedDiagnostics,
   };
 }
 

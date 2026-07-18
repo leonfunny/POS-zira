@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,27 +10,58 @@ async function source(path: string) {
   return readFile(resolve(ROOT, path), 'utf8');
 }
 
-describe('Android Stage 2 synthetic catalog', () => {
-  test('renders only embedded demo records and keeps checkout locked', async () => {
-    const html = await source('src/renderer/android-pos/index.html');
-    const records = [...html.matchAll(/data-synthetic-record="(DEMO-\d{3})"/g)].map((match) => match[1]);
+// Packet S2 replaced the static Stage-2 synthetic catalog with the REAL Windows
+// POS renderer (src/renderer/windows/pos/POSApp) mounted behind the typed
+// `window.electronAPI` shim. These assertions pin that contract: the entry
+// installs the shim before mounting POSApp, the shim module exists, and the
+// shim's synthetic surface lands in the built Android web bundle.
+describe('Android Stage 2 — real POS renderer behind the electronAPI shim', () => {
+  test('the entry installs the shim before mounting the real POSApp', async () => {
+    const main = await source('src/renderer/android-pos/main.ts');
 
-    expect(records).toEqual(['DEMO-001', 'DEMO-002', 'DEMO-003', 'DEMO-004', 'DEMO-005', 'DEMO-006']);
-    expect(html).toContain('data-mode="synthetic-read-only"');
-    expect(html).toContain('role="radiogroup" aria-label="Lọc danh mục mẫu"');
-    expect(html).toContain('id="checkout-lock" type="button" disabled');
-    expect(html).toContain('Không đăng nhập · Không API · Không fiscal · Không in');
-    expect(html).not.toMatch(/<form\b/i);
-    expect(html).not.toMatch(/https?:\/\//i);
+    // The shim is imported from the S2 shim package and invoked...
+    expect(main).toContain("from './shim'");
+    expect(main).toMatch(/installShim\(\)/);
+    // ...and the REAL Windows POS renderer is what gets mounted.
+    expect(main).toContain("from '../windows/pos/POSApp'");
+    expect(main).toMatch(/createRoot/);
+    // Source order: the installShim() call precedes the React mount call. (ES
+    // module imports are hoisted, but POSApp's module is side-effect-free re:
+    // electronAPI — the renderer only touches window.electronAPI at render
+    // time, which follows installShim().)
+    expect(main.indexOf('installShim()')).toBeLessThan(main.indexOf('createRoot('));
   });
 
-  test('publishes fail-closed runtime metadata', async () => {
-    const runtime = await source('src/renderer/android-pos/main.ts');
+  test('the shim installer module exposes the typed surface', async () => {
+    const installer = await source('src/renderer/android-pos/shim/index.ts');
+    expect(installer).toContain('export function installShim');
 
-    expect(runtime).toContain("mode: 'SYNTHETIC_READ_ONLY'");
-    expect(runtime).toContain("dataSource: 'EMBEDDED_DEMO_RECORDS'");
-    expect(runtime).toContain('checkoutEnabled: false');
-    expect(runtime).toContain('writesEnabled: false');
-    expect(runtime).toContain('networkEnabled: false');
+    const stubs = await source('src/renderer/android-pos/shim/stubs.ts');
+    // Benign S1 defaults that the CASH checkout + boot path depend on.
+    expect(stubs).toContain("'telegram-login-unavailable'");
+    expect(stubs).toContain("'no-printer'");
+    expect(stubs).toContain("'no-scale'");
+  });
+
+  test('the built Android web bundle contains the shim surface', async () => {
+    const assetsDir = resolve(ROOT, 'dist/android-web/assets');
+    let jsFile: string | undefined;
+    try {
+      const entries = await readdir(assetsDir);
+      jsFile = entries.find((name) => name.endsWith('.js'));
+    } catch (error) {
+      throw new Error(
+        `Built Android web bundle missing at ${assetsDir}. Run "npm run build:android:web" first. (${String(error)})`,
+      );
+    }
+    expect(jsFile, 'expected a built bundle .js asset under dist/android-web/assets').toBeTruthy();
+
+    const bundle = await readFile(resolve(assetsDir, jsFile as string), 'utf8');
+    // The shim assigns window.electronAPI (the renderer rides on it) and embeds
+    // the synthetic S2 seed identity + persisted-config key — all unique to the
+    // shim and present in the built output.
+    expect(bundle).toContain('electronAPI');
+    expect(bundle).toContain('dev@synthetic.local');
+    expect(bundle).toContain('zira-android-pos-config');
   });
 });
