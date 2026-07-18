@@ -343,6 +343,46 @@ export class PosApiClient {
     return response.json();
   }
 
+  /**
+   * POST /api/v1/auth/refresh. Ported from auth-refresh.ts:103-117. Exchanges a
+   * stored `refresh_token` (snake_case body) for a rotated
+   * `{ access_token, refresh_token?, token_type, expires_in }`. Carries NO
+   * Authorization header (the refresh token authenticates the call via the
+   * body); `/api/v1/auth/refresh` is in AUTH_ENDPOINT_PATTERNS so the 401-retry
+   * layer never tries to refresh-the-refresh (it would loop), and with no Bearer
+   * header `getBearerToken` is null so the retry path is inert anyway.
+   *
+   * S6+S7: the shim's TokenProvider.refresh() calls this, then rotates the
+   * tokens in TokenStore. The network-vs-dead-session distinction Windows carries
+   * via AuthRefreshNetworkError is surfaced here as: 401 → throws an Error whose
+   * `status === 401` (refresh-rejected, dead session); any other non-2xx or
+   * fetch throw → plain Error (transient). The transport maps both to refresh()
+   * === false but only clears tokens on the 401 branch.
+   */
+  async refreshAccessToken(refreshToken: string): Promise<{ access_token: string; refresh_token?: string }> {
+    const url = `${this.baseUrl}/api/v1/auth/refresh`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+
+    const body = await response.json();
+    if (!body?.access_token) {
+      // Malformed 2xx — treat like the Windows no-access_token branch (network).
+      const error = new Error('refresh response missing access_token') as Error & { status?: number };
+      throw error;
+    }
+    return body;
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   // Catalog (staff JWT + X-Salon-Slug)
   // ════════════════════════════════════════════════════════════════════════

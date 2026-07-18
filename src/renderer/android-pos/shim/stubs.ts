@@ -133,7 +133,11 @@ export function buildAuthNamespace({ configStore, transport }: StubDeps) {
     generateLoginToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
     checkToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
     generateRegisterToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
-    onExpired: () => noopUnsubscribe(),
+    // S6+S7: a real transport owns the auth-expired emitter; delegate to it when
+    // present, else the S2 no-op unsubscribe that never fires.
+    onExpired: transport.onAuthExpired
+      ? (cb: () => void) => transport.onAuthExpired!(cb)
+      : () => noopUnsubscribe(),
   };
 }
 
@@ -289,7 +293,11 @@ export function buildSyncNamespace({ transport }: StubDeps) {
     staff: async () => ({ success: true, count: 0 }),
     eventStatus: async () => ({ success: true, status: null }),
     flushEvents: async () => ({ success: true, result: { acked: 0, failed: 0 } }),
-    onProductsSynced: () => noopUnsubscribe(),
+    // S6+S7: a real transport owns the products-synced emitter; delegate when
+    // present, else the S2 no-op unsubscribe that never fires.
+    onProductsSynced: transport.onProductsSynced
+      ? (cb: () => void) => transport.onProductsSynced!(cb)
+      : () => noopUnsubscribe(),
     onStaffUpdated: () => noopUnsubscribe(),
     onCatalogUpdated: () => noopUnsubscribe(),
     onStockUpdated: () => noopUnsubscribe(),

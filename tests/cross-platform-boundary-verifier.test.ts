@@ -282,4 +282,51 @@ describe('cross-platform boundary verifier', () => {
       ({ rule }: { rule: string }) => rule === 'UNRESOLVED_LOCAL_IMPORT',
     )).toBe(true);
   });
+
+  // S6+S7: the shim's real transport reaches the eNail backend over `fetch`.
+  // `fetch` is the one network primitive a shim graph may use; the bare
+  // identifier is shimAllowable and dropped in shim mode (still flagged for a
+  // non-shim graph, e.g. the forbidden-network-apis fixture above).
+  test('allows fetch in a shim-bearing graph', async () => {
+    const root = resolve(FIXTURES, 'positive-shim-fetch');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      assumeShimGraph: true,
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  test('keeps fetch forbidden for a non-shim graph', async () => {
+    const result = await verifyFixture('forbidden-network-apis');
+
+    expect(result.graphIncludesShim).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_NETWORK_API',
+    )).toBe(true);
+  });
+
+  // WebSocket/XHR/EventSource/sendBeacon stay forbidden in EVERY mode, even a
+  // shim graph — Android is REST-only (the pa_-keyed socket the Windows agent
+  // opens is a hard rail the port never crosses).
+  test('rejects WebSocket even in a shim-bearing graph', async () => {
+    const root = resolve(FIXTURES, 'forbidden-shim-websocket');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      assumeShimGraph: true,
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_NETWORK_API',
+    )).toBe(true);
+  });
 });

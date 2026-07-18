@@ -16,20 +16,29 @@ async function source(path: string) {
 // installs the shim before mounting POSApp, the shim module exists, and the
 // shim's synthetic surface lands in the built Android web bundle.
 describe('Android Stage 2 — real POS renderer behind the electronAPI shim', () => {
-  test('the entry installs the shim before mounting the real POSApp', async () => {
+  test('the entry installs the shim with the real transport before mounting the boot app', async () => {
     const main = await source('src/renderer/android-pos/main.ts');
 
-    // The shim is imported from the S2 shim package and invoked...
+    // The shim is imported from the S2 shim package and invoked with the real
+    // transport + the SHARED config store (S6+S7)...
     expect(main).toContain("from './shim'");
-    expect(main).toMatch(/installShim\(\)/);
-    // ...and the REAL Windows POS renderer is what gets mounted.
-    expect(main).toContain("from '../windows/pos/POSApp'");
+    expect(main).toContain('createRealTransport');
+    expect(main).toMatch(/installShim\(\{ transport, configStore \}\)/);
+    // ...and the boot app (LoginScreen ↔ the REAL Windows POS renderer) is what
+    // gets mounted.
+    expect(main).toContain("from './AndroidBootApp'");
     expect(main).toMatch(/createRoot/);
     // Source order: the installShim() call precedes the React mount call. (ES
     // module imports are hoisted, but POSApp's module is side-effect-free re:
     // electronAPI — the renderer only touches window.electronAPI at render
     // time, which follows installShim().)
-    expect(main.indexOf('installShim()')).toBeLessThan(main.indexOf('createRoot('));
+    expect(main.indexOf('installShim(')).toBeLessThan(main.indexOf('createRoot('));
+
+    // The boot app mounts the REAL Windows POS renderer after auth.
+    const bootApp = await source('src/renderer/android-pos/AndroidBootApp.tsx');
+    expect(bootApp).toContain("from '../windows/pos/POSApp'");
+    expect(bootApp).toContain('LoginScreen');
+    expect(bootApp).toContain('auth.onExpired');
   });
 
   test('the shim installer module exposes the typed surface', async () => {

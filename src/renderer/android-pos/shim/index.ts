@@ -48,6 +48,13 @@ export interface InstallShimOptions {
   transport?: ShimTransport;
   /** Override the persisted/seed config (e.g. force posMode for a test). */
   config?: Partial<AgentConfig>;
+  /**
+   * Share ONE ShimConfigStore between the shim and a pre-built transport
+   * (S6+S7). createRealTransport writes login identity into the config store;
+   * if the shim built its own instance those writes would land in a different
+   * store than the renderer reads. Omit → the shim creates its own.
+   */
+  configStore?: ShimConfigStore;
   /** Force a fresh store instead of reusing the installed singleton. */
   reinstall?: boolean;
 }
@@ -83,7 +90,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
   }
 
   const transport = options.transport ?? SYNTHETIC_TRANSPORT;
-  const configStore = new ShimConfigStore({ seed: options.config });
+  const configStore = options.configStore ?? new ShimConfigStore({ seed: options.config });
   const posStore = new ShimPosStore();
 
   const stubDeps = { configStore, transport };

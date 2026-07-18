@@ -107,7 +107,13 @@ const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
   // The bare "pa_xxx" literal is the inert API-key format hint embedded by the
   // unmodified renderer's i18n; only suppressible for shim-bearing bundles.
   { label: 'print-agent key literal', pattern: /\bpa_[A-Za-z0-9_-]+/, shimAllowable: true },
-  { label: 'network API', pattern: /\bfetch\s*\(|\b(?:new\s+)?(?:EventSource|WebSocket|XMLHttpRequest)\s*\(|\.sendBeacon\s*\(/ },
+  // S6+S7: `fetch(` is the shim's allowed network primitive (real-transport.ts
+  // calls the eNail backend over fetch). Split out so a shim-bearing bundle may
+  // use it; the socket/xhr/beacon alternatives stay forbidden in every mode
+  // (Android is REST-only — the pa_-keyed socket the Windows agent opens is a
+  // hard rail the port never crosses, plan §1 #1).
+  { label: 'network API (fetch)', pattern: /\bfetch\s*\(/, shimAllowable: true },
+  { label: 'network API (socket/xhr/beacon)', pattern: /\b(?:new\s+)?(?:EventSource|WebSocket|XMLHttpRequest)\s*\(|\.sendBeacon\s*\(/ },
   // The unmodified renderer embeds https UI/SVG/error-decoder links as inert
   // strings (no network call at S2 — the network API pattern above stays active).
   { label: 'HTTP endpoint', pattern: /https?:\/\/[^\s"'<>]+/i, shimAllowable: true },
@@ -603,6 +609,16 @@ function directUsageViolations(sourceFile, isEntry = false) {
           rule: 'FORBIDDEN_NETWORK_API',
           node,
           message: `Network global "${node.text}" is forbidden in the Android/shared source graph`,
+          // S6+S7: the shim's real transport (shim/real-transport.ts) reaches the
+          // eNail backend over `fetch`, behind the shim installer. `fetch` is the
+          // ONE network primitive a shim graph is allowed to use; the socket/xhr/
+          // beacon alternatives stay forbidden in every mode — Android is REST-
+          // only, and the `pa_`-keyed Socket.IO the Windows agent opens is a hard
+          // rail the Android port never crosses (plan §1 #1, S1 §2.B note).
+          // The top-level-call rail (TOP_LEVEL_EFFECT_GLOBALS still flags a
+          // module-load `fetch()`) is unaffected — fetch is only ever called
+          // inside async transport methods.
+          shimAllowable: node.text === 'fetch',
         });
       }
     }
@@ -1104,6 +1120,13 @@ export async function verifyCrossPlatformBoundaries({
 
     for (const bundleFile of bundleFiles) {
       visitedBundleFiles.add(bundleFile);
+      // S6+S7: sql.js is an allowlisted renderer package whose UMD build
+      // carries guarded `typeof process`/`require` environment probes that a
+      // token scan cannot prove dead. The vite config isolates it into a
+      // dedicated vendor chunk; for a shim-bearing graph that ONE vendor chunk
+      // is exempt from token scanning (its import was already policed at the
+      // source level), while every application chunk stays fully scanned.
+      if (graphIncludesShim && /vendor-sqljs-[^/\\]*\.js$/.test(bundleFile)) continue;
       const source = await readFile(bundleFile, 'utf8');
       for (const { label, pattern, shimAllowable } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
         if (shimAllowable && graphIncludesShim) continue;

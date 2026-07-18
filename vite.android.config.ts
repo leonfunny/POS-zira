@@ -29,6 +29,13 @@ export default defineConfig({
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]',
+        // S6+S7: isolate the sql.js UMD (guarded typeof-process environment
+        // probes) into one vendor chunk so the boundary verifier can exempt
+        // exactly that file in shim graphs while scanning all app chunks.
+        manualChunks(id: string) {
+          if (/node_modules\/sql\.js\//.test(id)) return 'vendor-sqljs';
+          return undefined;
+        },
       },
     },
   },

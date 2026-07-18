@@ -132,6 +132,18 @@ export interface ShimTransport {
 
   /** Staff picker for shift open (S5 staff repo mirror). */
   getStaff?(): Promise<Array<{ id: string; user_id?: string | null; name: string; commission_rate: number; is_active: number; role?: string | null }>>;
+
+  /**
+   * Event subscriptions the transport OWNS (it knows when these fire). S6+S7:
+   * a real transport implements these so the shim's `auth.onExpired` /
+   * `pos.sync.onProductsSynced` subscriptions actually deliver. The S2
+   * SYNTHETIC_TRANSPORT omits them → the shim falls back to a no-op unsubscribe
+   * that never emits (the S2 default). S7's createRealTransport implements both.
+   */
+  /** Event: refresh rejected → drop to login (S1 §2.B, §3). Returns unsubscribe. */
+  onAuthExpired?(cb: () => void): () => void;
+  /** Event: catalog reloaded after a sync (S1 §2.E, §3). Returns unsubscribe. */
+  onProductsSynced?(cb: () => void): () => void;
 }
 
 /** Shape persisted by the config store — a subset of AgentConfig (S1 §2.A). */

@@ -8,6 +8,13 @@ import { extname, resolve, sep } from 'node:path';
 
 import { chromium } from 'playwright';
 
+// S6+S7: the built Android bundle now boots the REAL app — with no persisted
+// session the boot component resolves auth.getUser() → unauthenticated and
+// renders the staff LoginScreen. This smoke verifies that real boot path at
+// tablet/phone/split viewports without any network call (no token → the shim
+// transport short-circuits before HTTP; the login form is rendered, not
+// submitted).
+
 const root = resolve(import.meta.dirname, '..');
 const webRoot = resolve(root, 'dist/android-web');
 const viewports = [
@@ -21,6 +28,7 @@ const contentTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.svg', 'image/svg+xml'],
+  ['.wasm', 'application/wasm'],
 ]);
 
 const server = createServer(async (request, response) => {
@@ -53,7 +61,26 @@ const browser = await chromium.launch({ headless: true });
 try {
   for (const viewport of viewports) {
     const page = await browser.newPage({ viewport });
+    const externalRequests = [];
+    await page.route('**/*', async (route) => {
+      const url = route.request().url();
+      if (url.startsWith(pageUrl)) {
+        await route.continue();
+        return;
+      }
+      // The unauthenticated boot must not call any backend — record + block.
+      externalRequests.push(url);
+      await route.abort();
+    });
     await page.goto(pageUrl, { waitUntil: 'load' });
+
+    // Boot resolves to the staff login screen (no persisted session).
+    const emailInput = page.locator('input[type="email"]');
+    await emailInput.waitFor({ state: 'visible', timeout: 15000 });
+    const passwordInput = page.locator('input[type="password"]');
+    const submit = page.locator('button[type="submit"]');
+    assert.equal(await passwordInput.isVisible(), true, `${viewport.name}: password field visible`);
+    assert.equal(await submit.isEnabled(), true, `${viewport.name}: submit button enabled`);
 
     const dimensions = await page.evaluate(() => ({
       clientWidth: document.documentElement.clientWidth,
@@ -64,29 +91,22 @@ try {
       `${viewport.name}: horizontal page overflow ${dimensions.scrollWidth} > ${dimensions.clientWidth}`,
     );
 
-    const checkout = page.locator('#checkout-lock');
-    assert.equal(await checkout.isDisabled(), true, `${viewport.name}: checkout must remain disabled`);
-
-    await page.locator('label[for="category-gel"]').click();
-    assert.equal(
-      await page.locator('.product-card:visible').count(),
-      2,
-      `${viewport.name}: CSS-only gel filter must expose exactly two synthetic cards`,
-    );
-
     if (viewport.name === 'short-landscape-split') {
-      const safetyNote = page.locator('.lock-note');
-      for (const [name, locator] of [['checkout', checkout], ['safety note', safetyNote]]) {
-        await locator.scrollIntoViewIfNeeded();
-        const box = await locator.boundingBox();
-        assert.ok(box, `${viewport.name}: ${name} has no layout box`);
-        assert.ok(box.y >= 0, `${viewport.name}: ${name} remains above the viewport`);
-        assert.ok(
-          box.y + box.height <= viewport.height,
-          `${viewport.name}: ${name} remains below the viewport after scrolling`,
-        );
-      }
+      await submit.scrollIntoViewIfNeeded();
+      const box = await submit.boundingBox();
+      assert.ok(box, `${viewport.name}: submit has no layout box`);
+      assert.ok(box.y >= 0, `${viewport.name}: submit remains above the viewport`);
+      assert.ok(
+        box.y + box.height <= viewport.height,
+        `${viewport.name}: submit remains below the viewport after scrolling`,
+      );
     }
+
+    assert.equal(
+      externalRequests.length,
+      0,
+      `${viewport.name}: unauthenticated boot made external requests: ${externalRequests.join(', ')}`,
+    );
 
     await page.close();
   }
@@ -97,4 +117,4 @@ try {
   });
 }
 
-console.log('PASS Android responsive policy: tablet, portrait, and short landscape/split viewports verified');
+console.log('PASS Android responsive policy: real boot renders the login screen at tablet, portrait, and split viewports with no external requests');

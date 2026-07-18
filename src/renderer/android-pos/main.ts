@@ -1,41 +1,46 @@
 /**
- * Android POS web entry — mounts the REAL Windows POS renderer (POSApp) behind
- * the typed `window.electronAPI` shim.
+ * Android POS web entry — installs the shim with the REAL transport (S6+S7)
+ * and mounts the boot component (LoginScreen ↔ the real Windows POSApp).
  *
- * Packet S2 of the Android parity port — see
- * docs/android-pos/PARITY_PORT_PLAN_2026-07-18.md (§5, S2). The shim MUST be
- * installed before POSApp is imported: the renderer reads `window.electronAPI`
- * during its first render (useConfig / usePosStore). POSApp itself is the
- * unmodified Windows entry — never edit it from this packet.
+ * Packets S2 + S5 + S6+S7 of the Android parity port — see
+ * docs/android-pos/PARITY_PORT_PLAN_2026-07-18.md (§5) and
+ * docs/android-pos/SHIM_CONTRACT_S1.md.
  *
- * S5: the renderer is now STYLED. The SAME Tailwind stylesheet the Windows POS
- * window entry imports (`src/renderer/windows/pos/main.tsx` imports
- * `../../index.css`) is imported here — the relative path resolves to the same
- * `src/renderer/index.css`. The cross-platform boundary verifier was extended
- * (S5 GOAL A) to permit static asset imports (`.css`, vite `?url`) in a
- * shim-bearing graph; this import is the consumer of that allowance.
+ * Ordering note: ES imports are hoisted, so POSApp's module graph loads before
+ * the statements below run — that is safe because the renderer touches
+ * `window.electronAPI` only at render time (useConfig/usePosStore), and
+ * `installShim()` runs before the first render.
+ *
+ * Styling (S5): the SAME Tailwind stylesheet the Windows POS window imports
+ * (src/renderer/index.css; Windows entry uses `../../index.css`, this entry is
+ * one level shallower → `../index.css`).
+ *
+ * Wiring (S6+S7): the ONE ShimConfigStore instance is shared between the shim
+ * surface and the real transport — login writes identity into the same store
+ * the renderer reads (see InstallShimOptions.configStore).
  */
 
-import { installShim } from './shim';
+import '../index.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import POSApp from '../windows/pos/POSApp';
-// The SAME stylesheet the Windows POS window mounts (src/renderer/index.css).
-// Windows's entry is at src/renderer/windows/pos/main.tsx and imports
-// `../../index.css`; this entry is one level shallower
-// (src/renderer/android-pos/main.ts), so the relative path to the same file is
-// `../index.css`. Importing it styles the mounted renderer (Tailwind utilities).
-import '../index.css';
+import { installShim } from './shim';
+import { ShimConfigStore } from './shim/config-store';
+import { TokenStore } from './shim/token-store';
+import { createRealTransport } from './shim/real-transport';
+import AndroidBootApp from './AndroidBootApp';
 
-// Install the electronAPI surface (synthetic fakes, no transport) BEFORE the
-// renderer mounts. This is the single allowed module-load side effect of the
-// entry — the boundary verifier permits it because the shim installer is in
-// this graph (it is the contract that makes the real renderer safe to run).
-installShim();
+const configStore = new ShimConfigStore();
+const tokenStore = new TokenStore();
+const transport = createRealTransport({ configStore, tokenStore });
+
+// Install the electronAPI surface BEFORE the renderer mounts. This is the
+// single allowed module-load side effect of the entry — the boundary verifier
+// permits it because the shim installer is in this graph.
+installShim({ transport, configStore });
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
   createRoot(rootElement).render(
-    React.createElement(React.StrictMode, null, React.createElement(POSApp)),
+    React.createElement(React.StrictMode, null, React.createElement(AndroidBootApp)),
   );
 }
