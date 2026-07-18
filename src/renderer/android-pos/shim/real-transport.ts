@@ -52,6 +52,14 @@ import { initAndroidDb, type AndroidDatabase, type AndroidDbInitOptions } from '
 import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
 import { createSyncMeta } from './db/sync-meta';
+import {
+  buildBackendOrderItem,
+  createOrderRepo,
+  getLineSaleQuantity,
+  getLineSaleUnit,
+  getLineSellBy,
+  getLineTotalGrosze,
+} from './db/order-repo';
 
 // ─── Backend base URL ──────────────────────────────────────────────────────
 
@@ -268,6 +276,94 @@ function normalizeCategoryRow(cat: any): AndroidCategoryRow | null {
   };
 }
 
+// ─── Order sync helpers (ported from src/main/sync/order-sync.ts) ──────────
+
+/** Max transient sync attempts before shelving (order-sync.ts:11). */
+const MAX_SYNC_ATTEMPTS = 5;
+
+/** order-sync.ts:14-20 — business-rule rejections are never retried. */
+const BUSINESS_ERROR_PATTERNS = [
+  /insufficient stock/i,
+  /stock.*not available/i,
+  /price.*mismatch/i,
+  /tender.*less than/i,
+  /invalid.*product/i,
+];
+
+/** order-sync.ts:23-29. */
+function classifyError(msg: string): { kind: 'business' | 'transient'; code?: string } {
+  if (BUSINESS_ERROR_PATTERNS.some((p) => p.test(msg))) {
+    if (/insufficient stock/i.test(msg)) return { kind: 'business', code: 'INSUFFICIENT_STOCK' };
+    return { kind: 'business', code: 'BUSINESS_RULE' };
+  }
+  return { kind: 'transient' };
+}
+
+/** order-sync.ts:31-36. */
+function getBackendOrderNumber(response: any): string | undefined {
+  const direct = response?.orderNumber ?? response?.order_number;
+  if (typeof direct === 'string' && direct.trim()) return direct;
+  const nested = response?.order?.orderNumber ?? response?.order?.order_number;
+  return typeof nested === 'string' && nested.trim() ? nested : undefined;
+}
+
+/** order-sync.ts:38-44. */
+function normalizePosLocalCreatedAt(value: string | null | undefined): string | undefined {
+  const raw = String(value || '').trim();
+  if (!raw) return undefined;
+  const normalized = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
+  const date = new Date(normalized);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+/** order-sync.ts:187-191 — local payment method → backend enum. */
+const PM_MAP: Record<string, string> = {
+  CASH: 'CASH', CARD: 'CARD', BLIK: 'BLIK',
+  TRANSFER: 'BANK_TRANSFER', BANK_TRANSFER: 'BANK_TRANSFER',
+  CREDIT: 'CREDIT', INVOICE: 'BANK_TRANSFER',
+};
+
+/**
+ * Build the CreateB2BPOSOrderDto from a local order row + items — ported
+ * byte-for-byte from order-sync.ts:163-224. LOCAL rows are integer grosze;
+ * the BACKEND DTO carries PLN decimals (/100) — the S1 §2.F trap.
+ */
+function buildOrderDto(order: any, items: any[]): Record<string, any> {
+  const dto: Record<string, any> = {
+    id: order.id, // idempotency key
+    priceType: 'brutto',
+    requiresInvoice: !!order.customer_nip,
+    posLocalCreatedAt: normalizePosLocalCreatedAt(order.created_at),
+    items: items
+      .filter((item) => item.variant_id || item.id)
+      .map((item) => buildBackendOrderItem(item)),
+  };
+  const tendersJson = order.payment_tenders;
+  if (tendersJson) {
+    try {
+      const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
+      if (tenders.length > 0) {
+        dto.tenders = tenders.map((t) => ({ method: PM_MAP[t.method] || t.method, amount: t.amount / 100 }));
+      }
+    } catch { /* single method fallback below */ }
+  }
+  if (order.payment_method) dto.paymentMethod = PM_MAP[order.payment_method] || 'CASH';
+  if (order.staff_id) dto.staffId = order.staff_id;
+  if (order.staff_name) dto.staffName = order.staff_name;
+  if (order.shift_id) dto.shiftId = order.shift_id;
+  if (order.customer_id) dto.customerId = order.customer_id;
+  if (order.customer_nip) dto.customerNip = order.customer_nip;
+  if (order.customer_name) dto.customerName = order.customer_name;
+  if (order.source) dto.source = order.source;
+  if (order.order_type) dto.orderType = order.order_type;
+  if (order.mode) dto.mode = order.mode;
+  if (order.discount > 0) dto.discountAmount = order.discount / 100;
+  if (order.payment_amount > 0) dto.paymentAmount = order.payment_amount / 100;
+  if (order.change_amount > 0) dto.changeAmount = order.change_amount / 100;
+  if (order.tip && order.tip > 0) dto.tip = order.tip / 100;
+  return dto;
+}
+
 /**
  * ported from product-sync.ts:151-168. A v2 cursor that the backend has marked
  * as unsafe (status 409 + code PRODUCT_SYNC_CURSOR_UNSAFE + resetRequired) —
@@ -310,10 +406,14 @@ type RefreshOutcome = 'success' | 'rejected' | 'no-refresh-token' | 'transient' 
  * hooks (`onAuthExpired` / `onProductsSynced`) the shim's auth/sync namespaces
  * delegate to.
  */
-export function createRealTransport(options: RealTransportOptions): ShimTransport & {
+export interface RealTransportEvents {
   onAuthExpired(cb: () => void): () => void;
   onProductsSynced(cb: () => void): () => void;
-} {
+  onOrderSynced(cb: (payload: { orderId: string; backendId: string }) => void): () => void;
+  onOrderSyncFailed(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void;
+}
+
+export function createRealTransport(options: RealTransportOptions): ShimTransport & RealTransportEvents {
   const { configStore, tokenStore } = options;
   const baseUrl = resolveApiUrl(configStore);
 
@@ -325,7 +425,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
   const expiredListeners = new Set<() => void>();
   const productsSyncedListeners = new Set<() => void>();
+  const orderSyncedListeners = new Set<(payload: { orderId: string; backendId: string }) => void>();
+  const orderSyncFailedListeners = new Set<(payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
+  let orderSyncInFlight: Promise<void> | null = null;
 
   /** Clear the session identity (keep local DB — logout ≠ wipe, S1 §2.B note). */
   const clearSessionIdentity = () => {
@@ -394,10 +497,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     return dbPromise;
   };
 
-  const transport: ShimTransport & {
-    onAuthExpired(cb: () => void): () => void;
-    onProductsSynced(cb: () => void): () => void;
-  } = {
+  const transport: ShimTransport & RealTransportEvents = {
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
       try {
@@ -422,6 +522,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           posMode: 'retail',
         } as Partial<AgentConfig>);
         client.salonSlug = salonSlug || client.salonSlug;
+        // Seed the staff picker with the logged-in cashier (documented
+        // divergence: Windows fills `staff` via its staff sync worker; the
+        // Android staff-sync packet lands later).
+        try {
+          const database = await db();
+          createOrderRepo(database).upsertStaff({
+            id: authUser.id,
+            user_id: authUser.id,
+            name: [authUser.firstName, authUser.lastName].filter(Boolean).join(' ') || authUser.email,
+            role: authUser.role,
+          });
+        } catch { /* staff seeding must never fail a login */ }
         return { success: true, data: { user: authUser } };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
@@ -571,6 +683,205 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       return { success: true, productsCount };
     },
 
+    // ── Orders: CASH create + push (S8 — ported pos.module.ts:3053-3121 and
+    //    order-sync.ts:97-292) ─────────────────────────────────────────────
+    async createOrder(order: any, items: any[]): Promise<{ success: boolean; id?: string; error?: string }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        const productRepo = createProductRepo(database);
+        const normalizedOrder = { ...(order || {}) };
+        const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
+        if (isPosOrder) {
+          // Shift enforcement — ported from pos.module.ts:3057-3095.
+          const activeShift = orderRepo.getActiveShift();
+          const staffMissing = !String(normalizedOrder.staff_name || '').trim();
+          const staffIdMissing = !String(normalizedOrder.staff_id || '').trim();
+          const shiftMissing = !normalizedOrder.shift_id;
+          if (activeShift && (staffMissing || shiftMissing || staffIdMissing)) {
+            normalizedOrder.shift_id = activeShift.id;
+            normalizedOrder.staff_id = activeShift.staff_id;
+            normalizedOrder.staff_name = activeShift.staff_name;
+          }
+          const requestedShiftId = String(normalizedOrder.shift_id || '').trim();
+          if (!requestedShiftId || !String(normalizedOrder.staff_id || '').trim() || !String(normalizedOrder.staff_name || '').trim()) {
+            return { success: false, error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.' };
+          }
+          const orderShift = orderRepo.getOpenShiftById(requestedShiftId);
+          if (!orderShift) {
+            return { success: false, error: 'Cannot create POS order without a local active shift. Close and reopen the shift before payment.' };
+          }
+          normalizedOrder.shift_id = orderShift.id;
+          normalizedOrder.staff_id = orderShift.staff_id;
+          normalizedOrder.staff_name = orderShift.staff_name;
+        }
+
+        // Item normalization — ported from pos.module.ts:3097-3119.
+        const normalizedItems = (items || []).map((item: any) => {
+          const product = item.variant_id ? productRepo.getById(item.variant_id) : null;
+          const sell_by = getLineSellBy({
+            ...item,
+            sell_by: item.sell_by ?? item.sellBy ?? (product as any)?.sell_by ?? 'PIECE',
+          });
+          const sale_quantity = getLineSaleQuantity({ ...item, sell_by });
+          const sale_unit = getLineSaleUnit({
+            ...item,
+            sell_by,
+            sale_unit: item.sale_unit ?? item.saleUnit ?? (product as any)?.sale_unit ?? null,
+          });
+          const price = Math.max(0, Math.round(Number(item.price) || 0));
+          return {
+            ...item,
+            price,
+            quantity: sale_quantity,
+            sale_quantity,
+            sale_unit,
+            sell_by,
+            total: getLineTotalGrosze({ ...item, price, quantity: sale_quantity, sale_quantity, sell_by }),
+          };
+        });
+
+        const id = orderRepo.create(normalizedOrder, normalizedItems);
+
+        // Local stock decrement — ported from pos.module.ts:3132-3139.
+        const allowNegative = (configStore.getRawConfig() as any).allowOversell === true;
+        for (const item of normalizedItems) {
+          if (item.variant_id && item.quantity > 0) {
+            database.run(
+              allowNegative
+                ? 'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?'
+                : 'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ?',
+              [item.quantity, item.quantity, item.variant_id],
+            );
+          }
+        }
+
+        // Paid orders must survive a crash — flush immediately (order-repo.ts:249-250).
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+        return { success: true, id };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+
+    /** Drain pending orders — ported loop from order-sync.ts:87-292 (minus the
+     *  Windows local-variant-import deferral, which has no Android source). */
+    async syncOrders(): Promise<void> {
+      if (orderSyncInFlight) return orderSyncInFlight;
+      orderSyncInFlight = (async () => {
+        const token = await tokenStore.getAccessToken();
+        if (!token) return;
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        orderRepo.recoverStrandedSyncing();
+        const pending = orderRepo.getUnsynced();
+        for (const order of pending) {
+          const attempts = order.sync_attempts ?? 0;
+          if (attempts >= MAX_SYNC_ATTEMPTS) {
+            orderRepo.shelve(order.id, order.sync_error ?? 'Max retries exceeded');
+            continue;
+          }
+          try {
+            const items = orderRepo.getItemsByOrderId(order.id);
+            orderRepo.markSyncing(order.id);
+            database.run('UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?', [order.id]);
+            if (items.length === 0) {
+              orderRepo.markSynced(order.id, 'no-items');
+              continue;
+            }
+            const dto = buildOrderDto(order, items);
+            if (dto.items.length === 0) {
+              orderRepo.markSynced(order.id, 'no-valid-items');
+              continue;
+            }
+            const result = await client.createPosOrder(dto);
+            const backendId = String(result.id ?? result.orderId ?? order.id);
+            let backendOrderNumber = getBackendOrderNumber(result);
+            // Finalize immediately — triggers backend stock deduction
+            // (order-sync.ts:230-238). finishOrder failure is non-fatal.
+            try {
+              const finishResult = await client.finishOrder(backendId);
+              backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
+            } catch { /* non-fatal, matches Windows */ }
+            orderRepo.markSynced(order.id, backendId, backendOrderNumber);
+            database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
+            for (const cb of [...orderSyncedListeners]) {
+              try { cb({ orderId: order.id, backendId }); } catch { /* listener isolation */ }
+            }
+          } catch (err: any) {
+            const errMsg = String(err?.message || err).substring(0, 500);
+            const classified = classifyError(errMsg);
+            if (classified.kind === 'business') {
+              orderRepo.shelve(order.id, errMsg);
+              for (const cb of [...orderSyncFailedListeners]) {
+                try {
+                  cb({ orderId: order.id, orderNumber: order.order_number ?? null, error: errMsg, code: classified.code });
+                } catch { /* listener isolation */ }
+              }
+            } else {
+              orderRepo.markSyncFailed(order.id);
+              database.run('UPDATE orders SET sync_error = ? WHERE id = ?', [errMsg, order.id]);
+            }
+          }
+        }
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+      })().finally(() => { orderSyncInFlight = null; });
+      return orderSyncInFlight;
+    },
+
+    async getOrderHistory(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }> {
+      return createOrderRepo(await db()).getHistory(filters);
+    },
+    async getOrderDetail(orderId: string): Promise<{ order: any; items: any[] } | null> {
+      const orderRepo = createOrderRepo(await db());
+      const order = orderRepo.getById(orderId);
+      if (!order) return null;
+      return { order, items: orderRepo.getItemsByOrderId(orderId) };
+    },
+
+    // ── Shifts (S9 — local-first port of shift-controller.ts:75-170 +
+    //    pos.module.ts:4650-4666) ────────────────────────────────────────────
+    async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        const shiftId = (globalThis.crypto?.randomUUID?.() ?? `shift-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        orderRepo.openShift(shiftId, data.staffId, data.staffName, data.openingCash);
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+        // Async backend sync, non-blocking (shift-controller.ts:88).
+        void client.openPosShift({ staffId: data.staffId, openingCash: data.openingCash })
+          .catch(() => { /* backend outage never blocks the local shift */ });
+        return { success: true, shiftId };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+    async closeShift(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        // Ghost shift → clear gracefully (pos.module.ts:4663-4676).
+        if (!orderRepo.getOpenShiftById(data.shiftId)) {
+          void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
+            .catch(() => { /* best-effort server ghost close */ });
+          return { success: true, report: null };
+        }
+        // Pre-close order drain, never blocking (pos.module.ts:4680-4700 —
+        // Windows races a 2s timeout; the Android drain is awaited best-effort).
+        await (transport.syncOrders?.() ?? Promise.resolve()).catch(() => { /* offline close is fine */ });
+        const report = orderRepo.closeShift(data.shiftId, data.closingCash);
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+        void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
+          .catch(() => { /* backend outage never blocks the local Z-report */ });
+        return { success: true, report };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+    async getStaff(): Promise<any[]> {
+      return createOrderRepo(await db()).getStaff();
+    },
+
     // ── Event subscription hooks (delegated to by stubs.ts) ─────────────────
     onAuthExpired(cb: () => void): () => void {
       expiredListeners.add(cb);
@@ -579,6 +890,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     onProductsSynced(cb: () => void): () => void {
       productsSyncedListeners.add(cb);
       return () => { productsSyncedListeners.delete(cb); };
+    },
+    onOrderSynced(cb: (payload: { orderId: string; backendId: string }) => void): () => void {
+      orderSyncedListeners.add(cb);
+      return () => { orderSyncedListeners.delete(cb); };
+    },
+    onOrderSyncFailed(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void {
+      orderSyncFailedListeners.add(cb);
+      return () => { orderSyncFailedListeners.delete(cb); };
     },
   };
 

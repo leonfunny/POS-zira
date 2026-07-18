@@ -144,6 +144,10 @@ export interface ShimTransport {
   onAuthExpired?(cb: () => void): () => void;
   /** Event: catalog reloaded after a sync (S1 §2.E, §3). Returns unsubscribe. */
   onProductsSynced?(cb: () => void): () => void;
+  /** Event: an order landed on the backend (S1 §2.E pos:order-synced). */
+  onOrderSynced?(cb: (payload: { orderId: string; backendId: string }) => void): () => void;
+  /** Event: an order was shelved by a business rule (S1 §2.E pos:order-sync-failed). */
+  onOrderSyncFailed?(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void;
 }
 
 /** Shape persisted by the config store — a subset of AgentConfig (S1 §2.A). */

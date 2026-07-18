@@ -74,6 +74,91 @@ export const ANDROID_SCHEMA_DDL = `
     value TEXT,
     updated_at TEXT
   );
+
+  -- S8+S9: order/shift tables — column set ported from the Windows INSERTs
+  -- (order-repo.ts:218-243) plus the sync/backend columns the sync loop and
+  -- history read (synced tri-state 0/1/2/-1, sync_attempts, sync_error,
+  -- backend_id, synced_at, created_at). sequence_counters ports the atomic
+  -- order-number counter (order-repo.ts generateOrderNumber). shifts ports the
+  -- shift-controller row (id, staff, opening/closing cash, opened/closed).
+  CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    order_number TEXT,
+    status TEXT,
+    subtotal INTEGER DEFAULT 0,
+    discount INTEGER DEFAULT 0,
+    tax INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    payment_method TEXT,
+    payment_amount INTEGER DEFAULT 0,
+    change_amount INTEGER DEFAULT 0,
+    staff_id TEXT,
+    staff_name TEXT,
+    customer_id TEXT,
+    customer_name TEXT,
+    customer_nip TEXT,
+    shift_id TEXT,
+    source TEXT DEFAULT 'POS',
+    table_id TEXT,
+    covers INTEGER,
+    order_type TEXT DEFAULT 'standard',
+    tip INTEGER DEFAULT 0,
+    mode TEXT DEFAULT 'retail',
+    payment_tenders TEXT,
+    kitchen_number TEXT,
+    synced INTEGER DEFAULT 0,
+    sync_attempts INTEGER DEFAULT 0,
+    sync_error TEXT,
+    backend_id TEXT,
+    synced_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
+  CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
+
+  CREATE TABLE IF NOT EXISTS order_items (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    variant_id TEXT,
+    name TEXT,
+    sku TEXT,
+    price INTEGER DEFAULT 0,
+    quantity REAL DEFAULT 1,
+    sale_quantity REAL,
+    sale_unit TEXT,
+    sell_by TEXT DEFAULT 'PIECE',
+    total INTEGER DEFAULT 0,
+    vat_rate INTEGER DEFAULT 23,
+    staff_id TEXT,
+    staff_name TEXT,
+    notes TEXT,
+    course INTEGER DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+
+  CREATE TABLE IF NOT EXISTS shifts (
+    id TEXT PRIMARY KEY,
+    staff_id TEXT,
+    staff_name TEXT,
+    opening_cash INTEGER DEFAULT 0,
+    closing_cash INTEGER,
+    opened_at TEXT DEFAULT (datetime('now')),
+    closed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS staff (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT NOT NULL,
+    commission_rate REAL DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    role TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS sequence_counters (
+    name TEXT PRIMARY KEY,
+    current_value INTEGER DEFAULT 0
+  );
 `;
 
 /**
@@ -95,5 +180,5 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
-/** Bumped only on an incompatible schema change (none yet — fresh v1). */
-export const ANDROID_SCHEMA_VERSION = 1;
+/** v2 = S8+S9 order/shift/staff/sequence tables (additive, IF NOT EXISTS). */
+export const ANDROID_SCHEMA_VERSION = 2;

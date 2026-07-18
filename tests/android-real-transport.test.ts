@@ -235,3 +235,160 @@ describe('real transport catalog sync', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('real transport orders + shifts (S8+S9)', () => {
+  const CASH_ORDER = (shiftId: string) => ({
+    id: 'local-order-1',
+    order_number: null,
+    number_series: 'ORDER',
+    status: 'COMPLETED',
+    subtotal: 4900,
+    discount: 0,
+    tax: 0,
+    total: 4900,
+    payment_method: 'CASH',
+    payment_amount: 5000,
+    change_amount: 100,
+    shift_id: shiftId,
+    source: 'POS',
+    mode: 'retail',
+    synced: 0,
+  });
+  const CASH_ITEMS = [{
+    id: 'line-1', order_id: 'local-order-1', variant_id: 'p1', name: 'Gel Polish',
+    sku: 'SKU-1', price: 4900, quantity: 1, sell_by: 'PIECE', total: 4900, vat_rate: 23,
+  }];
+
+  async function transportWithShift() {
+    fetchMock.mockResolvedValue(jsonResponse(LOGIN_BODY));
+    const built = build();
+    await built.transport.loginWithEmail!('staff@salon.pl', 'pw');
+    fetchMock.mockResolvedValue(jsonResponse({ shiftId: 'server-shift' }));
+    const open = await built.transport.openShift!({ staffId: 'staff-1', staffName: 'Ala Nowak', openingCash: 10000 });
+    expect(open.success).toBe(true);
+    return { ...built, shiftId: open.shiftId! };
+  }
+
+  test('createOrder without an open shift is refused (Windows parity)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(LOGIN_BODY));
+    const { transport } = build();
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    const result = await transport.createOrder!(CASH_ORDER('missing-shift'), CASH_ITEMS);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('shift');
+  });
+
+  test('CASH order: local create → sync sends PLN-decimal DTO → finish → marked synced', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const synced = vi.fn();
+    (transport as any).onOrderSynced(synced);
+
+    const created = await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    expect(created).toMatchObject({ success: true, id: 'local-order-1' });
+
+    const requests: Array<{ url: string; body: any }> = [];
+    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const target = String(url);
+      requests.push({ url: target, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (/\/b2b\/pos\/orders\/backend-1\/finish$/.test(target)) {
+        return jsonResponse({ orderNumber: 'POS-20260718-0042' });
+      }
+      if (/\/b2b\/pos\/orders$/.test(target)) return jsonResponse({ id: 'backend-1' });
+      throw new Error(`unexpected fetch: ${target}`);
+    });
+
+    await transport.syncOrders!();
+
+    const createCall = requests.find((r) => /\/b2b\/pos\/orders$/.test(r.url));
+    expect(createCall).toBeDefined();
+    // The S1 §2.F trap: local grosze → backend PLN decimals.
+    expect(createCall!.body).toMatchObject({
+      id: 'local-order-1',
+      priceType: 'brutto',
+      paymentMethod: 'CASH',
+      paymentAmount: 50,
+      changeAmount: 1,
+      shiftId,
+    });
+    expect(createCall!.body.items[0]).toMatchObject({ variantId: 'p1', customPrice: 49, packQuantity: 1 });
+    expect(requests.some((r) => /\/finish$/.test(r.url))).toBe(true);
+    expect(synced).toHaveBeenCalledWith({ orderId: 'local-order-1', backendId: 'backend-1' });
+
+    const detail = await transport.getOrderDetail!('local-order-1');
+    expect(detail?.order).toMatchObject({ synced: 1, backend_id: 'backend-1', order_number: 'POS-20260718-0042' });
+    expect(detail?.items).toHaveLength(1);
+  });
+
+  test('business-rule rejection shelves the order (synced = -1) and emits failure', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const failed = vi.fn();
+    (transport as any).onOrderSyncFailed(failed);
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'Insufficient stock for SKU-1' }, 400));
+    await transport.syncOrders!();
+
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ code: 'INSUFFICIENT_STOCK' }));
+    const detail = await transport.getOrderDetail!('local-order-1');
+    expect(detail?.order.synced).toBe(-1);
+
+    // A second drain must NOT retry a shelved order.
+    fetchMock.mockClear();
+    await transport.syncOrders!();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('transient failure reverts to pending for retry and eventually shelves at the cap', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+
+    fetchMock.mockRejectedValue(new TypeError('network down'));
+    for (let i = 0; i < 5; i += 1) {
+      await transport.syncOrders!();
+      const detail = await transport.getOrderDetail!('local-order-1');
+      expect(detail?.order.synced).toBe(0); // reverted to pending each time
+    }
+    // Attempt cap reached → next drain shelves without an HTTP call.
+    fetchMock.mockClear();
+    await transport.syncOrders!();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const detail = await transport.getOrderDetail!('local-order-1');
+    expect(detail?.order.synced).toBe(-1);
+  });
+
+  test('closeShift drains orders, aggregates the Z-report, and closes locally', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (/\/finish$/.test(target)) return jsonResponse({});
+      if (/\/b2b\/pos\/orders$/.test(target)) return jsonResponse({ id: 'backend-1' });
+      if (/\/close$/.test(target)) return jsonResponse({});
+      throw new Error(`unexpected fetch: ${target}`);
+    });
+
+    const closed = await transport.closeShift!({ shiftId, closingCash: 14900 });
+    expect(closed.success).toBe(true);
+    expect(closed.report).toMatchObject({
+      shiftId,
+      totalSales: 4900,
+      totalOrders: 1,
+      cashTotal: 4900,
+      openingCash: 10000,
+      closingCash: 14900,
+      difference: 0,
+      unsyncedOrders: 0,
+    });
+
+    // A second order after close is refused — the shift is gone.
+    const after = await transport.createOrder!({ ...CASH_ORDER(shiftId), id: 'local-order-2' }, CASH_ITEMS);
+    expect(after.success).toBe(false);
+  });
+
+  test('the staff picker is seeded with the logged-in cashier', async () => {
+    const { transport } = await transportWithShift();
+    const staff = await transport.getStaff!();
+    expect(staff).toHaveLength(1);
+    expect(staff[0]).toMatchObject({ id: 'staff-1', name: 'Ala Nowak', is_active: 1 });
+  });
+});

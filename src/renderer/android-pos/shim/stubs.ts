@@ -301,8 +301,13 @@ export function buildSyncNamespace({ transport }: StubDeps) {
     onStaffUpdated: () => noopUnsubscribe(),
     onCatalogUpdated: () => noopUnsubscribe(),
     onStockUpdated: () => noopUnsubscribe(),
-    onOrderSynced: () => noopUnsubscribe(),
-    onOrderSyncFailed: () => noopUnsubscribe(),
+    // S8: a real transport owns the order sync emitters; delegate when present.
+    onOrderSynced: transport.onOrderSynced
+      ? (cb: (payload: { orderId: string; backendId: string }) => void) => transport.onOrderSynced!(cb)
+      : () => noopUnsubscribe(),
+    onOrderSyncFailed: transport.onOrderSyncFailed
+      ? (cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => transport.onOrderSyncFailed!(cb)
+      : () => noopUnsubscribe(),
     onDraftProductsSynced: () => noopUnsubscribe(),
     getConflicts: async () => [],
     resolveConflict: async () => ({ success: true }),
