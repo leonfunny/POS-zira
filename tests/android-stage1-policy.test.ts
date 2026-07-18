@@ -34,6 +34,10 @@ describe('Android Stage 1 native policy', () => {
     expect(buildRunner).toContain("':app:assembleDebug'");
     expect(buildRunner).toContain("':app:assembleDebugAndroidTest'");
     expect(buildRunner).not.toMatch(/['"]assembleDebugAndroidTest['"]/);
+    expect(buildRunner).toContain("':app:assembleRelease'");
+    expect(buildRunner).toContain("':app:bundleRelease'");
+    expect(buildRunner).toContain('app-release-unsigned.apk');
+    expect(buildRunner).toContain('signed release APK detected');
 
     const manifestVerifier = await source('scripts/verify-android-manifests.mjs');
     expect(manifestVerifier).toContain('allowedUsedPermissions');

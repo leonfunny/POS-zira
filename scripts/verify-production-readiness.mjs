@@ -495,6 +495,8 @@ if (isCli) {
     if (result.failures.length > 0) console.error(`FAILURES:\n- ${result.failures.join('\n- ')}`);
     console.log(`VERDICT: ${result.verdict} (${result.blockedCount} blocked)`);
   }
+  // --evidence-report records the register state without turning a legitimate
+  // NO-GO into a pipeline failure; hard policy failures still exit 1.
   if (result.failures.length > 0) process.exitCode = 1;
-  else if (result.verdict !== 'GO') process.exitCode = EXIT_NO_GO;
+  else if (result.verdict !== 'GO' && !process.argv.includes('--evidence-report')) process.exitCode = EXIT_NO_GO;
 }

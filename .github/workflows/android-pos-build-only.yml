@@ -50,6 +50,20 @@ jobs:
       - name: Verify shared platform boundaries
         run: npm run test:boundaries
 
+      - name: Record production readiness register evidence
+        run: |
+          mkdir -p ci-artifacts
+          node scripts/verify-production-readiness.mjs --json --evidence-report > ci-artifacts/readiness-register.json
+
+      - name: Upload immutable readiness register evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: readiness-register-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ci-artifacts/readiness-register.json
+
       - name: Emit fail-closed R12 gate report
         run: |
           mkdir -p ci-artifacts
@@ -117,6 +131,8 @@ jobs:
           mkdir -p ci-artifacts/android-evidence
           cp android-pos/app/build/outputs/apk/debug/app-debug.apk ci-artifacts/android-evidence/app-debug.apk
           cp android-pos/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk ci-artifacts/android-evidence/app-debug-androidTest.apk
+          cp android-pos/app/build/outputs/apk/release/app-release-unsigned.apk ci-artifacts/android-evidence/app-release-unsigned.apk
+          cp android-pos/app/build/outputs/bundle/release/app-release.aab ci-artifacts/android-evidence/app-release-unsigned.aab
           cp android-pos/app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml ci-artifacts/android-evidence/AndroidManifest-debug.xml
           cp android-pos/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml ci-artifacts/android-evidence/AndroidManifest-release.xml
           tar -czf ci-artifacts/android-build-evidence.tar.gz -C ci-artifacts/android-evidence .

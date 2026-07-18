@@ -16,10 +16,12 @@ Parent plan: `IMPLEMENTATION_PLAN_2026-07-17.md`; blocker register of record: `O
 | Pushed to GitHub | No |
 | Published/deployed/verified live | No; forbidden in this packet |
 
-This packet adds evidence tooling only. It changes no runtime behavior, no
-Android identity, no signing, no workflow, and no backend state. Passing its
-tests is not production readiness; the gate exists precisely to prove the
-opposite until every blocker closes with owner-reviewed evidence.
+This packet (and its same-day follow-up wave below) touches only evidence
+tooling, build scripts, and the build-only CI workflow. It changes no
+application runtime behavior, no Android identity, no signing, no publication
+channel, and no backend state. Passing its tests is not production readiness;
+the gate exists precisely to prove the opposite until every blocker closes
+with owner-reviewed evidence.
 
 ## What was added
 
@@ -33,7 +35,7 @@ opposite until every blocker closes with owner-reviewed evidence.
   requires `evidence {approvedBy, date, reference}`; the gate rejects an
   approval without complete evidence, unknown/duplicate/missing entries, and
   any decision value other than `blocked`/`approved`.
-- `tests/production-readiness-gate.test.ts` — 61 executable tests: each
+- `tests/production-readiness-gate.test.ts` — 62 executable tests: each
   detector in both directions on synthetic fixtures, register schema
   validation, fail-closed coupling, and the real-repository verdict.
 - npm scripts `gate:production-readiness` and `test:production-readiness`.
@@ -54,8 +56,8 @@ Checks read build inputs and built artifacts, not prose:
 | `legacy-publish-lane` | Every workflow in `.github/workflows` other than the build-only pipeline, scanned for R2/Play/electron-builder publication and tag-triggered installer builds |
 | `node-engines-contract` | `package.json` engines vs the pinned Node 22 toolchain |
 | `signing-material-hygiene` | Tracked file list (`git ls-files`, fs walk fallback) scanned for `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.pepk`, committed `*.apk`/`*.aab`, `keystore/key/signing/release.properties`, `google-services.json`, `agconnect-services.json`; plus a content scan of tracked gradle/properties sources for literal `storePassword`/`keyPassword` values (environment-sourced values pass) |
-| `electron-publish-defaults` | `package.json` `build.publish` vs `dist*` scripts missing `--publish never` (electron-builder defaults to `onTagOrDraft` on tagged CI runs) |
-| `release-artifact-ci` | `scripts/run-android-build.mjs` — CI currently assembles only debug variants; no release artifact is ever exercised |
+| `electron-publish-defaults` | `package.json` `build.publish` vs any electron-builder script missing `--publish never` (electron-builder defaults to `onTagOrDraft` on tagged CI runs; `--dir` builds never publish) |
+| `release-artifact-ci` | `scripts/run-android-build.mjs` must exercise release-variant assembly |
 | `local-publish-scripts` | Presence of `scripts/build-and-upload.sh`/`.ts`, which can mutate the R2 `latest.yml` update channel gated only by environment variables |
 | 14 owner-decision entries | `production-readiness-register.json` |
 
@@ -77,20 +79,48 @@ Checks read build inputs and built artifacts, not prose:
 
 ## Current verdict (2026-07-18, this checkout)
 
-`NO-GO` — 24 blocked (10 automatic + 14 owner decisions), 3 passing
+`NO-GO` — 22 blocked (8 automatic + 14 owner decisions), 5 passing
 (`build-only-security-policy`, `merged-manifest-evidence`,
-`signing-material-hygiene`), 0 hard failures, exit code 13.
+`signing-material-hygiene`, `electron-publish-defaults`,
+`release-artifact-ci`), 0 hard failures, exit code 13.
 
 Automatic blockers: development applicationId, no Play flavor, no release
 signing contract, per-run CI versionCode, `BLOCKED_R12`, legacy
-`.github/workflows/build.yml` R2 publish lane, Node 20 engines contract,
-implicit electron-builder publish defaults on `dist`/`dist:win`, debug-only
-CI assembly, and the ungated local `build-and-upload` R2 scripts.
+`.github/workflows/build.yml` R2 publish lane, Node 20 engines contract, and
+the ungated local `build-and-upload` R2 scripts.
 
-The last three automatic blockers come from an independent Claude-GLM
-read-only audit (2026-07-18) that confirmed all originally planned checks
-against file:line evidence and identified the publish-default, release
-assembly, and local-upload gaps.
+Three of the automatic checks came from an independent Claude-GLM read-only
+audit (2026-07-18) that confirmed all originally planned checks against
+file:line evidence and identified the publish-default, release-assembly, and
+local-upload gaps.
+
+## Same-day follow-up wave (no owner decision consumed)
+
+Two automatic blockers were closed through reviewed configuration changes
+that need no owner decision, and the register evidence is now recorded in CI:
+
+1. `electron-publish-defaults` cleared: `dist` and `dist:win` are pinned to
+   `--publish never`. The legacy `build.yml` python R2 upload and the local
+   `build-and-upload.ts` upload are deliberate manual paths and keep working;
+   only electron-builder's implicit `onTagOrDraft` publication is removed.
+2. `release-artifact-ci` cleared: `scripts/run-android-build.mjs` now builds
+   `:app:assembleRelease` and `:app:bundleRelease` and fails closed — it
+   requires `app-release-unsigned.apk`, refuses a signed `app-release.apk`
+   (which would mean release signing appeared without its owner-approved
+   packet), and requires the release `.aab`. Both artifacts are unsigned and
+   therefore uninstallable/unpublishable. The CI staging of these artifacts
+   is dormant in steady state: the `android-build` job is skipped while the
+   `security-policy` job exits 12 at the R12 gate, so remote release evidence
+   appears only after `BLOCKED_R12` is resolved. Verified locally: the built
+   `.aab` contains no `META-INF` signature entries and the release APK is the
+   `-unsigned` variant. Note for the owner: `--publish never` suppresses only
+   electron-builder's implicit generic-provider PUT to `img.zira.pl` — both
+   legacy lanes upload from on-disk artifacts themselves and keep working —
+   but confirm nothing depended on that implicit PUT.
+3. The build-only workflow's `security-policy` job now records
+   `readiness-register.json` via `--evidence-report` (exit 0 on a legitimate
+   `NO-GO`, exit 1 on hard policy failures) and uploads it as an immutable
+   artifact before the R12 gate exits.
 
 ## Dev-lock lockstep
 
@@ -127,17 +157,17 @@ blockers still force `NO-GO`.
   real-repository assertions are a living snapshot of the current blocker
   set: any legitimate approval or configuration change forces a reviewed test
   edit. That is intentional — the snapshot is itself a gate.
-- The gate is not wired into `.github/workflows/android-pos-build-only.yml`
-  as a verdict step in this packet. Recommended follow-up: run
-  `node scripts/verify-production-readiness.mjs --json` as an evidence-report
-  step (artifact upload, non-verdict) so remote CI records the register state;
-  wiring it as a failing step is wrong for a build-only pipeline that must
-  stay green while production is legitimately NO-GO.
+- The gate is wired into `.github/workflows/android-pos-build-only.yml` as an
+  evidence-report step only (`--evidence-report`): a legitimate `NO-GO` keeps
+  the build-only pipeline green while the register state is recorded as an
+  immutable artifact; hard policy failures still fail the job. It is
+  deliberately not a verdict step — a build-only pipeline must stay green
+  while production is legitimately `NO-GO`.
 
 ## Local acceptance commands
 
 ```bash
-npm run test:production-readiness   # 61 tests
+npm run test:production-readiness   # 62 tests
 npm run gate:production-readiness   # prints items, exits 13 (NO-GO)
 npm run test:ci:build-only-policy   # unchanged, still passes
 npm run test:build-metadata         # unchanged, still passes

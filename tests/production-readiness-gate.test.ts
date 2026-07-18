@@ -461,13 +461,18 @@ describe('real repository verdict', () => {
       'hidden-tv-apk-r12',
       'legacy-publish-lane',
       'node-engines-contract',
-      'electron-publish-defaults',
-      'release-artifact-ci',
       'local-publish-scripts',
     ]) {
       expect(byId.get(id), id).toBe('BLOCKED');
     }
-    for (const id of ['build-only-security-policy', 'signing-material-hygiene']) {
+    for (const id of [
+      'build-only-security-policy',
+      'signing-material-hygiene',
+      // Cleared 2026-07-18: dist scripts are pinned to --publish never and the
+      // Android build runner exercises unsigned release + bundle artifacts.
+      'electron-publish-defaults',
+      'release-artifact-ci',
+    ]) {
       expect(byId.get(id), id).toBe('PASS');
     }
     // Merged manifests are gitignored build intermediates: PASS when a local
@@ -490,6 +495,20 @@ describe('real repository verdict', () => {
     expect(report.verdict).toBe('NO-GO');
     expect(report.failures).toEqual([]);
     expect(report.blockedCount).toBeGreaterThan(0);
+  });
+
+  test('evidence-report mode records NO-GO without failing but still fails hard on policy breaks', () => {
+    const evidence = spawnSync(process.execPath, [SCRIPT, '--json', '--evidence-report'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    expect(evidence.status).toBe(0);
+    expect(JSON.parse(evidence.stdout).verdict).toBe('NO-GO');
+
+    const root = fixture();
+    write(root, 'android-pos/release.jks', 'binary');
+    const hard = spawnSync(process.execPath, [SCRIPT, '--root', root, '--evidence-report'], { encoding: 'utf8' });
+    expect(hard.status).toBe(1);
   });
 
   test('the CLI exits 1 on hard policy failures', () => {
