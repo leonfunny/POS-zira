@@ -31,6 +31,8 @@
     "scrape:fb:stealth": "node scripts/facebook-scraper-stealth.js",
     "test": "vitest run",
     "test:boundaries": "vitest run tests/cross-platform-boundary-verifier.test.ts",
+    "test:production-readiness": "vitest run tests/production-readiness-gate.test.ts",
+    "gate:production-readiness": "node scripts/verify-production-readiness.mjs",
     "test:android:boundaries:source": "node scripts/verify-cross-platform-boundaries.mjs --root . --entry src/renderer/android-pos/main.ts --tsconfig tsconfig.android.json",
     "test:android:boundaries:bundle": "node scripts/verify-cross-platform-boundaries.mjs --root . --entry src/renderer/android-pos/main.ts --tsconfig tsconfig.android.json --bundle-dir dist/android-web",
     "test:android:boundaries:native-assets": "node scripts/verify-cross-platform-boundaries.mjs --root . --entry src/renderer/android-pos/main.ts --tsconfig tsconfig.android.json --bundle-dir android-pos/app/src/main/assets/public",
