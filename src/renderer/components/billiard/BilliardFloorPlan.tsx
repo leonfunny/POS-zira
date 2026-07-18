@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Target, Plus, Loader2, Move, MousePointer, ZoomIn, ZoomOut, Maximize, Copy,
+  CalendarClock,
 } from 'lucide-react';
 import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
 import { Language } from '../../i18n/translations';
@@ -18,7 +19,6 @@ import {
   useStartSession,
   usePauseSession,
   useResumeSession,
-  useEndSession,
   useUpdateSession,
   useSyncStatus,
 } from '../../hooks/useBilliardData';
@@ -37,7 +37,11 @@ import { AssetPickerGrid } from './AssetPickerGrid';
 import { SessionDetailModal } from './SessionDetailModal';
 import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
+import { PaymentDialog } from './PaymentDialog';
+import { ReservationPanel } from './ReservationPanel';
 import { ToastProvider, useToast } from './Toast';
+import { resolveBilliardOutstandingBalance } from '../../../shared/billiard-contract';
+import { useAuth } from '../../hooks/useAuth';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
 
@@ -172,19 +176,20 @@ function normalizeFloorPlanList(rawFloorPlans: any, rawOverview: any): FloorPlan
 function FloorPlanInner({ language }: { language: Language }) {
   const { t } = useTranslation(language);
   const toast = useToast();
+  const { user } = useAuth();
+  const canEditLayout = String(user?.role || '').toUpperCase() === 'OWNER';
   const { billiardApi, resourcesApi } = useBilliardApi();
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Data
   const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview() as any;
-  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE') as any;
+  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE', canEditLayout) as any;
   const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans() as any;
   const { data: syncStatus } = useSyncStatus() as any;
 
   const startSession = useStartSession(refetchOverview);
   const pauseSession = usePauseSession(refetchOverview);
   const resumeSession = useResumeSession(refetchOverview);
-  const endSession = useEndSession(refetchOverview);
   const updateSession = useUpdateSession(refetchOverview);
 
   // UI state
@@ -210,9 +215,11 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [allSizeH, setAllSizeH] = useState<number>(1.3);
 
   // Dialog states
-  const [detailSession, setDetailSession] = useState<any>(null);
+  const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
   const [addItemSessionId, setAddItemSessionId] = useState<string | null>(null);
   const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
+  const [paymentSession, setPaymentSession] = useState<any>(null);
+  const [reservationsOpen, setReservationsOpen] = useState(false);
   const [changeImageId, setChangeImageId] = useState<string | null>(null);
   const [changeImageKey, setChangeImageKey] = useState<string | null>(null);
 
@@ -221,6 +228,21 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [deletePending, setDeletePending] = useState(false);
 
   const tables = useMemo(() => normalizeTableList(overview), [overview]);
+  const pendingPayments = useMemo(
+    () => Array.isArray((overview as any)?.pendingPayments)
+      ? (overview as any).pendingPayments
+      : [],
+    [overview],
+  );
+  const detailSession = useMemo(() => {
+    if (!detailSessionId) return null;
+    const active = tables
+      .map((table) => table.session)
+      .find((session) => session?.id === detailSessionId);
+    return active
+      || pendingPayments.find((session: any) => session?.id === detailSessionId)
+      || null;
+  }, [detailSessionId, tables, pendingPayments]);
   const normalizedFloorPlans = useMemo(
     () => normalizeFloorPlanList(floorPlansData, overview),
     [floorPlansData, overview],
@@ -244,6 +266,14 @@ function FloorPlanInner({ language }: { language: Language }) {
     setPendingMeasureTable(null);
     setPopoverTable(null);
   }, [editMode]);
+
+  useEffect(() => {
+    if (!canEditLayout) {
+      setEditMode(false);
+      setAddDialogOpen(false);
+      setEditMenu(null);
+    }
+  }, [canEditLayout]);
 
   // Sync room dims from active floor plan
   useEffect(() => {
@@ -562,7 +592,7 @@ function FloorPlanInner({ language }: { language: Language }) {
     startSession.mutate({ resourceId, guestCount: 1 }).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.startFailed') || 'Failed to start session'));
   }, [startSession, toast]);
 
-  const isPending = startSession.isPending || pauseSession.isPending || resumeSession.isPending || endSession.isPending;
+  const isPending = startSession.isPending || pauseSession.isPending || resumeSession.isPending;
 
   // Summary stats
   const stats = useMemo(() => {
@@ -603,7 +633,10 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [zoomKey, setZoomKey] = useState(0);
   useEffect(() => { setZoomKey((k) => k + 1); }, [editMode]);
 
-  if (isLoading) {
+  // Keep the live floor and any open dialogs mounted during background polls.
+  // useQuery toggles loading for refetches; replacing the entire tree here
+  // would reset reservation/session forms every ten seconds.
+  if (isLoading && !overview) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
@@ -704,21 +737,55 @@ function FloorPlanInner({ language }: { language: Language }) {
               </button>
             </>
           )}
-          <button
-            className={`h-8 px-3 text-xs font-medium rounded-md transition-colors flex items-center ${
-              editMode
-                ? 'bg-brand-600 text-white hover:bg-brand-700'
-                : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
-            }`}
-            onClick={() => setEditMode(!editMode)}
-          >
-            {editMode
-              ? <><MousePointer className="w-4 h-4 mr-1" /> {t('billiard.done') || 'Done'}</>
-              : <><Move className="w-4 h-4 mr-1" /> {t('billiard.editLayout') || 'Edit Layout'}</>
-            }
-          </button>
+          {!editMode && (
+            <button
+              type="button"
+              className="h-8 px-3 text-xs font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-100 transition-colors flex items-center"
+              onClick={() => setReservationsOpen(true)}
+            >
+              <CalendarClock className="w-4 h-4 mr-1" />
+              {t('billiard.reservations')}
+            </button>
+          )}
+          {canEditLayout && (
+            <button
+              className={`h-8 px-3 text-xs font-medium rounded-md transition-colors flex items-center ${
+                editMode
+                  ? 'bg-brand-600 text-white hover:bg-brand-700'
+                  : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
+              }`}
+              onClick={() => setEditMode(!editMode)}
+            >
+              {editMode
+                ? <><MousePointer className="w-4 h-4 mr-1" /> {t('billiard.done') || 'Done'}</>
+                : <><Move className="w-4 h-4 mr-1" /> {t('billiard.editLayout') || 'Edit Layout'}</>
+              }
+            </button>
+          )}
         </div>
       </div>
+
+      {!editMode && pendingPayments.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+          <div className="text-sm font-semibold text-amber-900 shrink-0">
+            {t('billiard.payment') || 'Payment'}: {pendingPayments.length}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {pendingPayments.map((session: any) => (
+              <button
+                key={session.id}
+                type="button"
+                onClick={() => setPaymentSession(session)}
+                className="h-8 px-3 rounded-md border border-amber-300 bg-white text-xs font-medium text-amber-900 hover:bg-amber-100"
+              >
+                {session.resource?.name || session.id.slice(0, 8)} · {' '}
+                {t('billiard.remaining') || 'Remaining'} {' '}
+                {formatCurrency(resolveBilliardOutstandingBalance(session))}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary Stats */}
       {tables.length > 0 && (
@@ -887,7 +954,7 @@ function FloorPlanInner({ language }: { language: Language }) {
                       ? (t('billiard.addTableHint') || 'Click "Add Table" to place one here')
                       : (t('billiard.switchToEditHint') || 'Switch to Edit Layout mode and add your first table')}
                   </p>
-                  {!editMode && (
+                  {!editMode && canEditLayout && (
                     <button
                       className="h-8 px-3 text-sm font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors flex items-center"
                       onClick={() => { setEditMode(true); setAddDialogOpen(true); }}
@@ -974,7 +1041,7 @@ function FloorPlanInner({ language }: { language: Language }) {
           clickPosition={popoverPos}
           onStartSession={() => handleQuickStart(popoverTable.resource.id)}
           onOpenDetail={() => {
-            setDetailSession(popoverTable.session);
+            setDetailSessionId(popoverTable.session?.id || null);
             setPopoverTable(null);
           }}
           onPause={() => {
@@ -987,11 +1054,6 @@ function FloorPlanInner({ language }: { language: Language }) {
               resumeSession.mutate(popoverTable.session.id).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.resumeFailed') || 'Failed to resume'));
             }
           }}
-          onEnd={() => {
-            if (popoverTable.session?.id) {
-              endSession.mutate(popoverTable.session.id).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.endFailed') || 'Failed to end session'));
-            }
-          }}
           onAddItem={() => {
             setAddItemSessionId(popoverTable.session?.id);
             setPopoverTable(null);
@@ -999,7 +1061,7 @@ function FloorPlanInner({ language }: { language: Language }) {
           onPayment={() => {
             // In desktop app, open detail modal for payment instead of routing
             if (popoverTable.session) {
-              setDetailSession(popoverTable.session);
+              setDetailSessionId(popoverTable.session.id);
             }
             setPopoverTable(null);
           }}
@@ -1018,21 +1080,34 @@ function FloorPlanInner({ language }: { language: Language }) {
       )}
 
       {/* Dialogs */}
-      <AddTableDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        onAdd={(name, basePrice, topViewImage) => handleCreateTable(name, basePrice, topViewImage)}
-        isPending={createPending}
-        existingNames={filteredTables.map((tbl) => tbl.resource.name)}
-        currentFloor={activeFloor?.floorNumber ?? 1}
-        language={language}
-      />
+      {reservationsOpen && (
+        <ReservationPanel
+          key="billiard-reservations-panel"
+          language={language}
+          tables={tables.map((table) => ({ id: table.resource.id, name: table.resource.name }))}
+          onClose={() => setReservationsOpen(false)}
+          onCheckedIn={refetchOverview}
+        />
+      )}
+
+      {canEditLayout && (
+        <AddTableDialog
+          open={addDialogOpen}
+          onOpenChange={setAddDialogOpen}
+          onAdd={(name, basePrice, topViewImage) => handleCreateTable(name, basePrice, topViewImage)}
+          isPending={createPending}
+          existingNames={filteredTables.map((tbl) => tbl.resource.name)}
+          currentFloor={activeFloor?.floorNumber ?? 1}
+          language={language}
+        />
+      )}
 
       <SessionDetailModal
         session={detailSession}
-        open={!!detailSession}
-        onOpenChange={(v) => { if (!v) setDetailSession(null); }}
+        open={!!detailSessionId && !!detailSession}
+        onOpenChange={(v) => { if (!v) setDetailSessionId(null); }}
         language={language}
+        onRefetch={refetchOverview}
       />
 
       {addItemSessionId && (
@@ -1050,6 +1125,16 @@ function FloorPlanInner({ language }: { language: Language }) {
           open={true}
           onOpenChange={(v) => { if (!v) setTransferSessionId(null); }}
           language={language}
+        />
+      )}
+
+      {paymentSession && (
+        <PaymentDialog
+          session={paymentSession}
+          open={true}
+          onOpenChange={(v) => { if (!v) setPaymentSession(null); }}
+          language={language}
+          onRefetch={refetchOverview}
         />
       )}
 

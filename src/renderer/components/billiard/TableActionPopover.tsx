@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import {
-  Play, Pause, Square, Users, Clock, Timer, Minus, Plus,
+  Play, Pause, Users, Clock, Timer, Minus, Plus,
   CreditCard, ArrowRightLeft, ShoppingBag, Eye, UtensilsCrossed,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -18,7 +18,6 @@ export function TableActionPopover({
   onOpenDetail,
   onPause,
   onResume,
-  onEnd,
   onAddItem,
   onPayment,
   onTransfer,
@@ -34,7 +33,6 @@ export function TableActionPopover({
   onOpenDetail: () => void;
   onPause: () => void;
   onResume: () => void;
-  onEnd: () => void;
   onAddItem: () => void;
   onPayment: () => void;
   onTransfer: () => void;
@@ -222,9 +220,6 @@ export function TableActionPopover({
             </button>
             <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onPayment}>
               <CreditCard className="w-3.5 h-3.5 mr-2" /> {t('billiard.payment') || 'Payment'}
-            </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center" onClick={onEnd} disabled={isPending}>
-              <Square className="w-3.5 h-3.5 mr-2" /> {t('billiard.endSession') || 'End'}
             </button>
           </>
         )}

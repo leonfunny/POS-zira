@@ -1,4 +1,10 @@
 import { useMemo } from 'react';
+import {
+  buildBilliardAvailabilityPath,
+  buildBilliardBookingsPath,
+  normalizeBilliardAvailability,
+  normalizeBilliardBookings,
+} from '../../shared/billiard-contract';
 
 /**
  * Billiard edit-mode API hooks.
@@ -14,19 +20,9 @@ function mutate(op: string, method: string, path: string, body?: any) {
   return window.electronAPI.billiard.mutate(op, method, path, body);
 }
 
-/** Online-only API call. Throws clear error when offline. */
-async function onlineApi(method: string, path: string, body?: any) {
-  // Quick check — if sync status shows offline, fail fast
-  try {
-    const status = await window.electronAPI.billiard.getSyncStatus();
-    if (!status.online) {
-      throw new Error('This operation requires a network connection. Please reconnect and try again.');
-    }
-  } catch (err: any) {
-    if (err.message?.includes('network connection')) throw err;
-    // getSyncStatus failed — proceed anyway and let apiCall decide
-  }
-  return window.electronAPI.apiCall(method, path, body);
+/** Online-only API call. REST itself is the availability probe. */
+function onlineApi(method: string, path: string, body?: any) {
+  return window.electronAPI.billiard.mutate('online_api', method, path, body);
 }
 
 export function useBilliardApi() {
@@ -38,15 +34,23 @@ export function useBilliardApi() {
     updateFloorPlan: (id: string, data: any) =>
       mutate('update_floor_plan', 'PATCH', `/billiard/floor-plans/${id}`, data),
     upsertTableLayout: (resourceId: string, data: any) =>
-      mutate('upsert_layout', 'POST', '/billiard/layouts/upsert', { resourceId, ...data }),
+      mutate('upsert_layout', 'PUT', `/billiard/table-layouts/${resourceId}`, data),
     batchUpdateLayouts: (layouts: any[]) =>
-      mutate('batch_update_layouts', 'POST', '/billiard/layouts/batch-update', { layouts }),
+      mutate('batch_update_layouts', 'PUT', '/billiard/table-layouts/batch', { layouts }),
   }), []);
 
   const resourcesApi = useMemo(() => ({
     // Online-only: creating resources/types returns server-generated IDs
     listResourceTypes: () => onlineApi('GET', '/resources/types'),
-    createResourceType: (data: any) => onlineApi('POST', '/resources/types', data),
+    createResourceType: async (data: any) => {
+      const response = await onlineApi('GET', '/resources/types');
+      const types = Array.isArray(response) ? response : (response?.data || []);
+      const existing = types.find(
+        (type: any) => String(type?.code || '').toUpperCase() === String(data?.code || '').toUpperCase(),
+      );
+      if (existing) return existing;
+      return onlineApi('POST', '/resources/types', data);
+    },
     createResource: (data: any) => onlineApi('POST', '/resources', data),
 
     // Queue-aware: rename updates work offline
@@ -57,5 +61,18 @@ export function useBilliardApi() {
     deleteResource: (id: string) => onlineApi('DELETE', `/resources/${id}`),
   }), []);
 
-  return { billiardApi, resourcesApi };
+  const bookingsApi = useMemo(() => ({
+    list: async (date: string) => normalizeBilliardBookings(
+      await onlineApi('GET', buildBilliardBookingsPath(date)),
+    ),
+    availability: async (resourceId: string, date: string) => normalizeBilliardAvailability(
+      await onlineApi('GET', buildBilliardAvailabilityPath(resourceId, date)),
+    ),
+    create: (data: any) => onlineApi('POST', '/billiard/bookings', data),
+    cancel: (id: string) => onlineApi('POST', `/billiard/bookings/${id}/cancel`),
+    checkIn: (id: string, data: { guestCount?: number } = {}) =>
+      onlineApi('POST', `/billiard/bookings/${id}/check-in`, data),
+  }), []);
+
+  return { billiardApi, resourcesApi, bookingsApi };
 }

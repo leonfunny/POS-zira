@@ -598,8 +598,14 @@ export class ApiClient {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${response.status}`);
+      const responseBody = await response.json().catch(() => ({}));
+      const error = new Error(responseBody.message || `HTTP ${response.status}`) as Error & {
+        status: number;
+        data?: any;
+      };
+      error.status = response.status;
+      error.data = responseBody;
+      throw error;
     }
     const text = await response.text();
     if (!text) return {};

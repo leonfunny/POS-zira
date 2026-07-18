@@ -559,11 +559,24 @@ export class SyncModule extends BaseModule {
       } catch (err) { logger.warn(`[SyncModule] Post-login draft sync failed: ${err}`); }
     });
 
+    // Billiard REST recovery is independent from the realtime socket. Start
+    // it after login as well, so HTTPS-healthy / WebSocket-down cashiers still
+    // refresh tables and pending payments.
+    bus.on('user:logged-in', async () => {
+      if (!this.billiardSync) return;
+      try {
+        await this.billiardSync.fullSync();
+        await this.billiardSync.replayQueue();
+      } catch (err) {
+        logger.warn(`[SyncModule] Post-login billiard sync failed: ${err}`);
+      }
+      this.billiardSync.startPeriodicDashboardRefresh();
+    });
+
     bus.on('socket:disconnected', () => {
       this.syncLogService?.stop();
       if (this.billiardSync) {
         this.billiardSync.setOnline(false);
-        this.billiardSync.stopPeriodicDashboardRefresh();
       }
     });
   }

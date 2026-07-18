@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  billiardPaymentPayload,
+  billiardTransferPayload,
+} from '../../shared/billiard-contract';
 
 // ─── Query hook (with retry on initial failure) ──────
 
@@ -169,11 +173,11 @@ export function useFloorPlans() {
   );
 }
 
-export function useResourceType(code: string) {
+export function useResourceType(code: string, enabled = true) {
   return useQuery(
     () => window.electronAPI.billiard.getResourceType(code),
     [code],
-    { staleTime: 300000 },
+    { staleTime: 300000, enabled },
   );
 }
 
@@ -245,7 +249,7 @@ export function useRemoveItem(refetch?: () => Promise<void>) {
 export function useTransferTable(refetch?: () => Promise<void>) {
   return useMutation(
     (args: { sessionId: string; resourceId: string }) => window.electronAPI.billiard.mutate(
-      'transfer_table', 'PATCH', `/billiard/sessions/${args.sessionId}/transfer`, { resourceId: args.resourceId },
+      'transfer_table', 'PATCH', `/billiard/sessions/${args.sessionId}/transfer`, billiardTransferPayload(args.resourceId),
     ),
     refetch,
   );
@@ -254,7 +258,10 @@ export function useTransferTable(refetch?: () => Promise<void>) {
 export function useProcessPayment(refetch?: () => Promise<void>) {
   return useMutation(
     (args: { sessionId: string; data: any }) => window.electronAPI.billiard.mutate(
-      'process_payment', 'POST', `/billiard/sessions/${args.sessionId}/payment`, args.data,
+      'process_payment',
+      'POST',
+      `/billiard/sessions/${args.sessionId}/payment`,
+      billiardPaymentPayload(args.data.paymentMethod ?? args.data.method, args.data.amount),
     ),
     refetch,
   );

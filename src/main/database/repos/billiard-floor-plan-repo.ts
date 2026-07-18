@@ -46,9 +46,16 @@ export const billiardFloorPlanRepo = {
   upsertMany(plans: any[]): void {
     for (const p of plans) {
       database.run(
-        `INSERT OR REPLACE INTO billiard_floor_plans
+        `INSERT INTO billiard_floor_plans
           (id, name, floor_number, room_width_m, room_height_m, background_image, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          floor_number = excluded.floor_number,
+          room_width_m = excluded.room_width_m,
+          room_height_m = excluded.room_height_m,
+          background_image = excluded.background_image,
+          updated_at = excluded.updated_at`,
         [
           p.id,
           p.name || '',
@@ -64,14 +71,39 @@ export const billiardFloorPlanRepo = {
 
   upsertLayouts(layouts: any[]): void {
     for (const l of layouts) {
+      const resourceId = l.resourceId || l.resource_id;
+      const floorPlanId = l.floorPlanId || l.floor_plan_id || null;
+      if (!resourceId || !database.get(
+        'SELECT id FROM billiard_resources WHERE id = ?',
+        [resourceId],
+      )) {
+        continue;
+      }
+      if (floorPlanId && !database.get(
+        'SELECT id FROM billiard_floor_plans WHERE id = ?',
+        [floorPlanId],
+      )) {
+        continue;
+      }
       database.run(
-        `INSERT OR REPLACE INTO billiard_table_layouts
+        `INSERT INTO billiard_table_layouts
           (id, resource_id, floor_plan_id, position_x, position_y, rotation, width_pct, height_pct, shape, asset_key, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          resource_id = excluded.resource_id,
+          floor_plan_id = excluded.floor_plan_id,
+          position_x = excluded.position_x,
+          position_y = excluded.position_y,
+          rotation = excluded.rotation,
+          width_pct = excluded.width_pct,
+          height_pct = excluded.height_pct,
+          shape = excluded.shape,
+          asset_key = excluded.asset_key,
+          updated_at = excluded.updated_at`,
         [
           l.id,
-          l.resourceId || l.resource_id,
-          l.floorPlanId || l.floor_plan_id || null,
+          resourceId,
+          floorPlanId,
           l.positionX ?? l.position_x ?? 50,
           l.positionY ?? l.position_y ?? 50,
           l.rotation ?? 0,

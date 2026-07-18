@@ -11,6 +11,7 @@ import {
   useRestaurantCombos,
 } from '../../hooks/useBilliardData';
 import TextInput from '../shared/TextInput';
+import { normalizeBilliardCatalogProduct } from '../../../shared/billiard-contract';
 
 interface AddItemToTabModalProps {
   sessionId: string;
@@ -106,28 +107,17 @@ export function AddItemToTabModal({
   };
 
   const handleProductSelect = async (product: any) => {
-    const variant = product.variants?.[0] || product;
-    const variantId = variant.id || product.variantId || product.id;
-    const productName = product.name || variant.name || 'Item';
-    const price = Number(
-      variant.retailPrice ??
-        product.retailPrice ??
-        variant.listPrice ??
-        product.listPrice ??
-        variant.posPrice ??
-        product.posPrice ??
-        product.price ??
-        0,
-    );
+    const normalized = normalizeBilliardCatalogProduct(product);
+    if (!normalized.hasStock) return;
 
     try {
       await addItem.mutate({
         sessionId,
         data: {
-          name: productName,
+          name: normalized.name,
           quantity: 1,
-          unitPrice: price,
-          variantId,
+          unitPrice: normalized.price,
+          variantId: normalized.variantId,
         },
       });
       // Stay open for quick successive adds
@@ -144,7 +134,7 @@ export function AddItemToTabModal({
         data: {
           name: combo.name || 'Combo',
           quantity: 1,
-          unitPrice: Number(combo.comboPrice || 0),
+          unitPrice: Number(combo.comboPrice ?? combo.combo_price ?? 0),
         },
       });
       setSearch('');
@@ -301,24 +291,8 @@ export function AddItemToTabModal({
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {products.map((product: any) => {
-                      const variant = product.variants?.[0] || product;
-                      const price = Number(
-                        variant.retailPrice ??
-                          product.retailPrice ??
-                          variant.listPrice ??
-                          product.listPrice ??
-                          variant.posPrice ??
-                          product.posPrice ??
-                          product.price ??
-                          0,
-                      );
-                      const stock =
-                        variant.stockQuantity ??
-                        product.stockQuantity ??
-                        product.totalAvailableStock ??
-                        product.stock ??
-                        null;
-                      const hasStock = stock === null || stock > 0;
+                      const normalized = normalizeBilliardCatalogProduct(product);
+                      const { price, stock, hasStock } = normalized;
 
                       return (
                         <button

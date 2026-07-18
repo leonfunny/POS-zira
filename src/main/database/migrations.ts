@@ -1704,4 +1704,15 @@ export const migrations: Migration[] = [
         ON pos_event_outbox(event_type, shift_id);
     `,
   },
+  {
+    version: 59,
+    name: 'billiard_cache_payload_snapshots',
+    // Preserve the canonical backend objects alongside the indexed cache
+    // columns. Billiard timers, package details, resource metadata and final
+    // payment totals must survive refresh/restart without schema drift.
+    up: `
+      ALTER TABLE billiard_resources ADD COLUMN payload_json TEXT;
+      ALTER TABLE billiard_sessions ADD COLUMN payload_json TEXT;
+    `,
+  },
 ];

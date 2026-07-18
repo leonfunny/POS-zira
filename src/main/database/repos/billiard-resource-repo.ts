@@ -1,4 +1,8 @@
 import { database } from '../database';
+import {
+  replaceBilliardResources,
+  upsertBilliardResources,
+} from './billiard-resource-cache';
 
 export interface BilliardResourceRow {
   id: string;
@@ -6,7 +10,8 @@ export interface BilliardResourceRow {
   code: string | null;
   type_id: string | null;
   type_name: string | null;
-  pricing_rules: string; // JSON array
+  pricing_rules: string; // JSON object
+  payload_json: string | null;
   is_active: number;
   updated_at: string | null;
 }
@@ -26,23 +31,12 @@ export const billiardResourceRepo = {
   },
 
   upsertMany(resources: any[]): void {
-    for (const r of resources) {
-      database.run(
-        `INSERT OR REPLACE INTO billiard_resources
-          (id, name, code, type_id, type_name, pricing_rules, is_active, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          r.id,
-          r.name || r.resourceName || '',
-          r.code || null,
-          r.typeId || r.type_id || null,
-          r.typeName || r.type_name || null,
-          typeof r.pricingRules === 'string' ? r.pricingRules : JSON.stringify(r.pricingRules || []),
-          r.isActive !== undefined ? (r.isActive ? 1 : 0) : 1,
-          r.updatedAt || r.updated_at || new Date().toISOString(),
-        ],
-      );
-    }
+    upsertBilliardResources(database, resources);
+  },
+
+  /** Replace the active pool-table cache with the authoritative dashboard set. */
+  replaceAll(resources: any[]): void {
+    replaceBilliardResources(database, resources);
   },
 
   clear(): void {

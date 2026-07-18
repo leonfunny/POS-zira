@@ -25,9 +25,14 @@ export function TransferTableDialog({
 
   const [selectedTableId, setSelectedTableId] = useState('');
 
-  const freeTables = ((floorOverview as any)?.resources || []).filter(
-    (r: any) => r.status === 'FREE' || r.status === 'free'
-  );
+  const overviewRows = Array.isArray(floorOverview)
+    ? floorOverview
+    : ((floorOverview as any)?.tables || (floorOverview as any)?.resources || []);
+  const freeTables = overviewRows
+    .map((row: any) => row?.resource
+      ? { ...row.resource, status: row.status }
+      : row)
+    .filter((row: any) => String(row?.status || 'free').toLowerCase() === 'free');
 
   const resetForm = () => {
     setSelectedTableId('');
