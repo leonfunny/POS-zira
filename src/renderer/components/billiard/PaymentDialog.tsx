@@ -6,7 +6,7 @@
  * The backend owns receipt dispatch; the client only opens the cash drawer.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { CreditCard, Loader2, X, Banknote, AlertTriangle } from 'lucide-react';
 import { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -31,6 +31,30 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
 }
 
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab' || !dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ));
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function PaymentDialog({ session, open, onOpenChange, language, onRefetch }: PaymentDialogProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
@@ -39,6 +63,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
   const [step, setStep] = useState<PaymentStep>('select');
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [endedSnapshot, setEndedSnapshot] = useState<any | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -50,6 +75,32 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
       setEndedSnapshot(alreadyEnded ? session : null);
     }
   }, [open, session?.id]);
+
+  const isProcessing = step === 'processing';
+  const handleCancel = useCallback(() => {
+    if (isProcessing) return;
+    if (endedSnapshot && step !== 'done') {
+      toast.error(
+        t('billiard.paymentFailed') || 'Payment is still pending and remains visible on the billiard screen.',
+      );
+    }
+    onOpenChange(false);
+  }, [endedSnapshot, isProcessing, onOpenChange, step, t, toast]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isProcessing) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleCancel();
+        return;
+      }
+      trapDialogFocus(event, dialogRef.current);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleCancel, isProcessing, open]);
 
   if (!open || !session) return null;
 
@@ -157,27 +208,32 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
     }
   };
 
-  const handleCancel = () => {
-    if (step === 'processing') return;
-    if (endedSnapshot && step !== 'done') {
-      toast.error(
-        t('billiard.paymentFailed') || 'Payment is still pending and remains visible on the billiard screen.',
-      );
-    }
-    onOpenChange(false);
-  };
-
-  const isProcessing = step === 'processing';
-
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center" onClick={handleCancel}>
-      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center"
+      onClick={handleCancel}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('billiard.payment') || 'Payment'}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <CreditCard className="w-5 h-5" />
             {t('billiard.payment') || 'Payment'}
           </h3>
-          <button onClick={handleCancel} className="p-1 rounded hover:bg-slate-100" disabled={isProcessing}>
+          <button
+            autoFocus
+            onClick={handleCancel}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            disabled={isProcessing}
+            aria-label={t('common.close') || 'Close'}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

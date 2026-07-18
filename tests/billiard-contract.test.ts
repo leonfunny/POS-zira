@@ -357,16 +357,81 @@ describe('billiard desktop/backend contract', () => {
     const apiClient = readSource('../src/main/network/api-client.ts');
     const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
     const sessionDetail = readSource('../src/renderer/components/billiard/SessionDetailModal.tsx');
-    const tablePopover = readSource('../src/renderer/components/billiard/TableActionPopover.tsx');
+    const tableDrawer = readSource('../src/renderer/components/billiard/TableActionPopover.tsx');
     expect(apiClient).toContain('error.status = response.status');
     expect(floorPlan).toContain('(overview as any)?.pendingPayments');
     expect(floorPlan).toContain('setPaymentSession(session)');
     expect(floorPlan).toContain('resolveBilliardOutstandingBalance(session)');
     expect(floorPlan).toContain("canEditLayout = String(user?.role || '').toUpperCase() === 'OWNER'");
     expect(floorPlan).toContain("useResourceType('POOL_TABLE', canEditLayout)");
-    expect(floorPlan).toContain('const [detailSessionId, setDetailSessionId]');
-    expect(floorPlan).toContain('session?.id === detailSessionId');
+    expect(floorPlan).toContain('const [selectedTableId, setSelectedTableId]');
+    expect(floorPlan).toContain('table.resource.id === selectedTableId');
+    expect(floorPlan).not.toContain('detailSessionId');
     expect(sessionDetail).not.toContain('useEndSession');
-    expect(tablePopover).not.toContain('onEnd: () => void');
+    expect(tableDrawer).not.toContain('onEnd: () => void');
+  });
+
+  it('keeps floor gestures bounded and renders one opaque cashier drawer', () => {
+    const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
+    const tableDrawer = readSource('../src/renderer/components/billiard/TableActionPopover.tsx');
+    const draggableTable = readSource('../src/renderer/components/billiard/DraggableTable.tsx');
+    const addItem = readSource('../src/renderer/components/billiard/AddItemToTabModal.tsx');
+    const payment = readSource('../src/renderer/components/billiard/PaymentDialog.tsx');
+    const transfer = readSource('../src/renderer/components/billiard/TransferTableDialog.tsx');
+
+    expect(floorPlan).toContain('data-billiard-canvas-viewport');
+    expect(floorPlan).toContain('h-[clamp(440px,62vh,720px)]');
+    expect(floorPlan).toContain('new ResizeObserver(updateSize)');
+    expect(floorPlan).toContain('...fittedCanvasSize');
+    expect(floorPlan).toContain('wheel={{ step: 0.08 }}');
+    expect(floorPlan).toContain('disabled: editMode');
+    expect(floorPlan).not.toContain('disabled={editMode}');
+    expect(floorPlan).not.toContain("addEventListener('wheel'");
+    expect(floorPlan).not.toContain('<SessionDetailModal');
+    expect(floorPlan).toContain('onOpenChange={closeSelectedTable}');
+    expect(floorPlan).toContain(
+      'suspended={Boolean(addItemSessionId || transferSessionId || paymentSession)}',
+    );
+
+    const nestedDialogActions = floorPlan.slice(
+      floorPlan.indexOf('onAddItem={() => {'),
+      floorPlan.indexOf('onUpdateGuestCount={(count) => {'),
+    );
+    expect(nestedDialogActions).not.toContain('setSelectedTableId(null)');
+
+    const tableClick = floorPlan.slice(
+      floorPlan.indexOf('// Handle table click in operate mode'),
+      floorPlan.indexOf('// Quick start'),
+    );
+    expect(tableClick).toContain('setSelectedTableId(table.resource.id)');
+    expect(tableClick).not.toContain('.mutate(');
+
+    expect(tableDrawer).toContain('role="dialog"');
+    expect(tableDrawer).toContain('bg-white text-slate-900');
+    expect(tableDrawer).toContain('sm:w-[400px]');
+    expect(tableDrawer).not.toContain('bg-popover');
+    expect(tableDrawer).not.toContain('bg-muted');
+    expect(tableDrawer).not.toContain('text-muted-foreground');
+    expect(tableDrawer).not.toContain('clickPosition');
+    expect(tableDrawer).not.toContain('onOpenDetail');
+    expect(tableDrawer).toContain('session?.currentTimeCharge ?? session?.timeCharge');
+    expect(tableDrawer).toContain('if (!open || suspended) return;');
+    expect(tableDrawer).toContain("const inertProps = suspended ? { inert: '' } : {};");
+    expect(tableDrawer).toContain('{...inertProps}');
+    expect(tableDrawer).toContain('aria-hidden={suspended || undefined}');
+
+    expect(draggableTable).toContain("role={editMode ? undefined : 'button'}");
+    expect(draggableTable).toContain("e.key !== 'Enter' && e.key !== ' '");
+    expect(addItem).toContain('trapDialogFocus(event, dialogRef.current)');
+    expect(addItem).toContain("document.addEventListener('keydown', handleKeyDown)");
+    expect(addItem).toContain('role="dialog"');
+    expect(payment).toContain('autoFocus');
+    expect(payment).toContain('role="dialog"');
+    expect(payment).toContain('trapDialogFocus(event, dialogRef.current)');
+    expect(payment).toContain("document.addEventListener('keydown', handleKeyDown)");
+    expect(transfer).toContain('autoFocus');
+    expect(transfer).toContain('role="dialog"');
+    expect(transfer).toContain('trapDialogFocus(event, dialogRef.current)');
+    expect(transfer).toContain("document.addEventListener('keydown', handleKeyDown)");
   });
 });

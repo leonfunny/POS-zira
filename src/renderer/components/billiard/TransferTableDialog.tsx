@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRightLeft, Loader2, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
@@ -10,6 +10,30 @@ interface TransferTableDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   language: Language;
+}
+
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab' || !dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ));
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 export function TransferTableDialog({
@@ -24,6 +48,7 @@ export function TransferTableDialog({
   const transferTable = useTransferTable(refetch);
 
   const [selectedTableId, setSelectedTableId] = useState('');
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const overviewRows = Array.isArray(floorOverview)
     ? floorOverview
@@ -61,6 +86,22 @@ export function TransferTableDialog({
     onOpenChange(nextOpen);
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !transferTable.isPending) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedTableId('');
+        onOpenChange(false);
+        return;
+      }
+      trapDialogFocus(event, dialogRef.current);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onOpenChange, open, transferTable.isPending]);
+
   if (!open) return null;
 
   return (
@@ -69,6 +110,11 @@ export function TransferTableDialog({
       onClick={() => handleOpenChange(false)}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('billiard.transferTable') || 'Transfer Table'}
+        tabIndex={-1}
         className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -138,6 +184,7 @@ export function TransferTableDialog({
         {/* Footer */}
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button
+            autoFocus
             className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50"
             onClick={() => handleOpenChange(false)}
             disabled={transferTable.isPending}

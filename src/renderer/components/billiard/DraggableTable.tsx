@@ -110,6 +110,17 @@ export const DraggableTable = memo(function DraggableTable({
   const isPackageLowTime = session?.billingMode === 'PACKAGE_COUNTDOWN' && session?.autoEndAt
     ? formatRemaining(session.autoEndAt).totalMinutes < 15
     : false;
+  const statusLabel = table.status === 'free'
+    ? (t('billiard.free') || 'Free')
+    : table.status === 'paused'
+      ? (t('billiard.paused') || 'Paused')
+      : (t('billiard.active') || 'Active');
+  const tableAriaLabel = [
+    table.resource.name,
+    statusLabel,
+    elapsed,
+    session ? formatCurrency(charge) : null,
+  ].filter(Boolean).join(', ');
 
   const [editing, setEditing] = useState(false);
   const [nameVal, setNameVal] = useState(table.resource.name);
@@ -136,14 +147,6 @@ export const DraggableTable = memo(function DraggableTable({
       className={`select-none ${isDragging ? 'opacity-70' : ''}`}
       {...(editMode && !isMeasureTarget && !isMeasureHighlighted ? dragHandlers : {})}
     >
-      {/* Occupied pulse ring — on outer div so it doesn't rotate */}
-      {table.status === 'occupied' && !editMode && !isPackageLowTime && (
-        <span className="absolute -top-1 -right-1 flex h-3 w-3 z-20">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
-        </span>
-      )}
-
       {/* Low-time warning ring for package countdown */}
       {isPackageLowTime && !editMode && (
         <span className="absolute -top-1 -right-1 flex h-3 w-3 z-20">
@@ -166,15 +169,19 @@ export const DraggableTable = memo(function DraggableTable({
           absolute inset-0 rounded-[14px] border-2 transition-all shadow-lg
           flex flex-col items-center justify-center overflow-hidden
           ${hasImage ? 'bg-transparent border-transparent' : `${colors.felt} ${colors.border}`} ${hasImage && table.status !== 'free' ? colors.border : ''} ${s.glow}
-          ${isMeasureTarget && !isMeasureHighlighted ? 'cursor-crosshair' : isMeasureHighlighted ? 'cursor-default' : editMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer hover:scale-105'}
+          ${isMeasureTarget && !isMeasureHighlighted ? 'cursor-crosshair' : isMeasureHighlighted ? 'cursor-default' : editMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer hover:ring-2 hover:ring-white/50'}
           ${isMeasureHighlighted ? 'ring-2 ring-red-500 ring-offset-2' : ''}
           ${isMeasureTarget && !isMeasureHighlighted ? 'ring-2 ring-red-400/60 ring-offset-1 animate-pulse' : ''}
           ${isDragging ? 'shadow-2xl ring-2 ring-blue-400/50' : ''}
+          ${!editMode ? 'focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 focus:ring-offset-[#17312b]' : ''}
         `}
         style={{
           transform: rotation ? `rotate(${rotation}deg)` : undefined,
           transition: 'transform 0.2s ease',
         }}
+        role={editMode ? undefined : 'button'}
+        tabIndex={editMode ? -1 : 0}
+        aria-label={editMode ? undefined : tableAriaLabel}
         onContextMenu={(e) => {
           if (!editMode) return;
           e.preventDefault();
@@ -189,6 +196,11 @@ export const DraggableTable = memo(function DraggableTable({
           }
           if (editMode) return;
           onTableClick(table, e);
+        }}
+        onKeyDown={(e) => {
+          if (editMode || (e.key !== 'Enter' && e.key !== ' ')) return;
+          e.preventDefault();
+          onTableClick(table);
         }}
       >
         {/* Asset image or CSS rectangle */}
