@@ -45,9 +45,10 @@ describe('Android Stage 2 — real POS renderer behind the electronAPI shim', ()
 
   test('the built Android web bundle contains the shim surface', async () => {
     const assetsDir = resolve(ROOT, 'dist/android-web/assets');
+    let entries: string[];
     let jsFile: string | undefined;
     try {
-      const entries = await readdir(assetsDir);
+      entries = await readdir(assetsDir);
       jsFile = entries.find((name) => name.endsWith('.js'));
     } catch (error) {
       throw new Error(
@@ -63,5 +64,18 @@ describe('Android Stage 2 — real POS renderer behind the electronAPI shim', ()
     expect(bundle).toContain('electronAPI');
     expect(bundle).toContain('dev@synthetic.local');
     expect(bundle).toContain('zira-android-pos-config');
+
+    // S5 GOAL A: the entry now imports the renderer's Tailwind stylesheet
+    // (../../index.css — the same file Windows pos/main.tsx imports), so the
+    // mounted renderer is styled. Vite emits it as a hashed .css asset.
+    const cssFile = (entries as string[]).find((name) => name.endsWith('.css'));
+    expect(cssFile, 'expected a built bundle .css asset under dist/android-web/assets').toBeTruthy();
+    if (cssFile) {
+      const stylesheet = await readFile(resolve(assetsDir, cssFile), 'utf8');
+      // Tailwind's compiled utilities land in the emitted CSS (the renderer's
+      // classNames resolve). A non-empty stylesheet with a Tailwind directive
+      // artifact confirms the right CSS was bundled, not a stray empty file.
+      expect(stylesheet.length).toBeGreaterThan(0);
+    }
   });
 });

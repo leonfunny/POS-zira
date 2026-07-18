@@ -254,4 +254,32 @@ describe('cross-platform boundary verifier', () => {
       ({ rule }: { rule: string }) => rule === 'FORBIDDEN_ELECTRON_API_GLOBAL',
     )).toBe(true);
   });
+
+  // S5 GOAL A: a shim-bearing graph may import static assets — the renderer's
+  // Tailwind stylesheet (`.css`) and sql.js's WASM (`sql.js/dist/sql-wasm.wasm?url`
+  // + the `sql.js` bare package). These are Vite-resolved, not TS-resolved, and
+  // are allowed only behind the shim.
+  test('allows static asset imports (.css, ?url wasm, sql.js) behind the shim', async () => {
+    const root = resolve(FIXTURES, 'positive-shim-asset-imports');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      assumeShimGraph: true,
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  test('keeps static asset imports flagged for a non-shim graph', async () => {
+    const result = await verifyFixture('forbidden-asset-import');
+
+    expect(result.graphIncludesShim).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'UNRESOLVED_LOCAL_IMPORT',
+    )).toBe(true);
+  });
 });

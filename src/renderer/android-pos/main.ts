@@ -8,18 +8,24 @@
  * during its first render (useConfig / usePosStore). POSApp itself is the
  * unmodified Windows entry — never edit it from this packet.
  *
- * Note: the renderer's Tailwind stylesheet (src/renderer/index.css) is NOT
- * imported here because the cross-platform boundary verifier flags non-TS
- * asset imports; S2's contract is "the real renderer boots behind the shim at
- * the bundle level". Tailwind injection is a follow-up (extend the verifier to
- * allow static asset imports in the shim graph, or link the compiled CSS from
- * index.html) — see the packet report.
+ * S5: the renderer is now STYLED. The SAME Tailwind stylesheet the Windows POS
+ * window entry imports (`src/renderer/windows/pos/main.tsx` imports
+ * `../../index.css`) is imported here — the relative path resolves to the same
+ * `src/renderer/index.css`. The cross-platform boundary verifier was extended
+ * (S5 GOAL A) to permit static asset imports (`.css`, vite `?url`) in a
+ * shim-bearing graph; this import is the consumer of that allowance.
  */
 
 import { installShim } from './shim';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import POSApp from '../windows/pos/POSApp';
+// The SAME stylesheet the Windows POS window mounts (src/renderer/index.css).
+// Windows's entry is at src/renderer/windows/pos/main.tsx and imports
+// `../../index.css`; this entry is one level shallower
+// (src/renderer/android-pos/main.ts), so the relative path to the same file is
+// `../index.css`. Importing it styles the mounted renderer (Tailwind utilities).
+import '../index.css';
 
 // Install the electronAPI surface (synthetic fakes, no transport) BEFORE the
 // renderer mounts. This is the single allowed module-load side effect of the

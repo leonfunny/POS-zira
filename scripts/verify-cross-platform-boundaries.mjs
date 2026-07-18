@@ -43,6 +43,12 @@ const RENDERER_ALLOWED_PACKAGES = new Set([
   'react-dom',
   'lucide-react',
   'react-zoom-pan-pinch',
+  // S5: the local catalog DB runs SQL.js (WebAssembly) in the WebView behind
+  // the shim. The bare `sql.js` package (the JS API) and the wasm asset import
+  // `sql.js/dist/sql-wasm.wasm?url` both resolve to packageName `sql.js`. Like
+  // the renderer React deps, it is a browser runtime dependency allowed only in
+  // a shim graph (still flagged for non-shim graphs).
+  'sql.js',
 ]);
 const TOP_LEVEL_EFFECT_GLOBALS = new Set([
   'fetch',
@@ -804,6 +810,26 @@ function fileExtension(file) {
   return match?.[0]?.toLowerCase() || '';
 }
 
+// Static asset imports that Vite resolves at build time, not TypeScript. These
+// never resolve via ts.resolveModuleName (a `.css` is not a TS module; a `?url`
+// query is a Vite-only asset idiom), so they surface as UNRESOLVED_* and would
+// otherwise be flagged. Behind the shim they are allowed: the renderer's
+// Tailwind stylesheet (`import '../../index.css'`, mounted by the S5 android
+// entry to match src/renderer/windows/pos/main.tsx) and sql.js's WASM
+// (`import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url'`). Only a `.css`
+// extension (no query) or a `?url` query (incl. `.wasm?url`) is permitted —
+// other Vite queries (`?raw`, `?worker`, `?inline`) are different idioms and
+// stay flagged. Non-shim graphs are unaffected (asset imports are still
+// unresolved there).
+function isStaticAssetImport(specifier) {
+  if (!specifier) return false;
+  const queryIndex = specifier.indexOf('?');
+  if (queryIndex !== -1) {
+    return specifier.slice(queryIndex + 1).split('&').includes('url');
+  }
+  return fileExtension(specifier) === '.css';
+}
+
 async function listBundleFiles(directory) {
   const files = [];
   const visit = async (current) => {
@@ -833,6 +859,13 @@ export async function verifyCrossPlatformBoundaries({
   tsconfigPath,
   allowedPackages = [],
   bundleDirs = [],
+  // Test-only affordance: force the graph to be treated as a renderer-behind-
+  // the-shim graph so shimAllowable diagnostics drop. Fixtures live under
+  // tests/fixtures/ and cannot sit on the src/renderer/android-pos/shim path
+  // that production detection (SHIM_INSTALLER_PATH_SEGMENT) keys on, so a
+  // fixture that wants to assert shim-mode behavior opts in here. Unset for
+  // every production caller — detection stays path-based and unchanged.
+  assumeShimGraph = false,
 }) {
   const absoluteRoot = resolve(root);
   const entryFiles = entries.map((entry) => resolve(entry));
@@ -975,6 +1008,9 @@ export async function verifyCrossPlatformBoundaries({
           ...baseDiagnostic,
           rule: internalAlias ? 'UNRESOLVED_INTERNAL_ALIAS' : 'UNRESOLVED_LOCAL_IMPORT',
           message: `Cannot resolve ${reference.syntax} "${specifier}" using ${config.configPath || 'default TypeScript resolution'}`,
+          // Static asset imports (Vite-resolved `.css` / `?url`) are not TS
+          // modules and are allowed behind the shim — see isStaticAssetImport.
+          shimAllowable: isStaticAssetImport(specifier),
         });
         continue;
       }
@@ -1017,9 +1053,10 @@ export async function verifyCrossPlatformBoundaries({
   // A graph is a "renderer behind the shim" iff the shim installer module is
   // reachable from an entry. Computed after the source walk so source-graph
   // shimAllowable diagnostics and bundle shimAllowable patterns use the same flag.
-  const graphIncludesShim = [...visited].some((file) => (
-    file.split(sep).join('/').includes(SHIM_INSTALLER_PATH_SEGMENT)
-  ));
+  const graphIncludesShim = assumeShimGraph
+    || [...visited].some((file) => (
+      file.split(sep).join('/').includes(SHIM_INSTALLER_PATH_SEGMENT)
+    ));
 
   for (const bundleDir of bundleDirs) {
     const absoluteBundleDir = resolve(bundleDir);
