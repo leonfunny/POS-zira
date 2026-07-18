@@ -23,6 +23,8 @@ import type { AgentConfig } from '../../../shared/types';
 import { ShimConfigStore, sanitizeConfigForRenderer } from './config-store';
 import { ShimPosStore } from './pos-store';
 import type { PosAction, PosState } from './pos-store';
+import { TokenStore } from './token-store';
+import type { TokenStoreStorage } from './token-store';
 import type { ShimTransport } from './transport';
 import { SYNTHETIC_TRANSPORT } from './stubs';
 import {
@@ -142,5 +144,6 @@ export {
   ShimConfigStore,
   ShimPosStore,
   sanitizeConfigForRenderer,
+  TokenStore,
 };
-export type { ShimTransport, AgentConfig };
+export type { ShimTransport, AgentConfig, TokenStoreStorage };
