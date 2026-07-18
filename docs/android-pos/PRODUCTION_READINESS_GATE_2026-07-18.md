@@ -13,7 +13,8 @@ Parent plan: `IMPLEMENTATION_PLAN_2026-07-17.md`; blocker register of record: `O
 | Planned | Yes |
 | Implemented on feature branch | Yes |
 | Landed on canonical branch | No |
-| Pushed to GitHub | No |
+| Pushed to GitHub | Yes — feature branch `codex/android-pos-build-ci` (2026-07-18, on request) |
+| Remote CI evidence | Yes — run 29646575053, see below |
 | Published/deployed/verified live | No; forbidden in this packet |
 
 This packet (and its same-day follow-up wave below) touches only evidence
@@ -121,6 +122,28 @@ that need no owner decision, and the register evidence is now recorded in CI:
    `readiness-register.json` via `--evidence-report` (exit 0 on a legitimate
    `NO-GO`, exit 1 on hard policy failures) and uploads it as an immutable
    artifact before the R12 gate exits.
+
+## Remote CI evidence (2026-07-18)
+
+First remote run of the build-only pipeline, on the pushed feature branch at
+commit `c0c7b0b`:
+
+- Run: <https://github.com/leonfunny/POS-zira/actions/runs/29646575053>
+- `security-policy` job on `ubuntu-latest`/Node 22.22.2: policy,
+  build-metadata, and boundary tests all **passed remotely**; the readiness
+  register was recorded and uploaded
+  (`readiness-register-c0c7b0b…-29646575053-1`, 3020 bytes); the job then
+  failed **only** at the `Emit fail-closed R12 gate report` step (exit 12, by
+  design) after uploading `r12-gate-c0c7b0b…-29646575053-1`.
+- `android-build`, `windows-build`, and `windows-installer-gate` were
+  intentionally skipped while `BLOCKED_R12` exists — matching the documented
+  steady state.
+- The legacy `build.yml` did **not** trigger (branch push, tags only), so no
+  publication lane ran.
+
+This satisfies the technical half of the `remote-ci-evidence` register entry;
+the entry itself stays `blocked` until the owner reviews this run and records
+the approval evidence.
 
 ## Dev-lock lockstep
 
