@@ -1421,6 +1421,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       return printCoordinator().getPrinterStatus();
     },
 
+    // ── Remote FISCAL receipt print (E-FISCAL) — delegated to the coordinator.
+    //    Same staff-JWT /print-agent/jobs route, role FISCAL_RECEIPT,
+    //    printerType FISCAL. The coordinator owns the fiscal status mapping
+    //    (NEVER auto-retries an uncertain job). hasFiscalPrinter (stubs.ts)
+    //    resolves `configured`+`connected` from getFiscalPrinterStatus.assigned.
+    async requestFiscalPrint(orderId) {
+      return printCoordinator().requestFiscalPrint(orderId);
+    },
+    async getFiscalPrinterStatus() {
+      return printCoordinator().getFiscalPrinterStatus();
+    },
+
     // ── Event subscription hooks (delegated to by stubs.ts) ─────────────────
     onAuthExpired(cb: () => void): () => void {
       expiredListeners.add(cb);

@@ -74,7 +74,7 @@ import type { PosApiClient } from '../port/api-client';
 import type { AndroidDatabase } from './db/db';
 import { createOrderRepo } from './db/order-repo';
 import type { ShimConfigStore } from './config-store';
-import type { RemotePrinterStatus, RemoteReceiptPrintResult } from './transport';
+import type { RemoteFiscalPrintResult, RemotePrinterStatus, RemoteReceiptPrintResult } from './transport';
 
 // ─── Constants (ported from shared-receipt-printer.ts / shared-print-retry-policy.ts) ─
 
@@ -83,6 +83,13 @@ import type { RemotePrinterStatus, RemoteReceiptPrintResult } from './transport'
  *  printer, print on the salon's shared agent printer" situation, so it resolves
  *  the same role. */
 const RECEIPT_PRINTER_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
+
+/** The salon printer role the Windows shared-FISCAL route binds to
+ *  (shared-fiscal-printer.ts:24 — `FISCAL_RECEIPT`). A Sunmi submits a fiscal
+ *  job to the salon's print-agent (ELZAB) exactly like a second Windows POS:
+ *  staff JWT, the SAME `/print-agent/jobs` route E1a uses. No Android fiscal
+ *  driver, no ELZAB on the device — Plan A (the ELZAB stays on the agent box). */
+const FISCAL_PRINTER_ROLE: SalonPrinterRole = 'FISCAL_RECEIPT';
 
 /** Negative-TTL on the assignment endpoint / lookup result
  *  (shared-receipt-printer.ts:26 — Windows uses 60s for an unavailable endpoint;
@@ -129,6 +136,20 @@ function buildReceiptIdempotencyKey(machineId: string | undefined, orderId: stri
   const cleanOrderId = String(orderId || '').trim();
   if (!cleanMachineId || !cleanOrderId) return undefined;
   return `pos-receipt:${cleanMachineId}:${cleanOrderId}:order:v1`;
+}
+
+/** ported from shared-print-retry-policy.ts:99-111 + shared-fiscal-printer.ts:321
+ *  (kind 'fiscal', purpose 'default'). The `fiscal` prefix + `default` purpose
+ *  keep this key disjoint from the receipt-COPY key for the SAME order
+ *  (buildReceiptIdempotencyKey → `pos-receipt:…:order:v1`), so an order that
+ *  prints BOTH a receipt copy AND a fiscal receipt gets two independent jobs —
+ *  a repeated fiscal tap resumes the fiscal job, never the receipt job, and a
+ *  duplicate fiscal document is never created. */
+function buildFiscalIdempotencyKey(machineId: string | undefined, orderId: string): string | undefined {
+  const cleanMachineId = String(machineId || '').trim();
+  const cleanOrderId = String(orderId || '').trim();
+  if (!cleanMachineId || !cleanOrderId) return undefined;
+  return `pos-fiscal:${cleanMachineId}:${cleanOrderId}:default:v1`;
 }
 
 // ─── Receipt payload build (ported from payment-controller.ts) ──────────────
@@ -236,6 +257,14 @@ interface StatusMapping {
   result: RemoteReceiptPrintResult;
 }
 
+/** A cached assignment-lookup result, per role (divergence #3 — cached in BOTH
+ *  the positive and the negative direction for the TTL window). */
+interface AssignmentCacheEntry {
+  printerId: string | null;
+  error?: string;
+  expiresAt: number;
+}
+
 /**
  * Map a CreatePrintJobResponse to a coordinator outcome. Ported from
  * classifySharedPrintResponse (shared-print-retry-policy.ts:49-97), simplified
@@ -301,6 +330,94 @@ function mapStatus(
   };
 }
 
+/**
+ * Map a CreatePrintJobResponse to a FISCAL coordinator outcome — the fiscal twin
+ * of `mapStatus`. Ported from classifySharedPrintResponse('FISCAL_RECEIPT', …)
+ * (shared-print-retry-policy.ts:49-97) with the FISCAL retry decision collapsed
+ * to "NEVER auto-retry" (divergence #1): Windows auto-retries a SAFE_BEFORE_PRINT
+ * fiscal failure via safeRetryPrintJob (shared-fiscal-printer.ts:113-128,184-217),
+ * but the packet forbids auto-retrying an uncertain fiscal job, so E-FISCAL does
+ * NOT port safe-retry. FISCAL is legal/money, so the table is explicit:
+ *
+ *  ──────────────────────────────────────────────────────────────────────────
+ *   terminal status / signal              →  fiscalPrinted   reason
+ *  ──────────────────────────────────────────────────────────────────────────
+ *   COMPLETED / PRINTED / *Printed:true   →  true            —
+ *   FAILED + SAFE_BEFORE_PRINT            →  false           'safe-before-print'
+ *   FAILED (other) / CANCELLED            →  false           'failed'
+ *   TIMEOUT / timedOut                    →  false           'unknown' (STOP_RECONCILE)
+ *   UNCERTAIN_AFTER_PRINT                 →  false           'unknown' (STOP_RECONCILE)
+ *   SENT/PRINTING/PENDING/RESERVED/∅      →  (not terminal — keep polling)
+ *  ──────────────────────────────────────────────────────────────────────────
+ *
+ * `success` is ALWAYS true on a terminal mapping (mirrors the Windows IPC
+ * try/catch — the coordinator ran to completion; `fiscalPrinted` carries the
+ * legal outcome). The only `success:false` is a create that threw before the
+ * agent accepted the job (handled in runRequestFiscalPrint, not here).
+ */
+function mapFiscalStatus(
+  result: CreatePrintJobResponse | null | undefined,
+  jobId: string | undefined,
+  printerId: string | undefined,
+): { terminal: boolean; result: RemoteFiscalPrintResult } {
+  const status = normalizeStatus(result);
+  const failureClass = getFailureClass(result);
+  const ok = (r: RemoteFiscalPrintResult): { terminal: true; result: RemoteFiscalPrintResult } => ({ terminal: true, result: r });
+  const printedFlag =
+    (result as { receiptPrinted?: boolean } | null)?.receiptPrinted === true
+    || (result as { fiscalPrinted?: boolean } | null)?.fiscalPrinted === true;
+
+  if (status === 'COMPLETED' || status === 'PRINTED' || printedFlag) {
+    return ok({ success: true, fiscalPrinted: true, jobId, ...(printerId ? { printerId } : {}) });
+  }
+
+  // TIMEOUT / timedOut / UNCERTAIN_AFTER_PRINT → UNKNOWN. NEVER auto-retry an
+  // uncertain fiscal job (shared-print-retry-policy.ts:65-77 FISCAL →
+  // STOP_RECONCILE_REQUIRED): the fiscal paper may already have come out, so a
+  // re-submit could print a SECOND fiscal document. The cashier must reconcile
+  // the till manually before any reissue.
+  if (status === 'TIMEOUT' || result?.timedOut === true || failureClass === 'UNCERTAIN_AFTER_PRINT') {
+    return ok({
+      success: true,
+      fiscalPrinted: false,
+      reason: 'unknown',
+      jobId,
+      error: 'fiscal print outcome uncertain (timeout / after-print) — reconcile before retrying',
+      ...(printerId ? { printerId } : {}),
+    });
+  }
+
+  if (status === 'FAILED' || status === 'CANCELLED') {
+    const errorMessage = String(result?.errorMessage || result?.message || result?.retryBlockedReason || status);
+    if (failureClass === 'SAFE_BEFORE_PRINT') {
+      // Nothing fiscal printed yet — a fresh fiscal reissue is the cashier's
+      // MANUAL action (a safe reprint; NOT an auto-retry of the uncertain path).
+      return ok({
+        success: true,
+        fiscalPrinted: false,
+        reason: 'safe-before-print',
+        jobId,
+        error: errorMessage,
+        ...(printerId ? { printerId } : {}),
+      });
+    }
+    return ok({
+      success: true,
+      fiscalPrinted: false,
+      reason: 'failed',
+      jobId,
+      error: errorMessage,
+      ...(printerId ? { printerId } : {}),
+    });
+  }
+
+  // SENT / PRINTING / PENDING / RESERVED / unrecognized / empty → still in flight.
+  return {
+    terminal: false,
+    result: { success: true, fiscalPrinted: false, reason: 'unknown', jobId, ...(printerId ? { printerId } : {}) },
+  };
+}
+
 // ─── Coordinator ───────────────────────────────────────────────────────────
 
 export interface RemotePrintCoordinatorOptions {
@@ -320,7 +437,14 @@ export interface RemotePrintCoordinatorOptions {
 
 export interface RemotePrintCoordinator {
   requestReceiptPrint(orderId: string, options?: { isReprint?: boolean; openDrawer?: boolean }): Promise<RemoteReceiptPrintResult>;
+  /** Submit (or resume) a FISCAL receipt print — the fiscal twin of
+   *  requestReceiptPrint (packet E-FISCAL). Same staff-JWT `/print-agent/jobs`
+   *  route, role FISCAL_RECEIPT, printerType FISCAL. NEVER auto-retries an
+   *  uncertain outcome (legal/money). */
+  requestFiscalPrint(orderId: string): Promise<RemoteFiscalPrintResult>;
   getPrinterStatus(forceRefresh?: boolean): Promise<RemotePrinterStatus>;
+  /** Resolve the salon's FISCAL printer (diagnostics / `hasFiscalPrinter`). */
+  getFiscalPrinterStatus(forceRefresh?: boolean): Promise<RemotePrinterStatus>;
 }
 
 /**
@@ -336,16 +460,28 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
   const totalWaitMs = options.totalWaitMs ?? DEFAULT_TOTAL_WAIT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
-  /** Cached assignment lookup (printerId found OR null with an error). */
-  let assignmentCache: { printerId: string | null; error?: string; expiresAt: number } | null = null;
+  /** Cached assignment lookup, PER ROLE (printerId found OR null with an error).
+   *  Keyed by role so the RECEIPT cache (E1a) and the FISCAL cache (E-FISCAL)
+   *  stay independent — a salon can have one and not the other, and each is
+   *  negative-cached for the TTL without the other's lookup poisoning it. The
+   *  RECEIPT entry behaves identically to the pre-fiscal single-slot cache
+   *  (it is now just `resolvePrinterByRole(RECEIPT_PRINTER_ROLE)`). */
+  const assignmentCacheByRole = new Map<string, AssignmentCacheEntry>();
 
   /** orderId → jobId resume registry (initial POS receipts only; divergence: keyed
    *  by orderId since one device has one initial-receipt job per order). */
   const knownJobs = new Map<string, string>();
+  /** E-FISCAL: orderId → fiscal jobId resume registry. SEPARATE from knownJobs so
+   *  a receipt-copy tap and a fiscal tap for the SAME order each resume their OWN
+   *  job — a repeated printFiscalReceipt reuses the fiscal job and never creates a
+   *  duplicate fiscal document (shared-fiscal-printer.ts resume parity). */
+  const knownFiscalJobs = new Map<string, string>();
 
   /** Coalesces concurrent/repeated prints for the same order+op so they share ONE
    *  create+poll cycle (the single-flight pattern used for refresh + order-sync). */
   const inFlight = new Map<string, Promise<RemoteReceiptPrintResult>>();
+  /** E-FISCAL: single-flight for fiscal prints (key `${orderId}#fiscal`). */
+  const inFlightFiscal = new Map<string, Promise<RemoteFiscalPrintResult>>();
 
   const salonName = (): string | undefined => configStore.getRawConfig().salonName ?? undefined;
   const machineId = (): string | undefined => {
@@ -365,27 +501,43 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
       knownJobs.delete(oldest);
     }
   };
+  /** E-FISCAL: remember an orderId → fiscal jobId binding (same LRU bound, own map). */
+  const rememberFiscalJob = (orderId: string, jobId: string): void => {
+    if (knownFiscalJobs.has(orderId)) knownFiscalJobs.delete(orderId);
+    knownFiscalJobs.set(orderId, jobId);
+    while (knownFiscalJobs.size > KNOWN_JOBS_MAX) {
+      const oldest = knownFiscalJobs.keys().next().value;
+      if (oldest === undefined) break;
+      knownFiscalJobs.delete(oldest);
+    }
+  };
 
   /**
-   * Resolve the salon's receipt printer via the assignment endpoint, cached for
-   * `assignmentCacheTtlMs` in BOTH directions (divergence #3). A 404/501 (endpoint
-   * not deployed for this salon), an empty assignment list, or any network error
-   * all resolve to `printerId:null` → the coordinator skips with no job. The
-   * cache makes the repeat no-printer path zero-HTTP for the TTL window.
+   * Resolve the salon printer bound to `role` via the assignment endpoint, cached
+   * for `assignmentCacheTtlMs` in BOTH directions (divergence #3). A 404/501
+   * (endpoint not deployed for this salon), an empty assignment list, or any
+   * network error all resolve to `printerId:null` → the coordinator skips with no
+   * job. The per-role cache makes the repeat no-printer path zero-HTTP for the TTL
+   * window. Generalized from the E1a receipt-only `resolveReceiptPrinter` — the
+   * RECEIPT behavior + cache are unchanged (it is now `resolvePrinterByRole(
+   * RECEIPT_PRINTER_ROLE)`); the FISCAL path resolves `FISCAL_RECEIPT`
+   * (shared-fiscal-printer.ts:24,250) into its OWN cache slot.
    */
-  const resolveReceiptPrinter = async (
+  const resolvePrinterByRole = async (
+    role: SalonPrinterRole,
     forceRefresh = false,
   ): Promise<{ printerId: string | null; error?: string; cached: boolean }> => {
     const now = Date.now();
-    if (!forceRefresh && assignmentCache && assignmentCache.expiresAt > now) {
-      return { printerId: assignmentCache.printerId, error: assignmentCache.error, cached: true };
+    const cached = assignmentCacheByRole.get(role);
+    if (!forceRefresh && cached && cached.expiresAt > now) {
+      return { printerId: cached.printerId, error: cached.error, cached: true };
     }
     let printerId: string | null = null;
     let error: string | undefined;
     try {
       const response = await client.listPrinterAssignments();
       const match = response.assignments.find(
-        (a) => String(a?.role || '').toUpperCase() === String(RECEIPT_PRINTER_ROLE).toUpperCase(),
+        (a) => String(a?.role || '').toUpperCase() === String(role).toUpperCase(),
       );
       printerId = match?.printerId ?? null;
     } catch (e: unknown) {
@@ -394,7 +546,7 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
       // endpoint does not get hammered on every sale (shared-receipt-printer.ts:298-302).
       error = e instanceof Error ? e.message : String(e);
     }
-    assignmentCache = { printerId, error, expiresAt: now + assignmentCacheTtlMs };
+    assignmentCacheByRole.set(role, { printerId, error, expiresAt: now + assignmentCacheTtlMs });
     return { printerId, error, cached: false };
   };
 
@@ -468,7 +620,7 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
     isReprint: boolean,
     openDrawer: boolean,
   ): Promise<RemoteReceiptPrintResult> => {
-    const { printerId } = await resolveReceiptPrinter();
+    const { printerId } = await resolvePrinterByRole(RECEIPT_PRINTER_ROLE);
     if (!printerId) {
       // No remote receipt printer for this salon → Wave-1 skip. The receipt COPY
       // is reported PRINTED so PaymentModal does not enter the recovery overlay
@@ -535,6 +687,140 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
     return await resolveFinal(createResp, jobId, printerId);
   };
 
+  // ─── Fiscal receipt print (E-FISCAL) ──────────────────────────────────────
+  // The fiscal twin of runRequestPrint. SAME staff-JWT `/print-agent/jobs` route,
+  // SAME order payload (buildSaleReceiptData), but: role FISCAL_RECEIPT,
+  // printerType FISCAL, referenceType POS_FISCAL_RECEIPT, a 'fiscal' idempotency
+  // key (disjoint from the receipt-copy key), and a fiscal status mapping that
+  // NEVER auto-retries an uncertain outcome (shared-fiscal-printer.ts:301-369
+  // parity, minus the safe-retry loop — divergence #1 / packet rail).
+
+  /** Poll a fiscal job to a terminal status within `totalWaitMs`. Identical
+   *  plumbing to resolveFinal, but via mapFiscalStatus → RemoteFiscalPrintResult.
+   *  NEVER auto-retries (a fiscal re-submit on an uncertain job could print a
+   *  SECOND fiscal document — STOP_RECONCILE_REQUIRED). */
+  const resolveFinalFiscal = async (
+    initial: CreatePrintJobResponse,
+    jobId: string | undefined,
+    printerId: string | undefined,
+  ): Promise<RemoteFiscalPrintResult> => {
+    let current = initial;
+    const deadline = Date.now() + totalWaitMs;
+    for (;;) {
+      const { terminal, result } = mapFiscalStatus(current, jobId, printerId);
+      if (terminal) return result;
+      // Still in flight. No jobId to poll, or budget exhausted → uncertain.
+      if (!jobId || Date.now() >= deadline) {
+        return {
+          success: true,
+          fiscalPrinted: false,
+          reason: 'unknown',
+          jobId,
+          error: 'fiscal job did not reach a terminal state before the wait budget elapsed',
+          ...(printerId ? { printerId } : {}),
+        };
+      }
+      await delay(pollIntervalMs);
+      try {
+        current = await client.getPrintJobStatus(jobId);
+      } catch (e: unknown) {
+        // A status-poll failure is UNCERTAIN — the fiscal paper may yet come
+        // out. NEVER auto-retry; surface reason 'unknown' for manual reconcile.
+        return {
+          success: true,
+          fiscalPrinted: false,
+          reason: 'unknown',
+          jobId,
+          error: e instanceof Error ? e.message : String(e),
+          ...(printerId ? { printerId } : {}),
+        };
+      }
+    }
+  };
+
+  /** Resume a known fiscal job by polling its status (idempotent reuse — a
+   *  repeated printFiscalReceipt tap reuses the SAME fiscal job, never creates a
+   *  duplicate fiscal document). */
+  const resumeFiscalJob = async (jobId: string, printerId: string | undefined): Promise<RemoteFiscalPrintResult> => {
+    try {
+      const status = await client.getPrintJobStatus(jobId);
+      return await resolveFinalFiscal(status, jobId, printerId);
+    } catch (e: unknown) {
+      return {
+        success: true,
+        fiscalPrinted: false,
+        reason: 'unknown',
+        jobId,
+        error: e instanceof Error ? e.message : String(e),
+        ...(printerId ? { printerId } : {}),
+      };
+    }
+  };
+
+  /** The actual fiscal print workflow (runs under the fiscal in-flight coalescer). */
+  const runRequestFiscalPrint = async (orderId: string): Promise<RemoteFiscalPrintResult> => {
+    const { printerId } = await resolvePrinterByRole(FISCAL_PRINTER_ROLE);
+    if (!printerId) {
+      // No fiscal printer assigned → skip (hasFiscalPrinter gates this call
+      // anyway). fiscalPrinted:false — a FALSE fiscal claim is a legal issue, so
+      // unlike the receipt COPY (which reports printed on no-printer), the
+      // fiscal skip stays fiscalPrinted:false (EXPANSION_PLAN E-FISCAL).
+      return { success: true, fiscalPrinted: false, skipped: true, reason: 'no-fiscal-printer' };
+    }
+
+    const orderRepo = createOrderRepo(await db());
+    const order = orderRepo.getById(orderId);
+    const items = orderRepo.getItemsByOrderId(orderId);
+    // SAME payload the receipt COPY uses (buildSaleReceiptData) — the fiscal
+    // printer renders the same sale data into a legal fiscal receipt
+    // (shared-fiscal-printer.ts:302-304 submits the same ReceiptData).
+    const receiptData = buildSaleReceiptData(orderId, order, items, salonName());
+    if (!receiptData) {
+      return { success: true, fiscalPrinted: false, reason: 'no-order', error: `order ${orderId} not found` };
+    }
+
+    // Idempotent resume — a known fiscal job for this order is polled, not
+    // re-created, so a repeated tap never creates a duplicate fiscal document.
+    const knownJobId = knownFiscalJobs.get(orderId);
+    if (knownJobId) {
+      return await resumeFiscalJob(knownJobId, printerId);
+    }
+
+    // shared-fiscal-printer.ts:319-332 — referenceType POS_FISCAL_RECEIPT, the
+    // 'fiscal' idempotency key, printerType FISCAL, waitForCompletion hold.
+    const idempotencyKey = buildFiscalIdempotencyKey(machineId(), orderId);
+    const body: CreatePrintJobRequest = {
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.FISCAL,
+      printerId,
+      payload: receiptData,
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: orderId,
+      waitForCompletion: true,
+      timeoutMs: completionTimeoutMs,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    };
+
+    let createResp: CreatePrintJobResponse;
+    try {
+      createResp = await client.createPrintJob(body);
+    } catch (e: unknown) {
+      // Create failed before the agent accepted the job. Nothing fiscal printed;
+      // the cashier can retry. Surface as a plain failure (fiscalPrinted:false).
+      return {
+        success: false,
+        fiscalPrinted: false,
+        reason: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+        ...(printerId ? { printerId } : {}),
+      };
+    }
+
+    const jobId = getJobId(createResp);
+    if (jobId) rememberFiscalJob(orderId, jobId);
+    return await resolveFinalFiscal(createResp, jobId, printerId);
+  };
+
   return {
     /**
      * Submit (or resume) a receipt COPY print. Concurrent/repeated calls for the
@@ -553,9 +839,34 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
       return promise;
     },
 
+    /**
+     * Submit (or resume) a FISCAL receipt print (E-FISCAL). Concurrent/repeated
+     * calls for the same order share ONE create+poll cycle (idempotent — one
+     * createPrintJob, never a duplicate fiscal document). NEVER auto-retries an
+     * uncertain outcome.
+     */
+    requestFiscalPrint(orderId): Promise<RemoteFiscalPrintResult> {
+      const opKey = `${orderId}#fiscal`;
+      const cached = inFlightFiscal.get(opKey);
+      if (cached) return cached;
+      const promise = runRequestFiscalPrint(orderId).finally(() => {
+        inFlightFiscal.delete(opKey);
+      });
+      inFlightFiscal.set(opKey, promise);
+      return promise;
+    },
+
     /** Resolve the salon's receipt printer (diagnostics / cache prime). */
     async getPrinterStatus(forceRefresh = false): Promise<RemotePrinterStatus> {
-      const { printerId, error, cached } = await resolveReceiptPrinter(forceRefresh);
+      const { printerId, error, cached } = await resolvePrinterByRole(RECEIPT_PRINTER_ROLE, forceRefresh);
+      if (!printerId) return { assigned: false, cached, error };
+      return { assigned: true, printerId, cached };
+    },
+    /** Resolve the salon's FISCAL printer (E-FISCAL) — same assignment lookup,
+     *  FISCAL_RECEIPT role, its own cache slot. Drives `hasFiscalPrinter`
+     *  (`assigned` → configured + connected). */
+    async getFiscalPrinterStatus(forceRefresh = false): Promise<RemotePrinterStatus> {
+      const { printerId, error, cached } = await resolvePrinterByRole(FISCAL_PRINTER_ROLE, forceRefresh);
       if (!printerId) return { assigned: false, cached, error };
       return { assigned: true, printerId, cached };
     },

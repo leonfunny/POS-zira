@@ -224,7 +224,19 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
       : Promise.resolve({ success: true, receiptPrinted: true });
 
   return {
-    hasFiscalPrinter: async () => ({ success: true, configured: false, connected: false }),
+    // E-FISCAL: delegate the fiscal-printer check to the coordinator's
+    // FISCAL_RECEIPT assignment lookup when the transport provides it; else the
+    // Wave-1 "no fiscal printer" outcome. `configured` + `connected` both track
+    // `assigned` (a fiscal printer is bound to the salon) — the assignment
+    // endpoint does not expose live online state, so a bound fiscal printer is
+    // treated as ready, matching the E1a getPrinterStatus semantics.
+    hasFiscalPrinter: async () => {
+      if (transport.getFiscalPrinterStatus) {
+        const status = await transport.getFiscalPrinterStatus();
+        return { success: true, configured: !!status.assigned, connected: !!status.assigned };
+      }
+      return { success: true, configured: false, connected: false };
+    },
     // Receipt COPY outcome (printed/skipped/failed) comes from the coordinator.
     // The renderer (receipt-outcome.ts deriveReceiptOutcome) reads ONLY
     // `receiptPrinted`; the coordinator's extra fields are harmless context.
@@ -236,10 +248,15 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
       const base = await runReceiptPrint(orderId, { openDrawer: true });
       return { ...base, drawerOpened: false };
     },
-    // Fiscal receipts are NOT claimed printed (a false fiscal claim is a legal
-    // issue) — printFiscalReceipt stays fiscalPrinted:false and the renderer
-    // already skips it when no fiscal printer is configured.
-    printFiscalReceipt: async () => ({ success: true, fiscalPrinted: false }),
+    // Fiscal receipts delegate to the remote fiscal-print coordinator (E-FISCAL)
+    // when the transport provides requestFiscalPrint; else the Wave-1 benign
+    // fiscalPrinted:false (a false fiscal claim is a legal issue, so the
+    // synthetic fallback NEVER claims printed). The coordinator itself returns
+    // fiscalPrinted:false + skipped when no fiscal printer is assigned.
+    printFiscalReceipt: (orderId: string) =>
+      transport.requestFiscalPrint
+        ? transport.requestFiscalPrint(orderId)
+        : Promise.resolve({ success: true, fiscalPrinted: false }),
     reprintReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
     // Refund receipt = a fresh print job via the E1a coordinator (isReprint
     // semantics — each refund receipt is its own job, no idempotency key, like a

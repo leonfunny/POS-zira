@@ -133,6 +133,39 @@ export interface RemoteReceiptPrintResult {
   error?: string;
 }
 
+/**
+ * Outcome of a remote FISCAL receipt print — packet E-FISCAL (the fiscal twin of
+ * RemoteReceiptPrintResult). Same staff-JWT `/print-agent/jobs` route as the
+ * receipt COPY, but role FISCAL_RECEIPT + printerType FISCAL, and a status
+ * mapping that NEVER auto-retries an uncertain outcome (legal/money — an
+ * uncertain fiscal job is STOP_RECONCILE_REQUIRED; a re-submit could print a
+ * SECOND fiscal document).
+ *
+ * `fiscalPrinted` is the LEGAL outcome: true ONLY when the agent returned a
+ * terminal COMPLETED/PRINTED. A false fiscal claim is a legal issue, so unlike
+ * the receipt COPY the no-printer skip stays `fiscalPrinted:false` (it does not
+ * pretend success). The renderer's `printFiscalReceipt` already gates on
+ * `hasFiscalPrinter`, so the skip is normally reached only when that gate is
+ * bypassed.
+ */
+export interface RemoteFiscalPrintResult {
+  /** The coordinator ran to completion (mirrors the Windows IPC try/catch —
+   *  `success:true` even when `fiscalPrinted:false`). False only on a create
+   *  that threw before the agent accepted the job, or no auth token. */
+  success: boolean;
+  /** Did the fiscal receipt LEGALLY print? true ONLY on terminal COMPLETED. */
+  fiscalPrinted: boolean;
+  /** No fiscal printer is assigned to this salon — the skip outcome
+   *  (fiscalPrinted:false). `hasFiscalPrinter` normally gates this call. */
+  skipped?: boolean;
+  /** Machine-readable outcome for diagnostics / reconciliation UI. */
+  reason?: 'no-fiscal-printer' | 'no-order' | 'safe-before-print' | 'failed' | 'unknown';
+  /** The backend fiscal print-job id (when one was created or resumed). */
+  jobId?: string;
+  printerId?: string;
+  error?: string;
+}
+
 /** Result of `getPrinterStatus` — whether a remote receipt printer is assigned
  *  to this salon (E1a). Used for diagnostics and to prime the assignment cache;
  *  `requestReceiptPrint` resolves the assignment lazily too. */
@@ -251,6 +284,18 @@ export interface ShimTransport {
   requestReceiptPrint?(orderId: string, options?: { isReprint?: boolean; openDrawer?: boolean }): Promise<RemoteReceiptPrintResult>;
   /** Resolve the salon's remote receipt printer (E1a). Diagnostic / cache-prime. */
   getPrinterStatus?(): Promise<RemotePrinterStatus>;
+  /**
+   * Remote FISCAL receipt print (E-FISCAL). Submits a FISCAL_RECEIPT job to the
+   * salon's print-agent (ELZAB) over the SAME staff-JWT `/print-agent/jobs` route
+   * as the receipt COPY, then returns the legal printed/skipped/failed/unknown
+   * outcome. NEVER auto-retries an uncertain job. When no fiscal printer is
+   * assigned the coordinator returns the skip (`fiscalPrinted:false,
+   * skipped:true, reason:'no-fiscal-printer'`).
+   */
+  requestFiscalPrint?(orderId: string): Promise<RemoteFiscalPrintResult>;
+  /** Resolve the salon's remote FISCAL printer (E-FISCAL). Diagnostic /
+   *  cache-prime; drives `hasFiscalPrinter` (`assigned` → configured+connected). */
+  getFiscalPrinterStatus?(forceRefresh?: boolean): Promise<RemotePrinterStatus>;
 
   /**
    * Event subscriptions the transport OWNS (it knows when these fire). S6+S7:
