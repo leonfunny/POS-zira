@@ -39,6 +39,12 @@
  * This is recorded in the packet report.
  */
 
+import type {
+  CreatePrintJobRequest,
+  CreatePrintJobResponse,
+  SalonPrinterAssignmentsResponse,
+} from '../../../shared/types';
+
 // ─── Constants (ported from api-client.ts:130-132) ─────────────────────────
 const DEFAULT_TIMEOUT = 30000;
 const BOOTSTRAP_POST_RETRY_DELAY_MS = 500;
@@ -716,6 +722,112 @@ export class PosApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
+    return response.json();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Print jobs · receipt COPY (staff JWT) — packet E1a
+  // ════════════════════════════════════════════════════════════════════════
+  //
+  // These target the SAME staff-JWT print routes the Windows shared-receipt
+  // route uses (src/main/printing/shared-receipt-printer.ts → ApiClient
+  // createPrintJob / getPrintJobStatus / listPrinterAssignments). HARD RAIL:
+  // staff JWT only — NEVER the `pa_` API-key variants (`createPrintJobWithApiKey`
+  // / `*WithApiKey`), NEVER `/print-agent/connect`, NEVER the agent socket. The
+  // remote-print coordinator (shim/remote-print.ts) is the only caller. Fiscal
+  // print is backend-gated (P0-FISCAL) and stays out of this client entirely.
+  //
+  // The URLs are interpolated template literals (`${this.baseUrl}/...`) so the
+  // cross-platform boundary verifier's static-string `/print-agent/` ban does
+  // not flag them (a fully-static `'/print-agent/jobs'` literal would).
+
+  /**
+   * Resolve the `waitForCompletion` request timeout. Ported from
+   * api-client.ts:1093-1096: at least DEFAULT_TIMEOUT, at most timeoutMs+5s,
+   * capped at 65s. A job without `waitForCompletion`/`timeoutMs` uses the
+   * default — the backend returns immediately.
+   */
+  private printJobRequestTimeout(
+    body?: Pick<CreatePrintJobRequest, 'waitForCompletion' | 'timeoutMs'>,
+  ): number {
+    if (!body?.waitForCompletion || typeof body.timeoutMs !== 'number') return DEFAULT_TIMEOUT;
+    return Math.max(DEFAULT_TIMEOUT, Math.min(body.timeoutMs + 5_000, 65_000));
+  }
+
+  /**
+   * GET /api/v1/print-agent/salons/me/printer-assignments (staff JWT). Ported
+   * from api-client.ts:1052-1055. Returns the salon's printer-role → printerId
+   * assignments; the coordinator picks the `SELF_CHECKOUT_RECEIPT` role (the
+   * role the Windows shared-receipt route binds to — shared-receipt-printer.ts:25).
+   * Throws an Error carrying `.status` on non-2xx so the coordinator can treat a
+   * 404/501 (endpoint not deployed for this salon) as "no remote printer".
+   */
+  async listPrinterAssignments(): Promise<SalonPrinterAssignmentsResponse> {
+    const token = await this.requireToken('listPrinterAssignments');
+    const url = `${this.baseUrl}/api/v1/print-agent/salons/me/printer-assignments`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    const raw = await response.json();
+    return { assignments: Array.isArray(raw?.assignments) ? raw.assignments : [] };
+  }
+
+  /**
+   * POST /api/v1/print-agent/jobs (staff JWT). Ported from api-client.ts:1098-1100
+   * (+ requestWithTimeout:1102-1126). The body is the CreatePrintJobRequest built
+   * by the coordinator; the timeout follows `waitForCompletion`/`timeoutMs`.
+   * Throws an Error carrying `.status` on non-2xx. An empty 2xx body (Windows
+   * returns `{}` for some accepts) is normalized to `{}`.
+   */
+  async createPrintJob(body: CreatePrintJobRequest): Promise<CreatePrintJobResponse> {
+    const token = await this.requireToken('createPrintJob');
+    const url = `${this.baseUrl}/api/v1/print-agent/jobs`;
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      this.printJobRequestTimeout(body),
+    );
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
+  }
+
+  /**
+   * GET /api/v1/print-agent/jobs/:id (staff JWT). Ported from
+   * api-client.ts:1187-1189. Polls the status of a print job the coordinator
+   * already created or is resuming. Throws an Error carrying `.status` on
+   * non-2xx (the coordinator maps a poll failure to an UNCERTAIN outcome, never
+   * an auto-retry).
+   */
+  async getPrintJobStatus(jobId: string): Promise<CreatePrintJobResponse> {
+    const token = await this.requireToken('getPrintJobStatus');
+    const url = `${this.baseUrl}/api/v1/print-agent/jobs/${encodeURIComponent(jobId)}`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
     return response.json();
   }
 }

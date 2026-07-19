@@ -52,6 +52,7 @@ import { initAndroidDb, type AndroidDatabase, type AndroidDbInitOptions } from '
 import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
 import { createSyncMeta } from './db/sync-meta';
+import { createRemotePrintCoordinator } from './remote-print';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -551,6 +552,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     return dbPromise;
   };
 
+  // ── Remote receipt-print coordinator (E1a) — receipt COPY over the staff-JWT
+  //    print routes. Built lazily on first use so a transport that never prints
+  //    (e.g. the auth-only tests) pays no setup cost. Shares the same `client`
+  //    (staff JWT + refresh-on-401) + SQL.js `db()` + config store.
+  let printCoordinatorPromise: ReturnType<typeof createRemotePrintCoordinator> | null = null;
+  const printCoordinator = () => {
+    if (!printCoordinatorPromise) {
+      printCoordinatorPromise = createRemotePrintCoordinator({ client, db, configStore });
+    }
+    return printCoordinatorPromise;
+  };
+
   const transport: ShimTransport & RealTransportEvents = {
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
@@ -1013,6 +1026,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       const active = createOrderRepo(await db()).getActiveShift();
       if (!active) return { success: false, error: 'no-active-shift' };
       return { success: true, shift: { id: active.id, staff_id: active.staff_id, staff_name: active.staff_name, opened_at: active.opened_at } };
+    },
+
+    // ── Remote receipt COPY print (E1a) — delegated to the coordinator ──────
+    async requestReceiptPrint(orderId, options) {
+      return printCoordinator().requestReceiptPrint(orderId, options);
+    },
+    async getPrinterStatus() {
+      return printCoordinator().getPrinterStatus();
     },
 
     // ── Event subscription hooks (delegated to by stubs.ts) ─────────────────

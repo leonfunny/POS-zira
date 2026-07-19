@@ -100,7 +100,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     onStateChanged: (cb: (state: PosState) => void): (() => void) => posStore.onStateChanged(cb),
     products: buildProductsNamespace(stubDeps),
     categories: buildCategoriesNamespace(stubDeps),
-    payment: buildPaymentNamespace(),
+    payment: buildPaymentNamespace(stubDeps),
     orders: buildOrdersNamespace(stubDeps),
     shift: buildShiftNamespace(stubDeps),
     staff: buildStaffNamespace(stubDeps),

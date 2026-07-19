@@ -207,21 +207,39 @@ export function buildCategoriesNamespace({ transport }: StubDeps) {
   };
 }
 
-/** Payment / print (S1 §2.F, §2.I). LATER (M5) — benign defaults so CASH completes. */
-export function buildPaymentNamespace() {
+/** Payment / print (S1 §2.F, §2.I). Receipt COPY delegates to the remote-print
+ *  coordinator (E1a) when a transport is present; otherwise the Wave-1 benign
+ *  outcome so a synthetic install completes CASH without the recovery overlay.
+ *  Fiscal print stays disabled (backend-gated P0-FISCAL) — printFiscalReceipt
+ *  keeps returning fiscalPrinted:false. */
+export function buildPaymentNamespace({ transport }: StubDeps) {
+  // Delegate a receipt COPY print to the remote-print coordinator (E1a) when the
+  // transport provides requestReceiptPrint; else the Wave-1 benign outcome. The
+  // coordinator itself returns the Wave-1 skip (receiptPrinted:true) when no
+  // remote printer is assigned, so a no-agent salon sees the same UX either way.
+  const runReceiptPrint = (orderId: string, opts?: { isReprint?: boolean; openDrawer?: boolean }) =>
+    transport.requestReceiptPrint
+      ? transport.requestReceiptPrint(orderId, opts)
+      : Promise.resolve({ success: true, receiptPrinted: true });
+
   return {
     hasFiscalPrinter: async () => ({ success: true, configured: false, connected: false }),
-    // Receipt COPY (non-fiscal) is reported PRINTED so the CASH checkout is not
-    // interrupted by the receipt-recovery overlay on every sale (M1–M4: the
-    // Windows counter still prints; the Android device is not the receipt
-    // authority — plan rail #6). M5 replaces this with real remote-print status.
+    // Receipt COPY outcome (printed/skipped/failed) comes from the coordinator.
+    // The renderer (receipt-outcome.ts deriveReceiptOutcome) reads ONLY
+    // `receiptPrinted`; the coordinator's extra fields are harmless context.
+    printReceipt: (orderId: string) => runReceiptPrint(orderId),
+    // CASH checkout entry point. Drawer is NEVER claimed opened on Android —
+    // there is no drawer hardware (printReceiptAndOpenDrawer hard-rails the
+    // drawer half to false regardless of the coordinator outcome).
+    printReceiptAndOpenDrawer: async (orderId: string) => {
+      const base = await runReceiptPrint(orderId, { openDrawer: true });
+      return { ...base, drawerOpened: false };
+    },
     // Fiscal receipts are NOT claimed printed (a false fiscal claim is a legal
     // issue) — printFiscalReceipt stays fiscalPrinted:false and the renderer
     // already skips it when no fiscal printer is configured.
-    printReceipt: async () => ({ success: true, receiptPrinted: true }),
-    printReceiptAndOpenDrawer: async () => ({ success: true, receiptPrinted: true, drawerOpened: false }),
     printFiscalReceipt: async () => ({ success: true, fiscalPrinted: false }),
-    reprintReceipt: async () => ({ success: true, receiptPrinted: true }),
+    reprintReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
     printRefundReceipt: async () => ({ success: true, receiptPrinted: false, error: 'no-printer' }),
     getPrintAttempts: async () => ({ success: true, attempts: [] }),
     getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),

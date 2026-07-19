@@ -98,6 +98,46 @@ export interface ShimGetUserResult {
 }
 
 /**
+ * Outcome of a remote receipt COPY print — packet E1a. Receipt COPY only: the
+ * fiscal receipt stays backend-gated (P0-FISCAL) and `printFiscalReceipt` keeps
+ * returning `fiscalPrinted:false`.
+ *
+ * `receiptPrinted` is the ONLY field `deriveReceiptOutcome` (receipt-outcome.ts)
+ * reads — true → PaymentModal closes cleanly (no recovery overlay); false → the
+ * cashier sees the "receipt not printed" warning + recovery path. The no-printer
+ * skip deliberately reports `receiptPrinted:true` so a salon with no Windows
+ * agent is not stopped by the overlay on every CASH sale (Wave-1 pilot UX).
+ */
+export interface RemoteReceiptPrintResult {
+  /** The coordinator ran to completion (mirrors the Windows IPC try/catch —
+   *  `success:true` even when `receiptPrinted:false`). False only on an
+   *  unexpected internal failure or no auth token. */
+  success: boolean;
+  /** Did the receipt paper emit? Drives the PaymentModal recovery overlay. */
+  receiptPrinted: boolean;
+  /** No remote receipt printer is configured/online for this salon — the
+   *  Wave-1 "skip" outcome (receiptPrinted:true) so the overlay never shows. */
+  skipped?: boolean;
+  /** Machine-readable outcome for diagnostics / future UI. */
+  reason?: 'no-printer' | 'no-order' | 'no-auth' | 'safe-before-print' | 'failed' | 'unknown';
+  /** The backend print-job id (when one was created or resumed). */
+  jobId?: string;
+  error?: string;
+}
+
+/** Result of `getPrinterStatus` — whether a remote receipt printer is assigned
+ *  to this salon (E1a). Used for diagnostics and to prime the assignment cache;
+ *  `requestReceiptPrint` resolves the assignment lazily too. */
+export interface RemotePrinterStatus {
+  assigned: boolean;
+  printerId?: string;
+  /** The cached lookup is still within its TTL (a print right now skips the
+   *  assignment HTTP round-trip). */
+  cached?: boolean;
+  error?: string;
+}
+
+/**
  * The transport seam. Implementations: `SyntheticTransport` (S2 default) and a
  * future fetch-based transport (S3+). The shim never imports a transport
  * directly; it receives one via `installShim({ transport })`.
@@ -141,6 +181,23 @@ export interface ShimTransport {
 
   /** Staff picker for shift open (S5 staff repo mirror). */
   getStaff?(): Promise<Array<{ id: string; user_id?: string | null; name: string; commission_rate: number; is_active: number; role?: string | null }>>;
+
+  /**
+   * Remote receipt COPY print (E1a). Submits a print job to the Windows agent
+   * over the existing staff-JWT routes (POST /print-agent/jobs + poll
+   * GET /print-agent/jobs/:id), then returns the real printed/failed/skipped
+   * outcome. Receipt COPY only — fiscal stays disabled. When no remote printer
+   * is assigned the coordinator returns the Wave-1 skip (`receiptPrinted:true,
+   * skipped:true`) so the checkout is not interrupted.
+   *
+   * `isReprint` builds a POS_RECEIPT_REPRINT job (no idempotency key — each
+   * reprint is a fresh job, matching Windows). `openDrawer` is accepted for API
+   * symmetry with `printReceiptAndOpenDrawer` but the drawer is always reported
+   * closed on Android (no drawer hardware).
+   */
+  requestReceiptPrint?(orderId: string, options?: { isReprint?: boolean; openDrawer?: boolean }): Promise<RemoteReceiptPrintResult>;
+  /** Resolve the salon's remote receipt printer (E1a). Diagnostic / cache-prime. */
+  getPrinterStatus?(): Promise<RemotePrinterStatus>;
 
   /**
    * Event subscriptions the transport OWNS (it knows when these fire). S6+S7:

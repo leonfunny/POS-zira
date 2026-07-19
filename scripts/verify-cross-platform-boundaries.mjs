@@ -89,6 +89,17 @@ const FORBIDDEN_NETWORK_GLOBALS = new Set([
   'fetch',
 ]);
 const BUILT_BUNDLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.mjs']);
+// The pa_-keyed agent EXECUTION surface + the socket handshake + the pa_ key
+// fetch stay forbidden in every mode. The staff-JWT, salon-scoped REST routes
+// (jobs / salons / fiscal-receipts / pickup-orders — packet E1a's receipt-COPY
+// print routes among them) are NOT pa_-keyed and are permitted: the Android
+// staff app calls them with the staff JWT exactly as the Windows staff POS does.
+// The distinguisher is the path segment right after /print-agent/: `agent(s)`,
+// `connect`, `my-key` are the forbidden execution/identity surface. (Before E1a
+// every /print-agent/ substring was banned because the whole surface was M5
+// "LATER"; E1a brought the receipt-COPY staff-JWT routes into scope.)
+const PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN = /\/print-agent\/(?:agents?(?=[/"']|$)|connect(?=[/"']|$)|my-key(?=[/"']|$))|x-print-agent-/i;
+
 const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
   // shimAllowable patterns are inert renderer string surface (see comment above
   // SHIM_INSTALLER_PATH_SEGMENT) and are skipped for shim-bearing bundles.
@@ -102,8 +113,11 @@ const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
   // file). dirname/process stay forbidden in every mode.
   { label: 'Node global Buffer (isomorphic base64 fallback)', pattern: /\bBuffer\s*[.(]/, shimAllowable: true },
   { label: 'Windows/native package', pattern: /@nut-tree-fork\/nut-js|@serialport\/|\b(?:ffi-napi|node-hid|ref-napi|serialport)\b/i },
-  // Real print-agent execution routes/headers stay forbidden in every mode.
-  { label: 'print-agent route or header', pattern: /\/print-agent\/|x-print-agent-/i },
+  // pa_-keyed print-agent execution routes/headers stay forbidden in every mode
+  // (agent/connect/my-key + the x-print-agent-* identity headers). Staff-JWT
+  // salon routes (jobs/salons/fiscal-receipts/pickup-orders) are allowed — see
+  // PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN above.
+  { label: 'print-agent route or header', pattern: PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN },
   // The bare "pa_xxx" literal is the inert API-key format hint embedded by the
   // unmodified renderer's i18n; only suppressible for shim-bearing bundles.
   { label: 'print-agent key literal', pattern: /\bpa_[A-Za-z0-9_-]+/, shimAllowable: true },
@@ -546,8 +560,11 @@ function directUsageViolations(sourceFile, isEntry = false) {
 
   const addIdentityViolation = (node, value) => {
     const normalized = value.toLowerCase();
-    const isRouteOrHeader = normalized.startsWith('x-print-agent-')
-      || normalized.includes('/print-agent/');
+    // pa_-keyed execution routes (/print-agent/agent(s)·connect·my-key) + the
+    // x-print-agent-* identity headers stay forbidden; staff-JWT salon routes
+    // (jobs/salons/fiscal-receipts/pickup-orders, incl. E1a receipt COPY) are
+    // permitted — see PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN.
+    const isRouteOrHeader = PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN.test(normalized);
     const isPaLiteral = normalized.includes('pa_');
     if (!isRouteOrHeader && !isPaLiteral) return;
     const offset = node.getStart(sourceFile, false);
@@ -557,9 +574,9 @@ function directUsageViolations(sourceFile, isEntry = false) {
       rule: 'FORBIDDEN_PRINT_AGENT_IDENTITY',
       node,
       message: `Print-agent identity/execution literal "${value}" is forbidden in Android/shared core`,
-      // Real routes/headers stay forbidden in every mode. The bare `pa_` literal
-      // is the inert "pa_xxx" i18n format hint in the unmodified renderer and is
-      // only suppressible for shim-bearing renderer graphs.
+      // pa_-keyed routes/headers stay forbidden in every mode. The bare `pa_`
+      // literal is the inert "pa_xxx" i18n format hint in the unmodified renderer
+      // and is only suppressible for shim-bearing renderer graphs.
       shimAllowable: isPaLiteral && !isRouteOrHeader,
     });
   };
