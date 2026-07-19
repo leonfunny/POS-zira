@@ -174,6 +174,39 @@ export function createOrderRepo(database: AndroidDatabase) {
     shelve(id: string, error: string): void {
       database.run('UPDATE orders SET synced = -1, sync_error = ? WHERE id = ?', [error, id]);
     },
+    /**
+     * Delete an UNSYNCED local order and restock its lines (order-repo.ts
+     * deleteLocalUnsynced). Refuses a synced/in-flight order — those must be
+     * cancelled/refunded server-side, never silently dropped. Returns whether
+     * it deleted and how many units were restocked.
+     */
+    deleteLocalUnsynced(id: string): { deleted: boolean; restocked: number; error?: string } {
+      const order = database.get<any>('SELECT * FROM orders WHERE id = ?', [id]);
+      if (!order) return { deleted: false, restocked: 0, error: 'not-found' };
+      if (order.backend_id || order.synced === 1) {
+        return { deleted: false, restocked: 0, error: 'Synced orders cannot be deleted locally. Cancel or refund via the backend instead.' };
+      }
+      if (order.synced === 2) {
+        return { deleted: false, restocked: 0, error: 'Order sync is in progress. Wait for it to finish before deleting.' };
+      }
+      const items = database.all<any>('SELECT * FROM order_items WHERE order_id = ?', [id]);
+      let restocked = 0;
+      database.transaction(() => {
+        for (const item of items) {
+          if (item.variant_id && item.quantity > 0) {
+            database.run(
+              'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? AND track_inventory = 1',
+              [item.quantity, item.quantity, item.variant_id],
+            );
+            restocked += item.quantity;
+          }
+        }
+        database.run('DELETE FROM order_items WHERE order_id = ?', [id]);
+        database.run('DELETE FROM orders WHERE id = ?', [id]);
+      });
+      return { deleted: true, restocked };
+    },
+
     /** Reset a shelved (-1) order for manual retry. order-repo.ts resetForRetry. */
     resetForRetry(id: string): boolean {
       const row = database.get<{ synced: number }>('SELECT synced FROM orders WHERE id = ?', [id]);

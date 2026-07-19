@@ -121,6 +121,9 @@ export interface ShimTransport {
   /** Order history (local + server) — S9. */
   getOrderHistory?(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }>;
   getOrderDetail?(orderId: string): Promise<{ order: any; items: any[] } | null>;
+  /** Cancel/delete a not-yet-synced local order (+restock) so it never syncs. */
+  cancelOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
+  deleteLocalOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
 
   /** Sync pull/push (S6 catalog / S8 orders). */
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;

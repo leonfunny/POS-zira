@@ -233,8 +233,25 @@ function normalizeProductRow(item: any): AndroidProductRow | null {
     thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,
     sale_unit: item.saleUnit ?? item.sale_unit ?? template.baseUnit ?? template.base_unit ?? null,
     sell_by: item.sellBy ?? item.sell_by ?? template.sellBy ?? template.sell_by ?? 'PIECE',
+    // Services / non-inventory items are not stock-decremented locally (Windows
+    // STOCK_TRACKED_GUARD_SQL: item_type='stockable' AND track_inventory=1).
+    track_inventory: resolveTrackInventory(item, template),
     updated_at: item.canonicalUpdatedAt ?? item.canonical_updated_at ?? item.updatedAt ?? item.updated_at ?? null,
   };
+}
+
+/**
+ * Whether a catalog row is stock-tracked. Mirrors the Windows guard: only
+ * `item_type='stockable'` with `track_inventory` truthy is decremented. A
+ * service/consumable item_type, or an explicit track_inventory=false, is 0.
+ * Absent metadata defaults to tracked (1) — the safe default for retail goods.
+ */
+function resolveTrackInventory(item: any, template: any): number {
+  const itemType = String(item.itemType ?? item.item_type ?? template.itemType ?? template.item_type ?? '').toLowerCase();
+  if (itemType && itemType !== 'stockable' && itemType !== 'product') return 0;
+  const track = item.trackInventory ?? item.track_inventory ?? template.trackInventory ?? template.track_inventory;
+  if (track === false || track === 0 || track === '0' || track === 'false') return 0;
+  return 1;
 }
 
 /** ported from api-client.ts:494-500 — an icon string that is itself a URL. */
@@ -314,6 +331,29 @@ function normalizePosLocalCreatedAt(value: string | null | undefined): string | 
   const normalized = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
   const date = new Date(normalized);
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+/**
+ * CASH-only enforcement (plan §1 rail #2). Returns an error string if the order
+ * carries any non-CASH tender, else null. An empty/absent payment_method is
+ * treated as CASH (the local default). Split tenders must every be CASH.
+ */
+function assertCashOnly(order: any): string | null {
+  const method = String(order?.payment_method ?? 'CASH').trim().toUpperCase();
+  if (method && method !== 'CASH') {
+    return `Android accepts CASH only (got ${method}). Electronic tenders are disabled.`;
+  }
+  const tendersJson = order?.payment_tenders;
+  if (tendersJson) {
+    try {
+      const tenders = JSON.parse(tendersJson) as Array<{ method?: string }>;
+      const nonCash = tenders.find((t) => String(t?.method ?? 'CASH').trim().toUpperCase() !== 'CASH');
+      if (nonCash) return `Android accepts CASH only (split tender ${String(nonCash.method)}). Electronic tenders are disabled.`;
+    } catch {
+      return 'Android accepts CASH only (unreadable tender data).';
+    }
+  }
+  return null;
 }
 
 /** order-sync.ts:187-191 — local payment method → backend enum. */
@@ -691,6 +731,23 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         const orderRepo = createOrderRepo(database);
         const productRepo = createProductRepo(database);
         const normalizedOrder = { ...(order || {}) };
+
+        // Idempotent create (parity with pos.module.ts:3196-3208): a retried
+        // create with the same client order id returns the existing order
+        // instead of throwing a PK violation — otherwise the renderer would
+        // re-ring under a new id and double-charge the customer.
+        if (normalizedOrder.id && orderRepo.getById(normalizedOrder.id)) {
+          return { success: true, id: normalizedOrder.id, duplicate: true } as any;
+        }
+
+        // CASH-only hard rail (plan §1 #2). The backend marks any non-CREDIT
+        // tender set PAID without proving CARD/BLIK authorization (P0-PAY-1),
+        // so Android must not submit electronic tenders. Reject a non-CASH
+        // payment_method or any non-CASH split tender here, at the write path
+        // — a disabled Elavon stub does not stop a manual CARD/TRANSFER tap.
+        const cashOnlyError = assertCashOnly(normalizedOrder);
+        if (cashOnlyError) return { success: false, error: cashOnlyError };
+
         const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
         if (isPosOrder) {
           // Shift enforcement — ported from pos.module.ts:3057-3095.
@@ -747,10 +804,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         const allowNegative = (configStore.getRawConfig() as any).allowOversell === true;
         for (const item of normalizedItems) {
           if (item.variant_id && item.quantity > 0) {
+            // Guard on track_inventory (Windows STOCK_TRACKED_GUARD_SQL) so
+            // services / non-inventory items are not driven to phantom 0 stock.
             database.run(
               allowNegative
-                ? 'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ?'
-                : 'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ?',
+                ? 'UPDATE product_variants SET in_stock = in_stock - ?, available_qty = available_qty - ? WHERE id = ? AND track_inventory = 1'
+                : 'UPDATE product_variants SET in_stock = MAX(0, in_stock - ?), available_qty = MAX(0, available_qty - ?) WHERE id = ? AND track_inventory = 1',
               [item.quantity, item.quantity, item.variant_id],
             );
           }
@@ -837,6 +896,24 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       const order = orderRepo.getById(orderId);
       if (!order) return null;
       return { order, items: orderRepo.getItemsByOrderId(orderId) };
+    },
+
+    /** Cancel a not-yet-synced order: delete it locally + restock so it is
+     *  never pushed to the backend (the S2 stub returned a fake success and
+     *  let the "cancelled" order sync anyway). A synced order is refused. */
+    async cancelOrder(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }> {
+      const database = await db();
+      const result = createOrderRepo(database).deleteLocalUnsynced(orderId);
+      await database.flush().catch(() => { /* debounced flush still pending */ });
+      if (!result.deleted) return { success: false, error: result.error };
+      return { success: true, restocked: result.restocked };
+    },
+    async deleteLocalOrder(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }> {
+      const database = await db();
+      const result = createOrderRepo(database).deleteLocalUnsynced(orderId);
+      await database.flush().catch(() => { /* debounced flush still pending */ });
+      if (!result.deleted) return { success: false, restocked: 0, error: result.error };
+      return { success: true, restocked: result.restocked };
     },
 
     // ── Shifts (S9 — local-first port of shift-controller.ts:75-170 +

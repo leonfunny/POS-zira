@@ -391,4 +391,94 @@ describe('real transport orders + shifts (S8+S9)', () => {
     expect(staff).toHaveLength(1);
     expect(staff[0]).toMatchObject({ id: 'staff-1', name: 'Ala Nowak', is_active: 1 });
   });
+
+  test('createOrder rejects a non-CASH tender (CASH-only hard rail)', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const card = await transport.createOrder!(
+      { ...CASH_ORDER(shiftId), id: 'card-order', payment_method: 'CARD' },
+      CASH_ITEMS,
+    );
+    expect(card.success).toBe(false);
+    expect(card.error).toMatch(/CASH only/i);
+
+    const split = await transport.createOrder!(
+      { ...CASH_ORDER(shiftId), id: 'split-order', payment_tenders: JSON.stringify([{ method: 'CASH', amount: 2000 }, { method: 'BLIK', amount: 2900 }]) },
+      CASH_ITEMS,
+    );
+    expect(split.success).toBe(false);
+    expect(split.error).toMatch(/CASH only/i);
+
+    // Neither rejected order was persisted.
+    expect(await transport.getOrderDetail!('card-order')).toBeNull();
+    expect(await transport.getOrderDetail!('split-order')).toBeNull();
+  });
+
+  test('createOrder is idempotent on a repeated client order id (no double-charge)', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const first = await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    expect(first).toMatchObject({ success: true, id: 'local-order-1' });
+    const retry = await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    expect(retry).toMatchObject({ success: true, id: 'local-order-1', duplicate: true });
+
+    // Exactly one order exists; stock decremented once (10 → 9), not twice.
+    const history = await transport.getOrderHistory!({});
+    expect(history.orders.filter((o: any) => o.id === 'local-order-1')).toHaveLength(1);
+  });
+
+  test('cancelOrder deletes an unsynced order and restocks so it never syncs', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+
+    const cancelled = await transport.cancelOrder!('local-order-1');
+    expect(cancelled.success).toBe(true);
+    expect(await transport.getOrderDetail!('local-order-1')).toBeNull();
+
+    // A subsequent drain must NOT push the cancelled order.
+    fetchMock.mockClear();
+    await transport.syncOrders!();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('cancelOrder refuses a synced order', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (/\/finish$/.test(target)) return jsonResponse({});
+      if (/\/b2b\/pos\/orders$/.test(target)) return jsonResponse({ id: 'backend-1' });
+      throw new Error(`unexpected fetch: ${target}`);
+    });
+    await transport.syncOrders!();
+    const cancelled = await transport.cancelOrder!('local-order-1');
+    expect(cancelled.success).toBe(false);
+    expect(cancelled.error).toMatch(/Synced/i);
+  });
+
+  test('a service item (track_inventory=0) is not stock-decremented on sale', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    // Seed a service product through the catalog sync normalizer.
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (target.includes('/warehouse/public/products')) {
+        return jsonResponse({
+          products: [{ id: 'svc-1', name: 'Manicure', itemType: 'service', retailPrice: '80.00', in_stock: 0, template: { id: 't-svc' } }],
+          categories: [],
+          nextSyncCursor: 'c1',
+        });
+      }
+      return jsonResponse({ categories: [] });
+    });
+    await transport.syncProducts!();
+    const svc = await transport.getProductById!('svc-1');
+    expect(svc).toBeTruthy();
+
+    await transport.createOrder!(
+      { ...CASH_ORDER(shiftId), id: 'svc-order' },
+      [{ id: 'l-svc', order_id: 'svc-order', variant_id: 'svc-1', name: 'Manicure', price: 8000, quantity: 1, sell_by: 'PIECE', total: 8000, vat_rate: 23 }],
+    );
+    const after = await transport.getProductById!('svc-1');
+    // Service stock stays 0 (not driven negative / phantom), unlike a tracked good.
+    expect((after as any).in_stock).toBe(0);
+    expect((after as any).available_qty).toBe(0);
+  });
 });

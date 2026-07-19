@@ -43,6 +43,8 @@ export interface AndroidProductRow {
   thumbnail_url: string | null;
   sale_unit: string | null;
   sell_by: string | null;
+  /** 0 for services / non-inventory items (never decremented locally). */
+  track_inventory?: number;
   updated_at: string | null;
 }
 
@@ -381,14 +383,14 @@ export function createProductRepo(db: AndroidDatabase): AndroidProductRepo {
           `INSERT OR REPLACE INTO product_variants (
             id, template_id, name, sku, barcode, retail_price, category_id, image_url,
             in_stock, available_qty, vat_rate, is_active, is_on_sale, thumbnail_url,
-            sale_unit, sell_by, updated_at
+            sale_unit, sell_by, track_inventory, updated_at
           )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0,
             p.category_id, p.image_url, p.in_stock ?? 0, p.available_qty ?? 0,
             p.vat_rate ?? 23, p.is_active ?? 1, p.is_on_sale ?? 0, p.thumbnail_url,
-            p.sale_unit, p.sell_by ?? 'PIECE', p.updated_at,
+            p.sale_unit, p.sell_by ?? 'PIECE', p.track_inventory ?? 1, p.updated_at,
           ],
         );
       }

@@ -52,6 +52,7 @@ export const ANDROID_SCHEMA_DDL = `
     thumbnail_url TEXT,
     sale_unit TEXT,
     sell_by TEXT DEFAULT 'PIECE',
+    track_inventory INTEGER DEFAULT 1,
     updated_at TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_pv_barcode ON product_variants(barcode);
@@ -177,8 +178,17 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   for (const sql of statements) {
     db.run(sql);
   }
+  // Additive migrations for DBs created before a column existed (CREATE IF NOT
+  // EXISTS won't add columns to an existing table). Guarded by table_info so
+  // re-runs are safe.
+  const productColumns = new Set<string>();
+  const info = db.exec('PRAGMA table_info(product_variants)');
+  for (const row of info[0]?.values ?? []) productColumns.add(String(row[1]));
+  if (!productColumns.has('track_inventory')) {
+    db.run('ALTER TABLE product_variants ADD COLUMN track_inventory INTEGER DEFAULT 1');
+  }
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
-/** v2 = S8+S9 order/shift/staff/sequence tables (additive, IF NOT EXISTS). */
-export const ANDROID_SCHEMA_VERSION = 2;
+/** v3 = product_variants.track_inventory (stock-guard parity). */
+export const ANDROID_SCHEMA_VERSION = 3;

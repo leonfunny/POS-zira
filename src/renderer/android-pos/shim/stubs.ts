@@ -248,8 +248,19 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
     }),
     retrySync: async () => ({ success: true }),
-    cancel: async () => ({ success: true }),
-    deleteLocal: async () => ({ success: true, restocked: 0 }),
+    // Delegate to the transport so a not-yet-synced order is actually removed
+    // (and restocked); the S2 fake-success let the "cancelled" order sync.
+    // Without a transport (synthetic install), refuse rather than lie.
+    cancel: (orderId: string) => withTransport(
+      transport.cancelOrder,
+      [orderId],
+      () => ({ success: false as boolean, restocked: undefined as number | undefined, error: 'cancel-unavailable' as string | undefined }),
+    ),
+    deleteLocal: (orderId: string) => withTransport(
+      transport.deleteLocalOrder,
+      [orderId],
+      () => ({ success: false as boolean, restocked: 0 as number | undefined, error: 'delete-unavailable' as string | undefined }),
+    ),
     mutate: async () => ({ success: true, localOnly: true }),
     mirrorFromServer: async () => ({ success: false, error: 'no-server-mirror' }),
     refund: async () => ({ success: false, error: 'refund-unavailable' }),
