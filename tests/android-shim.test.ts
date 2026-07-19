@@ -64,6 +64,19 @@ describe('android shim installShim', () => {
     expect((await api.pos.getState()).session.isOpen).toBe(false);
   });
 
+  test('a fresh login resets the POS session so no ghost shift survives a tenant switch', async () => {
+    const { api } = installShim();
+    const opened = await api.pos.shift.open({ staffId: 's1', staffName: 'Ala', openingCash: 1000 });
+    expect((await api.pos.getState()).session.isOpen).toBe(true);
+
+    // Re-login (e.g. after an onExpired or a salon switch) must clear the
+    // in-memory session — otherwise payment stays unlocked by a shift whose
+    // row was wiped, and createOrder would reject every sale.
+    await api.auth.loginWithEmail('other@salon.pl', 'pw');
+    expect((await api.pos.getState()).session.isOpen).toBe(false);
+    void opened;
+  });
+
   test('installs the full S1 contract surface', async () => {
     const { api } = installShim();
 

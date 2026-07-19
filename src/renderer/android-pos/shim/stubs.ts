@@ -93,7 +93,7 @@ export interface StubDeps {
 }
 
 /** Auth namespace (S1 §2.B). Email login is the pilot path; Telegram-QR is STUB. */
-export function buildAuthNamespace({ configStore, transport }: StubDeps) {
+export function buildAuthNamespace({ configStore, transport, posStore }: StubDeps) {
   const applyAuthUser = (user: AuthUser) => {
     // Mirrors the Windows setConfig side-effect (minus the print-agent connect
     // hard rail — Android never calls /print-agent/connect). S1 §2.B note.
@@ -115,7 +115,15 @@ export function buildAuthNamespace({ configStore, transport }: StubDeps) {
           data: { user: { ...SYNTHETIC_AUTH_USER, email: email || SYNTHETIC_AUTH_USER.email } },
         }),
       );
-      if (result.success && result.data?.user) applyAuthUser(result.data.user);
+      if (result.success && result.data?.user) {
+        applyAuthUser(result.data.user);
+        // A fresh login starts with no open shift in memory. Reset the session
+        // so a stale session from a prior salon/user (e.g. after a tenant
+        // switch or an onExpired while POS was mounted) cannot leave a ghost
+        // shift unlocking payment. The boot hydrate re-opens the session from
+        // the local active-shift row if one legitimately exists.
+        posStore?.dispatch({ type: 'session/close' });
+      }
       return result;
     },
     getUser: async (): Promise<{ success: boolean; data?: { isAuthenticated: boolean; user?: AuthUser }; error?: string }> => {

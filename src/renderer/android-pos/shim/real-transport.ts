@@ -570,9 +570,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // the Windows archive-then-clear on salon change (auth.module.ts:767-800).
         const previousSalonId = configStore.getRawConfig().salonId;
         if (previousSalonId && previousSalonId !== authUser.salonId) {
-          const database = await db();
-          database.clearSalonData();
-          await database.flush().catch(() => { /* debounced flush still pending */ });
+          // Abort the login if the wipe does not durably persist — otherwise
+          // config (localStorage) would flip to salon B while salon A's catalog
+          // image (IndexedDB) survives a failed flush, a cross-tenant leak on
+          // the next boot. Do NOT swallow the flush error here.
+          try {
+            const database = await db();
+            database.clearSalonData();
+            await database.flush();
+          } catch {
+            return { success: false, error: 'Could not clear the previous salon data; login aborted to protect tenant isolation.' };
+          }
         }
         // Store the staff JWT (NO pa_ key, NO /print-agent/connect — S1 §2.B rail).
         await tokenStore.setTokens(result.access_token, result.refresh_token ?? null);
