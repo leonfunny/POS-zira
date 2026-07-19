@@ -446,10 +446,10 @@ describe('android shim config store', () => {
     expect((sanitized as Record<string, unknown>).encryptedRemotePin).toBe('');
   });
 
-  test('seeds retail mode + synthetic authUser so RetailTemplate mounts', () => {
+  test('seeds salon mode (Windows default) + synthetic authUser', () => {
     const store = new ShimConfigStore({ storage: makeMapStorage() });
     const config = store.getConfig();
-    expect(config.posMode).toBe('retail');
+    expect(config.posMode).toBe('salon'); // E2a: salon is the Windows default
     expect(config.authUser).toEqual(SYNTHETIC_AUTH_USER);
     expect(config.posEnabled).toBe(true);
   });

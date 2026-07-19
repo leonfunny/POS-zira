@@ -38,6 +38,7 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import { resolvePosMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
 import type {
   ShimGetUserResult,
@@ -294,6 +295,47 @@ function normalizeCategoryRow(cat: any): AndroidCategoryRow | null {
   };
 }
 
+// ─── Staff normalization (E2a — staffSync.pullStaff → staffRepo) ───────────
+
+/**
+ * Normalize one backend staff profile (GET /api/v1/staff) into the local
+ * `staff` table column set. The backend may return camelCase or snake_case,
+ * a flat `name` or split `firstName`/`lastName`, and a 0–100 commission rate.
+ * Mirrors the defensive mapping the Windows staff-sync worker applies before
+ * the staffRepo bulk upsert (staff-sync.ts:17 → staffRepo). Returns null for a
+ * row without an id or any resolvable name (skipped, never throws).
+ */
+function normalizeStaffRow(raw: any): {
+  id: string;
+  user_id: string | null;
+  name: string;
+  commission_rate: number;
+  is_active: number;
+  role: string | null;
+} | null {
+  if (!raw) return null;
+  const id = raw.id ?? raw.staffProfileId ?? raw.staff_profile_id ?? raw.userId ?? raw.user_id;
+  if (!id) return null;
+  const firstName = raw.firstName ?? raw.first_name ?? '';
+  const lastName = raw.lastName ?? raw.last_name ?? '';
+  const name = String(
+    raw.name ?? raw.fullName ?? raw.full_name
+    ?? [firstName, lastName].filter(Boolean).join(' ').trim()
+    ?? raw.email ?? '',
+  ).trim();
+  if (!name) return null;
+  const commission = Number(raw.commissionRate ?? raw.commission_rate ?? raw.commissionPercent ?? raw.commission_percent ?? 0);
+  const isActive = raw.isActive ?? raw.is_active;
+  return {
+    id: String(id),
+    user_id: raw.userId ?? raw.user_id ?? raw.user?.id ?? null,
+    name,
+    commission_rate: Number.isFinite(commission) ? commission : 0,
+    is_active: isActive === false || isActive === 0 || isActive === '0' ? 0 : 1,
+    role: raw.role ?? null,
+  };
+}
+
 // ─── Order sync helpers (ported from src/main/sync/order-sync.ts) ──────────
 
 /** Max transient sync attempts before shelving (order-sync.ts:11). */
@@ -452,6 +494,8 @@ export interface RealTransportEvents {
   onProductsSynced(cb: () => void): () => void;
   onOrderSynced(cb: (payload: { orderId: string; backendId: string }) => void): () => void;
   onOrderSyncFailed(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void;
+  onStaffUpdated(cb: (data?: { count?: number } | undefined) => void): () => void;
+  onNailTurnsUpdated(cb: (data: { orderId?: string; checkedOut?: number }) => void): () => void;
 }
 
 export function createRealTransport(options: RealTransportOptions): ShimTransport & RealTransportEvents {
@@ -468,6 +512,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const productsSyncedListeners = new Set<() => void>();
   const orderSyncedListeners = new Set<(payload: { orderId: string; backendId: string }) => void>();
   const orderSyncFailedListeners = new Set<(payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void>();
+  // E2a salon emitters: staff-updated (after a staff pull) + nail-turns-updated
+  // (after a salon checkout closes a technician's turn).
+  const staffUpdatedListeners = new Set<(data?: { count?: number } | undefined) => void>();
+  const nailTurnsUpdatedListeners = new Set<(data: { orderId?: string; checkedOut?: number }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
   // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
@@ -564,6 +612,78 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     return printCoordinatorPromise;
   };
 
+  /** Emit pos:nail-turns-updated (E2a §2.D) — fires after a salon checkout
+   *  closes at least one technician's turn so SalonTemplate reloads the board. */
+  const emitNailTurnsUpdated = (payload: { orderId?: string; checkedOut?: number }) => {
+    for (const cb of [...nailTurnsUpdatedListeners]) {
+      try { cb(payload); } catch { /* listener isolation */ }
+    }
+  };
+
+  /**
+   * E2a §2.D (SHIM_CONTRACT_SALON_E2): best-effort nail-turn checkout for a
+   * salon sale. After a salon-mode order is created, close each technician's
+   * active turn on the nail-turn board so revenue + tip share are credited.
+   * Fully swallowed / fire-and-forget — no-ops when there is no token, the
+   * board is unavailable (403/404/501), or no active assignment matches a cart
+   * line's staff (pos.module.ts:897,912,926). Emits pos:nail-turns-updated only
+   * when a checkout actually succeeded.
+   *
+   * Cart lines carry `staff_id` (= the staff table id = the user id in the
+   * cashier seed); the board keys technicians by `staff_profile_id`, so the
+   * board's `staff[].user_id → staff_profile_id` map resolves the cross-key.
+   */
+  const syncNailTurnCheckoutForOrder = async (order: any, items: any[]) => {
+    try {
+      if (String(order?.mode ?? '').toLowerCase() !== 'salon') return;
+      const token = await tokenStore.getAccessToken();
+      if (!token) return;
+      const board = await client.getNailTurnBoard();
+      if (!board) return; // turn board not deployed today → no-op
+      const assignments: any[] = Array.isArray(board.active_assignments) ? board.active_assignments : [];
+      if (assignments.length === 0) return;
+      const staffSummaries: any[] = Array.isArray(board.staff) ? board.staff : [];
+      const userToProfile = new Map<string, string>();
+      for (const s of staffSummaries) {
+        const profile = s.staff_profile_id ?? s.staffProfileId;
+        const user = s.user_id ?? s.userId;
+        if (profile && user) userToProfile.set(String(user), String(profile));
+      }
+      // Group cart lines by staff_id, summing grosze totals (pos.module.ts:3180).
+      const totalsByStaff = new Map<string, number>();
+      for (const item of items) {
+        const sid = item.staff_id ?? item.staffId;
+        if (!sid) continue;
+        const total = Math.max(0, Math.round(Number(item.total ?? 0) || 0));
+        totalsByStaff.set(String(sid), (totalsByStaff.get(String(sid)) ?? 0) + total);
+      }
+      if (totalsByStaff.size === 0) return;
+      const orderTipGrosze = Math.max(0, Math.round(Number(order?.tip ?? 0) || 0));
+      const staffIds = [...totalsByStaff.keys()];
+      const tipPerStaff = orderTipGrosze > 0 ? Math.floor(orderTipGrosze / staffIds.length) : 0;
+      let checkedOut = 0;
+      for (const staffId of staffIds) {
+        const profileId = userToProfile.get(staffId);
+        if (!profileId) continue;
+        const assignment = assignments.find(
+          (a) => String(a.staff_profile_id ?? a.staffProfileId ?? '') === profileId,
+        );
+        if (!assignment?.id) continue;
+        const amountGrosze = totalsByStaff.get(staffId) ?? 0;
+        const result = await client.checkoutNailTurnAssignment(String(assignment.id), {
+          amount_pln: amountGrosze / 100,
+          tip_pln: tipPerStaff / 100,
+          idempotency_key: `pos-zira:nail-turn-checkout:${order.id}:${assignment.id}`,
+        });
+        if (result) checkedOut += 1;
+      }
+      if (checkedOut > 0) emitNailTurnsUpdated({ orderId: order.id, checkedOut });
+    } catch {
+      // Best-effort: a checkout failure never breaks the sale (the order is
+      // already created + flushed). Technician revenue/turn tracking just lags.
+    }
+  };
+
   const transport: ShimTransport & RealTransportEvents = {
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
@@ -599,13 +719,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         await tokenStore.setTokens(result.access_token, result.refresh_token ?? null);
         const salonSlug = resolveAuthSalonSlug(result);
         // setConfig side-effect (auth.module.ts:795), minus the print-agent auto-connect.
+        // E2a: do NOT hard-seed 'retail' on every login — resolve the POS mode so a
+        // salon boots salon (the Windows default) and a retail-configured device
+        // stays retail. The resolved value reflects the config the cashier already
+        // has (device/driver choice authoritative); SHIM_CONTRACT_SALON_E2 §0.1.
         configStore.setConfig({
           authUser,
           salonId: authUser.salonId,
           salonName: authUser.salonName ?? '',
           salonSlug,
           posEnabled: true,
-          posMode: 'retail',
+          posMode: resolvePosMode(configStore.getRawConfig()),
         } as Partial<AgentConfig>);
         client.salonSlug = salonSlug || client.salonSlug;
         // Seed the staff picker with the logged-in cashier (documented
@@ -684,6 +808,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
     async getProductByBarcode(barcode): Promise<ShimPosProduct | null> {
       return createProductRepo(await db()).getByBarcode(barcode);
+    },
+    async getByCategory(categoryId): Promise<ShimPosProduct[]> {
+      // E2a §2.A: salon service-grid reader (category-filtered catalog).
+      return createProductRepo(await db()).getByCategory(categoryId);
     },
     async searchProducts(query): Promise<ShimPosProduct[]> {
       return createProductRepo(await db()).search(query);
@@ -866,6 +994,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
         // Paid orders must survive a crash — flush immediately (order-repo.ts:249-250).
         await database.flush().catch(() => { /* debounced flush still pending */ });
+        // E2a §2.D: salon sales best-effort close each technician's turn on the
+        // nail-turn board (mode:'salon' only). Fire-and-forget + swallowed — it
+        // no-ops when the board is absent, so it can never break the sale.
+        void syncNailTurnCheckoutForOrder(normalizedOrder, normalizedItems);
         return { success: true, id };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
@@ -1121,6 +1253,72 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     async getStaff(): Promise<any[]> {
       return createOrderRepo(await db()).getStaff();
     },
+
+    // ── Salon mode (E2a) — getByCategory is defined with the other catalog
+    //    readers above; syncStaff + schedule/nail-turn reads follow. ─────────
+    /** Pull the salon technicians (GET /api/v1/staff, staff JWT), replace the
+     *  local staff table, emit onStaffUpdated so the SalonTemplate per-line
+     *  picker refreshes. Non-fatal: a failed pull keeps the local cache. */
+    async syncStaff(): Promise<{ success: boolean; count?: number; error?: string }> {
+      const token = await tokenStore.getAccessToken();
+      if (!token) return { success: false, error: 'no-auth' };
+      let profiles: any[];
+      try {
+        profiles = await client.getStaffProfiles();
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+      // normalizeStaffRow maps every observed backend shape (camelCase /
+      // snake_case / split names / 0–100 commission) onto the staff table
+      // columns, dropping rows without an id+name.
+      const rows = (Array.isArray(profiles) ? profiles : [])
+        .map((p: any) => normalizeStaffRow(p))
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      const database = await db();
+      createOrderRepo(database).bulkUpsertStaff(rows);
+      await database.flush().catch(() => { /* debounced flush still pending */ });
+      for (const cb of [...staffUpdatedListeners]) {
+        try { cb({ count: rows.length }); } catch { /* listener isolation */ }
+      }
+      return { success: true, count: rows.length };
+    },
+
+    // ── Schedule + nail-turn board (E2c reads) — dark-launch safe ───────────
+    // The api-client darkLaunch* helpers return null on 403/404/501/network, so
+    // an undeployed salon transparently hides these panels (unavailable:true).
+    async getNailTurnBoard() {
+      const board = await client.getNailTurnBoard().catch(() => null);
+      return board ? { success: true, board } : { success: false, unavailable: true };
+    },
+    async getPosScheduleToday(date?: string) {
+      const schedule = await client.getPosScheduleToday(date).catch(() => null);
+      return schedule ? { success: true, schedule } : { success: false, unavailable: true };
+    },
+    async getPosScheduleWeek(from?: string, days?: number) {
+      const week = await client.getPosScheduleWeek(from, days).catch(() => null);
+      return week ? { success: true, week } : { success: false, unavailable: true };
+    },
+    async setPosScheduleStaffStatus(payload: any) {
+      const schedule = await client
+        .setPosScheduleStaffStatus(payload.staffProfileId, {
+          status: payload.status,
+          idempotencyKey: payload.idempotencyKey,
+        })
+        .catch(() => null);
+      return schedule ? { success: true, schedule } : { success: false, unavailable: true };
+    },
+    async assignPosScheduleNext(payload: any) {
+      const schedule = await client
+        .assignPosScheduleNext(payload.checkinLogId, payload)
+        .catch(() => null);
+      return schedule ? { success: true, schedule } : { success: false, unavailable: true };
+    },
+    async requestPosScheduleStaff(payload: any) {
+      const schedule = await client
+        .requestPosScheduleStaff(payload.checkinLogId, payload)
+        .catch(() => null);
+      return schedule ? { success: true, schedule } : { success: false, unavailable: true };
+    },
     async getActiveShift(): Promise<{ success: boolean; shift?: { id: string; staff_id: string | null; staff_name: string | null; opened_at: string } | null; error?: string }> {
       const active = createOrderRepo(await db()).getActiveShift();
       if (!active) return { success: false, error: 'no-active-shift' };
@@ -1151,6 +1349,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     onOrderSyncFailed(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void {
       orderSyncFailedListeners.add(cb);
       return () => { orderSyncFailedListeners.delete(cb); };
+    },
+    onStaffUpdated(cb: (data?: { count?: number } | undefined) => void): () => void {
+      staffUpdatedListeners.add(cb);
+      return () => { staffUpdatedListeners.delete(cb); };
+    },
+    onNailTurnsUpdated(cb: (data: { orderId?: string; checkedOut?: number }) => void): () => void {
+      nailTurnsUpdatedListeners.add(cb);
+      return () => { nailTurnsUpdatedListeners.delete(cb); };
     },
   };
 

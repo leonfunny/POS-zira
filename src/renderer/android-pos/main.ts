@@ -24,7 +24,7 @@ import '../index.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { installShim } from './shim';
-import { ShimConfigStore } from './shim/config-store';
+import { ShimConfigStore, resolvePosMode } from './shim/config-store';
 import { TokenStore } from './shim/token-store';
 import { createRealTransport } from './shim/real-transport';
 import AndroidBootApp from './AndroidBootApp';
@@ -37,6 +37,18 @@ const transport = createRealTransport({ configStore, tokenStore });
 // single allowed module-load side effect of the entry — the boundary verifier
 // permits it because the shim installer is in this graph.
 installShim({ transport, configStore });
+
+// E2a (salon mode): materialize the resolved POS mode into config so the
+// unmodified Windows POSLayout (`posMode === 'salon'` → SalonTemplate,
+// POSLayout.tsx:1642) renders the right template. `resolvePosMode` defaults a
+// fresh/invalid config to 'salon' (the Windows default, S1 headline #2) and
+// leaves an explicit 'retail' config untouched — so a salon boots salon, a
+// retail-configured device stays retail. No-op when config already holds a
+// supported mode.
+const resolvedPosMode = resolvePosMode(configStore.getRawConfig());
+if (configStore.getRawConfig().posMode !== resolvedPosMode) {
+  configStore.setConfig({ posMode: resolvedPosMode });
+}
 
 const rootElement = document.getElementById('root');
 if (rootElement) {

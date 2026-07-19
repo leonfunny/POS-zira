@@ -16,13 +16,51 @@
  *  - `setConfig`/`saveConfig` merge + persist + emit `onConfigUpdated` so every
  *    subscribed window re-`getConfig()` (matches the Windows config-updated
  *    broadcast).
- *  - Seeds posMode='retail' + a synthetic authUser so RetailTemplate mounts and
- *    resolves its per-user cart key (S1 §0.2, §5).
+ *  - Seeds posMode='salon' (E2a — the Windows default) + a synthetic authUser so
+ *    SalonTemplate/RetailTemplate mount and resolve their per-user cart key
+ *    (S1 §0.2, §5; SHIM_CONTRACT_SALON_E2 §0.1). `resolvePosMode` is the single
+ *    source of the salon-vs-retail decision at boot + login.
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
 
 const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
+
+// ─── posMode resolution (packet E2a — salon mode) ───────────────────────────
+
+/**
+ * The two POS modes the Android shell drives on the unmodified Windows
+ * `POSLayout` (PosMode = 'retail'|'salon'|'b2b'|'restaurant', types.ts:586, but
+ * Android only renders retail + salon — b2b/restaurant are EXCLUDE). Per
+ * SHIM_CONTRACT_SALON_E2 §0.1 / §9.1 the Windows default is **'salon'**
+ * (`POSLayout.tsx:294`); the S1 retail port seeded 'retail' because it only
+ * shipped the retail template. E2a makes the salon template render, so the
+ * Android shell must boot a salon in salon mode while keeping a
+ * retail-configured device on retail.
+ */
+export type AndroidPosMode = 'retail' | 'salon';
+
+/**
+ * Resolve the effective POS mode. Precedence (SHIM_CONTRACT_SALON_E2 task #1):
+ *   1. `config.posMode` when it is an Android-supported mode (the device/driver
+ *      choice is authoritative — a retail-configured salon stays retail);
+ *   2. else the salon entitlement's `suggestedPosMode` when it names a supported
+ *      mode (a salon the backend flags retail);
+ *   3. else `'salon'` — the Windows default (S1 headline #2, POSLayout.tsx:294).
+ *
+ * Pure + exported so the boot path (main.ts) and login (real-transport) share
+ * one decision, and so the precedence is unit-testable without a window.
+ */
+export function resolvePosMode(
+  config: { posMode?: string } | null | undefined,
+  entitlement?: { suggestedPosMode?: string | null } | null,
+): AndroidPosMode {
+  const fromConfig = String(config?.posMode ?? '').trim().toLowerCase();
+  if (fromConfig === 'retail' || fromConfig === 'salon') return fromConfig;
+  const suggested = String(entitlement?.suggestedPosMode ?? '').trim().toLowerCase();
+  if (suggested === 'retail' || suggested === 'salon') return suggested;
+  return 'salon';
+}
 
 /**
  * The synthetic staff identity used until real login (S3/S4) lands. Marked
@@ -38,7 +76,11 @@ export const SYNTHETIC_AUTH_USER: AuthUser = {
   salonName: 'Synthetic Salon',
 };
 
-/** The S2 boot seed — retail mode, synthetic session, no secrets, no URLs. */
+/**
+ * The S2 boot seed — SALON mode (the Windows default, SHIM_CONTRACT_SALON_E2
+ * §0.1/§9.1), synthetic session, no secrets, no URLs. A retail-configured
+ * device overrides this via the seed/config; `resolvePosMode` honors that.
+ */
 export function createSeedConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
     name: 'Zira AI Print Agent (Android)',
@@ -50,7 +92,7 @@ export function createSeedConfig(overrides: Partial<AgentConfig> = {}): AgentCon
     autoStart: false,
     language: 'pl',
     posLanguage: 'pl',
-    posMode: 'retail',
+    posMode: 'salon',
     posEnabled: true,
     allowOversell: false,
     showNonFiscalOrders: true,

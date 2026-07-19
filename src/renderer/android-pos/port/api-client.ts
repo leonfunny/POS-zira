@@ -862,4 +862,171 @@ export class PosApiClient {
     }
     return response.json();
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Staff · sync pull (staff JWT) — packet E2a (SHIM_CONTRACT_SALON_E2 §2.B)
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/v1/staff. Ported transport from api-client.ts:3423-3448
+   * (`getStaffProfiles`). Staff JWT — the same route family the shift picker
+   * already depends on. Returns the raw staff rows (normalization to the local
+   * `staff` table happens in real-transport). Throws on non-2xx so the sync
+   * caller surfaces a real error (this is PORT, not dark-launch safe) — unlike
+   * the schedule/nail-turn reads below.
+   */
+  async getStaffProfiles(): Promise<any[]> {
+    const token = await this.requireToken('getStaffProfiles');
+    const url = `${this.baseUrl}/api/v1/staff`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    const raw = await response.json();
+    if (Array.isArray(raw)) return raw;
+    return raw?.items ?? raw?.staff ?? raw?.data ?? [];
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Schedule + nail-turn board (staff JWT) — packet E2a dark-launch (§2.C/§2.D)
+  //
+  // All staff-JWT, NO `pa_` agent-key fallback (the Windows schedule READS fall
+  // back to /api/v1/pos/schedule/agent/… — Android skips that hard rail). Every
+  // route is dark-launch tolerant: a 403/404/501 means "not deployed for this
+  // salon" → return null so the real-transport wrapper reports
+  // {success:false, unavailable:true} and SalonTemplate hides the panel.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Fetch JSON, mapping the dark-launch statuses (403/404/501) to null. Other
+   * non-2xx throw with `.status` attached; network throws propagate. The
+   * schedule/nail-turn wrappers below share this so the absence semantics are
+   * identical across reads and writes.
+   */
+  private async darkLaunchJson(
+    url: string,
+    init: RequestInit,
+  ): Promise<any | null> {
+    const response = await this.fetchWithTimeout(url, init);
+    if (response.status === 403 || response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /** GET /api/v1/nail-turns/today. Ported transport from api-client.ts:2546
+   *  (`getNailTurnBoard`). Staff JWT. null → board unavailable (hide banner). */
+  async getNailTurnBoard(): Promise<any | null> {
+    const token = await this.requireToken('getNailTurnBoard');
+    const url = `${this.baseUrl}/api/v1/nail-turns/today`;
+    return this.darkLaunchJson(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+  }
+
+  /** POST /api/v1/nail-turns/assignments/:id/checkout. Ported transport from
+   *  api-client.ts:2762-2774 (`checkoutNailTurnAssignment`). Staff JWT. Body is
+   *  `{amount_pln, tip_pln, idempotency_key}`. null → assignment/route absent
+   *  (best-effort checkout no-ops). */
+  async checkoutNailTurnAssignment(
+    assignmentId: string,
+    body: { amount_pln: number; tip_pln: number; idempotency_key: string },
+  ): Promise<any | null> {
+    const token = await this.requireToken('checkoutNailTurnAssignment');
+    const url = `${this.baseUrl}/api/v1/nail-turns/assignments/${encodeURIComponent(assignmentId)}/checkout`;
+    return this.darkLaunchJson(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** GET /api/v1/pos/schedule/today?date=. Ported transport from
+   *  api-client.ts:2648-2675 (`getPosScheduleToday`). Staff JWT. null → route
+   *  absent (schedule view shows its unavailable banner). */
+  async getPosScheduleToday(date?: string): Promise<any | null> {
+    const token = await this.requireToken('getPosScheduleToday');
+    const qs = new URLSearchParams();
+    if (date) qs.set('date', date);
+    const query = qs.toString();
+    const url = `${this.baseUrl}/api/v1/pos/schedule/today${query ? `?${query}` : ''}`;
+    return this.darkLaunchJson(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+  }
+
+  /** GET /api/v1/pos/schedule/week?from=&days=. Ported transport from
+   *  api-client.ts:2677-2705 (`getPosScheduleWeek`). Staff JWT. null → absent. */
+  async getPosScheduleWeek(from?: string, days?: number): Promise<any | null> {
+    const token = await this.requireToken('getPosScheduleWeek');
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (typeof days === 'number') qs.set('days', String(days));
+    const query = qs.toString();
+    const url = `${this.baseUrl}/api/v1/pos/schedule/week${query ? `?${query}` : ''}`;
+    return this.darkLaunchJson(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+  }
+
+  /** PATCH /api/v1/pos/schedule/staff/:id/status. Ported transport from
+   *  api-client.ts:2707-2723 (`setPosScheduleStaffStatus`). Staff JWT only (no
+   *  agent fallback). Returns the refreshed day. null → route absent. */
+  async setPosScheduleStaffStatus(
+    staffProfileId: string,
+    body: { status: string; idempotencyKey?: string },
+  ): Promise<any | null> {
+    const token = await this.requireToken('setPosScheduleStaffStatus');
+    const url = `${this.baseUrl}/api/v1/pos/schedule/staff/${encodeURIComponent(staffProfileId)}/status`;
+    return this.darkLaunchJson(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** POST /api/v1/pos/schedule/checkins/:id/assign-next. Ported transport from
+   *  api-client.ts:2725-2740 (`assignPosScheduleNext`). Staff JWT only. null →
+   *  route absent. */
+  async assignPosScheduleNext(
+    checkinId: string,
+    body: Record<string, any>,
+  ): Promise<any | null> {
+    const token = await this.requireToken('assignPosScheduleNext');
+    const url = `${this.baseUrl}/api/v1/pos/schedule/checkins/${encodeURIComponent(checkinId)}/assign-next`;
+    return this.darkLaunchJson(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** POST /api/v1/pos/schedule/checkins/:id/request-staff. Ported transport
+   *  from api-client.ts:2742-2755 (`requestPosScheduleStaff`). Staff JWT only.
+   *  null → route absent. */
+  async requestPosScheduleStaff(
+    checkinId: string,
+    body: Record<string, any>,
+  ): Promise<any | null> {
+    const token = await this.requireToken('requestPosScheduleStaff');
+    const url = `${this.baseUrl}/api/v1/pos/schedule/checkins/${encodeURIComponent(checkinId)}/request-staff`;
+    return this.darkLaunchJson(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
 }

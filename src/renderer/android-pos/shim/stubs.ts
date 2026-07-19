@@ -183,7 +183,8 @@ export function buildProductsNamespace({ transport }: StubDeps) {
   return {
     getAll: () => withTransport(transport.getProducts, [], empty),
     getAllIncludingInactive: () => withTransport(transport.getProducts, [], empty),
-    getByCategory: async () => empty(),
+    // E2a §2.A: the salon service grid calls this dedicated category reader.
+    getByCategory: (categoryId: string) => withTransport(transport.getByCategory, [categoryId], empty),
     search: (query: string) => withTransport(transport.searchProducts, [query], empty),
     searchByCode: async () => empty(),
     getByBarcode: (barcode: string) => withTransport(
@@ -382,7 +383,14 @@ export function buildSyncNamespace({ transport }: StubDeps) {
       [],
       () => undefined,
     ),
-    staff: async () => ({ success: true, count: 0 }),
+    // E2a §2.B: staff sync pull (GET /api/v1/staff → staff table + emit). A real
+    // transport refreshes the per-line staff picker; the S2 synthetic no-op keeps
+    // the cashier-seeded row so the picker still works offline.
+    staff: () => withTransport(
+      transport.syncStaff,
+      [],
+      () => ({ success: true, count: 0 }),
+    ),
     eventStatus: async () => ({ success: true, status: null }),
     flushEvents: async () => ({ success: true, result: { acked: 0, failed: 0 } }),
     // S6+S7: a real transport owns the products-synced emitter; delegate when
@@ -390,7 +398,11 @@ export function buildSyncNamespace({ transport }: StubDeps) {
     onProductsSynced: transport.onProductsSynced
       ? (cb: () => void) => transport.onProductsSynced!(cb)
       : () => noopUnsubscribe(),
-    onStaffUpdated: () => noopUnsubscribe(),
+    // E2a: a real transport owns the staff-updated emitter (fires after a pull);
+    // delegate when present, else the S2 no-op unsubscribe that never fires.
+    onStaffUpdated: transport.onStaffUpdated
+      ? (cb: (data?: { count?: number } | undefined) => void) => transport.onStaffUpdated!(cb)
+      : () => noopUnsubscribe(),
     onCatalogUpdated: () => noopUnsubscribe(),
     onStockUpdated: () => noopUnsubscribe(),
     // S8: a real transport owns the order sync emitters; delegate when present.
@@ -408,8 +420,24 @@ export function buildSyncNamespace({ transport }: StubDeps) {
   };
 }
 
-/** Restaurant / kitchen / admin / AI surfaces (S1 §6, §2.M) — EXCLUDE, STUB no-op. */
-export function buildExcludedPosNamespaces() {
+/** Restaurant / kitchen / admin / AI surfaces (S1 §6, §2.M) — EXCLUDE, STUB no-op.
+ *  E2a: the salon `schedule` + `nailTurns` namespaces are PORT-optional and
+ *  dark-launch safe (SHIM_CONTRACT_SALON_E2 §2.C/§2.D). They delegate to the
+ *  transport when it provides the route; with no transport (S2 synthetic) OR
+ *  when the backend route is absent they return {success:false, unavailable:true}
+ *  so SalonTemplate hides the schedule/turn panel instead of crashing. All other
+ *  namespaces here stay STUB no-ops. */
+export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = { transport: {} as ShimTransport }) {
+  const { transport } = deps;
+  // Dark-launch fallback shared by every schedule/nailTurn method when the
+  // transport doesn't provide the port (synthetic install) or the route is
+  // unavailable. SalonTemplate reads `result?.success && result.<field>` and
+  // otherwise shows its unavailable banner / hides the panel.
+  const unavailable = <T extends Record<string, unknown>>(extra: T = {} as T) => ({
+    success: false,
+    unavailable: true,
+    ...extra,
+  });
   return {
     draftProducts: {
       getAll: async () => [],
@@ -497,15 +525,46 @@ export function buildExcludedPosNamespaces() {
       transcribe: async () => ({ ok: false, error: 'voice-unavailable' }),
     },
     nailTurns: {
-      getToday: async () => ({ ok: true, turns: [] }),
-      onUpdated: () => noopUnsubscribe(),
+      // E2a §2.D: technician turn board. Dark-launch safe — null/hide-banner when
+      // the route is absent. The transport wrapper already returns the
+      // {success:false, unavailable:true} shape on 403/404/501/network.
+      getToday: () => withTransport(
+        transport.getNailTurnBoard,
+        [],
+        () => unavailable(),
+      ),
+      onUpdated: transport.onNailTurnsUpdated
+        ? (cb: (data: { orderId?: string; checkedOut?: number }) => void) => transport.onNailTurnsUpdated!(cb)
+        : () => noopUnsubscribe(),
     },
     schedule: {
-      getToday: async () => ({ ok: true }),
-      getWeek: async () => ({ ok: true }),
-      setStaffStatus: async () => ({ ok: true }),
-      assignNext: async () => ({ ok: true }),
-      requestStaff: async () => ({ ok: true }),
+      // E2a §2.C: technician timetable + waiting check-ins. All dark-launch safe
+      // (the schedule view shows scheduleError / hides the panel on unavailable).
+      getToday: (date?: string) => withTransport(
+        transport.getPosScheduleToday,
+        [date],
+        () => unavailable(),
+      ),
+      getWeek: (from?: string, days?: number) => withTransport(
+        transport.getPosScheduleWeek,
+        [from, days],
+        () => unavailable(),
+      ),
+      setStaffStatus: (payload: any) => withTransport(
+        transport.setPosScheduleStaffStatus,
+        [payload],
+        () => unavailable(),
+      ),
+      assignNext: (payload: any) => withTransport(
+        transport.assignPosScheduleNext,
+        [payload],
+        () => unavailable(),
+      ),
+      requestStaff: (payload: any) => withTransport(
+        transport.requestPosScheduleStaff,
+        [payload],
+        () => unavailable(),
+      ),
     },
     scale: {
       readWeight: async () => ({ success: false, weightKg: 0, stable: false, code: 'NO_SCALE', error: 'no-scale' }),

@@ -394,6 +394,29 @@ export function createOrderRepo(database: AndroidDatabase) {
         [staff.id, staff.user_id ?? null, staff.name, staff.role ?? null],
       );
     },
+    /**
+     * Bulk REPLACE the staff table from a sync pull (E2a — GET /api/v1/staff).
+     * One transaction: wipe the local rows, then insert the backend's current
+     * list. This makes the picker a faithful mirror of the backend staff roster
+     * — a technician removed server-side disappears from the per-line `<select>`,
+     * and the login-time cashier seed is superseded once the real roster lands
+     * (in production the cashier is themselves a staff row the backend returns).
+     * Honors the backend's commission_rate + is_active. A FAILED pull never
+     * reaches this method (syncStaff returns early on fetch error), so the local
+     * cache survives a transient outage.
+     */
+    bulkUpsertStaff(rows: Array<{ id: string; user_id?: string | null; name: string; commission_rate?: number; is_active?: number; role?: string | null }>): void {
+      database.transaction(() => {
+        database.run('DELETE FROM staff');
+        for (const s of rows) {
+          database.run(
+            `INSERT INTO staff (id, user_id, name, commission_rate, is_active, role)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [s.id, s.user_id ?? null, s.name, s.commission_rate ?? 0, s.is_active ?? 1, s.role ?? null],
+          );
+        }
+      });
+    },
     getStaff(): any[] {
       return database.all('SELECT * FROM staff WHERE is_active = 1 ORDER BY name');
     },

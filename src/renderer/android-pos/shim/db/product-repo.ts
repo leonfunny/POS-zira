@@ -278,6 +278,7 @@ export interface AndroidProductRepo {
   getAll(): AndroidProductRow[];
   getById(id: string): AndroidProductRow | null;
   getByBarcode(barcode: string): AndroidProductRow | null;
+  getByCategory(categoryId: string): AndroidProductRow[];
   search(query: string): AndroidProductRow[];
   /** Bulk upsert for the catalog sync worker (S6). */
   upsertProducts(products: AndroidProductRow[]): void;
@@ -298,6 +299,19 @@ export function createProductRepo(db: AndroidDatabase): AndroidProductRepo {
 
     getById(id: string): AndroidProductRow | null { // (product-repo.ts:338-340)
       return db.get<AndroidProductRow>('SELECT * FROM product_variants WHERE id = ?', [id]);
+    },
+
+    getByCategory(categoryId: string): AndroidProductRow[] { // (product-repo.ts:331-334)
+      // Salon service grid reader (SHIM_CONTRACT_SALON_E2 §2.A) — active rows in
+      // one category, name-sorted, template-with-variant rows hidden (same guard
+      // as getAll). The salon grid calls this dedicated reader; retail filtered
+      // getAll in the renderer.
+      const cat = categoryId == null ? '' : String(categoryId);
+      if (!cat) return [];
+      return db.all<AndroidProductRow>(
+        `SELECT * FROM product_variants WHERE is_active = 1 AND category_id = ? ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+        [cat],
+      );
     },
 
     getByBarcode(barcode: string): AndroidProductRow | null { // (product-repo.ts:349-395)

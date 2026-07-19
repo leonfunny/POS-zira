@@ -35,6 +35,14 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import type {
+  NailTurnBoardIpcResult,
+  PosScheduleAssignNextPayload,
+  PosScheduleDayIpcResult,
+  PosScheduleRequestStaffPayload,
+  PosScheduleStaffStatusPayload,
+  PosScheduleWeekIpcResult,
+} from '../../../shared/types';
 
 /** A sanitized product row (mirrors the SQL.js PosProduct; see S1 §2.D). */
 export interface ShimPosProduct {
@@ -154,6 +162,7 @@ export interface ShimTransport {
   getProducts?(): Promise<ShimPosProduct[]>;
   getProductById?(id: string): Promise<ShimPosProduct | null>;
   getProductByBarcode?(barcode: string): Promise<ShimPosProduct | null>;
+  getByCategory?(categoryId: string): Promise<ShimPosProduct[]>;
   searchProducts?(query: string): Promise<ShimPosProduct[]>;
   getCategories?(): Promise<ShimPosCategory[]>;
 
@@ -232,6 +241,34 @@ export interface ShimTransport {
   onOrderSynced?(cb: (payload: { orderId: string; backendId: string }) => void): () => void;
   /** Event: an order was shelved by a business rule (S1 §2.E pos:order-sync-failed). */
   onOrderSyncFailed?(cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void): () => void;
+
+  // ── E2a salon surface (SHIM_CONTRACT_SALON_E2) ───────────────────────────
+  // Staff sync + the schedule/nail-turn dark-launch reads/writes. All staff-JWT
+  // (schedule reads have NO `pa_` agent fallback on Android — hard rail).
+
+  /** Staff sync pull → GET /api/v1/staff (E2a §2.B). Upserts the staff table +
+   *  emits onStaffUpdated. Returns {success, count, error}. */
+  syncStaff?(): Promise<{ success: boolean; count?: number; error?: string }>;
+  /** Event: staff table refreshed after a pull / remote change
+   *  (E2a §2.B, pos:staff-updated). Payload {count?}. */
+  onStaffUpdated?(cb: (data?: { count?: number } | undefined) => void): () => void;
+  /** Event: a nail-turn checkout closed a technician's turn
+   *  (E2a §2.D, pos:nail-turns-updated). Payload {orderId?, checkedOut?}. */
+  onNailTurnsUpdated?(cb: (data: { orderId?: string; checkedOut?: number }) => void): () => void;
+
+  /** Nail-turn board → GET /api/v1/nail-turns/today (E2a §2.D). Dark-launch:
+   *  {success:false, unavailable:true} when the route is absent. */
+  getNailTurnBoard?(): Promise<NailTurnBoardIpcResult>;
+  /** Schedule day → GET /api/v1/pos/schedule/today?date= (E2a §2.C). */
+  getPosScheduleToday?(date?: string): Promise<PosScheduleDayIpcResult>;
+  /** Schedule week → GET /api/v1/pos/schedule/week?from=&days= (E2a §2.C). */
+  getPosScheduleWeek?(from?: string, days?: number): Promise<PosScheduleWeekIpcResult>;
+  /** Toggle a technician's turn status → PATCH .../staff/:id/status (E2a §2.C). */
+  setPosScheduleStaffStatus?(payload: PosScheduleStaffStatusPayload): Promise<PosScheduleDayIpcResult>;
+  /** Assign next-in-queue → POST .../checkins/:id/assign-next (E2a §2.C). */
+  assignPosScheduleNext?(payload: PosScheduleAssignNextPayload): Promise<PosScheduleDayIpcResult>;
+  /** Assign a specific technician → POST .../checkins/:id/request-staff (E2a §2.C). */
+  requestPosScheduleStaff?(payload: PosScheduleRequestStaffPayload): Promise<PosScheduleDayIpcResult>;
 }
 
 /** Shape persisted by the config store — a subset of AgentConfig (S1 §2.A). */

@@ -86,7 +86,7 @@ describe('real transport auth', () => {
     expect(config.authUser?.id).toBe('staff-1');
     expect(config.salonId).toBe('salon-1');
     expect(config.salonSlug).toBe('test-salon');
-    expect(config.posMode).toBe('retail');
+    expect(config.posMode).toBe('salon'); // E2a: salon is the Windows default
 
     // Hard rail: exactly one HTTP call — the staff login. No pa_ key, no
     // /print-agent/connect, no /print-agent/my-key.
