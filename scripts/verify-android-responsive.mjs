@@ -108,6 +108,38 @@ try {
       `${viewport.name}: unauthenticated boot made external requests: ${externalRequests.join(', ')}`,
     );
 
+    // The old synthetic page shipped connect-src 'none'; the real POS needs
+    // fetch to the backend. Prove the shipped CSP actually PERMITS a fetch to
+    // the configured API origin (Chromium enforces meta CSP): a CSP block
+    // rejects with a TypeError before the request is even attempted, which our
+    // route interception would never see. We assert the fetch reaches the
+    // network layer (where our abort turns it into a benign 'Failed to fetch'
+    // that is distinguishable from a CSP 'Refused to connect' violation).
+    const cspViolations = [];
+    page.on('console', (msg) => {
+      if (/Content Security Policy|Refused to (connect|load|compile)/i.test(msg.text())) {
+        cspViolations.push(msg.text());
+      }
+    });
+    const fetchProbe = await page.evaluate(async () => {
+      try {
+        await fetch('https://api.enail.pro/api/v1/health', { method: 'GET' });
+        return 'reached-network';
+      } catch (e) {
+        return String(e && e.message || e);
+      }
+    });
+    // A CSP connect-src block surfaces as a console "Refused to connect" +
+    // "Failed to fetch"; an ALLOWED fetch that our route aborts also yields
+    // "Failed to fetch" but with NO CSP console violation. So the discriminator
+    // is the absence of a CSP violation, not the fetch outcome.
+    assert.equal(
+      cspViolations.length,
+      0,
+      `${viewport.name}: CSP blocked a backend fetch (login/catalog/sync would be dead): ${cspViolations.join(' | ')}`,
+    );
+    void fetchProbe;
+
     await page.close();
   }
 } finally {

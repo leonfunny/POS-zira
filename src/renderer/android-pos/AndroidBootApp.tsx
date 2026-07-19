@@ -39,10 +39,30 @@ export default function AndroidBootApp() {
 
   useEffect(() => {
     if (state !== 'pos') return;
+    const api = (window as any).electronAPI;
+    // Restore the open-shift session after a restart: the local shift row
+    // survives but the in-memory POS store starts empty, so re-dispatch
+    // session/open (the Windows main process does this at boot). Without it the
+    // cashier would have to close+reopen the shift to unlock payments.
+    Promise.resolve(api.pos.shift.getActive())
+      .then(async (active: any) => {
+        const current = await api.pos.getState();
+        if (active?.success && active.shift?.id && !current?.session?.isOpen) {
+          await api.pos.dispatch({
+            type: 'session/open',
+            payload: {
+              shiftId: active.shift.id,
+              staffId: active.shift.staff_id,
+              staffName: active.shift.staff_name,
+              openedAt: active.shift.opened_at,
+            },
+          });
+        }
+      })
+      .catch(() => { /* no active shift / offline boot is fine */ });
     // Fire-and-forget catalog sync after an authenticated mount (S1 §2.E). The
     // sync worker no-ops with {success:false, error:'no-auth'} when tokens are
     // missing, so this is safe on every entry into the POS state.
-    const api = (window as any).electronAPI;
     Promise.resolve(api.pos.sync.products()).catch(() => { /* offline boot is fine */ });
   }, [state]);
 

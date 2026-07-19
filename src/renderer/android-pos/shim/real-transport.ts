@@ -881,6 +881,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     async getStaff(): Promise<any[]> {
       return createOrderRepo(await db()).getStaff();
     },
+    async getActiveShift(): Promise<{ success: boolean; shift?: { id: string; staff_id: string | null; staff_name: string | null; opened_at: string } | null; error?: string }> {
+      const active = createOrderRepo(await db()).getActiveShift();
+      if (!active) return { success: false, error: 'no-active-shift' };
+      return { success: true, shift: { id: active.id, staff_id: active.staff_id, staff_name: active.staff_name, opened_at: active.opened_at } };
+    },
 
     // ── Event subscription hooks (delegated to by stubs.ts) ─────────────────
     onAuthExpired(cb: () => void): () => void {

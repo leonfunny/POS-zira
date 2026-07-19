@@ -82,6 +82,14 @@ export function syntheticEntitlements(salonId: string) {
 export interface StubDeps {
   configStore: ShimConfigStore;
   transport: ShimTransport;
+  /** The authoritative POS store — the shift namespace dispatches session
+   *  open/close into it so `state.session.isOpen` tracks the shift, exactly as
+   *  the Windows IPC handler does (pos.module.ts:4654). Optional so the S2
+   *  synthetic install and unit tests that only need the surface can omit it. */
+  posStore?: {
+    dispatch(action: { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } } | { type: 'session/close' }): void;
+    getState(): { session?: { shiftId?: string | null; isOpen?: boolean } };
+  };
 }
 
 /** Auth namespace (S1 §2.B). Email login is the pilot path; Telegram-QR is STUB. */
@@ -195,10 +203,17 @@ export function buildCategoriesNamespace({ transport }: StubDeps) {
 export function buildPaymentNamespace() {
   return {
     hasFiscalPrinter: async () => ({ success: true, configured: false, connected: false }),
-    printReceipt: async () => ({ success: true, receiptPrinted: false, error: 'no-printer' }),
-    printReceiptAndOpenDrawer: async () => ({ success: true, receiptPrinted: false, drawerOpened: false }),
+    // Receipt COPY (non-fiscal) is reported PRINTED so the CASH checkout is not
+    // interrupted by the receipt-recovery overlay on every sale (M1–M4: the
+    // Windows counter still prints; the Android device is not the receipt
+    // authority — plan rail #6). M5 replaces this with real remote-print status.
+    // Fiscal receipts are NOT claimed printed (a false fiscal claim is a legal
+    // issue) — printFiscalReceipt stays fiscalPrinted:false and the renderer
+    // already skips it when no fiscal printer is configured.
+    printReceipt: async () => ({ success: true, receiptPrinted: true }),
+    printReceiptAndOpenDrawer: async () => ({ success: true, receiptPrinted: true, drawerOpened: false }),
     printFiscalReceipt: async () => ({ success: true, fiscalPrinted: false }),
-    reprintReceipt: async () => ({ success: true, receiptPrinted: false, error: 'no-printer' }),
+    reprintReceipt: async () => ({ success: true, receiptPrinted: true }),
     printRefundReceipt: async () => ({ success: true, receiptPrinted: false, error: 'no-printer' }),
     getPrintAttempts: async () => ({ success: true, attempts: [] }),
     getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),
@@ -248,20 +263,41 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
   };
 }
 
-/** Shift (S1 §2.H). open/close are PORT M4 (S9); S2 synthetic. */
-export function buildShiftNamespace({ transport }: StubDeps) {
+/** Shift (S1 §2.H). open/close are PORT M4 (S9); S2 synthetic. On success the
+ *  namespace dispatches session/open|close into the POS store so the renderer's
+ *  payment gating (RetailTemplate session.isOpen) reflects the shift — the
+ *  Windows main process does this inside the IPC handler, which the renderer
+ *  never does itself. */
+export function buildShiftNamespace({ transport, posStore }: StubDeps) {
   return {
-    open: (data: { staffId: string; staffName: string; openingCash: number }) => withTransport(
-      transport.openShift,
-      [data],
-      () => ({ success: true, shiftId: generateId('synthetic-shift') }),
+    open: async (data: { staffId: string; staffName: string; openingCash: number }) => {
+      const result = await withTransport(
+        transport.openShift,
+        [data],
+        () => ({ success: true, shiftId: generateId('synthetic-shift') }),
+      );
+      if (result?.success && result.shiftId) {
+        posStore?.dispatch({
+          type: 'session/open',
+          payload: { shiftId: result.shiftId, staffId: data.staffId, staffName: data.staffName },
+        });
+      }
+      return result;
+    },
+    close: async (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
+      const result = await withTransport(
+        transport.closeShift,
+        [data],
+        () => ({ success: true, report: null }),
+      );
+      if (result?.success) posStore?.dispatch({ type: 'session/close' });
+      return result;
+    },
+    getActive: () => withTransport(
+      transport.getActiveShift,
+      [],
+      () => ({ success: false as boolean, error: 'no-active-shift' as string | undefined, shift: undefined as any }),
     ),
-    close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => withTransport(
-      transport.closeShift,
-      [data],
-      () => ({ success: true, report: null }),
-    ),
-    getActive: async () => ({ success: false, error: 'no-active-shift' }),
   };
 }
 

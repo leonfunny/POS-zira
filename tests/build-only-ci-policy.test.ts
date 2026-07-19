@@ -85,7 +85,7 @@ android {
 export default { android: { allowMixedContent: false, webContentsDebuggingEnabled: false } };
 `);
   write(root, 'src/renderer/android-pos/index.html', `
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.enail.pro; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
 `);
   return root;
 }
@@ -236,10 +236,10 @@ describe('build-only CI policy', () => {
   test('rejects extra network script origins in an otherwise strict-looking CSP', () => {
     const root = fixture();
     write(root, 'src/renderer/android-pos/index.html', `
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://evil.example; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://evil.example; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.enail.pro; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
 `);
     expect(analyzeBuildOnlyPolicy(root).failures).toContain(
-      "Android source CSP must define exactly: script-src 'self'",
+      "Android source CSP must define exactly: script-src 'self' 'wasm-unsafe-eval'",
     );
   });
 

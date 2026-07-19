@@ -93,7 +93,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
   const configStore = options.configStore ?? new ShimConfigStore({ seed: options.config });
   const posStore = new ShimPosStore();
 
-  const stubDeps = { configStore, transport };
+  const stubDeps = { configStore, transport, posStore };
 
   // The `pos` namespace = authoritative store (S1 §2.C) + catalog/orders/shift/
   // sync/staff + the EXCLUDE surfaces the POS window boot path still references.

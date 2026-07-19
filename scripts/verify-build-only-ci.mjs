@@ -41,12 +41,20 @@ function verifyCsp(label, html, failures) {
     if (directives.has(name)) failures.push(`${label} CSP repeats directive: ${name}`);
     directives.set(name, values);
   }
+  // The real POS renderer requires: fetch to the backend (connect-src),
+  // WebAssembly for sql.js (script-src wasm-unsafe-eval), React inline styles
+  // (style-src unsafe-inline), and catalog images from arbitrary CDN/backend
+  // hosts (img-src https:). connect-src is a host allowlist, NOT 'none' — a
+  // wildcard here would let any exfiltration endpoint through. Kept in lockstep
+  // with src/renderer/android-pos/index.html; changing one without the other
+  // fails this gate by design.
   const expected = new Map([
     ['default-src', ["'none'"]],
-    ['script-src', ["'self'"]],
-    ['style-src', ["'self'"]],
-    ['img-src', ["'self'", 'data:']],
-    ['connect-src', ["'none'"]],
+    ['script-src', ["'self'", "'wasm-unsafe-eval'"]],
+    ['style-src', ["'self'", "'unsafe-inline'"]],
+    ['img-src', ["'self'", 'data:', 'https:']],
+    ['font-src', ["'self'", 'data:']],
+    ['connect-src', ["'self'", 'https://api.enail.pro']],
     ['object-src', ["'none'"]],
     ['base-uri', ["'none'"]],
     ['form-action', ["'none'"]],

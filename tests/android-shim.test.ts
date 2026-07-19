@@ -48,6 +48,22 @@ describe('android shim installShim', () => {
   beforeEach(() => __resetShimForTest());
   afterEach(() => __resetShimForTest());
 
+  test('opening a shift flips the POS store session so payment unlocks', async () => {
+    const { api } = installShim();
+    expect((await api.pos.getState()).session.isOpen).toBe(false);
+
+    const opened = await api.pos.shift.open({ staffId: 's1', staffName: 'Ala', openingCash: 1000 });
+    expect(opened.success).toBe(true);
+
+    const state = await api.pos.getState();
+    expect(state.session.isOpen).toBe(true);
+    expect(state.session.shiftId).toBe(opened.shiftId);
+    expect(state.session.staffName).toBe('Ala');
+
+    await api.pos.shift.close({ shiftId: opened.shiftId, closingCash: 1000 });
+    expect((await api.pos.getState()).session.isOpen).toBe(false);
+  });
+
   test('installs the full S1 contract surface', async () => {
     const { api } = installShim();
 
@@ -155,20 +171,23 @@ describe('android shim S1 stub defaults', () => {
     expect(await api.auth.generateRegisterToken()).toEqual(expected);
   });
 
-  test('payment / receipt stubs let the CASH checkout complete without a printer', async () => {
+  test('payment / receipt stubs let the CASH checkout complete without the recovery overlay', async () => {
     expect(await api.pos.payment.hasFiscalPrinter()).toEqual({
       success: true, configured: false, connected: false,
     });
+    // The receipt COPY reports printed so PaymentModal does not enter the
+    // receipt-recovery overlay on every CASH sale (Wave 1 fix). The fiscal
+    // receipt is NOT claimed printed.
     expect(await api.pos.payment.printReceipt('o1')).toEqual({
-      success: true, receiptPrinted: false, error: 'no-printer',
+      success: true, receiptPrinted: true,
     });
     expect(await api.pos.payment.printReceiptAndOpenDrawer('o1')).toEqual({
-      success: true, receiptPrinted: false, drawerOpened: false,
+      success: true, receiptPrinted: true, drawerOpened: false,
     });
     expect(await api.pos.payment.printFiscalReceipt('o1')).toEqual({
       success: true, fiscalPrinted: false,
     });
-    expect(await api.pos.payment.reprintReceipt('o1')).toMatchObject({ receiptPrinted: false });
+    expect(await api.pos.payment.reprintReceipt('o1')).toMatchObject({ receiptPrinted: true });
     expect(await api.pos.payment.getPrintAttempts('o1')).toEqual({ success: true, attempts: [] });
     expect(await api.pos.payment.getLatestFiscalAttempt('o1')).toEqual({
       success: true, attempt: null, printer: null,

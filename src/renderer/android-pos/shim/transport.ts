@@ -129,6 +129,9 @@ export interface ShimTransport {
   /** Shift open/close — POST /api/v1/pos/shifts/* (S9). */
   openShift?(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }>;
   closeShift?(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }>;
+  /** Active-shift lookup for boot session recovery (S9). Returns the open local
+   *  shift so the shell can re-dispatch session/open after a restart. */
+  getActiveShift?(): Promise<{ success: boolean; shift?: { id: string; staff_id: string | null; staff_name: string | null; opened_at: string } | null; error?: string }>;
 
   /** Staff picker for shift open (S5 staff repo mirror). */
   getStaff?(): Promise<Array<{ id: string; user_id?: string | null; name: string; commission_rate: number; is_active: number; role?: string | null }>>;
