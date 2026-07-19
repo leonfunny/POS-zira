@@ -247,7 +247,14 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
     getServerList: async () => ({
       orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
     }),
-    retrySync: async () => ({ success: true }),
+    // Delegate to the transport so a shelved order is actually reset + re-drained
+    // and the renderer's SyncFailurePanel sees a real {result:{status}}; the S2
+    // stub returned bare success and the shelved order stayed stuck forever.
+    retrySync: (orderId: string) => withTransport(
+      transport.retryOrderSync,
+      [orderId],
+      () => ({ success: true as boolean, result: undefined as { status: string; error?: string } | undefined }),
+    ),
     // Delegate to the transport so a not-yet-synced order is actually removed
     // (and restocked); the S2 fake-success let the "cancelled" order sync.
     // Without a transport (synthetic install), refuse rather than lie.

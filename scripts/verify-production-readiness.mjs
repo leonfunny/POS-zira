@@ -455,7 +455,18 @@ export function analyzeProductionReadiness(root) {
   for (const [automaticId, registerId] of DECISION_COUPLING) {
     const automatic = items.find((item) => item.id === automaticId);
     const decision = registerItems.get(registerId);
-    if (automatic?.status === 'PASS' && decision && decision.decision !== 'approved') {
+    // A coupling whose automatic check or register entry no longer exists is a
+    // hard failure, not a silent skip — otherwise renaming a check id would
+    // quietly drop the "config ahead of owner decision" guard (fail-open).
+    if (!automatic) {
+      failures.push(`decision coupling references an unknown automatic check: ${automaticId}`);
+      continue;
+    }
+    if (!decision) {
+      failures.push(`decision coupling references an unknown register entry: ${registerId}`);
+      continue;
+    }
+    if (automatic.status === 'PASS' && decision.decision !== 'approved') {
       failures.push(
         `configuration is ahead of its owner decision: ${automaticId} cleared while register entry ${registerId} is still blocked`,
       );

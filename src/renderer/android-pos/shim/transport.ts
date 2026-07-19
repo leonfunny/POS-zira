@@ -21,8 +21,9 @@
  *
  * The contract is: the shim's electronAPI methods call `transport.X` when the
  * transport provides X, otherwise fall back to the synthetic fake. S7 wires a
- * real transport by calling `installShim({ transport })` (or
- * `setShimTransport`) — the shim surface the renderer sees never changes.
+ * real transport by passing it to the FIRST `installShim({ transport })` call
+ * (the transport is fixed at install) — the shim surface the renderer sees
+ * never changes.
  *
  * Every method is OPTIONAL. A transport only implements the ports it owns; the
  * shim fills the rest with synthetic behavior. This keeps S2 self-contained
@@ -124,6 +125,8 @@ export interface ShimTransport {
   /** Cancel/delete a not-yet-synced local order (+restock) so it never syncs. */
   cancelOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
   deleteLocalOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
+  /** Reset a shelved order and re-drain (recover from a business rejection). */
+  retryOrderSync?(orderId: string): Promise<{ success: boolean; result?: { status: string; error?: string }; error?: string }>;
 
   /** Sync pull/push (S6 catalog / S8 orders). */
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;

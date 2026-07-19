@@ -929,6 +929,21 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     /** Cancel a not-yet-synced order: delete it locally + restock so it is
      *  never pushed to the backend (the S2 stub returned a fake success and
      *  let the "cancelled" order sync anyway). A synced order is refused. */
+    /** Recover a shelved (business-rejected or attempt-capped) order: reset it
+     *  to pending, then drain. Returns the SyncFailurePanel shape
+     *  ({result:{status}}) the renderer checks — the S2 stub lied success and
+     *  left the order shelved forever. */
+    async retryOrderSync(orderId: string): Promise<{ success: boolean; result?: { status: string; error?: string }; error?: string }> {
+      const database = await db();
+      const reset = createOrderRepo(database).resetForRetry(orderId);
+      if (!reset) {
+        return { success: true, result: { status: 'failed', error: 'Order is not in a retryable state' } };
+      }
+      await (transport.syncOrders?.() ?? Promise.resolve());
+      const order = createOrderRepo(await db()).getById(orderId);
+      if (order?.synced === 1) return { success: true, result: { status: 'synced' } };
+      return { success: true, result: { status: 'failed', error: order?.sync_error ?? 'Retry did not sync' } };
+    },
     async cancelOrder(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }> {
       const database = await db();
       const result = createOrderRepo(database).deleteLocalUnsynced(orderId);

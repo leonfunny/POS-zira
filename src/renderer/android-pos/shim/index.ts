@@ -68,15 +68,6 @@ export interface InstalledShim {
 
 let installed: InstalledShim | null = null;
 
-/** Swaps the transport on the already-installed shim (used by S7). */
-export function setShimTransport(transport: ShimTransport): void {
-  if (!installed) {
-    installShim({ transport });
-    return;
-  }
-  installed.transport = transport;
-}
-
 /**
  * Assemble + assign `window.electronAPI`. Idempotent — repeated calls reuse the
  * singleton unless `reinstall` is set. Returns the installed handles (the `api`
@@ -85,7 +76,10 @@ export function setShimTransport(transport: ShimTransport): void {
  */
 export function installShim(options: InstallShimOptions = {}): InstalledShim {
   if (installed && !options.reinstall) {
-    if (options.transport) installed.transport = options.transport;
+    // The transport is fixed at first install — the namespaces capture it in
+    // closures, so a post-install swap would be a silent no-op. Callers that
+    // need the real transport (main.ts) pass it on the FIRST installShim call;
+    // a later call with a different transport must use `reinstall: true`.
     return installed;
   }
 

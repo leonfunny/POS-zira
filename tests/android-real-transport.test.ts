@@ -506,6 +506,33 @@ describe('real transport orders + shifts (S8+S9)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test('retryOrderSync recovers a business-shelved order once the reason clears', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+
+    // First drain: business rejection shelves the order (synced = -1).
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'Insufficient stock for SKU-1' }, 400));
+    await transport.syncOrders!();
+    expect((await transport.getOrderDetail!('local-order-1'))?.order.synced).toBe(-1);
+
+    // Backend stock fixed → retry drains successfully.
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (/\/finish$/.test(target)) return jsonResponse({});
+      if (/\/b2b\/pos\/orders$/.test(target)) return jsonResponse({ id: 'backend-1' });
+      throw new Error(`unexpected fetch: ${target}`);
+    });
+    const retry = await transport.retryOrderSync!('local-order-1');
+    expect(retry).toMatchObject({ success: true, result: { status: 'synced' } });
+    expect((await transport.getOrderDetail!('local-order-1'))?.order.synced).toBe(1);
+  });
+
+  test('retryOrderSync on a non-retryable order reports failed, not fake success', async () => {
+    const { transport } = await transportWithShift();
+    const retry = await transport.retryOrderSync!('does-not-exist');
+    expect(retry.result?.status).toBe('failed');
+  });
+
   test('cancelOrder refuses a synced order', async () => {
     const { transport, shiftId } = await transportWithShift();
     await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);

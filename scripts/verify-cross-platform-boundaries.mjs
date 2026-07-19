@@ -1118,18 +1118,23 @@ export async function verifyCrossPlatformBoundaries({
       continue;
     }
 
+    // The sql.js UMD (isolated into a vendor-sqljs-* chunk by the vite config)
+    // legitimately carries guarded `typeof process`/`require`/`Buffer`
+    // environment probes a token scan cannot prove dead. For a shim-bearing
+    // graph ONLY those Node-env-probe labels are exempt in that ONE chunk — the
+    // dangerous patterns (Electron, print-agent route/header, WebSocket/socket,
+    // Windows-native packages) stay ENFORCED, so a manualChunks change that
+    // routed real code into a vendor-sqljs chunk still fails.
+    const VENDOR_SQLJS_EXEMPT_LABELS = new Set([
+      'Node builtin', 'Node global', 'Node global Buffer (isomorphic base64 fallback)',
+    ]);
     for (const bundleFile of bundleFiles) {
       visitedBundleFiles.add(bundleFile);
-      // S6+S7: sql.js is an allowlisted renderer package whose UMD build
-      // carries guarded `typeof process`/`require` environment probes that a
-      // token scan cannot prove dead. The vite config isolates it into a
-      // dedicated vendor chunk; for a shim-bearing graph that ONE vendor chunk
-      // is exempt from token scanning (its import was already policed at the
-      // source level), while every application chunk stays fully scanned.
-      if (graphIncludesShim && /vendor-sqljs-[^/\\]*\.js$/.test(bundleFile)) continue;
+      const isVendorSqljs = graphIncludesShim && /vendor-sqljs-[^/\\]*\.js$/.test(bundleFile);
       const source = await readFile(bundleFile, 'utf8');
       for (const { label, pattern, shimAllowable } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
         if (shimAllowable && graphIncludesShim) continue;
+        if (isVendorSqljs && VENDOR_SQLJS_EXEMPT_LABELS.has(label)) continue;
         const match = pattern.exec(source);
         if (!match) continue;
         addDiagnostic({
