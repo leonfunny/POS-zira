@@ -276,6 +276,24 @@ export class AndroidDatabase {
     return this.draining;
   }
 
+  /**
+   * Wipe all salon-scoped data (catalog + orders + shifts + staff + sync
+   * cursors) on an account switch — parity with the Windows clearSalonData
+   * (database.ts) which archives-then-clears when the salon changes. Prevents a
+   * tablet that logs from Salon A into Salon B from selling Salon A's catalog
+   * or syncing Salon A's queued orders under Salon B's identity.
+   */
+  clearSalonData(): void {
+    this.transaction(() => {
+      for (const table of [
+        'product_variants', 'categories', 'orders', 'order_items',
+        'shifts', 'staff', 'sequence_counters', 'sync_meta',
+      ]) {
+        this.db.run(`DELETE FROM ${table}`);
+      }
+    });
+  }
+
   /** Export the current DB image (for tests / backup). */
   exportImage(): Uint8Array {
     return new Uint8Array(this.db.export());

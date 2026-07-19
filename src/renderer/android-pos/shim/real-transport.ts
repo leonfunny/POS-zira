@@ -469,6 +469,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const orderSyncFailedListeners = new Set<(payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
+  // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
+  // the refresh token on every success, so two concurrent 401s must NOT each
+  // POST the same token — the loser would 401 and clear the just-rotated pair,
+  // logging the cashier out of a recoverable session. Concurrent callers share
+  // this one promise.
+  let refreshInFlight: Promise<boolean> | null = null;
 
   /** Clear the session identity (keep local DB — logout ≠ wipe, S1 §2.B note). */
   const clearSessionIdentity = () => {
@@ -479,32 +485,40 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     });
   };
 
+  const runRefresh = async (): Promise<boolean> => {
+    const refreshToken = await tokenStore.getRefreshToken();
+    if (!refreshToken) {
+      // No refresh token → unrecoverable this run (auth-refresh.ts:95-98).
+      lastRefreshOutcome = 'no-refresh-token';
+      return false;
+    }
+    try {
+      const body = await client.refreshAccessToken(refreshToken);
+      // Backend rotates the refresh token on success (auth-refresh.ts:158-162).
+      await tokenStore.setTokens(body.access_token, body.refresh_token ?? null);
+      lastRefreshOutcome = 'success';
+      return true;
+    } catch (err: any) {
+      if (err?.status === 401) {
+        // Refresh rejected — dead session. Clear tokens (auth-refresh.ts:132-135).
+        await tokenStore.clear();
+        lastRefreshOutcome = 'rejected';
+      } else {
+        // Transient (network / 5xx / malformed) — tokens stay (auth-refresh.ts:138-142).
+        lastRefreshOutcome = 'transient';
+      }
+      return false;
+    }
+  };
+
   const tokenProvider: TokenProvider = {
     getAccessToken: () => tokenStore.getAccessToken(),
-    refresh: async () => {
-      const refreshToken = await tokenStore.getRefreshToken();
-      if (!refreshToken) {
-        // No refresh token → unrecoverable this run (auth-refresh.ts:95-98).
-        lastRefreshOutcome = 'no-refresh-token';
-        return false;
-      }
-      try {
-        const body = await client.refreshAccessToken(refreshToken);
-        // Backend rotates the refresh token on success (auth-refresh.ts:158-162).
-        await tokenStore.setTokens(body.access_token, body.refresh_token ?? null);
-        lastRefreshOutcome = 'success';
-        return true;
-      } catch (err: any) {
-        if (err?.status === 401) {
-          // Refresh rejected — dead session. Clear tokens (auth-refresh.ts:132-135).
-          await tokenStore.clear();
-          lastRefreshOutcome = 'rejected';
-        } else {
-          // Transient (network / 5xx / malformed) — tokens stay (auth-refresh.ts:138-142).
-          lastRefreshOutcome = 'transient';
-        }
-        return false;
-      }
+    refresh: () => {
+      // Coalesce concurrent refreshes onto one in-flight promise so the rotated
+      // refresh token is exchanged exactly once.
+      if (refreshInFlight) return refreshInFlight;
+      refreshInFlight = runRefresh().finally(() => { refreshInFlight = null; });
+      return refreshInFlight;
     },
     onExpired: () => {
       // The api-client fires onExpired whenever refresh() returns false. Only a
@@ -549,6 +563,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         if (!authUser.salonId) {
           return { success: false, error: 'Login response missing salon id' };
         }
+        // Tenant switch: if a DIFFERENT salon was previously bound to this
+        // device, wipe its local mirror before adopting the new identity —
+        // otherwise the cashier could sell the previous salon's catalog or sync
+        // its queued orders under the new salon (cross-tenant leak). Parity with
+        // the Windows archive-then-clear on salon change (auth.module.ts:767-800).
+        const previousSalonId = configStore.getRawConfig().salonId;
+        if (previousSalonId && previousSalonId !== authUser.salonId) {
+          const database = await db();
+          database.clearSalonData();
+          await database.flush().catch(() => { /* debounced flush still pending */ });
+        }
         // Store the staff JWT (NO pa_ key, NO /print-agent/connect — S1 §2.B rail).
         await tokenStore.setTokens(result.access_token, result.refresh_token ?? null);
         const salonSlug = resolveAuthSalonSlug(result);
@@ -592,8 +617,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         const user = resolveAuthUser(raw, configStore.getRawConfig().salonName);
         return { success: true, data: { isAuthenticated: true, user } };
       } catch (err: any) {
-        const message = String(err?.message ?? err);
-        if (/\b401\b/.test(message)) {
+        // Classify by HTTP status (getMe now attaches err.status), not by
+        // regex-matching a message — a NestJS 401 body carries 'Unauthorized'
+        // with no '401' substring, so the old regex misfired and left a dead
+        // session logged in.
+        if (err?.status === 401) {
           // refresh already ran inside the api-client 401-retry path.
           if (lastRefreshOutcome === 'transient') {
             // Transient refresh failure — fall back to the cached profile so a

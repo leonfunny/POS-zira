@@ -129,6 +129,73 @@ describe('real transport auth', () => {
     expect(configStore.getRawConfig().authUser).toBeUndefined();
   });
 
+  test('getUser dead session (401 with message "Unauthorized") drops to login', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build();
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+
+    const expired = vi.fn();
+    (transport as any).onAuthExpired(expired);
+    // getMe 401 (NestJS body 'Unauthorized', no '401' substring) → refresh 401.
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ message: 'Unauthorized' }, 401))
+      .mockResolvedValueOnce(jsonResponse({ message: 'Unauthorized' }, 401));
+    const result = await transport.getUser!();
+    expect(result.data?.isAuthenticated).toBe(false);
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
+  test('concurrent 401s trigger exactly one refresh (single-flight), keeping the session', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport, tokenStore } = build();
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+
+    let refreshCalls = 0;
+    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const target = String(url);
+      if (target.includes('/auth/refresh')) {
+        refreshCalls += 1;
+        return jsonResponse({ access_token: 'jwt-access-2', refresh_token: 'jwt-refresh-2' });
+      }
+      // /auth/me: 401 with the OLD token, 200 once the refreshed token is used.
+      const bearer = String((init?.headers as Record<string, string>)?.Authorization ?? '');
+      if (bearer.includes('jwt-access-2')) return jsonResponse({ user: LOGIN_BODY.user });
+      return jsonResponse({ message: 'Unauthorized' }, 401);
+    });
+
+    const [a, b] = await Promise.all([transport.getUser!(), transport.getUser!()]);
+    expect(a.data?.isAuthenticated).toBe(true);
+    expect(b.data?.isAuthenticated).toBe(true);
+    // Two concurrent 401s must NOT each POST /auth/refresh with the rotating token.
+    expect(refreshCalls).toBe(1);
+    await expect(tokenStore.getRefreshToken()).resolves.toBe('jwt-refresh-2');
+  });
+
+  test('logging into a different salon wipes the previous salon local data', async () => {
+    // Login salon-1, sync a product + create an order.
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build();
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (target.includes('/warehouse/public/products')) {
+        return jsonResponse({ products: [{ id: 'p1', name: 'Gel', retailPrice: '49.00', template: { id: 't1' } }], categories: [], nextSyncCursor: 'c1' });
+      }
+      return jsonResponse({ categories: [] });
+    });
+    await transport.syncProducts!();
+    expect(await transport.getProducts!()).toHaveLength(1);
+
+    // Login salon-2: the salon-1 catalog must be gone.
+    const SALON2 = {
+      ...LOGIN_BODY,
+      user: { ...LOGIN_BODY.user, salonId: 'salon-2', salon: { id: 'salon-2', name: 'Other Salon', slug: 'other-salon' } },
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse(SALON2));
+    await transport.loginWithEmail!('other@salon.pl', 'pw');
+    expect(await transport.getProducts!()).toHaveLength(0);
+  });
+
   test('getUser transient network error falls back to the cached profile', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
     const { transport } = build();

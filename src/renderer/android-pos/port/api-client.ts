@@ -337,7 +337,11 @@ export class PosApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP ${response.status}`);
+      // Attach the HTTP status so callers can classify a dead session by code,
+      // not by regex-matching a localized message ('Unauthorized' has no 401).
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
 
     return response.json();
