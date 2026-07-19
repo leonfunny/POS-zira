@@ -980,6 +980,105 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       return { success: true, restocked: result.restocked };
     },
 
+    // ── Refund (E1b — ported pos.module.ts:3727-3892, minus the Windows DTO
+    //    rebuild + response validator). The renderer-built refund DTO is POSTed
+    //    VERBATIM (the renderer builds it — see the E1b report for the
+    //    request-unit note); on success the local order is marked refunded and
+    //    the restock:true lines are restocked (track_inventory=1 only).
+    async refundOrder(orderId: string, dto: any): Promise<{
+      success: boolean;
+      refundedLines?: any[];
+      refundAmount?: number;
+      receiptPrinted?: boolean;
+      mutationDetected?: boolean;
+      requiresRefresh?: boolean;
+      error?: string;
+    }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+
+        // Order must exist + be synced (pos.module.ts:3729-3732). An unsynced
+        // order has no backend identity to refund against — cancelling it
+        // locally (cancelOrder) is the correct action, not a server refund.
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+        if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
+
+        // Refunds are shift-scoped — an active shift is required (pos.module.ts:3743-3746).
+        if (!orderRepo.getActiveShift()) {
+          return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
+        }
+
+        const token = await tokenStore.getAccessToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        // POST the renderer-built refund DTO verbatim (pass-through).
+        const result: any = await client.refundOrder(order.backend_id, dto);
+        if (result === null) return { success: false, error: 'Refund endpoint not available' };
+
+        // Resolve the cumulative refunded grosze + FULL/PARTIAL status. Windows
+        // derives these from validateRefundBackendResponse; the Android port does
+        // not rebuild that validator. Prefer the backend's cumulative
+        // totalRefundedAmount (PLN→grosze), else alreadyRefunded + the requested
+        // delta, else the cashier-requested amount.
+        const alreadyRefunded = order.refund_amount ?? 0;
+        const orderTotal = order.total ?? 0;
+        const linesTotalGrosze = Array.isArray(dto?.lines)
+          ? dto.lines.reduce((s: number, l: any) => s + (Number(l?.refundAmount) || 0), 0)
+          : 0;
+        const requestedAmountGrosze = dto?.type === 'FULL'
+          ? Math.max(0, orderTotal - alreadyRefunded)
+          : (Number(dto?.amount) || linesTotalGrosze);
+        const plnToGrosze = (v: unknown): number | null => {
+          if (v == null) return null;
+          const n = typeof v === 'number' ? v : parseFloat(String(v));
+          return Number.isFinite(n) ? Math.round(n * 100) : null;
+        };
+        const cumulativeFromBackend = plnToGrosze(result?.totalRefundedAmount);
+        const refundedAmount = cumulativeFromBackend ?? (alreadyRefunded + requestedAmountGrosze);
+        const status: 'FULL' | 'PARTIAL' =
+          result?.status === 'REFUNDED' || (requestedAmountGrosze >= orderTotal && orderTotal > 0)
+            ? 'FULL'
+            : 'PARTIAL';
+        const refundReason = result?.refundReason || dto?.reason || '';
+
+        // Mark refunded locally + restock the restock:true lines (track_inventory=1
+        // only — the local mirror; the backend deducts server-side too). One
+        // transaction so a partial failure cannot leave the order marked refunded
+        // with un-restocked stock.
+        database.transaction(() => {
+          orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, dto?.lines);
+          if (Array.isArray(dto?.lines)) {
+            for (const line of dto.lines) {
+              const qty = Number(line?.quantity) || 0;
+              if (line?.restock && line.variantId && qty > 0) {
+                database.run(
+                  'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? AND track_inventory = 1',
+                  [qty, qty, line.variantId],
+                );
+              }
+            }
+          }
+        });
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+
+        // Renderer-shaped result. refundAmount is PLN (the renderer grosses it up
+        // via toGrosze); fall back to the requested grosze/100. No auto-print —
+        // the cashier prints the refund receipt via printRefundReceipt (E1a).
+        return {
+          success: true,
+          refundedLines: Array.isArray(result?.refundedLines) ? result.refundedLines : undefined,
+          refundAmount: result?.refundAmount ?? requestedAmountGrosze / 100,
+          receiptPrinted: false,
+        };
+      } catch (e: any) {
+        const detail = e?.message || e?.code || (typeof e === 'string' ? e : '') || 'Refund failed';
+        return { success: false, error: detail };
+      }
+    },
+
     // ── Shifts (S9 — local-first port of shift-controller.ts:75-170 +
     //    pos.module.ts:4650-4666) ────────────────────────────────────────────
     async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }> {

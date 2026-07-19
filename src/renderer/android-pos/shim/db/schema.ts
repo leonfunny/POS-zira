@@ -112,7 +112,11 @@ export const ANDROID_SCHEMA_DDL = `
     sync_error TEXT,
     backend_id TEXT,
     synced_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    refund_amount INTEGER DEFAULT 0,
+    refund_reason TEXT,
+    refunded_at TEXT,
+    refund_lines TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
   CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
@@ -182,13 +186,31 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   // EXISTS won't add columns to an existing table). Guarded by table_info so
   // re-runs are safe.
   const productColumns = new Set<string>();
-  const info = db.exec('PRAGMA table_info(product_variants)');
-  for (const row of info[0]?.values ?? []) productColumns.add(String(row[1]));
+  const productInfo = db.exec('PRAGMA table_info(product_variants)');
+  for (const row of productInfo[0]?.values ?? []) productColumns.add(String(row[1]));
   if (!productColumns.has('track_inventory')) {
     db.run('ALTER TABLE product_variants ADD COLUMN track_inventory INTEGER DEFAULT 1');
+  }
+  // v4: refund columns on orders (E1b markRefunded). Additive, guarded per-column
+  // so a partially-migrated DB (e.g. refunded_at added in a future hotfix) converges.
+  const orderColumns = new Set<string>();
+  const orderInfo = db.exec('PRAGMA table_info(orders)');
+  for (const row of orderInfo[0]?.values ?? []) orderColumns.add(String(row[1]));
+  if (!orderColumns.has('refund_amount')) {
+    db.run('ALTER TABLE orders ADD COLUMN refund_amount INTEGER DEFAULT 0');
+  }
+  if (!orderColumns.has('refund_reason')) {
+    db.run('ALTER TABLE orders ADD COLUMN refund_reason TEXT');
+  }
+  if (!orderColumns.has('refunded_at')) {
+    db.run('ALTER TABLE orders ADD COLUMN refunded_at TEXT');
+  }
+  if (!orderColumns.has('refund_lines')) {
+    db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
-/** v3 = product_variants.track_inventory (stock-guard parity). */
-export const ANDROID_SCHEMA_VERSION = 3;
+/** v3 = product_variants.track_inventory (stock-guard parity).
+ *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund). */
+export const ANDROID_SCHEMA_VERSION = 4;

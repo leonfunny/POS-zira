@@ -143,6 +143,26 @@ describe('cross-platform boundary verifier', () => {
     });
   }
 
+  test('allows staff-JWT print-agent receipt routes (E1a) while still banning the pa_-keyed surface', async () => {
+    // The salon-scoped staff-JWT REST routes (jobs / jobs/:id / salons/me/...) are
+    // permitted; only the pa_-keyed execution surface (agent/connect/my-key +
+    // x-print-agent-* headers) stays forbidden.
+    const allowed = await verifyFixture('allowed-print-agent-staff-jwt-route');
+    expect(allowed.ok).toBe(true);
+    expect(allowed.diagnostics.some(({ rule }: { rule: string }) => rule === 'FORBIDDEN_PRINT_AGENT_IDENTITY')).toBe(false);
+
+    for (const stillBanned of [
+      'forbidden-print-agent-identity',
+      'forbidden-print-agent-agent-route',
+      'forbidden-print-agent-machine-header',
+      'forbidden-print-agent-bearer-key',
+    ]) {
+      const result = await verifyFixture(stillBanned);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics.some(({ rule }: { rule: string }) => rule === 'FORBIDDEN_PRINT_AGENT_IDENTITY')).toBe(true);
+    }
+  });
+
   test('resolves reviewed aliases and rejects imports escaping the boundary root', async () => {
     const result = await verifyFixture('forbidden-shared-alias-escape');
 

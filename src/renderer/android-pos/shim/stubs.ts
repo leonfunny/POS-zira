@@ -240,7 +240,11 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
     // already skips it when no fiscal printer is configured.
     printFiscalReceipt: async () => ({ success: true, fiscalPrinted: false }),
     reprintReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
-    printRefundReceipt: async () => ({ success: true, receiptPrinted: false, error: 'no-printer' }),
+    // Refund receipt = a fresh print job via the E1a coordinator (isReprint
+    // semantics — each refund receipt is its own job, no idempotency key, like a
+    // reprint). A true refund-document job type is beyond E1a's receipt-COPY
+    // coordinator, so this reuses the receipt-reprint path (documented E1b gap).
+    printRefundReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
     getPrintAttempts: async () => ({ success: true, attempts: [] }),
     getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),
     getReconcilableFiscalAttempt: async () => ({ success: true, attempt: null }),
@@ -296,7 +300,15 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
     ),
     mutate: async () => ({ success: true, localOnly: true }),
     mirrorFromServer: async () => ({ success: false, error: 'no-server-mirror' }),
-    refund: async () => ({ success: false, error: 'refund-unavailable' }),
+    // Delegate to the transport so a synced order is really refunded server-side
+    // + marked locally + restocked (E1b); the S2 fake-success let a refund look
+    // done without hitting the backend. Without a transport (synthetic install),
+    // refuse rather than lie.
+    refund: (orderId: string, data: any) => withTransport(
+      transport.refundOrder,
+      [orderId, data],
+      () => ({ success: false as boolean, error: 'refund-unavailable' as string | undefined }),
+    ),
     downloadPdf: async () => ({ success: false, error: 'no-printer' }),
     addInvoice: async () => ({ success: false, error: 'invoice-unavailable' }),
     generateProforma: async () => ({ success: false, error: 'invoice-unavailable' }),

@@ -631,6 +631,38 @@ export class PosApiClient {
   }
 
   /**
+   * POST /api/v1/b2b/pos/orders/:id/refund. Ported transport from
+   * api-client.ts:2781-2804. The DTO is the renderer-built refund request
+   * (SHIM_CONTRACT §2.G) passed through UNCHANGED — the renderer
+   * (OrderHistoryModal → buildRefundRequest) constructs it; this client does not
+   * rebuild it. Staff JWT. Returns null on 404/501 (endpoint not deployed for
+   * this salon / order not found), matching Windows; throws on other non-2xx.
+   *
+   * Response shape the renderer consumes (OrderHistoryModal getRefundSuccess*):
+   * `{ success, status?, refundAmount?(PLN), totalRefundedAmount?(PLN),
+   * refundedLines?([{...,refundAmount(PLN)}]), restocked?, stockMovementIds?,
+   * refundReason? }`. Amounts are PLN decimals (the renderer grosses them up to
+   * integer grosze via toGrosze) — see the E1b report for the request-unit note.
+   */
+  async refundOrder(orderId: string, dto: Record<string, any>): Promise<any | null> {
+    const token = await this.requireToken('refundOrder');
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/refund`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto),
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /**
    * GET /api/v1/b2b/pos/orders. Ported from api-client.ts:3096-3125. Builds the
    * exact query string Windows builds and returns the `{ orders, total, page,
    * limit }` slice.

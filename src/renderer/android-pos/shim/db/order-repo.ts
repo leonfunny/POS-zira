@@ -175,6 +175,26 @@ export function createOrderRepo(database: AndroidDatabase) {
       database.run('UPDATE orders SET synced = -1, sync_error = ? WHERE id = ?', [error, id]);
     },
     /**
+     * Mark an order refunded (full or partial). Ported from Windows
+     * order-repo.ts:518-524 — sets status REFUNDED/PARTIAL_REFUND, the cumulative
+     * refund_amount (grosze), reason, refunded_at, and the merged refund_lines
+     * JSON. The Z-report (closeShift) reads refund_amount + status to subtract
+     * refunds from sales + the matching tender bucket (shift-controller.ts:139-177).
+     */
+    markRefunded(
+      id: string,
+      amount: number,
+      reason: string,
+      type: 'FULL' | 'PARTIAL',
+      refundLines?: Array<{ name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string; variantId?: string }>,
+    ): void {
+      const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
+      database.run(
+        "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now'), refund_lines = ? WHERE id = ?",
+        [status, amount, reason, refundLines ? JSON.stringify(refundLines) : null, id],
+      );
+    },
+    /**
      * Delete an UNSYNCED local order and restock its lines (order-repo.ts
      * deleteLocalUnsynced). Refuses a synced/in-flight order — those must be
      * cancelled/refunded server-side, never silently dropped. Returns whether
@@ -269,30 +289,78 @@ export function createOrderRepo(database: AndroidDatabase) {
     getOpenShiftById(shiftId: string): any | null {
       return database.get('SELECT * FROM shifts WHERE id = ? AND closed_at IS NULL', [shiftId]) ?? null;
     },
-    /** Close + Z-report aggregation (split tenders honored). */
+    /** Close + Z-report aggregation (split tenders honored). Refunds are
+     *  subtracted from totalSales AND the matching tender bucket (a cash refund
+     *  reduces cashTotal); discounts are subtracted from totalSales — ported from
+     *  Windows shift-controller.ts:139-177 (the deferred REVIEW_FIXES item). */
     closeShift(shiftId: string, closingCash: number): any {
       const shift = database.get<any>('SELECT * FROM shifts WHERE id = ?', [shiftId]);
       if (!shift) throw new Error(`Shift ${shiftId} not found`);
       const orders = database.all<any>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
       const grossSales = orders.reduce((sum: number, o: any) => sum + (o.total ?? 0), 0);
+      const totalDiscounts = orders.reduce((sum: number, o: any) => sum + (o.discount ?? 0), 0);
+      // Per-order cumulative refund_amount for REFUNDED/PARTIAL_REFUND orders
+      // (shift-controller.ts:140-143). Refunds of unsynced orders can't happen
+      // (refundOrder refuses them), so every refund_amount here is backend-confirmed.
+      const totalRefunds = orders.reduce(
+        (sum: number, o: any) => sum + (o.refund_amount && o.refund_amount > 0 ? o.refund_amount : 0),
+        0,
+      );
+
       let cashTotal = 0; let cardTotal = 0; let blikTotal = 0; let transferTotal = 0;
+      // Bucket classifier shared by the sale-aggregation and refund-subtraction
+      // passes so a refund always comes out of the same bucket the sale went into
+      // (CASH/CARD/BLIK; TRANSFER|BANK_TRANSFER|unknown → transferTotal). `sign`
+      // is +1 for sales, -1 for refunds.
+      const applyTender = (method: string | null | undefined, amount: number, sign: number) => {
+        const m = String(method ?? '').toUpperCase();
+        if (m === 'CASH') cashTotal += sign * amount;
+        else if (m === 'CARD') cardTotal += sign * amount;
+        else if (m === 'BLIK') blikTotal += sign * amount;
+        else transferTotal += sign * amount;
+      };
+      const parseTenders = (o: any): Array<{ method: string; amount: number }> | null => {
+        if (!o.payment_tenders) return null;
+        try {
+          const parsed = JSON.parse(o.payment_tenders);
+          return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+        } catch { return null; }
+      };
+
+      // 1. Aggregate sales (split tenders honored; single-method fallback).
       for (const o of orders) {
-        let tenders: Array<{ method: string; amount: number }> | null = null;
-        if (o.payment_tenders) {
-          try { tenders = JSON.parse(o.payment_tenders); } catch { tenders = null; }
-        }
-        const buckets = tenders && tenders.length > 0
-          ? tenders
-          : [{ method: o.payment_method ?? 'CASH', amount: o.total ?? 0 }];
-        for (const t of buckets) {
-          switch (String(t.method).toUpperCase()) {
-            case 'CASH': cashTotal += t.amount; break;
-            case 'CARD': cardTotal += t.amount; break;
-            case 'BLIK': blikTotal += t.amount; break;
-            default: transferTotal += t.amount; break;
+        const tenders = parseTenders(o);
+        const buckets = tenders ?? [{ method: o.payment_method ?? 'CASH', amount: o.total ?? 0 }];
+        for (const t of buckets) applyTender(t.method, t.amount ?? 0, +1);
+      }
+
+      // 2. Subtract each order's refund from the matching tender bucket
+      //    (shift-controller.ts:145-175). Split tenders distribute the refund
+      //    proportionally with the last tender absorbing the rounding remainder;
+      //    a single-method order refunds straight against that method.
+      for (const o of orders) {
+        if (!(o.refund_amount > 0)) continue;
+        const tenders = parseTenders(o);
+        if (tenders) {
+          const orderTotal = tenders.reduce((s: number, t: any) => s + (t.amount ?? 0), 0);
+          if (orderTotal > 0) {
+            let distributed = 0;
+            for (let i = 0; i < tenders.length; i += 1) {
+              const isLast = i === tenders.length - 1;
+              const share = isLast
+                ? o.refund_amount - distributed
+                : Math.round(o.refund_amount * ((tenders[i].amount ?? 0) / orderTotal));
+              distributed += share;
+              applyTender(tenders[i].method, share, -1);
+            }
+            continue;
           }
         }
+        applyTender(o.payment_method, o.refund_amount, -1);
       }
+
+      const totalSales = grossSales - totalRefunds - totalDiscounts;
+
       database.run(
         "UPDATE shifts SET closing_cash = ?, closed_at = datetime('now') WHERE id = ?",
         [closingCash, shiftId],
@@ -307,9 +375,11 @@ export function createOrderRepo(database: AndroidDatabase) {
         closedAt,
         openingCash: shift.opening_cash ?? 0,
         closingCash,
-        totalSales: grossSales,
+        totalSales,
         totalOrders: orders.length,
         cashTotal, cardTotal, blikTotal, transferTotal,
+        totalRefunds,
+        totalDiscounts,
         difference: closingCash - ((shift.opening_cash ?? 0) + cashTotal),
         unsyncedOrders: this.getUnsyncedCountByShift(shiftId),
       };

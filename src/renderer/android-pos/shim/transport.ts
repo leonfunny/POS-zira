@@ -167,6 +167,24 @@ export interface ShimTransport {
   deleteLocalOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
   /** Reset a shelved order and re-drain (recover from a business rejection). */
   retryOrderSync?(orderId: string): Promise<{ success: boolean; result?: { status: string; error?: string }; error?: string }>;
+  /**
+   * Refund a SYNCED order (E1b). POSTs the renderer-built refund DTO to the
+   * backend (POST /b2b/pos/orders/:id/refund, staff JWT), then marks the local
+   * order refunded + restocks the restock:true lines. An UNSYNCED order is
+   * refused (refund a not-yet-synced order = cancel it, not a server refund).
+   * Returns the renderer-shaped result OrderHistoryModal consumes
+   * ({success, refundedLines?, refundAmount?, receiptPrinted?, mutationDetected?,
+   * requiresRefresh?, error?}).
+   */
+  refundOrder?(orderId: string, dto: any): Promise<{
+    success: boolean;
+    refundedLines?: any[];
+    refundAmount?: number;
+    receiptPrinted?: boolean;
+    mutationDetected?: boolean;
+    requiresRefresh?: boolean;
+    error?: string;
+  }>;
 
   /** Sync pull/push (S6 catalog / S8 orders). */
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;
