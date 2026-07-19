@@ -57,6 +57,30 @@ restaurant/kitchen/tables/pickup, billiard, B2B wholesale.
 - **E1c Order-history depth**: server list/detail/reprint, retry-sync already
   done; add the server-side views the OrderHistoryModal already renders.
 
+### OWNER DECISION 2026-07-19 — dedicated Sunmi POS, fiscal like the grocery
+The target is a **dedicated Sunmi Android POS terminal** (fixed in the shop, not
+a hand-carried tablet), and it must print **fiscal receipts like the grocery
+setup**. This changes two things:
+- The "lost-tablet" threat behind the staff-JWT-only / no-`pa_` rail does not
+  apply to a fixed trusted terminal. The owner accepts treating the Sunmi like
+  a Windows counter. `pa_`-keyed capabilities (product-admin writes, print-agent
+  connect, card) may be enabled if/when needed — but see the fiscal note.
+- **Fiscal is unblocked WITHOUT dropping the rail or the backend gate.** The
+  grocery prints fiscal by submitting a job to the print-agent → ELZAB
+  (`shared-fiscal-printer.ts`, role `FISCAL_RECEIPT`), and that submit path
+  tries the **staff JWT first** (pa_ is only a fallback). So a Sunmi submits a
+  fiscal job to the salon's print-agent exactly like a second Windows POS —
+  staff JWT, the same `/print-agent/jobs` route E1a already uses. **No Android
+  fiscal driver, no ELZAB on the Sunmi, no rail change.** The ELZAB stays on the
+  salon's print-agent box (Plan A, owner-approved).
+- The one genuinely Android-native piece is the **Sunmi built-in ESC/POS printer**
+  for the non-fiscal customer copy (Sunmi's Android printer SDK) — a later
+  device packet; the legal fiscal receipt comes from the ELZAB via the agent.
+
+Packet **E-FISCAL** (in progress): the fiscal twin of E1a — extend the
+remote-print coordinator to submit `FISCAL_RECEIPT` jobs, wire
+`pos.payment.printFiscalReceipt` + `hasFiscalPrinter`.
+
 ### STATUS 2026-07-19 — client cash-sale surface is COMPLETE for the pilot
 After E1a/E1b/E2a/E3, every method the SalonTemplate + RetailTemplate cashier
 flow calls is ported: login → salon services + retail products → cart with
