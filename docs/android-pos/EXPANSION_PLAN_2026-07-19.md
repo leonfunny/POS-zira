@@ -106,6 +106,20 @@ one, it becomes its own wave — none is on this roadmap.
   (eNail CLAUDE.md template), and leave it dark behind a flag until the backend
   is deployed and verified. Requests go to Paul to forward to backend IT.
 
+### claude-glm conveyor rules (revised 2026-07-19 after usage-limit incidents)
+- **ONE claude-glm run at a time. Never launch a second while one is running.**
+  Parallel GLM runs hit the Z.ai usage limit; a throttled run stalls, and a
+  killed run's child process keeps writing files under the supervisor — the
+  E1a/E1b/E2a chaos. Sequential single-run avoids both.
+- **Wait for the run to fully complete; do not kill it as "stalled".** GLM runs
+  are slow (the acceptance phase alone is minutes). If a takeover is truly
+  needed, `pkill -9 -f claude-glm` ALL matches, then verify the file md5 is
+  stable over several seconds before editing.
+- **Trust tsc + vitest, not IDE diagnostics** during/after a GLM run — the
+  language server lags file writes and reports stale "does not exist" errors.
+- Packets small enough for the supervisor to do reliably (thin layers, wiring,
+  test-only) are done directly, no GLM — faster than reconciling half-writes.
+
 ### Execution order (collision-aware)
 1. E1a remote receipt print (new remote-print coordinator module + print
    namespace wiring) ‖ E2-inventory (read-only doc: SalonTemplate + bookings
