@@ -663,6 +663,79 @@ export class PosApiClient {
   }
 
   /**
+   * PATCH /api/v1/b2b/pos/orders/:id/add-invoice. Ported transport from
+   * api-client.ts:2834-2857. Staff JWT. Attaches a VAT invoice to an
+   * already-created (synced) POS order. The renderer-built DTO
+   * ({customerNip, invoiceType?}) is passed through; `invoiceType` defaults to
+   * 'VAT' to match the Windows api-client. Throws an Error carrying `.status`
+   * on non-2xx so the transport can map it to {success:false, error}.
+   */
+  async addInvoiceToOrder(
+    backendOrderId: string,
+    data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' },
+  ): Promise<any> {
+    const token = await this.requireToken('addInvoiceToOrder');
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/add-invoice`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerNip: data.customerNip, invoiceType: data.invoiceType ?? 'VAT' }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /**
+   * POST /api/v1/b2b/pos/orders/:id/generate-proforma. Ported transport from
+   * api-client.ts:2859-2877. Staff JWT. Generates a proforma from a synced POS
+   * order. No request body (matches Windows). Throws an Error carrying `.status`
+   * on non-2xx.
+   */
+  async generateProforma(backendOrderId: string): Promise<any> {
+    const token = await this.requireToken('generateProforma');
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/generate-proforma`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /**
+   * GET /api/v1/b2b/pos/customers/nip/:nip. Ported transport from
+   * api-client.ts:2879-2895. Staff JWT. Looks up a customer by Polish tax ID,
+   * falling back to the GUS registry when no local customer matches. Throws an
+   * Error carrying `.status` on non-2xx (a 404 = no such NIP → the transport
+   * returns {success:false}).
+   */
+  async lookupCustomerByNip(nip: string): Promise<any> {
+    const token = await this.requireToken('lookupCustomerByNip');
+    const url = `${this.baseUrl}/api/v1/b2b/pos/customers/nip/${encodeURIComponent(nip)}`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  /**
    * GET /api/v1/b2b/pos/orders. Ported from api-client.ts:3096-3125. Builds the
    * exact query string Windows builds and returns the `{ orders, total, page,
    * limit }` slice.

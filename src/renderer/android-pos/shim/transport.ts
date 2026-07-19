@@ -195,6 +195,32 @@ export interface ShimTransport {
     error?: string;
   }>;
 
+  // ── E3 invoicing (Polish VAT) — SHIM_CONTRACT_S1 §2.G (invoice extras). NIP/
+  //    GUS lookup + attach-invoice + generate-proforma. All staff-JWT over the
+  //    b2b/pos routes; the order-scoped calls require a SYNCED order
+  //    (backend_id present). PDF download stays out of scope (Android
+  //    FileProvider/share) — downloadPdf keeps its stub.
+  /**
+   * NIP → customer/GUS registry lookup → GET /api/v1/b2b/pos/customers/nip/:nip
+   * (E3a). Staff JWT. Returns {success, data?, error?}; `data` is the GUS /
+   * existing-customer row. A 404 (no such NIP) → {success:false}.
+   */
+  lookupNip?(nip: string): Promise<{ success: boolean; data?: any; error?: string }>;
+  /**
+   * Attach a VAT invoice to a SYNCED order → PATCH .../orders/:id/add-invoice
+   * (E3a). Staff JWT. The renderer-built {customerNip, invoiceType?} DTO is
+   * passed through unchanged. An unsynced order is refused (no backend identity
+   * to invoice against). On success the local order's customer_nip (+ status if
+   * the response carries one) is updated so getDetail reflects it. Returns
+   * {success, order?, error?}.
+   */
+  addInvoice?(orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }): Promise<{ success: boolean; order?: any; error?: string }>;
+  /**
+   * Generate a proforma from a SYNCED order → POST .../orders/:id/generate-proforma
+   * (E3a). Staff JWT. An unsynced order is refused. Returns {success, proforma?, error?}.
+   */
+  generateProforma?(orderId: string): Promise<{ success: boolean; proforma?: any; error?: string }>;
+
   /** Sync pull/push (S6 catalog / S8 orders). */
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;
   syncOrders?(): Promise<void>;

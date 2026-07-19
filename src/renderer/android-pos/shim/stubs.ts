@@ -311,8 +311,22 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       () => ({ success: false as boolean, error: 'refund-unavailable' as string | undefined }),
     ),
     downloadPdf: async () => ({ success: false, error: 'no-printer' }),
-    addInvoice: async () => ({ success: false, error: 'invoice-unavailable' }),
-    generateProforma: async () => ({ success: false, error: 'invoice-unavailable' }),
+    // Delegate to the transport so a synced order is really invoiced server-side
+    // + the local customer_nip is persisted (E3a); the S2 fake-success let an
+    // invoice look attached without hitting the backend. Without a transport
+    // (synthetic install), refuse rather than lie. downloadPdf stays a stub —
+    // PDF download needs Android FileProvider/share, which the manifest forbids
+    // (E3a follow-up).
+    addInvoice: (orderId: string, data: any) => withTransport(
+      transport.addInvoice,
+      [orderId, data],
+      () => ({ success: false as boolean, error: 'invoice-unavailable' as string | undefined }),
+    ),
+    generateProforma: (orderId: string) => withTransport(
+      transport.generateProforma,
+      [orderId],
+      () => ({ success: false as boolean, error: 'invoice-unavailable' as string | undefined }),
+    ),
     getServerHistory: async () => ({ success: true, history: [] }),
     getDailyStats: async () => ({ order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 }),
     repairStockFailures: async () => ({ success: true }),
@@ -493,7 +507,15 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
       search: async () => [],
       getById: async () => null,
       increaseDebt: async () => undefined,
-      lookupNip: async () => ({ success: false, error: 'nip-lookup-unavailable' }),
+      // E3a: delegate the NIP/GUS lookup to the transport (staff-JWT
+      // GET /b2b/pos/customers/nip/:nip) when one is present; the S2 synthetic
+      // fallback keeps the 'unavailable' shape so the invoicing UI shows its
+      // not-available state instead of crashing.
+      lookupNip: (nip: string) => withTransport(
+        transport.lookupNip,
+        [nip],
+        () => ({ success: false as boolean, error: 'nip-lookup-unavailable' as string | undefined }),
+      ),
     },
     pickupOrders: {
       machineId: async () => null,

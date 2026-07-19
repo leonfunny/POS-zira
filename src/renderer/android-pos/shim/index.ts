@@ -105,7 +105,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     shift: buildShiftNamespace(stubDeps),
     staff: buildStaffNamespace(stubDeps),
     sync: buildSyncNamespace(stubDeps),
-    ...buildExcludedPosNamespaces(),
+    ...buildExcludedPosNamespaces(stubDeps),
   };
 
   const api = {

@@ -1211,6 +1211,94 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       }
     },
 
+    // ── Invoicing (E3a — ported pos.module.ts:3924-3981, minus the Windows
+    //    logger). NIP/GUS lookup + attach-invoice + generate-proforma, all
+    //    staff-JWT over the b2b/pos routes. addInvoice/generateProforma require a
+    //    SYNCED order (backend_id present) — an unsynced order has no backend
+    //    identity to invoice against, so it is refused before any HTTP call
+    //    (PATCHing a local id the backend has never seen would 404 every time).
+    async lookupNip(nip: string): Promise<{ success: boolean; data?: any; error?: string }> {
+      try {
+        const token = await tokenStore.getAccessToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+        // Sanitize + validate the NIP exactly like the Windows handler
+        // (pos.module.ts:3974-3975): digits only, must be exactly 10 long.
+        const cleanNip = String(nip ?? '').replace(/\D/g, '');
+        if (cleanNip.length !== 10) return { success: false, error: 'NIP must be 10 digits' };
+        const data = await client.lookupCustomerByNip(cleanNip);
+        return { success: true, data };
+      } catch (e: any) {
+        // 404 (no such NIP in GUS), other 4xx/5xx, or network — the api-client
+        // attaches err.status; map every throw to the renderer {success:false}.
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+    async addInvoice(
+      orderId: string,
+      data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' },
+    ): Promise<{ success: boolean; order?: any; error?: string }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        // Order must exist + be synced (pos.module.ts:3926-3928). An unsynced
+        // order has no backend identity to attach an invoice against — refuse it
+        // with NO HTTP call rather than PATCHing a local id the backend has
+        // never seen.
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = await tokenStore.getAccessToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        // Sanitize + validate the NIP (pos.module.ts:3933-3934).
+        const nip = String(data?.customerNip ?? '').replace(/\D/g, '');
+        if (nip.length !== 10) return { success: false, error: 'NIP must be 10 digits' };
+
+        // Pass the renderer DTO through (the api-client adds the invoiceType
+        // default); do not rebuild it from the local order row.
+        const result: any = await client.addInvoiceToOrder(order.backend_id, {
+          customerNip: nip,
+          invoiceType: data?.invoiceType,
+        });
+
+        // Persist the invoiced NIP locally so getDetail reflects it
+        // (pos.module.ts:3941). If the backend response carries a new status,
+        // reflect that too — the Windows handler does not, but the task asks for
+        // it conditionally (only when the response says so).
+        database.transaction(() => {
+          database.run('UPDATE orders SET customer_nip = ? WHERE id = ?', [nip, orderId]);
+          const newStatus = result?.order?.status ?? result?.status;
+          if (typeof newStatus === 'string' && newStatus.trim()) {
+            database.run('UPDATE orders SET status = ? WHERE id = ?', [newStatus, orderId]);
+          }
+        });
+        await database.flush().catch(() => { /* debounced flush still pending */ });
+
+        return { success: true, order: result };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+    async generateProforma(orderId: string): Promise<{ success: boolean; proforma?: any; error?: string }> {
+      try {
+        const database = await db();
+        const orderRepo = createOrderRepo(database);
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = await tokenStore.getAccessToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const result: any = await client.generateProforma(order.backend_id);
+        // No local mutation — Windows returns the proforma as-is.
+        return { success: true, proforma: result };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
+
     // ── Shifts (S9 — local-first port of shift-controller.ts:75-170 +
     //    pos.module.ts:4650-4666) ────────────────────────────────────────────
     async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }> {
