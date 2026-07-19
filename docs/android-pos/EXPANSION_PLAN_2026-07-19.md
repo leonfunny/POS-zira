@@ -57,6 +57,25 @@ restaurant/kitchen/tables/pickup, billiard, B2B wholesale.
 - **E1c Order-history depth**: server list/detail/reprint, retry-sync already
   done; add the server-side views the OrderHistoryModal already renders.
 
+### STATUS 2026-07-19 — client cash-sale surface is COMPLETE for the pilot
+After E1a/E1b/E2a/E3, every method the SalonTemplate + RetailTemplate cashier
+flow calls is ported: login → salon services + retail products → cart with
+per-service staff → CASH order → shift + Z-report → remote receipt print →
+refund → VAT invoice (NIP/add-invoice/proforma). **E1c is already covered**
+(history views ported in S8/S9/E1a/E1b). **E2b (customers) is N/A for a nail
+salon** — the only customer methods the POS window calls are `getAll` and
+`increaseDebt`, both used exclusively by the **B2BTemplate** (EXCLUDE); the
+salon/retail sale flow has no customer picker, and `lookupNip` is done in E3.
+The remaining stubs are all out of the client's reach:
+- **Backend-gated** (E4 writes, E5): electronic payment (P0-PAY-1), fiscal
+  print (P0-FISCAL), product-admin writes (pa_→staff-JWT gap). Client-prep +
+  server request only; cannot be finished client-side.
+- **Android-platform**: PDF download (FileProvider/share the manifest forbids).
+- **EXCLUDE**: B2B, restaurant, billiard, self-checkout, customer display.
+
+**The productive next step is E6 (packaging + on-device pilot), which needs a
+named tablet + a test salon from the owner** — not more feature packets.
+
 ### Wave E2 — salon mode (services, staff-per-service, bookings/check-in)
 The nail-salon core. All templates already exist in the renderer; we port the
 shim methods they call.
