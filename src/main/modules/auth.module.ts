@@ -34,6 +34,7 @@ import SocketClient from '../network/socket-client';
 import { ApiClient, normalizeServerPrinterRows } from '../network/api-client';
 import { authEvents, AUTH_EXPIRED, forwardAuthExpiredToRenderer } from '../network/auth-refresh';
 import { resolveCurrentUser } from '../network/auth-get-user';
+import { resolveStartupConnectPlan } from '../network/startup-connect-plan';
 import {
   getConfig, setConfig, getConfigValue, setConfigValue,
   setSecureAuthToken, getSecureAuthToken, setSecureApiKey, getSecureApiKey,
@@ -1231,56 +1232,67 @@ export class AuthModule extends BaseModule {
   }
 
   async start(): Promise<void> {
-    // Auto-connect if paired — but only if credentials actually exist
-    const isPaired = getConfigValue('isPaired');
-    if (isPaired) {
-      const config = getConfig();
-      const secureKey = getSecureApiKey();
-      const hasApiKey = secureKey?.startsWith('pa_');
-      const hasMachineId = !!config.machineId;
+    // Decide how to (re)establish the /print-agent socket that drives the
+    // app's ONLINE state. The decision is a pure helper so its branches are
+    // unit-tested without booting the module (startup-connect-plan.ts +
+    // tests/startup-connect-plan.test.ts). Crucially it does NOT gate the
+    // reconnect solely on isPaired: an authenticated terminal must self-heal
+    // to ONLINE after a logout → login-different-salon relaunch, which used
+    // to leave it silently offline until a manual logout/login.
+    const config = getConfig();
+    const secureKey = getSecureApiKey();
+    const token = getSecureAuthToken();
+    const salonId = config.salonId || config.authUser?.salonId || '';
+    const salonName = config.salonName || config.authUser?.salonName || '';
+    const serverUrl = config.serverUrl || 'https://api.enail.pro';
 
-      if (hasApiKey || (secureKey && hasMachineId)) {
-        const token = getSecureAuthToken();
-        // Connect in the background so app startup / session restore isn't blocked
-        // by a slow backend WS handshake (was delaying launch up to 30s on each boot).
+    const plan = resolveStartupConnectPlan({
+      isPaired: !!getConfigValue('isPaired'),
+      hasToken: !!token,
+      hasSalonId: !!salonId,
+      hasApiKey: !!secureKey?.startsWith('pa_'),
+      hasSecureKey: !!secureKey,
+      hasMachineId: !!config.machineId,
+    });
+
+    switch (plan.action) {
+      case 'connect-with-key': {
+        // Connect in the background so app startup / session restore isn't
+        // blocked by a slow backend WS handshake (was delaying launch up to
+        // 30s per boot). connectWithAvailablePrintAgentKey reuses a valid
+        // stored key first and only fetches my-key when it's missing/mismatched.
         void (async () => {
           try {
-            if (token && hasApiKey) {
-              const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-              await this.connectWithAvailablePrintAgentKey(
-                client,
-                token,
-                'startup',
-                config.salonId || config.authUser?.salonId || '',
-                config.salonName || config.authUser?.salonName || '',
-              );
-            } else {
-              await this.connect();
-            }
+            await this.connectWithAvailablePrintAgentKey(
+              new ApiClient(serverUrl), token!, 'startup', salonId, salonName,
+            );
           } catch (e: any) {
-            logger.warn('[AuthModule] Auto-connect failed:', e);
-            if (token) {
-              try {
-                const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-                await this.connectWithAvailablePrintAgentKey(
-                  client,
-                  token,
-                  'startup',
-                  config.salonId || config.authUser?.salonId || '',
-                  config.salonName || config.authUser?.salonName || '',
-                );
-              } catch (retryErr: any) {
-                logger.warn('[AuthModule] Auto-connect retry with current print-agent key failed:', retryErr?.message || retryErr);
-              }
+            logger.warn('[AuthModule] Startup auto-connect failed:', e?.message || e);
+            try {
+              await this.connectWithAvailablePrintAgentKey(
+                new ApiClient(serverUrl), token!, 'startup', salonId, salonName,
+              );
+            } catch (retryErr: any) {
+              logger.warn('[AuthModule] Startup auto-connect retry failed:', retryErr?.message || retryErr);
             }
           }
         })();
-      } else {
-        logger.error('[AuthModule] isPaired=true but no valid credentials found (apiKey=%s, machineId=%s). Resetting isPaired.',
-          hasApiKey, hasMachineId);
-        setConfig({ isPaired: false });
+        break;
       }
+      case 'legacy-connect':
+        // Paired terminal with device credentials but no user session — my-key
+        // needs a user token, so connect with the stored key/machineId instead.
+        void this.connect().catch((e: any) =>
+          logger.warn('[AuthModule] Startup device-credential connect failed:', e?.message || e));
+        break;
+      case 'reset-paired':
+        logger.error('[AuthModule] isPaired=true but no valid credentials found. Resetting isPaired.');
+        setConfig({ isPaired: false });
+        break;
+      case 'noop':
+        break;
     }
+
     this.setState(ModuleState.RUNNING);
   }
 
