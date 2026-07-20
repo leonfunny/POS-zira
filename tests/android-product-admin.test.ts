@@ -166,6 +166,47 @@ describe('product-admin surface (E-PARITY-3)', () => {
     expect(c.method).toBe('POST');
   });
 
+  test('redacts purchase cost when the token lacks canViewPurchasePrice', async () => {
+    const { surface } = build();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/capabilities')) return jsonResponse({ supportsPurchasePrice: true, canViewPurchasePrice: false });
+      if (u.includes('/variants/v1')) return jsonResponse({ variant: { id: 'v1', retailPrice: 8000, purchasePrice: 3000, purchase_price_grosze: 300000 } });
+      return jsonResponse({});
+    });
+    const res = await surface.getVariant('v1');
+    expect(res.ok).toBe(true);
+    const variant = (res as any).data.variant;
+    expect(variant).toMatchObject({ id: 'v1', retailPrice: 8000 }); // retail kept
+    expect(variant.purchasePrice).toBeUndefined();                  // cost stripped
+    expect(variant.purchase_price_grosze).toBeUndefined();
+  });
+
+  test('preserves purchase cost when the token may view it', async () => {
+    const { surface } = build();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/capabilities')) return jsonResponse({ supportsPurchasePrice: true, canViewPurchasePrice: true });
+      if (u.includes('/variants/v1')) return jsonResponse({ variant: { id: 'v1', purchasePrice: 3000 } });
+      return jsonResponse({});
+    });
+    const res = await surface.getVariant('v1');
+    expect((res as any).data.variant.purchasePrice).toBe(3000);
+  });
+
+  test('fail-safe: redacts cost when the capabilities probe is unavailable', async () => {
+    const { surface } = build();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/capabilities')) return jsonResponse({ message: 'nope' }, 500); // probe fails
+      if (u.includes('/variants/v1')) return jsonResponse({ variant: { id: 'v1', purchasePrice: 3000 } });
+      return jsonResponse({});
+    });
+    const res = await surface.getVariant('v1');
+    expect(res.ok).toBe(true);
+    expect((res as any).data.variant.purchasePrice).toBeUndefined(); // redacted on unknown
+  });
+
   test('a non-data-URL image payload is rejected locally with no HTTP call', async () => {
     const { surface } = build();
     const res = await surface.uploadMainImage('v1', { dataUrl: 'https://example.invalid/not-a-data-url.png' });

@@ -13,15 +13,16 @@
  *   { ok: true, data } | { ok: false, error, code? }
  * — a thrown request maps its `.status`/`.code`/`.message` into that shape.
  *
- * ─── Deliberate divergences from Windows (documented, server-authoritative) ──
- * 1. No client-side PRE-FLIGHT capability gate. Windows fetches /capabilities
- *    and refuses locally when a capability is off; here the SERVER enforces it
- *    and returns the same `{ ok:false, code }` envelope on a rejected call. The
- *    renderer still calls getCapabilities() to enable/disable its own UI.
- * 2. No client-side purchase-price redaction. The server is the source of truth
- *    for what each token may see; it decides whether to include purchase price.
- *    (Windows also redacts client-side as defence-in-depth — low risk here since
- *    the surface is owner/manager-only. Flagged for backend confirmation.)
+ * Purchase-price redaction IS ported (defence-in-depth): when the token lacks
+ * canViewPurchasePrice, cost fields are stripped from every response, exactly as
+ * Windows does (redactProductAdminPurchaseData) — fail-safe (redact when the
+ * capability is unknown/unfetchable).
+ *
+ * ─── Deliberate divergence from Windows (documented, server-authoritative) ───
+ * No client-side PRE-FLIGHT capability gate. Windows fetches /capabilities and
+ * refuses locally when a capability is off; here the SERVER enforces it and
+ * returns the same `{ ok:false, code }` envelope on a rejected call. The renderer
+ * still calls getCapabilities() to enable/disable its own UI.
  * The two multipart image uploads (main-image, category image) ARE supported:
  * the renderer sends the image as a base64 data URL, which the WebView decodes
  * to a Blob and posts as the 'image' multipart field — the same wire shape
@@ -31,6 +32,42 @@
 import type { PosApiClient } from '../port/api-client';
 import type { ShimConfigStore } from './config-store';
 import type { AgentConfig } from '../../../shared/types';
+
+/**
+ * Purchase (cost) price is field-level protected: a role may edit stock/products
+ * without being allowed to SEE cost. Ported byte-for-byte from Windows
+ * product-workspace-input.ts:18-102 (PRODUCT_ADMIN_PURCHASE_COST_FIELDS +
+ * redactProductAdminPurchaseData) so the Sunmi hides cost from a token without
+ * `canViewPurchasePrice`, even if a backend response includes the fields.
+ */
+const PURCHASE_COST_FIELDS: readonly string[] = [
+  'purchasePrice', 'purchasePriceGrosze', 'unitCost', 'unitCostGrosze',
+  'purchase_price', 'purchase_price_grosze', 'unit_cost', 'unit_cost_grosze',
+];
+
+function redactPurchaseCostFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactPurchaseCostFields);
+  if (!value || typeof value !== 'object') return value;
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (PURCHASE_COST_FIELDS.includes(key)) continue;
+    redacted[key] = redactPurchaseCostFields(nested);
+  }
+  return redacted;
+}
+
+function redactProductAdminPurchaseData<T>(data: T): T {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const source = data as Record<string, unknown>;
+  const redacted: Record<string, unknown> = { ...source };
+  for (const key of ['variant', 'template', 'product', 'receipt', 'details']) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      redacted[key] = redactPurchaseCostFields(source[key]);
+    }
+  }
+  if (Array.isArray(source.items)) redacted.items = source.items.map(redactPurchaseCostFields);
+  return redacted as T;
+}
 
 /** The IPC envelope the renderer expects for every product-admin call. */
 export type ProductAdminResult =
@@ -103,11 +140,29 @@ export function createProductAdminSurface(deps: ProductAdminSurfaceDeps): Produc
     return { salonCode, agentId };
   };
 
-  /** Run a product-admin request and normalize it into the IPC envelope. */
+  // Capabilities gate for purchase-price redaction. Fetched once per surface
+  // (shared with getCapabilities) — leaner than Windows' per-call fetch, same
+  // safety. FAIL-SAFE: an unfetchable capabilities response redacts (matches
+  // Windows' canViewPurchasePrice:false default on error, pos.module.ts:1440).
+  let capsPromise: Promise<any | null> | null = null;
+  const loadCaps = (): Promise<any | null> => {
+    if (!capsPromise) {
+      capsPromise = client.productAdminRequest<any>('GET', '/capabilities', context()).catch(() => null);
+    }
+    return capsPromise;
+  };
+  const canSeePurchasePrice = async (): Promise<boolean> => {
+    const caps = await loadCaps();
+    return caps?.supportsPurchasePrice === true && caps?.canViewPurchasePrice === true;
+  };
+
+  /** Run a product-admin request and normalize it into the IPC envelope, hiding
+   *  purchase cost from a token that lacks canViewPurchasePrice. */
   const run = async <T>(fn: () => Promise<T>): Promise<ProductAdminResult> => {
     try {
       const data = await fn();
-      return { ok: true, data };
+      const safe = (await canSeePurchasePrice()) ? data : redactProductAdminPurchaseData(data);
+      return { ok: true, data: safe };
     } catch (e: any) {
       // Map the thrown request envelope (status/code/message) to { ok:false }.
       const code = typeof e?.code === 'string' ? e.code : undefined;
@@ -123,12 +178,10 @@ export function createProductAdminSurface(deps: ProductAdminSurfaceDeps): Produc
 
   return {
     async getCapabilities() {
-      try {
-        const capabilities = await client.productAdminRequest<any>('GET', '/capabilities', context());
-        return { ok: true, capabilities };
-      } catch (e: any) {
-        return { ok: false, error: e?.message || String(e) };
-      }
+      const capabilities = await loadCaps();
+      return capabilities !== null
+        ? { ok: true, capabilities }
+        : { ok: false, error: 'capabilities-unavailable' };
     },
 
     createProduct(payload) {
