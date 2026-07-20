@@ -49,6 +49,16 @@ function build(overrides: { seed?: Record<string, unknown> } = {}) {
     configStore,
     tokenStore,
     dbInit: { locateFile: NODE_LOCATE_FILE },
+    // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
+    // the real login-time /print-agent/my-key fetch would desync them. The
+    // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
+    agentConnection: {
+      connect: async () => ({ connected: false, reason: 'no-key' as const }),
+      disconnect: async () => {},
+      isConnected: () => false,
+      getPushedJobStatus: () => null,
+      onJobStatus: () => () => {},
+    },
   });
   return { configStore, tokenStore, tokenStorage, transport };
 }
@@ -88,8 +98,9 @@ describe('real transport auth', () => {
     expect(config.salonSlug).toBe('test-salon');
     expect(config.posMode).toBe('salon'); // E2a: salon is the Windows default
 
-    // Hard rail: exactly one HTTP call — the staff login. No pa_ key, no
-    // /print-agent/connect, no /print-agent/my-key.
+    // Exactly one HTTP call — the staff login. (The agent connection is stubbed
+    // no-op in build(); its real login-time /print-agent/my-key fetch is covered
+    // in tests/android-agent-connect.test.ts.)
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/api/v1/auth/login');
@@ -459,25 +470,37 @@ describe('real transport orders + shifts (S8+S9)', () => {
     expect(staff[0]).toMatchObject({ id: 'staff-1', name: 'Ala Nowak', is_active: 1 });
   });
 
-  test('createOrder rejects a non-CASH tender (CASH-only hard rail)', async () => {
+  test('createOrder accepts manual CARD + split BLIK tenders (E-PARITY-2, like the Windows counter)', async () => {
+    // The trusted Sunmi terminal accepts the same manual tenders the Windows
+    // salon counter does (cashier-attested standalone terminal). Owner decision
+    // 2026-07-19; the backend P0-PAY-1 gap is accepted on the same basis.
     const { transport, shiftId } = await transportWithShift();
+    // Distinct item ids per order — both orders now persist, so they cannot
+    // share an order_items PK ('line-1').
     const card = await transport.createOrder!(
       { ...CASH_ORDER(shiftId), id: 'card-order', payment_method: 'CARD' },
-      CASH_ITEMS,
+      [{ ...CASH_ITEMS[0], id: 'card-line-1', order_id: 'card-order' }],
     );
-    expect(card.success).toBe(false);
-    expect(card.error).toMatch(/CASH only/i);
+    expect(card.success).toBe(true);
+    expect(await transport.getOrderDetail!('card-order')).not.toBeNull();
 
     const split = await transport.createOrder!(
       { ...CASH_ORDER(shiftId), id: 'split-order', payment_tenders: JSON.stringify([{ method: 'CASH', amount: 2000 }, { method: 'BLIK', amount: 2900 }]) },
+      [{ ...CASH_ITEMS[0], id: 'split-line-1', order_id: 'split-order' }],
+    );
+    expect(split.success).toBe(true);
+    expect(await transport.getOrderDetail!('split-order')).not.toBeNull();
+  });
+
+  test('createOrder still refuses a genuinely unknown tender', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const bad = await transport.createOrder!(
+      { ...CASH_ORDER(shiftId), id: 'bad-order', payment_method: 'BITCOIN' },
       CASH_ITEMS,
     );
-    expect(split.success).toBe(false);
-    expect(split.error).toMatch(/CASH only/i);
-
-    // Neither rejected order was persisted.
-    expect(await transport.getOrderDetail!('card-order')).toBeNull();
-    expect(await transport.getOrderDetail!('split-order')).toBeNull();
+    expect(bad.success).toBe(false);
+    expect(bad.error).toMatch(/unsupported/i);
+    expect(await transport.getOrderDetail!('bad-order')).toBeNull();
   });
 
   test('createOrder is idempotent on a repeated client order id (no double-charge)', async () => {

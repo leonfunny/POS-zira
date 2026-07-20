@@ -378,23 +378,34 @@ function normalizePosLocalCreatedAt(value: string | null | undefined): string | 
 }
 
 /**
- * CASH-only enforcement (plan §1 rail #2). Returns an error string if the order
- * carries any non-CASH tender, else null. An empty/absent payment_method is
- * treated as CASH (the local default). Split tenders must every be CASH.
+ * Tender validation (E-PARITY-2). The Sunmi is a trusted, fixed POS terminal
+ * (owner decision 2026-07-19) and accepts the SAME manual tenders the Windows
+ * salon counter does: CASH plus the manual electronic tenders (CARD / BLIK /
+ * TRANSFER / …). The Windows salon PaymentModal drives a STANDALONE card
+ * terminal — the cashier keys the amount on the terminal and confirms approval;
+ * there is no integrated capture reference, exactly like this port. The backend
+ * P0-PAY-1 gap (it marks any non-CREDIT tender PAID without capture proof) is
+ * accepted here on the same cashier-attestation basis as the Windows counter.
+ *
+ * Returns an error string only for a genuinely UNKNOWN/unreadable tender (a
+ * method the backend enum map cannot accept), else null. An empty/absent
+ * payment_method is treated as CASH (the local default).
  */
-function assertCashOnly(order: any): string | null {
+function assertTenderAllowed(order: any): string | null {
+  const isKnown = (m: string): boolean =>
+    m === '' || Object.prototype.hasOwnProperty.call(PM_MAP, m);
   const method = String(order?.payment_method ?? 'CASH').trim().toUpperCase();
-  if (method && method !== 'CASH') {
-    return `Android accepts CASH only (got ${method}). Electronic tenders are disabled.`;
+  if (!isKnown(method)) {
+    return `Unsupported payment method: ${method}.`;
   }
   const tendersJson = order?.payment_tenders;
   if (tendersJson) {
     try {
       const tenders = JSON.parse(tendersJson) as Array<{ method?: string }>;
-      const nonCash = tenders.find((t) => String(t?.method ?? 'CASH').trim().toUpperCase() !== 'CASH');
-      if (nonCash) return `Android accepts CASH only (split tender ${String(nonCash.method)}). Electronic tenders are disabled.`;
+      const bad = tenders.find((t) => !isKnown(String(t?.method ?? 'CASH').trim().toUpperCase()));
+      if (bad) return `Unsupported split tender: ${String(bad.method)}.`;
     } catch {
-      return 'Android accepts CASH only (unreadable tender data).';
+      return 'Unreadable tender data.';
     }
   }
   return null;
@@ -476,6 +487,14 @@ export interface RealTransportOptions {
   tokenStore: TokenStore;
   /** Passed to initAndroidDb on first catalog/sync use (tests inject locateFile: null). */
   dbInit?: AndroidDbInitOptions;
+  /**
+   * E-PARITY-1: the print-agent connection. Defaults to the real
+   * createAgentConnection (fetch key -> connect -> socket). Injectable so tests
+   * that don't exercise the agent can pass a no-op and keep their fetch mocks
+   * deterministic — login fires connect() in the background, which would
+   * otherwise make an unmocked /print-agent/my-key call.
+   */
+  agentConnection?: AgentConnection;
 }
 
 /** Outcome of the most recent refresh attempt — disambiguates the boolean
@@ -609,7 +628,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   // Windows counter). Created eagerly — this is just closures, NO socket opens
   // until connect() runs after login. Its socket-pushed job statuses feed the
   // print coordinator as the PRIMARY completion signal (HTTP poll is fallback).
-  const agentConnection: AgentConnection = createAgentConnection({
+  const agentConnection: AgentConnection = options.agentConnection ?? createAgentConnection({
     client,
     tokenStore,
     configStore,
@@ -953,13 +972,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           return { success: true, id: normalizedOrder.id, duplicate: true } as any;
         }
 
-        // CASH-only hard rail (plan §1 #2). The backend marks any non-CREDIT
-        // tender set PAID without proving CARD/BLIK authorization (P0-PAY-1),
-        // so Android must not submit electronic tenders. Reject a non-CASH
-        // payment_method or any non-CASH split tender here, at the write path
-        // — a disabled Elavon stub does not stop a manual CARD/TRANSFER tap.
-        const cashOnlyError = assertCashOnly(normalizedOrder);
-        if (cashOnlyError) return { success: false, error: cashOnlyError };
+        // Tender validation (E-PARITY-2). The trusted Sunmi terminal accepts the
+        // same MANUAL tenders as the Windows salon counter (CASH/CARD/BLIK/
+        // TRANSFER); only a genuinely unknown/unreadable tender is refused. Card
+        // is cashier-attested (standalone terminal), so the backend P0-PAY-1 gap
+        // is accepted on the same basis as Windows — see assertTenderAllowed +
+        // the owner decision recorded in EXPANSION_PLAN_2026-07-19.md.
+        const tenderError = assertTenderAllowed(normalizedOrder);
+        if (tenderError) return { success: false, error: tenderError };
 
         const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
         if (isPosOrder) {
