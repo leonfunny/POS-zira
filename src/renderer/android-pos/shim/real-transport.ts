@@ -54,6 +54,7 @@ import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
 import { createSyncMeta } from './db/sync-meta';
 import { createRemotePrintCoordinator } from './remote-print';
+import { createAgentConnection, type AgentConnection } from './agent-connect';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -604,10 +605,28 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   //    print routes. Built lazily on first use so a transport that never prints
   //    (e.g. the auth-only tests) pays no setup cost. Shares the same `client`
   //    (staff JWT + refresh-on-401) + SQL.js `db()` + config store.
+  // E-PARITY-1: the print-agent connection (trusted-terminal parity with the
+  // Windows counter). Created eagerly — this is just closures, NO socket opens
+  // until connect() runs after login. Its socket-pushed job statuses feed the
+  // print coordinator as the PRIMARY completion signal (HTTP poll is fallback).
+  const agentConnection: AgentConnection = createAgentConnection({
+    client,
+    tokenStore,
+    configStore,
+    apiUrl: baseUrl,
+  });
+
   let printCoordinatorPromise: ReturnType<typeof createRemotePrintCoordinator> | null = null;
   const printCoordinator = () => {
     if (!printCoordinatorPromise) {
-      printCoordinatorPromise = createRemotePrintCoordinator({ client, db, configStore });
+      printCoordinatorPromise = createRemotePrintCoordinator({
+        client,
+        db,
+        configStore,
+        // Socket-push primary (E-PARITY-1): the coordinator consults the agent
+        // socket before each HTTP status poll.
+        getPushedJobStatus: (jobId) => agentConnection.getPushedJobStatus(jobId),
+      });
     }
     return printCoordinatorPromise;
   };
@@ -703,6 +722,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // the Windows archive-then-clear on salon change (auth.module.ts:767-800).
         const previousSalonId = configStore.getRawConfig().salonId;
         if (previousSalonId && previousSalonId !== authUser.salonId) {
+          // E-PARITY-1 cross-tenant guard: the PREVIOUS salon's pa_ key must
+          // never connect THIS new salon's terminal to the old salon's
+          // print-agent. Windows re-validates the stored key's salonId and
+          // clears on mismatch (auth.module.ts:1009-1027); here we drop the key
+          // on any salon change so the post-login connect() re-fetches the
+          // correct salon's key via /print-agent/my-key. Also tears down any
+          // socket still open to the old salon.
+          await agentConnection.disconnect();
           // Abort the login if the wipe does not durably persist — otherwise
           // config (localStorage) would flip to salon B while salon A's catalog
           // image (IndexedDB) survives a failed flush, a cross-tenant leak on
@@ -744,6 +771,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
             role: authUser.role,
           });
         } catch { /* staff seeding must never fail a login */ }
+        // E-PARITY-1: connect to the print-agent exactly like Windows does after
+        // login (fetch pa_ key → /print-agent/connect → open the socket). Fully
+        // best-effort + non-blocking: a salon with no agent key, or an offline
+        // agent, must NEVER fail or delay the cashier's login — the terminal
+        // simply stays REST-only until the agent is reachable.
+        void agentConnection.connect().catch(() => { /* connection is best-effort */ });
         return { success: true, data: { user: authUser } };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
@@ -792,6 +825,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
 
     async logout() {
+      // E-PARITY-1: tear down the print-agent socket + drop the pa_ key before
+      // clearing the session (mirror Windows disconnect-on-logout).
+      await agentConnection.disconnect();
       // Clear tokens + identity; KEEP the local SQL.js mirror (S1 §2.B note —
       // logout ≠ wipe; a re-login to the same salon stays healthy).
       await tokenStore.clear();

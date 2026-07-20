@@ -82,16 +82,20 @@ function callsOf(mock: ReturnType<typeof vi.fn>): RoutedCall[] {
   });
 }
 
-/** Hard-rail guards (every scenario): staff JWT only, never the pa_ key, never
- *  /print-agent/connect, never the agent socket. */
+/** Hard-rail guards for the PRINT PATH: staff JWT only, the pa_ key never rides
+ *  a REST header/Bearer, never the pa_-keyed `agents` printer-CRUD routes.
+ *  E-PARITY-1 (owner decision 2026-07-19): a trusted Sunmi terminal MAY call
+ *  /print-agent/connect + /print-agent/my-key and open the agent socket at
+ *  LOGIN — those two login endpoints are skipped here so this still asserts the
+ *  print path is pa_-free (the pa_ key lives in the socket auth + connect body). */
 function assertHardRails(mock: ReturnType<typeof vi.fn>): void {
   const calls = callsOf(mock);
   for (const c of calls) {
-    // Never the agent connect / handshake / pa_-keyed agent routes.
-    expect(c.url).not.toContain('/print-agent/connect');
-    expect(c.url).not.toContain('/print-agent/my-key');
-    expect(c.url).not.toMatch(/\/print-agent\/agent\//); // the *WithApiKey routes
-    // Never a websocket upgrade.
+    // Skip the trusted-terminal login endpoints — the print path guard follows.
+    if (/\/print-agent\/(?:connect|my-key)(?=$|[/?])/.test(c.url)) continue;
+    // Never the pa_-keyed agent printer-CRUD routes.
+    expect(c.url).not.toMatch(/\/print-agent\/agents?\//i);
+    // Never a websocket upgrade on a REST call.
     expect(c.url).not.toMatch(/^wss?:\/\//);
     expect(String(c.headers.upgrade ?? '').toLowerCase()).not.toBe('websocket');
     // No pa_ API-key header, no pa_ token value anywhere in the headers.

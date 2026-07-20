@@ -349,4 +349,42 @@ describe('cross-platform boundary verifier', () => {
       ({ rule }: { rule: string }) => rule === 'FORBIDDEN_NETWORK_API',
     )).toBe(true);
   });
+
+  // E-PARITY-1: the socket.io-client stack (isolated into the `vendor-socketio`
+  // chunk) is the ONE sanctioned WebSocket surface — the trusted Sunmi terminal
+  // reaches the salon print-agent over it, exactly like the Windows counter. The
+  // exemption is scoped to that vendor filename in a shim graph.
+  test('exempts WebSocket in the vendor-socketio chunk of a shim-bearing bundle', async () => {
+    const root = resolve(FIXTURES, 'positive-shim-vendor-socketio');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      bundleDirs: [resolve(root, 'bundle')],
+      assumeShimGraph: true,
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  // …but the exemption is FILENAME-scoped, not graph-wide: a raw WebSocket in an
+  // app (non-vendor) chunk still fails even in a shim graph, so app code can
+  // never smuggle a socket past the vendor carve-out.
+  test('still rejects WebSocket in an app chunk of a shim-bearing bundle', async () => {
+    const root = resolve(FIXTURES, 'forbidden-shim-app-websocket-bundle');
+    const result = await verifyCrossPlatformBoundaries({
+      root,
+      entries: [resolve(root, 'entry.ts')],
+      tsconfigPath: TSCONFIG,
+      bundleDirs: [resolve(root, 'bundle')],
+      assumeShimGraph: true,
+    });
+
+    expect(result.graphIncludesShim).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some(
+      ({ rule }: { rule: string }) => rule === 'FORBIDDEN_BUILT_BUNDLE_CONTENT',
+    )).toBe(true);
+  });
 });

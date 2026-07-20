@@ -34,6 +34,13 @@ export default defineConfig({
         // exactly that file in shim graphs while scanning all app chunks.
         manualChunks(id: string) {
           if (/node_modules\/sql\.js\//.test(id)) return 'vendor-sqljs';
+          // E-PARITY-1: isolate the socket.io-client stack (+ its engine.io /
+          // parser deps) into one vendor chunk so the boundary verifier can
+          // exempt exactly that file's WebSocket/XHR transports in shim graphs
+          // (trusted-terminal parity) while still scanning every app chunk.
+          if (/node_modules\/(?:socket\.io-client|socket\.io-parser|engine\.io-client|engine\.io-parser)\//.test(id)) {
+            return 'vendor-socketio';
+          }
           return undefined;
         },
       },

@@ -630,6 +630,66 @@ export class PosApiClient {
     return response.json();
   }
 
+  // ── Print-agent connection (E-PARITY-1) — trusted-terminal parity with the
+  //    Windows counter. The Sunmi is a fixed, owner-trusted POS terminal, so it
+  //    fetches the salon-wide print-agent key and registers as an agent exactly
+  //    like the Windows app (auth.module.ts connectWithAvailablePrintAgentKey
+  //    :998, connectWithApiKey :928). The key VALUE is never logged.
+
+  /**
+   * GET /api/v1/print-agent/my-key — fetch-or-create the salon's print-agent
+   * API key for the authenticated staff user. Staff JWT (refresh-on-401 via
+   * fetchWithTimeout). Returns `{ apiKey }` or null on any non-2xx / error, so
+   * the caller degrades gracefully when the salon has no agent key yet.
+   * Ported from api-client.ts:3222 (getMyPrintAgentKey).
+   */
+  async getMyPrintAgentKey(): Promise<{ apiKey: string } | null> {
+    const token = await this.requireToken('getMyPrintAgentKey');
+    const url = `${this.baseUrl}/api/v1/print-agent/my-key`;
+    try {
+      const response = await this.fetchWithTimeout(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) return null;
+      const data = await response.json().catch(() => null);
+      // SECURITY: never log the key value, even partial.
+      return data?.apiKey ? { apiKey: data.apiKey } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * POST /api/v1/print-agent/connect — register this terminal as a print-agent
+   * with the salon-wide `pa_` key (in the body, NOT a Bearer header — the key
+   * authenticates the call itself). Returns the connect envelope (agentId,
+   * salonId, salonName, salonSlug, printers…). Ported from api-client.ts:1331
+   * (connectWithApiKey). Throws on non-2xx so the coordinator can fall back to
+   * socket-only like Windows (auth.module.ts:949-955).
+   */
+  async connectPrintAgent(
+    apiKey: string,
+    meta: { machineId?: string; appVersion?: string; osVersion?: string } = {},
+  ): Promise<Record<string, any>> {
+    const url = `${this.baseUrl}/api/v1/print-agent/connect`;
+    const response = await rawFetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiKey,
+        machineId: meta.machineId ?? this.machineId ?? '',
+        appVersion: meta.appVersion ?? '1.0.23',
+        osVersion: meta.osVersion ?? 'android',
+      }),
+    }, DEFAULT_TIMEOUT);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
   /**
    * POST /api/v1/b2b/pos/orders/:id/refund. Ported transport from
    * api-client.ts:2781-2804. The DTO is the renderer-built refund request

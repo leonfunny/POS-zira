@@ -49,6 +49,13 @@ const RENDERER_ALLOWED_PACKAGES = new Set([
   // the renderer React deps, it is a browser runtime dependency allowed only in
   // a shim graph (still flagged for non-shim graphs).
   'sql.js',
+  // E-PARITY-1: the print-agent realtime socket. The Sunmi is a trusted, fixed
+  // POS terminal (owner decision 2026-07-19) that connects to the salon's
+  // print-agent exactly like the Windows counter, so socket.io-client is an
+  // allowed browser runtime dependency in the shim graph (still flagged for
+  // non-shim graphs). Its WebSocket/XHR transports are isolated in the
+  // `vendor-socketio` bundle chunk and exempted only there (see the bundle scan).
+  'socket.io-client',
 ]);
 const TOP_LEVEL_EFFECT_GLOBALS = new Set([
   'fetch',
@@ -99,6 +106,15 @@ const BUILT_BUNDLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.mjs'
 // every /print-agent/ substring was banned because the whole surface was M5
 // "LATER"; E1a brought the receipt-COPY staff-JWT routes into scope.)
 const PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN = /\/print-agent\/(?:agents?(?=[/"']|$)|connect(?=[/"']|$)|my-key(?=[/"']|$))|x-print-agent-/i;
+// E-PARITY-1 trusted-terminal split. The Sunmi is a DEDICATED, FIXED, owner-
+// trusted POS terminal (decision 2026-07-19) that connects to the salon's
+// print-agent exactly like the Windows counter. So the connection/identity
+// surface — `/print-agent/connect` (register) and `/print-agent/my-key` (fetch
+// the pa_ key) — is ALLOWED behind the Android shim (shimAllowable), while the
+// printer-CRUD `agent(s)` surface and the `x-print-agent-*` headers stay
+// HARD-forbidden in EVERY mode (the terminal never administers printers).
+const PRINT_AGENT_HARD_FORBIDDEN_PATTERN = /\/print-agent\/agents?(?=[/"']|$)|x-print-agent-/i;
+const PRINT_AGENT_TRUSTED_TERMINAL_PATTERN = /\/print-agent\/(?:connect|my-key)(?=[/"']|$)/i;
 
 const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
   // shimAllowable patterns are inert renderer string surface (see comment above
@@ -113,11 +129,14 @@ const BUILT_BUNDLE_FORBIDDEN_PATTERNS = [
   // file). dirname/process stay forbidden in every mode.
   { label: 'Node global Buffer (isomorphic base64 fallback)', pattern: /\bBuffer\s*[.(]/, shimAllowable: true },
   { label: 'Windows/native package', pattern: /@nut-tree-fork\/nut-js|@serialport\/|\b(?:ffi-napi|node-hid|ref-napi|serialport)\b/i },
-  // pa_-keyed print-agent execution routes/headers stay forbidden in every mode
-  // (agent/connect/my-key + the x-print-agent-* identity headers). Staff-JWT
-  // salon routes (jobs/salons/fiscal-receipts/pickup-orders) are allowed — see
-  // PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN above.
-  { label: 'print-agent route or header', pattern: PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN },
+  // The printer-CRUD agent(s) surface + x-print-agent-* identity headers stay
+  // HARD-forbidden in every mode. Staff-JWT salon routes
+  // (jobs/salons/fiscal-receipts/pickup-orders) are allowed — see the patterns above.
+  { label: 'print-agent agent/header surface', pattern: PRINT_AGENT_HARD_FORBIDDEN_PATTERN },
+  // E-PARITY-1: /print-agent/connect + /print-agent/my-key are the trusted-
+  // terminal connection surface — allowed behind the shim, flagged for non-shim
+  // (retail/Windows) graphs.
+  { label: 'print-agent connect/my-key (trusted terminal)', pattern: PRINT_AGENT_TRUSTED_TERMINAL_PATTERN, shimAllowable: true },
   // The bare "pa_xxx" literal is the inert API-key format hint embedded by the
   // unmodified renderer's i18n; only suppressible for shim-bearing bundles.
   { label: 'print-agent key literal', pattern: /\bpa_[A-Za-z0-9_-]+/, shimAllowable: true },
@@ -567,6 +586,12 @@ function directUsageViolations(sourceFile, isEntry = false) {
     const isRouteOrHeader = PRINT_AGENT_FORBIDDEN_ROUTE_PATTERN.test(normalized);
     const isPaLiteral = normalized.includes('pa_');
     if (!isRouteOrHeader && !isPaLiteral) return;
+    // E-PARITY-1: `/print-agent/connect` + `/print-agent/my-key` are the trusted-
+    // terminal connection surface — suppressible behind the Android shim. The
+    // `agent(s)` printer-CRUD surface + `x-print-agent-*` headers are HARD-
+    // forbidden (never shimAllowable).
+    const isHardForbidden = PRINT_AGENT_HARD_FORBIDDEN_PATTERN.test(normalized);
+    const isTrustedTerminal = PRINT_AGENT_TRUSTED_TERMINAL_PATTERN.test(normalized) && !isHardForbidden;
     const offset = node.getStart(sourceFile, false);
     if (identityOffsets.has(offset)) return;
     identityOffsets.add(offset);
@@ -574,10 +599,10 @@ function directUsageViolations(sourceFile, isEntry = false) {
       rule: 'FORBIDDEN_PRINT_AGENT_IDENTITY',
       node,
       message: `Print-agent identity/execution literal "${value}" is forbidden in Android/shared core`,
-      // pa_-keyed routes/headers stay forbidden in every mode. The bare `pa_`
-      // literal is the inert "pa_xxx" i18n format hint in the unmodified renderer
-      // and is only suppressible for shim-bearing renderer graphs.
-      shimAllowable: isPaLiteral && !isRouteOrHeader,
+      // The hard `agent(s)`/`x-print-agent-` surface stays forbidden in every
+      // mode. The trusted-terminal connect/my-key routes and the inert "pa_xxx"
+      // i18n format hint are only suppressible for shim-bearing renderer graphs.
+      shimAllowable: isTrustedTerminal || (isPaLiteral && !isRouteOrHeader),
     });
   };
 
@@ -1145,13 +1170,23 @@ export async function verifyCrossPlatformBoundaries({
     const VENDOR_SQLJS_EXEMPT_LABELS = new Set([
       'Node builtin', 'Node global', 'Node global Buffer (isomorphic base64 fallback)',
     ]);
+    // E-PARITY-1: the isolated socket.io-client vendor chunk legitimately carries
+    // the WebSocket / XMLHttpRequest transports it uses to reach the salon's
+    // print-agent (trusted-terminal parity). Exempt EXACTLY that chunk for the
+    // network-transport label — every app chunk is still scanned, so app code
+    // opening a raw socket/XHR still fails.
+    const VENDOR_SOCKETIO_EXEMPT_LABELS = new Set([
+      'network API (socket/xhr/beacon)',
+    ]);
     for (const bundleFile of bundleFiles) {
       visitedBundleFiles.add(bundleFile);
       const isVendorSqljs = graphIncludesShim && /vendor-sqljs-[^/\\]*\.js$/.test(bundleFile);
+      const isVendorSocketio = graphIncludesShim && /vendor-socketio-[^/\\]*\.js$/.test(bundleFile);
       const source = await readFile(bundleFile, 'utf8');
       for (const { label, pattern, shimAllowable } of BUILT_BUNDLE_FORBIDDEN_PATTERNS) {
         if (shimAllowable && graphIncludesShim) continue;
         if (isVendorSqljs && VENDOR_SQLJS_EXEMPT_LABELS.has(label)) continue;
+        if (isVendorSocketio && VENDOR_SOCKETIO_EXEMPT_LABELS.has(label)) continue;
         const match = pattern.exec(source);
         if (!match) continue;
         addDiagnostic({

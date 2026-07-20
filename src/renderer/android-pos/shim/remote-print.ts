@@ -433,6 +433,14 @@ export interface RemotePrintCoordinatorOptions {
   completionTimeoutMs?: number;
   totalWaitMs?: number;
   pollIntervalMs?: number;
+  /**
+   * E-PARITY-1: the print-agent socket's most-recent pushed status for a job, or
+   * null. When present, the poll loop uses it INSTEAD of an HTTP getPrintJobStatus
+   * call — the socket is the primary completion signal (Windows uses job:new /
+   * job:updated as primary), and the HTTP poll is the fallback when no push has
+   * arrived. Absent (undefined) → poll-only, the pre-E-PARITY behavior.
+   */
+  getPushedJobStatus?: (jobId: string) => Record<string, any> | null;
 }
 
 export interface RemotePrintCoordinator {
@@ -580,6 +588,13 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
         };
       }
       await delay(pollIntervalMs);
+      // Socket-push PRIMARY (E-PARITY-1): if the print-agent socket already
+      // pushed a status for this job, use it and skip the HTTP poll entirely.
+      const pushed = options.getPushedJobStatus?.(jobId);
+      if (pushed) {
+        current = pushed as CreatePrintJobResponse;
+        continue;
+      }
       try {
         current = await client.getPrintJobStatus(jobId);
       } catch (e: unknown) {
@@ -721,6 +736,14 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
         };
       }
       await delay(pollIntervalMs);
+      // Socket-push PRIMARY (E-PARITY-1): a pushed fiscal-job status replaces the
+      // HTTP poll for this iteration. This does NOT weaken the no-auto-retry rule
+      // — an UNKNOWN/timeout still maps to reason 'unknown' via mapFiscalStatus.
+      const pushed = options.getPushedJobStatus?.(jobId);
+      if (pushed) {
+        current = pushed as CreatePrintJobResponse;
+        continue;
+      }
       try {
         current = await client.getPrintJobStatus(jobId);
       } catch (e: unknown) {

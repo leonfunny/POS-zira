@@ -41,6 +41,14 @@
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
+// E-PARITY-1: the salon-wide print-agent API key (Windows `pa_xxx`). The Sunmi
+// is a trusted fixed terminal (owner-approved 2026-07-19), so it MAY hold this
+// key exactly like the Windows counter does in electron-store via safeStorage
+// (setSecureApiKey/getSecureApiKey — auth.module.ts:919, config/store.ts). The
+// logical slot name is `printAgentKey` (NOT the `pa_`-prefixed value) so the
+// slot identifier itself carries no key material. The KEY VALUE is never logged.
+const PRINT_AGENT_KEY = 'printAgentKey';
+
 /** localStorage key prefix for the plaintext dev fallback (never on-device). */
 const INSECURE_PREFIX = 'zira.dev-insecure.';
 
@@ -141,6 +149,24 @@ export class TokenStore {
     }
   }
 
+  /**
+   * E-PARITY-1: the stored print-agent API key (`pa_…`), or null when the device
+   * has never fetched/connected. Mirrors Windows getSecureApiKey. Never logged.
+   */
+  async getPrintAgentKey(): Promise<string | null> {
+    return this.read(PRINT_AGENT_KEY);
+  }
+
+  /** Persist the print-agent API key (mirror Windows setSecureApiKey). */
+  async setPrintAgentKey(key: string): Promise<void> {
+    await this.write(PRINT_AGENT_KEY, key);
+  }
+
+  /** Drop the stored print-agent key (logout / terminal unpair). */
+  async clearPrintAgentKey(): Promise<void> {
+    await this.removeKey(PRINT_AGENT_KEY);
+  }
+
   /** Wipe both tokens (logout). Clears the whole SecureKV file on-device. */
   async clear(): Promise<void> {
     const plugin = nativeSecureKv();
@@ -154,6 +180,7 @@ export class TokenStore {
     }
     this.storage.removeItem(INSECURE_PREFIX + ACCESS_TOKEN_KEY);
     this.storage.removeItem(INSECURE_PREFIX + REFRESH_TOKEN_KEY);
+    this.storage.removeItem(INSECURE_PREFIX + PRINT_AGENT_KEY);
   }
 
   private async read(key: string): Promise<string | null> {
