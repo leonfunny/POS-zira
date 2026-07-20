@@ -43,6 +43,7 @@ import type {
   PosScheduleStaffStatusPayload,
   PosScheduleWeekIpcResult,
 } from '../../../shared/types';
+import type { ProductAdminSurface } from './product-admin';
 
 /** A sanitized product row (mirrors the SQL.js PosProduct; see S1 §2.D). */
 export interface ShimPosProduct {
@@ -184,6 +185,9 @@ export interface RemotePrinterStatus {
  * directly; it receives one via `installShim({ transport })`.
  */
 export interface ShimTransport {
+  /** Product/stock/category admin surface (E-PARITY-3, owner-only). */
+  productAdmin?: ProductAdminSurface;
+
   /** Staff email login → POST /api/v1/auth/login (S3). */
   loginWithEmail?(email: string, password: string): Promise<ShimLoginResult>;
   /** Boot session verify → GET /api/v1/auth/me (S3). */

@@ -55,6 +55,7 @@ import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo'
 import { createSyncMeta } from './db/sync-meta';
 import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
+import { createProductAdminSurface } from './product-admin';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -723,6 +724,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
 
   const transport: ShimTransport & RealTransportEvents = {
+    // ── Product/stock/category admin (E-PARITY-3, owner-only) ──────────────
+    productAdmin: createProductAdminSurface({ client, configStore }),
+
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
       try {

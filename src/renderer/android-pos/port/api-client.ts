@@ -630,6 +630,121 @@ export class PosApiClient {
     return response.json();
   }
 
+  // ── Product admin (E-PARITY-3) — the owner's product/stock/category surface.
+  //    Staff JWT (NOT the pa_ key — Windows uses getSecureAuthToken here, see
+  //    pos.module.ts:1734) + the salon-context headers + optimistic-concurrency
+  //    header. Ported from api-client.ts productAdminRequest :1586. All routes
+  //    hang off /api/v1/warehouse/product-admin.
+
+  /**
+   * Generic product-admin request. Attaches the staff JWT, the salon-context
+   * headers (X-Salon-Slug/Code/Agent-Id), and the idempotency / expected-updated
+   * -at headers. On a non-2xx it throws an Error carrying `.status`, `.code`,
+   * `.field`, `.details`, `.serverBody` (the same envelope Windows surfaces) so
+   * the shim can map it to `{ ok: false, error, code }`.
+   */
+  async productAdminRequest<T>(
+    method: string,
+    path: string,
+    opts: {
+      body?: unknown;
+      idempotencyKey?: string;
+      expectedUpdatedAt?: string;
+      salonCode?: string;
+      agentId?: string;
+    } = {},
+  ): Promise<T> {
+    const token = await this.requireToken('productAdminRequest');
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (this.salonSlug) headers['X-Salon-Slug'] = this.salonSlug;
+    if (opts.salonCode) headers['X-Salon-Code'] = opts.salonCode;
+    if (opts.agentId) headers['X-Agent-Id'] = opts.agentId;
+    if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+    if (opts.expectedUpdatedAt) headers['X-Expected-Updated-At'] = opts.expectedUpdatedAt;
+
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/api/v1/warehouse/product-admin${path}`,
+      { method, headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined },
+    );
+    const rawText = await response.text();
+    let data: any = null;
+    try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = rawText; }
+
+    if (!response.ok) {
+      const envelopeError = data && typeof data === 'object' && data.error && typeof data.error === 'object'
+        ? data.error
+        : null;
+      const stringErrorCode = data && typeof data === 'object' && typeof data.error === 'string' && /^[A-Z0-9_]+$/.test(data.error)
+        ? data.error
+        : undefined;
+      const message = envelopeError?.message
+        || (typeof data === 'object' ? data?.message : null)
+        || (typeof data === 'object' && typeof data?.error === 'string' ? data.error : null)
+        || rawText || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & {
+        status?: number; code?: string; field?: string | null; details?: unknown; serverBody?: unknown;
+      };
+      error.status = response.status;
+      if (data && typeof data === 'object') {
+        error.code = data.code ?? envelopeError?.code ?? stringErrorCode;
+        error.field = data.field ?? envelopeError?.field;
+        error.details = data.details ?? envelopeError?.details;
+        error.serverBody = data;
+      }
+      throw error;
+    }
+    return data as T;
+  }
+
+  /**
+   * Product-admin multipart upload (E-PARITY-3 image uploads). Staff JWT + salon
+   * -context headers + optional expected-updated-at; the body is a FormData, so
+   * NO Content-Type header is set — the runtime supplies the multipart boundary.
+   * Same error envelope as productAdminRequest. Ported from
+   * api-client.ts productAdminMultipartRequest :1655.
+   */
+  async productAdminMultipartRequest<T>(
+    path: string,
+    form: FormData,
+    opts: { expectedUpdatedAt?: string; salonCode?: string; agentId?: string } = {},
+  ): Promise<T> {
+    const token = await this.requireToken('productAdminMultipartRequest');
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (this.salonSlug) headers['X-Salon-Slug'] = this.salonSlug;
+    if (opts.salonCode) headers['X-Salon-Code'] = opts.salonCode;
+    if (opts.agentId) headers['X-Agent-Id'] = opts.agentId;
+    if (opts.expectedUpdatedAt) headers['X-Expected-Updated-At'] = opts.expectedUpdatedAt;
+
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/api/v1/warehouse/product-admin${path}`,
+      { method: 'POST', headers, body: form },
+    );
+    const rawText = await response.text();
+    let data: any = null;
+    try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = rawText; }
+
+    if (!response.ok) {
+      const envelopeError = data && typeof data === 'object' && data.error && typeof data.error === 'object'
+        ? data.error
+        : null;
+      const message = envelopeError?.message
+        || (typeof data === 'object' ? data?.message : null)
+        || (typeof data === 'object' && typeof data?.error === 'string' ? data.error : null)
+        || rawText || `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number; code?: string; serverBody?: unknown };
+      error.status = response.status;
+      if (data && typeof data === 'object') {
+        error.code = data.code ?? envelopeError?.code;
+        error.serverBody = data;
+      }
+      throw error;
+    }
+    return data as T;
+  }
+
   // ── Print-agent connection (E-PARITY-1) — trusted-terminal parity with the
   //    Windows counter. The Sunmi is a fixed, owner-trusted POS terminal, so it
   //    fetches the salon-wide print-agent key and registers as an agent exactly

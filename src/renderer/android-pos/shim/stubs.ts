@@ -494,10 +494,13 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
       listUnresolvedIds: async () => ({ ok: true, ids: [] }),
       requeue: async () => ({ ok: false, error: 'no-sync-transport' }),
     },
-    productAdmin: {
+    // E-PARITY-3: the owner product/stock/category admin surface. Delegates to
+    // the real transport port (staff-JWT /warehouse/product-admin) when present;
+    // the synthetic install keeps the all-unavailable shape (admin-only surface,
+    // never hit by the cashier flow).
+    productAdmin: transport.productAdmin ?? {
       getCapabilities: async () => ({ ok: false }),
       updateVariant: async () => ({ ok: false, code: 'UNAUTHORIZED_PRODUCT_ADMIN' }),
-      // Remaining product-admin surface is admin-only and never hit by the cashier.
       createProduct: async () => ({ ok: false }),
       deactivateVariant: async () => ({ ok: false }),
       adjustStock: async () => ({ ok: false }),
