@@ -107,6 +107,21 @@ describe('createAgentConnection (E-PARITY-1)', () => {
     expect(capturedOpts.reconnection).toBe(true);
   });
 
+  test('persists the connect-response identity (agentId/salonCode) to config', async () => {
+    const client = fakeClient();
+    client.connectPrintAgent = vi.fn(async () => ({
+      agentId: 'agent-77', salonCode: '6535', salonName: 'Smile', salonSlug: 'smile',
+    }));
+    const { agent, configStore } = buildAgent({ client });
+
+    await agent.connect();
+
+    const cfg = configStore.getRawConfig() as any;
+    // So downstream product-admin sends X-Agent-Id / X-Salon-Code (like Windows).
+    expect(cfg.agentId).toBe('agent-77');
+    expect(cfg.salonCode).toBe('6535');
+  });
+
   test('reuses a stored pa_ key without re-fetching from /my-key', async () => {
     const tokenStore = new TokenStore({ storage: memoryStorage() });
     await tokenStore.setPrintAgentKey('pa_already_stored');
@@ -131,9 +146,10 @@ describe('createAgentConnection (E-PARITY-1)', () => {
     expect(agent.getPushedJobStatus('job-9')).toMatchObject({ jobId: 'job-9', status: 'COMPLETED' });
     expect(seen).toHaveLength(1);
 
-    // job:new is recorded too (a brand-new job the agent just accepted).
+    // job:new is a DISPATCH (work order) to a printing agent, NOT a status —
+    // a submitter terminal must NOT cache it as a job status.
     socket.emit('job:new', { id: 'job-10', status: 'SENT' });
-    expect(agent.getPushedJobStatus('job-10')).toMatchObject({ id: 'job-10', status: 'SENT' });
+    expect(agent.getPushedJobStatus('job-10')).toBeNull();
     expect(agent.getPushedJobStatus('missing')).toBeNull();
   });
 

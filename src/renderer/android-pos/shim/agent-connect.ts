@@ -167,7 +167,14 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
         if (fetched?.apiKey) {
           key = fetched.apiKey;
           await deps.tokenStore.setPrintAgentKey(key);
-          if (superseded()) return { connected: false, reason: 'superseded' };
+          if (superseded()) {
+            // A concurrent disconnect (salon switch) may have run its
+            // clearPrintAgentKey BEFORE this write landed — clear again so the
+            // just-written key cannot outlive the switch and be reused by the
+            // next salon's connect (cross-tenant guard; reviewer finding #2).
+            await deps.tokenStore.clearPrintAgentKey();
+            return { connected: false, reason: 'superseded' };
+          }
         }
       }
       if (!key) {
@@ -179,9 +186,21 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
       }
 
       // 2) Register this terminal. A REST failure is non-fatal — Windows proceeds
-      //    socket-only (auth.module.ts:949-955).
+      //    socket-only (auth.module.ts:949-955). Persist the connect-response
+      //    identity (agentId/salonCode/salonName/salonSlug) to config like
+      //    Windows connectWithApiKey does, so downstream product-admin sends the
+      //    X-Agent-Id / X-Salon-Code context headers and audit can attribute the
+      //    terminal (reviewer finding #3).
       try {
-        await deps.client.connectPrintAgent(key, { machineId: machineId() });
+        const reg: any = await deps.client.connectPrintAgent(key, { machineId: machineId() });
+        if (reg && typeof reg === 'object' && !superseded()) {
+          const patch: Record<string, unknown> = {};
+          if (reg.agentId) patch.agentId = reg.agentId;
+          if (reg.salonCode) patch.salonCode = reg.salonCode;
+          if (reg.salonName) patch.salonName = reg.salonName;
+          if (reg.salonSlug) patch.salonSlug = reg.salonSlug;
+          if (Object.keys(patch).length) deps.configStore.setConfig(patch as Partial<AgentConfig>);
+        }
       } catch (e: any) {
         log(`[agent-connect] /print-agent/connect failed, socket-only: ${e?.message || e}`);
       }
@@ -205,10 +224,19 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
           connected = false;
           log(`[agent-connect] socket connect_error: ${err?.message || err}`);
         });
-        // Print-job status pushes — the primary print-completion signal
-        // (socket-client.ts:425-433 job:new / job:updated).
-        socket.on('job:new', recordJobStatus);
+        // `job:updated` is a STATUS change for a job this terminal submitted —
+        // the primary print-completion signal (HTTP poll is the fallback).
         socket.on('job:updated', recordJobStatus);
+        // `job:new` is the server DISPATCHING a job to a PRINTING agent — a work
+        // order with NO status field (orchestrator.ts:375; PrintJobEvent in
+        // shared/types.ts). This terminal is a job SUBMITTER that owns no printer,
+        // so it must NOT record a dispatch as a status. Log for visibility if one
+        // ever arrives — the backend should route print jobs only to the
+        // printerId's owning agent, never here (reviewer finding #1: confirm the
+        // server never dead-letters a real job to this connection).
+        socket.on('job:new', (job: any) => {
+          log(`[agent-connect] unexpected job:new dispatch to a submitter terminal (jobId=${job?.jobId ?? job?.id ?? '?'}) — ignored, not fulfilled`);
+        });
         return { connected: true };
       } catch (e: any) {
         log(`[agent-connect] socket open failed: ${e?.message || e}`);
