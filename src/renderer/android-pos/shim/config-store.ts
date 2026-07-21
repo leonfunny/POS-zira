@@ -150,7 +150,7 @@ export function sanitizeConfigForRenderer(config: AgentConfig): AgentConfig {
   writable.encryptedRemotePin = '';
 
   if (config.booksy) {
-    const booksy = config.booksy as Record<string, unknown>;
+    const booksy = config.booksy as unknown as Record<string, unknown>;
     sanitized.booksy = {
       ...config.booksy,
       enailJwt: '',
