@@ -4,7 +4,7 @@ import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
 import { useToast } from './Toast';
 import TextInput from '../shared/TextInput';
-import { getNextName } from './utils';
+import { defaultNameForAsset, getNextName } from './utils';
 import {
   FLOOR_PLAN_CATEGORIES,
   FLOOR_PLAN_ASSETS,
@@ -172,17 +172,31 @@ export function AddTableDialog({
   const [step, setStep] = useState<'asset' | 'details'>('asset');
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
   const [price, setPrice] = useState(60);
   const prevOpenRef = useRef(false);
 
   useEffect(() => {
     if (open && !prevOpenRef.current) {
       setName(getNextName('', existingNames));
+      setNameTouched(false);
       setStep('asset');
       setSelectedAsset(null);
     }
     prevOpenRef.current = open;
   }, [open, existingNames]);
+
+  // One-tap add: picking an asset suggests a type-aware name and jumps
+  // straight to the prefilled details, so adding is asset-tap -> Add.
+  const handleAssetSelect = (key: string | null) => {
+    setSelectedAsset(key);
+    if (!key) return; // a deselect tap stays on the picker
+    if (!nameTouched) {
+      const asset = FLOOR_PLAN_ASSETS.find((a) => a.key === key);
+      setName(defaultNameForAsset(asset, existingNames));
+    }
+    setStep('details');
+  };
 
   const handleSubmit = () => {
     if (!name.trim()) { toast.error(t('billiard.nameRequired') || 'Name is required'); return; }
@@ -245,7 +259,7 @@ export function AddTableDialog({
           {step === 'asset' ? (
             <AssetPickerGrid
               selected={selectedAsset}
-              onSelect={setSelectedAsset}
+              onSelect={handleAssetSelect}
               language={language}
             />
           ) : (
@@ -257,7 +271,7 @@ export function AddTableDialog({
                   labelClassName="text-sm font-medium text-slate-900"
                   placeholder="Table 1"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
                   onKeyDown={handleKeyDown}
                   autoFocus
                 />
@@ -287,15 +301,7 @@ export function AddTableDialog({
           >
             {t('common.cancel') || 'Cancel'}
           </button>
-          {step === 'asset' ? (
-            <button
-              type="button"
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center"
-              onClick={() => setStep('details')}
-            >
-              {t('common.next') || 'Next'}
-            </button>
-          ) : (
+          {step === 'details' && (
             <button
               type="button"
               className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center"

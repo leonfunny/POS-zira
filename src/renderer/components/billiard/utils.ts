@@ -106,6 +106,22 @@ function dominantNumberedName(names: string[]): string | null {
   return best === null ? null : `${best}${families.get(best)!.maxNum}`;
 }
 
+/**
+ * Default name for a freshly picked floor asset. Billiard assets continue the
+ * venue's dominant table family; any other asset type names within its own
+ * family (seeded from the asset's display name) so a massage bed never
+ * becomes the next "Bàn #n".
+ */
+export function defaultNameForAsset(
+  asset: { category: string; name: string } | undefined | null,
+  existingNames: string[],
+): string {
+  if (!asset || asset.category === 'billiard') return getNextName('', existingNames);
+  const base = asset.name.trim();
+  const family = existingNames.filter((n) => n.toLowerCase().startsWith(base.toLowerCase()));
+  return family.length > 0 ? getNextName('', family) : `${base} 1`;
+}
+
 export function getNextName(currentValue: string, existingNames: string[], direction: 'up' | 'down' = 'up'): string {
   const val = currentValue.trim();
   const source = val || dominantNumberedName(existingNames) || existingNames[existingNames.length - 1] || '';
