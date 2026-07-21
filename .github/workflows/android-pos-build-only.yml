@@ -1,0 +1,290 @@
+name: POS dual-platform build-only evidence
+
+# Trigger narrowed 2026-07-21 (merge-to-main prep): '**' made EVERY main push
+# run 4 jobs (2× windows-latest billed). Android evidence only needs to run on
+# the android workstream branches + PRs + manual dispatch.
+on:
+  push:
+    branches:
+      - 'codex/android-pos-**'
+      - 'codex/android-billiard-**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pos-build-only-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22.22.2'
+  NPM_VERSION: '10.8.2'
+  JAVA_VERSION: '21.0.11'
+
+jobs:
+  security-policy:
+    name: Build-only policy and shared boundary tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Pin npm CLI
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify publication is absent and Android policy is fail closed
+        run: npm run test:ci:build-only-policy
+
+      - name: Verify immutable build metadata contract
+        run: npm run test:build-metadata
+
+      - name: Verify shared platform boundaries
+        run: npm run test:boundaries
+
+      - name: Record production readiness register evidence
+        run: |
+          mkdir -p ci-artifacts
+          node scripts/verify-production-readiness.mjs --json --evidence-report > ci-artifacts/readiness-register.json
+
+      - name: Upload immutable readiness register evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: readiness-register-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ci-artifacts/readiness-register.json
+
+      - name: Emit fail-closed R12 gate report
+        run: |
+          mkdir -p ci-artifacts
+          node scripts/verify-build-only-ci.mjs --json --fail-on-r12 > ci-artifacts/r12-gate.json
+
+      - name: Upload immutable R12 gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r12-gate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ci-artifacts/r12-gate.json
+
+  android-build:
+    name: Android development APK build and manifest evidence
+    needs: security-policy
+    runs-on: ubuntu-latest
+    env:
+      ZIRA_ANDROID_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Pin npm CLI
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Set up exact Java runtime
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Install pinned Android SDK platform and build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify pinned Android toolchain
+        run: npm run android:preflight
+
+      - name: Build and verify development APKs
+        run: npm run android:build:verify
+
+      - name: Generate and verify merged Android manifests
+        run: npm run test:android:manifests
+
+      - name: Verify generated and copied Android web security policy
+        run: node scripts/verify-build-only-ci.mjs --require-built-assets
+
+      - name: Stage exact Android build evidence
+        run: |
+          mkdir -p ci-artifacts/android-evidence
+          cp android-pos/app/build/outputs/apk/debug/app-debug.apk ci-artifacts/android-evidence/app-debug.apk
+          cp android-pos/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk ci-artifacts/android-evidence/app-debug-androidTest.apk
+          cp android-pos/app/build/outputs/apk/release/app-release-unsigned.apk ci-artifacts/android-evidence/app-release-unsigned.apk
+          cp android-pos/app/build/outputs/bundle/release/app-release.aab ci-artifacts/android-evidence/app-release-unsigned.aab
+          cp android-pos/app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml ci-artifacts/android-evidence/AndroidManifest-debug.xml
+          cp android-pos/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml ci-artifacts/android-evidence/AndroidManifest-release.xml
+          tar -czf ci-artifacts/android-build-evidence.tar.gz -C ci-artifacts/android-evidence .
+
+      - name: Generate immutable Android artifact metadata
+        run: >-
+          npm run build:metadata --
+          --artifact ci-artifacts/android-build-evidence.tar.gz
+          --artifact-root ci-artifacts
+          --output ci-artifacts/android-build-metadata.json
+          --git-sha ${{ github.sha }}
+          --platform android
+          --build-number ${{ env.ZIRA_ANDROID_BUILD_NUMBER }}
+          --run-id ${{ github.run_id }}
+          --run-attempt ${{ github.run_attempt }}
+          --minimum-compatible-version 1.0.23
+          --channel ci-debug
+
+      - name: Upload immutable Android build evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-pos-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ci-artifacts/android-build-evidence.tar.gz
+            ci-artifacts/android-build-metadata.json
+
+  windows-build:
+    name: Windows compile and immutable evidence
+    needs: security-policy
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Pin npm CLI
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build Windows application sources
+        run: npm run build
+
+      - name: Verify shared platform boundaries on Windows
+        run: npm run test:boundaries
+
+      - name: Run the complete test suite on Windows
+        run: npm test
+
+      - name: Create Windows compiled evidence archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          tar.exe -a -c -f ci-artifacts/windows-compiled.zip dist package.json
+
+      - name: Generate immutable Windows compile metadata
+        run: >-
+          npm run build:metadata --
+          --artifact ci-artifacts/windows-compiled.zip
+          --artifact-root ci-artifacts
+          --output ci-artifacts/windows-build-metadata.json
+          --git-sha ${{ github.sha }}
+          --platform windows
+          --build-number ${{ github.run_id }}
+          --run-id ${{ github.run_id }}
+          --run-attempt ${{ github.run_attempt }}
+          --minimum-compatible-version 1.0.23
+          --channel ci-compiled
+
+      - name: Upload immutable Windows compile evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-compiled-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ci-artifacts/windows-compiled.zip
+            ci-artifacts/windows-build-metadata.json
+
+  windows-installer-gate:
+    name: Windows installer validation gate
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - security-policy
+      - windows-build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node.js runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Pin npm CLI
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Refuse hidden Android TV APK dependency
+        run: npm run test:ci:windows-package-preflight
+
+      - name: Build application sources in the installer job
+        run: npm run build
+
+      - name: Build installer without publication after the gate is cleared
+        run: npm run dist:win -- --publish never
+
+      - name: Validate installer and generate immutable metadata
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem release -Filter *.exe -File)
+          if ($installers.Count -ne 1) { throw "Expected exactly one Windows installer, found $($installers.Count)" }
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          Copy-Item $installers[0].FullName ci-artifacts/windows-installer.exe
+          node scripts/generate-build-metadata.mjs `
+            --artifact ci-artifacts/windows-installer.exe `
+            --artifact-root ci-artifacts `
+            --output ci-artifacts/windows-installer-metadata.json `
+            --git-sha ${{ github.sha }} `
+            --platform windows `
+            --build-number ${{ github.run_id }} `
+            --run-id ${{ github.run_id }} `
+            --run-attempt ${{ github.run_attempt }} `
+            --minimum-compatible-version 1.0.23 `
+            --channel ci-installer
+
+      - name: Upload immutable Windows installer evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-installer-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ci-artifacts/windows-installer.exe
+            ci-artifacts/windows-installer-metadata.json

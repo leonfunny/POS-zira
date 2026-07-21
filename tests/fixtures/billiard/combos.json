@@ -1,0 +1,416 @@
+[
+  {
+    "id": "6815de49-f7e1-4081-af1b-b31b4a696b2c",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:10.905Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "1h Solo Chill",
+    "description": "1 godzina gry + 2 napoje do wyboru",
+    "comboPrice": "45.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 60,
+    "isActive": false,
+    "displayOrder": 0,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/6815de49-f7e1-4081-af1b-b31b4a696b2c.webp",
+    "items": [
+      {
+        "id": "212c43d8-fb90-4881-b55c-7fabbfc1591b",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "6815de49-f7e1-4081-af1b-b31b4a696b2c",
+        "variantId": null,
+        "name": "1h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "30.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "8044da2f-3de0-4ecc-a9db-dd31805ab23e",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "6815de49-f7e1-4081-af1b-b31b4a696b2c",
+        "variantId": "bc1c518f-1ed1-456f-8931-c2643e8a0d0c",
+        "name": "Coca-Cola 0.33L",
+        "quantity": "2.00",
+        "unitPrice": "7.00",
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "id": "4f2ce5dc-1cc9-4865-8ea6-c5f2557fbb09",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:11.991Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Piwo & Gra 2h",
+    "description": "2 godziny gry + 2 piwa Tyskie + chipsy",
+    "comboPrice": "75.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 120,
+    "isActive": false,
+    "displayOrder": 1,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/4f2ce5dc-1cc9-4865-8ea6-c5f2557fbb09.webp",
+    "items": [
+      {
+        "id": "d87a1be2-edf0-4fc7-964e-740a630d9c72",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4f2ce5dc-1cc9-4865-8ea6-c5f2557fbb09",
+        "variantId": null,
+        "name": "2h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "60.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "296bca96-d965-4d37-a36f-24f5a7cb4915",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4f2ce5dc-1cc9-4865-8ea6-c5f2557fbb09",
+        "variantId": "6f85fb17-66f9-449b-b8fe-f90e77305990",
+        "name": "Piwo Tyskie",
+        "quantity": "2.00",
+        "unitPrice": "11.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "37277b02-f163-4176-a49d-ddb83b959ca4",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4f2ce5dc-1cc9-4865-8ea6-c5f2557fbb09",
+        "variantId": "657607bc-bdfd-4d90-bd9f-d53a5eff334f",
+        "name": "Chipsy Lays",
+        "quantity": "1.00",
+        "unitPrice": "8.00",
+        "displayOrder": 2
+      }
+    ]
+  },
+  {
+    "id": "71d7df68-e909-4859-8871-db74024ed96b",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:13.570Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Party Pack 3h",
+    "description": "3h gry + 4 piwa + nachos + frytki",
+    "comboPrice": "150.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 180,
+    "isActive": false,
+    "displayOrder": 2,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/71d7df68-e909-4859-8871-db74024ed96b.webp",
+    "items": [
+      {
+        "id": "d6d9ebf3-1e44-4f1d-b907-d4662241cd3d",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "71d7df68-e909-4859-8871-db74024ed96b",
+        "variantId": null,
+        "name": "3h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "90.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "39f1869a-aaba-42dc-b422-a9e80925f29c",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "71d7df68-e909-4859-8871-db74024ed96b",
+        "variantId": "1adc8124-7368-4c9c-893b-ee1a1d848510",
+        "name": "Piwo Heineken",
+        "quantity": "4.00",
+        "unitPrice": "14.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "59286065-2f94-46c9-8d24-3e6e1905a3a3",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "71d7df68-e909-4859-8871-db74024ed96b",
+        "variantId": "2a1bce74-2fab-46a4-99dc-4964f508da0b",
+        "name": "Nachos z salsa",
+        "quantity": "1.00",
+        "unitPrice": "18.00",
+        "displayOrder": 2
+      },
+      {
+        "id": "4655a9af-bc5d-485a-8649-1842b91c7164",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "71d7df68-e909-4859-8871-db74024ed96b",
+        "variantId": "5f7cd2a1-32d5-4483-b22b-da41e9c0a59f",
+        "name": "Frytki",
+        "quantity": "1.00",
+        "unitPrice": "12.00",
+        "displayOrder": 3
+      }
+    ]
+  },
+  {
+    "id": "a3bbae0c-ea50-4469-9797-977cc055115f",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:14.746Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Snack Break",
+    "description": "2 piwa + chipsy + orzeszki",
+    "comboPrice": "35.00",
+    "comboType": "FOOD_ONLY",
+    "playMinutes": null,
+    "isActive": false,
+    "displayOrder": 3,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/a3bbae0c-ea50-4469-9797-977cc055115f.webp",
+    "items": [
+      {
+        "id": "8c3418bb-6f8a-404e-a607-09fb772cbfbe",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "a3bbae0c-ea50-4469-9797-977cc055115f",
+        "variantId": "6f85fb17-66f9-449b-b8fe-f90e77305990",
+        "name": "Piwo Tyskie",
+        "quantity": "2.00",
+        "unitPrice": "11.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "729728e4-fdbc-4e9b-a14c-bddec8eda65d",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "a3bbae0c-ea50-4469-9797-977cc055115f",
+        "variantId": "657607bc-bdfd-4d90-bd9f-d53a5eff334f",
+        "name": "Chipsy Lays",
+        "quantity": "1.00",
+        "unitPrice": "8.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "add12fed-4966-4699-8c6c-57991d6e501b",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "a3bbae0c-ea50-4469-9797-977cc055115f",
+        "variantId": "eed3a7c1-fa6d-4fa2-8901-497c1764b0ab",
+        "name": "Orzeszki solone",
+        "quantity": "1.00",
+        "unitPrice": "10.00",
+        "displayOrder": 2
+      }
+    ]
+  },
+  {
+    "id": "4aaa34ee-cad8-4dd6-abcc-437496a0878c",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:16.486Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Date Night",
+    "description": "2h gry + 2 latte + pizza Margherita",
+    "comboPrice": "95.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 120,
+    "isActive": false,
+    "displayOrder": 4,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/4aaa34ee-cad8-4dd6-abcc-437496a0878c.webp",
+    "items": [
+      {
+        "id": "57fc3ba6-ac3f-45a2-b6e1-dfff6609c883",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4aaa34ee-cad8-4dd6-abcc-437496a0878c",
+        "variantId": null,
+        "name": "2h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "60.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "106ccbfc-1ee4-464c-9087-af2b77137a7a",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4aaa34ee-cad8-4dd6-abcc-437496a0878c",
+        "variantId": "f01ce8f4-e5d5-4cff-b712-465def4b2c79",
+        "name": "Latte",
+        "quantity": "2.00",
+        "unitPrice": "13.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "06b03999-d2c0-4799-a3d6-0b32aee13e58",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "4aaa34ee-cad8-4dd6-abcc-437496a0878c",
+        "variantId": "4801f535-c388-4a6b-9eeb-0d9320cd63e9",
+        "name": "Pizza Margherita",
+        "quantity": "1.00",
+        "unitPrice": "28.00",
+        "displayOrder": 2
+      }
+    ]
+  },
+  {
+    "id": "8c9df1f8-0b35-4738-a827-0a44b32f6f98",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:17.769Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Student Special",
+    "description": "1h gry + Coca-Cola 0.5L + hot-dog",
+    "comboPrice": "40.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 60,
+    "isActive": false,
+    "displayOrder": 5,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/8c9df1f8-0b35-4738-a827-0a44b32f6f98.webp",
+    "items": [
+      {
+        "id": "4a27496b-2364-473c-a0a0-d44ea3460a53",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "8c9df1f8-0b35-4738-a827-0a44b32f6f98",
+        "variantId": null,
+        "name": "1h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "30.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "4e19a50e-0ec1-4afd-92c1-fb02afae6950",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "8c9df1f8-0b35-4738-a827-0a44b32f6f98",
+        "variantId": "9fe96c05-29a0-4a56-9c87-0ff53fca69dc",
+        "name": "Coca-Cola 0.5L",
+        "quantity": "1.00",
+        "unitPrice": "9.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "a6a81382-99bb-495c-850d-1ad4376d776e",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "8c9df1f8-0b35-4738-a827-0a44b32f6f98",
+        "variantId": "b5395d2c-ec53-4bc8-a90e-54f5a6129f9f",
+        "name": "Hot-dog",
+        "quantity": "1.00",
+        "unitPrice": "10.00",
+        "displayOrder": 2
+      }
+    ]
+  },
+  {
+    "id": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:21.360Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "VIP Night",
+    "description": "4h gry + 4x Guinness + pizza + nachos + nuggetsy",
+    "comboPrice": "250.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 240,
+    "isActive": false,
+    "displayOrder": 6,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/56b465eb-589d-4c08-93d3-5b4239c04adc.webp",
+    "items": [
+      {
+        "id": "904751c5-75f0-4e85-b5cf-185c6e367c02",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+        "variantId": null,
+        "name": "4h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "120.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "65ddc1d3-4629-44a9-a9f1-9ba9ce3fc486",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+        "variantId": "aee89776-0f9a-4d4a-93e5-211019e0d794",
+        "name": "Guinness",
+        "quantity": "4.00",
+        "unitPrice": "18.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "f42769ea-4c89-457e-b249-46f1ce51f78c",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+        "variantId": "347884ab-a1ca-4915-bcd4-366e7c2c3df6",
+        "name": "Pizza Pepperoni",
+        "quantity": "1.00",
+        "unitPrice": "32.00",
+        "displayOrder": 2
+      },
+      {
+        "id": "938c1fc9-1254-4f0a-a00f-7b906109712d",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+        "variantId": "2a1bce74-2fab-46a4-99dc-4964f508da0b",
+        "name": "Nachos z salsa",
+        "quantity": "1.00",
+        "unitPrice": "18.00",
+        "displayOrder": 3
+      },
+      {
+        "id": "9789e825-7e9b-4c5e-bcb3-2027ce6c54b5",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "56b465eb-589d-4c08-93d3-5b4239c04adc",
+        "variantId": "2b9ac7e4-191c-4aee-b8fc-f8b1d15e8210",
+        "name": "Nuggetsy (8szt)",
+        "quantity": "1.00",
+        "unitPrice": "18.00",
+        "displayOrder": 4
+      }
+    ]
+  },
+  {
+    "id": "38e08efa-a12e-4968-8d93-528787735ea2",
+    "createdAt": "2026-02-13T12:29:45.385Z",
+    "updatedAt": "2026-02-27T20:33:22.354Z",
+    "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+    "name": "Kawa & Gra",
+    "description": "1h gry + 2 cappuccino + paluszki",
+    "comboPrice": "42.00",
+    "comboType": "TIME_AND_FOOD",
+    "playMinutes": 60,
+    "isActive": false,
+    "displayOrder": 7,
+    "imageUrl": "https://img.zira.pl/billiard/combo/cbe3776f-5fdd-4ab0-993c-becc29fce2c2/38e08efa-a12e-4968-8d93-528787735ea2.webp",
+    "items": [
+      {
+        "id": "41bbc046-5333-4797-ab0f-23f286c6e99d",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "38e08efa-a12e-4968-8d93-528787735ea2",
+        "variantId": null,
+        "name": "1h gry na stole",
+        "quantity": "1.00",
+        "unitPrice": "30.00",
+        "displayOrder": 0
+      },
+      {
+        "id": "0a287760-cde4-4cce-8e7d-6f306e69e4cb",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "38e08efa-a12e-4968-8d93-528787735ea2",
+        "variantId": "9cc3f62d-d6a6-4415-9b96-43ac4597f3e0",
+        "name": "Cappuccino",
+        "quantity": "2.00",
+        "unitPrice": "12.00",
+        "displayOrder": 1
+      },
+      {
+        "id": "3101cf93-3011-4592-8fbc-c1dd345981cb",
+        "createdAt": "2026-02-13T12:30:06.978Z",
+        "updatedAt": "2026-02-13T12:30:06.978Z",
+        "comboId": "38e08efa-a12e-4968-8d93-528787735ea2",
+        "variantId": "fd5b1064-b348-4106-9296-f94b5a76fd73",
+        "name": "Paluszki",
+        "quantity": "1.00",
+        "unitPrice": "6.00",
+        "displayOrder": 2
+      }
+    ]
+  }
+]

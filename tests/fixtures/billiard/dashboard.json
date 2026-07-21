@@ -1,0 +1,1685 @@
+[
+  {
+    "resource": {
+      "id": "4e1b3723-f041-4236-9ea1-3bdb321df673",
+      "createdAt": "2026-02-13T08:24:33.406Z",
+      "updatedAt": "2026-02-28T04:24:33.947Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #1",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 1,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #1",
+          "pl": "Bàn #1",
+          "vi": "Bàn #1"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "14:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "12:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "6ce1de31-927e-42eb-8b97-9e73867362b0",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "4e1b3723-f041-4236-9ea1-3bdb321df673",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "11.3",
+      "positionY": "12.0",
+      "rotation": 180,
+      "widthPct": "14.3",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-26T00:13:27.627Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "dafe5901-fc7e-488b-b618-05efc46fe65e",
+      "createdAt": "2026-02-13T08:24:33.419Z",
+      "updatedAt": "2026-02-27T19:02:33.287Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #10",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 10,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #10",
+          "pl": "Bàn #10",
+          "vi": "Bàn #10"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "1087ae31-13b8-4bed-81da-483bacb8611a",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "dafe5901-fc7e-488b-b618-05efc46fe65e",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "45.0",
+      "positionY": "55.0",
+      "rotation": 90,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.259Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "8f8e77a8-97ba-439e-9535-6e7832d17089",
+      "createdAt": "2026-02-13T08:24:33.421Z",
+      "updatedAt": "2026-02-27T19:03:03.232Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #11",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 11,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #11",
+          "pl": "Bàn #11",
+          "vi": "Bàn #11"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "c4a6ad8b-cb4d-447e-8014-4a28512d3162",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "8f8e77a8-97ba-439e-9535-6e7832d17089",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "56.3",
+      "positionY": "66.0",
+      "rotation": 90,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.262Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "157dbb79-4488-4d33-8232-785affb8ade4",
+      "createdAt": "2026-02-13T08:24:33.422Z",
+      "updatedAt": "2026-02-27T19:04:01.788Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #12",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 12,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #12",
+          "pl": "Bàn #12",
+          "vi": "Bàn #12"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "d4503a22-55d4-4190-8df1-2578defa2baa",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "157dbb79-4488-4d33-8232-785affb8ade4",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "71.3",
+      "positionY": "52.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.264Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "b111453a-4612-4f76-a75a-0a41fb3e41c8",
+      "createdAt": "2026-02-13T08:24:33.423Z",
+      "updatedAt": "2026-02-27T19:04:30.495Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #13",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 13,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #13",
+          "pl": "Bàn #13",
+          "vi": "Bàn #13"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "299b2dc1-36a6-4b61-bf49-695ad310f8e1",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "b111453a-4612-4f76-a75a-0a41fb3e41c8",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "71.3",
+      "positionY": "69.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.267Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "75f09d17-0ebc-4540-a227-45556ff53cb0",
+      "createdAt": "2026-04-12T18:29:47.262Z",
+      "updatedAt": "2026-04-12T18:29:47.262Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #14",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 0,
+      "metadata": {},
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "14:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "12:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "9e3583df-7208-4386-a403-eeaad8d5ba65",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "75f09d17-0ebc-4540-a227-45556ff53cb0",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "9.4",
+      "positionY": "54.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-04-12T18:29:50.441Z",
+      "updatedAt": "2026-04-12T18:30:15.269Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "c438b511-1014-449c-a7ed-397f93f564d3",
+      "createdAt": "2026-02-13T08:24:33.409Z",
+      "updatedAt": "2026-02-27T18:58:59.157Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #2",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 2,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #2",
+          "pl": "Bàn #2",
+          "vi": "Bàn #2"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "14:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "12:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "79d6b2fa-8688-4b91-9e48-dd3948688184",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "c438b511-1014-449c-a7ed-397f93f564d3",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "27.5",
+      "positionY": "12.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.272Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "142494ca-110c-4c13-8992-75e3dadcfa1d",
+      "createdAt": "2026-02-13T08:24:33.410Z",
+      "updatedAt": "2026-02-27T18:59:05.360Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #3",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 3,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #3",
+          "pl": "Bàn #3",
+          "vi": "Bàn #3"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "a12d2690-5023-4a03-b0a3-17a4b46d8a93",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "142494ca-110c-4c13-8992-75e3dadcfa1d",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "43.1",
+      "positionY": "12.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.275Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "e46d75ce-02bb-4758-950f-55cc44c3751c",
+      "createdAt": "2026-02-13T08:24:33.411Z",
+      "updatedAt": "2026-02-27T18:49:07.936Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #4",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 4,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #4",
+          "pl": "Bàn #4",
+          "vi": "Bàn #4"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "a936ce8a-b61c-4a50-8667-c60d6d84fe3e",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "e46d75ce-02bb-4758-950f-55cc44c3751c",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "59.4",
+      "positionY": "13.0",
+      "rotation": 180,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.284Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "18772d17-f915-433f-b639-7f62914ca9ac",
+      "createdAt": "2026-02-13T08:24:33.413Z",
+      "updatedAt": "2026-02-27T18:53:05.811Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #5",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 5,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #5",
+          "pl": "Bàn #5",
+          "vi": "Bàn #5"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "14:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "12:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "aa5fade8-57da-41f7-b68b-0e17d4a3af60",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "18772d17-f915-433f-b639-7f62914ca9ac",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "11.3",
+      "positionY": "29.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.289Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "b3975d21-271b-4fb6-b7ee-54e3c4ed8941",
+      "createdAt": "2026-02-13T08:24:33.414Z",
+      "updatedAt": "2026-02-27T18:58:39.965Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #6",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 6,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #6",
+          "pl": "Bàn #6",
+          "vi": "Bàn #6"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "3386ddc4-9472-4f51-9963-c94f23999f63",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "b3975d21-271b-4fb6-b7ee-54e3c4ed8941",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "27.5",
+      "positionY": "29.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.293Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "ab160555-a1ce-423f-abfc-83bbafc8a22a",
+      "createdAt": "2026-02-13T08:24:33.415Z",
+      "updatedAt": "2026-02-27T18:59:48.418Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #7",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 7,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #7",
+          "pl": "Bàn #7",
+          "vi": "Bàn #7"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "a7d809f8-dc29-4851-ba7a-5cbd05457a33",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "ab160555-a1ce-423f-abfc-83bbafc8a22a",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "43.1",
+      "positionY": "29.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.296Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "985788c4-d09b-4dc0-a24e-6dcad6482d41",
+      "createdAt": "2026-02-13T08:24:33.416Z",
+      "updatedAt": "2026-02-27T19:01:27.722Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #8",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 8,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #8",
+          "pl": "Bàn #8",
+          "vi": "Bàn #8"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "8603590a-83e1-46de-8229-9c304ce2539e",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "985788c4-d09b-4dc0-a24e-6dcad6482d41",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "59.4",
+      "positionY": "28.0",
+      "rotation": 0,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.299Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "02100a20-d6c1-4dcc-9067-a41788f166ad",
+      "createdAt": "2026-02-13T08:24:33.417Z",
+      "updatedAt": "2026-02-27T19:02:04.044Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Bàn #9",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 9,
+      "metadata": {
+        "translations": {
+          "en": "Bàn #9",
+          "pl": "Bàn #9",
+          "vi": "Bàn #9"
+        },
+        "availableFrom": "10:00",
+        "availableUntil": "24:00"
+      },
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "06:00",
+        "peakHourStart": "23:00",
+        "weekendMultiplier": 1,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": null,
+      "availableUntil": null,
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": {
+        "0": {
+          "from": "10:00",
+          "until": "02:00"
+        },
+        "1": null,
+        "2": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "3": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "4": {
+          "from": "14:00",
+          "until": "23:00"
+        },
+        "5": {
+          "from": "12:00",
+          "until": "00:00"
+        },
+        "6": {
+          "from": "10:00",
+          "until": "02:00"
+        }
+      },
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "df717011-c8b7-453d-8eb0-d56d541d8d93",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "02100a20-d6c1-4dcc-9067-a41788f166ad",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "73.1",
+      "positionY": "32.0",
+      "rotation": 90,
+      "widthPct": "15.6",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-02-14T12:25:04.430Z",
+      "updatedAt": "2026-04-12T18:30:15.302Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  },
+  {
+    "resource": {
+      "id": "b031ba54-42a7-4173-a5e4-71409d7d1068",
+      "createdAt": "2026-04-26T18:12:24.193Z",
+      "updatedAt": "2026-04-26T18:12:24.193Z",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+      "name": "Ghế massage #1",
+      "description": null,
+      "isActive": true,
+      "displayOrder": 0,
+      "metadata": {},
+      "requiresStaff": false,
+      "defaultSupervisorId": null,
+      "maxConcurrentBookings": 1,
+      "pricingRules": {
+        "currency": "PLN",
+        "basePrice": 60,
+        "peakHourEnd": "22:00",
+        "peakHourStart": "18:00",
+        "weekendMultiplier": 1.5,
+        "peakHourMultiplier": 1.3
+      },
+      "availableFrom": "10:00:00",
+      "availableUntil": "24:00:00",
+      "availableDays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "weeklySchedule": null,
+      "resourceType": {
+        "id": "0b477782-ea2b-4100-8453-0b060a8231f5",
+        "createdAt": "2026-02-13T08:24:33.404Z",
+        "updatedAt": "2026-02-13T08:24:33.404Z",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Stół bilardowy",
+        "code": "POOL_TABLE",
+        "description": "Stoły bilardowe Pool i Snooker",
+        "color": "#16a34a",
+        "icon": "table",
+        "isActive": true,
+        "displayOrder": 1
+      }
+    },
+    "session": null,
+    "status": "free",
+    "layout": {
+      "id": "8e0b91e1-5af3-45e2-8f1f-6c3f93957afd",
+      "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+      "resourceId": "b031ba54-42a7-4173-a5e4-71409d7d1068",
+      "floorPlanId": "ac4321fb-3d12-4805-b173-d26173ca5644",
+      "positionX": "8.8",
+      "positionY": "74.0",
+      "rotation": 0,
+      "widthPct": "15.5",
+      "heightPct": "13.0",
+      "zoneName": null,
+      "zoneColor": null,
+      "createdAt": "2026-04-26T18:12:38.121Z",
+      "updatedAt": "2026-04-26T18:13:21.289Z",
+      "floorPlan": {
+        "id": "ac4321fb-3d12-4805-b173-d26173ca5644",
+        "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+        "name": "Floor 1",
+        "floorNumber": 1,
+        "isDefault": true,
+        "isActive": true,
+        "backgroundImage": null,
+        "roomWidthM": "16.00",
+        "roomHeightM": "10.00",
+        "displayOrder": 0,
+        "createdAt": "2026-02-14T12:25:04.430Z",
+        "updatedAt": "2026-02-14T12:25:04.430Z"
+      }
+    }
+  }
+]

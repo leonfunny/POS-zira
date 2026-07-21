@@ -1,0 +1,728 @@
+/**
+ * Shim stubs — every S1 STUB / LATER / EXCLUDE method plus the synthetic fakes
+ * for PORT-disposition methods that need a backend/DB (catalog, orders, sync,
+ * shift, auth HTTP).
+ *
+ * Packet S2 of the Android parity port. Each value below is the EXACT benign
+ * default spelled out in docs/android-pos/SHIM_CONTRACT_S1.md (§2.A–§2.M, §3).
+ * The unit test in tests/android-shim.test.ts spot-checks these literals, so
+ * changing one here is a contract change — update S1 + the test together.
+ *
+ * PORT methods that need real behavior delegate to the injected ShimTransport
+ * (transport.ts) when it provides the port; otherwise they return the synthetic
+ * fake so the renderer boots end-to-end with no network. S7 swaps the fakes for
+ * real ports by passing a transport to installShim — this surface never moves.
+ */
+
+import type { AgentConfig, AuthUser } from '../../../shared/types';
+import type {
+  ShimLoginResult,
+  ShimPosCategory,
+  ShimPosProduct,
+  ShimTransport,
+} from './transport';
+import { SYNTHETIC_AUTH_USER } from './config-store';
+import type { ShimConfigStore } from './config-store';
+
+// ── Tiny helpers ────────────────────────────────────────────────────────────
+
+/** No-op unsubscribe — every STUB event subscription returns this (S1 §3). */
+export function noopUnsubscribe(): () => void {
+  return () => { /* STUB event: never emits */ };
+}
+
+/** Id generator that prefers crypto.randomUUID and degrades for old runtimes. */
+export function generateId(prefix = 'id'): string {
+  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return `${prefix}-${g.crypto.randomUUID()}`;
+  return `${prefix}-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+/** Run the transport port when present, otherwise the synthetic fake. */
+/**
+ * Run the transport port when the method is present, otherwise the synthetic
+ * fake. Takes the (possibly undefined) method reference + its args so the
+ * synthetic fallback actually fires when no transport is injected (S2 default).
+ */
+async function withTransport<Args extends unknown[], T>(
+  method: ((...args: Args) => Promise<T>) | undefined,
+  args: Args,
+  synthetic: () => T,
+): Promise<T> {
+  return method ? await method(...args) : synthetic();
+}
+
+// ── Synthetic entitlements (all-enabled default, S1 §1 #9) ──────────────────
+
+const ALL_FEATURE_KEYS = [
+  'chat', 'status', 'booksy', 'invoicing', 'settings', 'debug', 'orders',
+  'products', 'warehouse', 'forecast', 'pos', 'label', 'remote', 'telegram',
+  'security', 'checkin', 'bookings', 'billiard', 'selfCheckout',
+] as const;
+
+export function syntheticEntitlements(salonId: string) {
+  const now = new Date().toISOString();
+  return {
+    salonId,
+    salonCode: '0000',
+    salonName: 'Synthetic Salon',
+    plan: 'enterprise' as const,
+    suggestedPosMode: 'retail' as const,
+    features: ALL_FEATURE_KEYS.reduce((acc, key) => {
+      acc[key] = { featureKey: key, enabled: true };
+      return acc;
+    }, {} as Record<string, { featureKey: string; enabled: boolean }>),
+    fetchedAt: now,
+    validUntil: now,
+  };
+}
+
+// ── Namespace builders ──────────────────────────────────────────────────────
+
+export interface StubDeps {
+  configStore: ShimConfigStore;
+  transport: ShimTransport;
+  /** The authoritative POS store — the shift namespace dispatches session
+   *  open/close into it so `state.session.isOpen` tracks the shift, exactly as
+   *  the Windows IPC handler does (pos.module.ts:4654). Optional so the S2
+   *  synthetic install and unit tests that only need the surface can omit it. */
+  posStore?: {
+    dispatch(action: { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } } | { type: 'session/close' }): void;
+    getState(): { session?: { shiftId?: string | null; isOpen?: boolean } };
+  };
+}
+
+/** Auth namespace (S1 §2.B). Email login is the pilot path; Telegram-QR is STUB. */
+export function buildAuthNamespace({ configStore, transport, posStore }: StubDeps) {
+  const applyAuthUser = (user: AuthUser) => {
+    // Mirrors the Windows setConfig side-effect (minus the print-agent connect
+    // hard rail — Android never calls /print-agent/connect). S1 §2.B note.
+    configStore.setConfig({
+      authUser: user,
+      salonId: user.salonId,
+      salonName: user.salonName ?? configStore.getRawConfig().salonName,
+    });
+  };
+
+  return {
+    loginWithEmail: async (email: string, password: string): Promise<ShimLoginResult> => {
+      const result = await withTransport(
+        transport.loginWithEmail,
+        [email, password],
+        (): ShimLoginResult => ({
+          // S2 synthetic: succeed with the synthetic staff identity.
+          success: true,
+          data: { user: { ...SYNTHETIC_AUTH_USER, email: email || SYNTHETIC_AUTH_USER.email } },
+        }),
+      );
+      if (result.success && result.data?.user) {
+        applyAuthUser(result.data.user);
+        // A fresh login starts with no open shift in memory. Reset the session
+        // so a stale session from a prior salon/user (e.g. after a tenant
+        // switch or an onExpired while POS was mounted) cannot leave a ghost
+        // shift unlocking payment. The boot hydrate re-opens the session from
+        // the local active-shift row if one legitimately exists.
+        posStore?.dispatch({ type: 'session/close' });
+      }
+      return result;
+    },
+    getUser: async (): Promise<{ success: boolean; data?: { isAuthenticated: boolean; user?: AuthUser }; error?: string }> => {
+      const synthetic = (): { success: boolean; data?: { isAuthenticated: boolean; user?: AuthUser }; error?: string } => ({
+        success: true,
+        data: { isAuthenticated: true, user: configStore.getRawConfig().authUser ?? SYNTHETIC_AUTH_USER },
+      });
+      const result = await withTransport(transport.getUser, [], synthetic);
+      if (result.success && result.data?.user) applyAuthUser(result.data.user);
+      return result;
+    },
+    logout: async () => {
+      const result = await withTransport(
+        transport.logout,
+        [],
+        () => ({ success: true }),
+      );
+      // Windows keeps local POS data; only clears identity fields (S1 §2.B note).
+      configStore.setConfig({ authUser: undefined, salonName: undefined, salonSlug: undefined });
+      return result;
+    },
+    // Telegram-QR login is not part of the pilot — email is primary.
+    generateLoginToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
+    checkToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
+    generateRegisterToken: async () => ({ success: false, error: 'telegram-login-unavailable' }),
+    // S6+S7: a real transport owns the auth-expired emitter; delegate to it when
+    // present, else the S2 no-op unsubscribe that never fires.
+    onExpired: transport.onAuthExpired
+      ? (cb: () => void) => transport.onAuthExpired!(cb)
+      : () => noopUnsubscribe(),
+  };
+}
+
+/** Connection / boot surface (S1 §2.A). */
+export function buildConnectionStubs() {
+  return {
+    getStatus: async () => ({ connected: true, deviceStatus: null }),
+    onConnectionStatus: () => noopUnsubscribe(),
+    connect: async () => ({ success: true }),
+    disconnect: async () => ({ success: true }),
+  };
+}
+
+/** Entitlements (S1 §1 #9, §2 — all-enabled default). */
+export function buildEntitlementsNamespace({ configStore }: StubDeps) {
+  return {
+    get: async () => syntheticEntitlements(configStore.getRawConfig().salonId ?? 'synthetic'),
+    fetch: async () => syntheticEntitlements(configStore.getRawConfig().salonId ?? 'synthetic'),
+    isEnabled: async () => true,
+    onChanged: () => noopUnsubscribe(),
+  };
+}
+
+/** Catalog (S1 §2.D). PORT M2 — synthetic empty until S5/S6 SQL.js mirror. */
+export function buildProductsNamespace({ transport }: StubDeps) {
+  const empty = (): ShimPosProduct[] => [];
+  return {
+    getAll: () => withTransport(transport.getProducts, [], empty),
+    getAllIncludingInactive: () => withTransport(transport.getProducts, [], empty),
+    // E2a §2.A: the salon service grid calls this dedicated category reader.
+    getByCategory: (categoryId: string) => withTransport(transport.getByCategory, [categoryId], empty),
+    search: (query: string) => withTransport(transport.searchProducts, [query], empty),
+    searchByCode: async () => empty(),
+    getByBarcode: (barcode: string) => withTransport(
+      transport.getProductByBarcode,
+      [barcode],
+      (): ShimPosProduct | null => null,
+    ),
+    getById: (id: string) => withTransport(
+      transport.getProductById,
+      [id],
+      (): ShimPosProduct | null => null,
+    ),
+  };
+}
+
+export function buildCategoriesNamespace({ transport }: StubDeps) {
+  const empty = (): ShimPosCategory[] => [];
+  return {
+    getAll: () => withTransport(transport.getCategories, [], empty),
+    getAllIncludingEmpty: async () => empty(),
+  };
+}
+
+/** Payment / print (S1 §2.F, §2.I). Receipt COPY delegates to the remote-print
+ *  coordinator (E1a) when a transport is present; otherwise the Wave-1 benign
+ *  outcome so a synthetic install completes CASH without the recovery overlay.
+ *  Fiscal print stays disabled (backend-gated P0-FISCAL) — printFiscalReceipt
+ *  keeps returning fiscalPrinted:false. */
+export function buildPaymentNamespace({ transport }: StubDeps) {
+  // Delegate a receipt COPY print to the remote-print coordinator (E1a) when the
+  // transport provides requestReceiptPrint; else the Wave-1 benign outcome. The
+  // coordinator itself returns the Wave-1 skip (receiptPrinted:true) when no
+  // remote printer is assigned, so a no-agent salon sees the same UX either way.
+  const runReceiptPrint = (orderId: string, opts?: { isReprint?: boolean; openDrawer?: boolean }) =>
+    transport.requestReceiptPrint
+      ? transport.requestReceiptPrint(orderId, opts)
+      : Promise.resolve({ success: true, receiptPrinted: true });
+
+  return {
+    // E-FISCAL: delegate the fiscal-printer check to the coordinator's
+    // FISCAL_RECEIPT assignment lookup when the transport provides it; else the
+    // Wave-1 "no fiscal printer" outcome. `configured` + `connected` both track
+    // `assigned` (a fiscal printer is bound to the salon) — the assignment
+    // endpoint does not expose live online state, so a bound fiscal printer is
+    // treated as ready, matching the E1a getPrinterStatus semantics.
+    hasFiscalPrinter: async () => {
+      if (transport.getFiscalPrinterStatus) {
+        const status = await transport.getFiscalPrinterStatus();
+        return { success: true, configured: !!status.assigned, connected: !!status.assigned };
+      }
+      return { success: true, configured: false, connected: false };
+    },
+    // Receipt COPY outcome (printed/skipped/failed) comes from the coordinator.
+    // The renderer (receipt-outcome.ts deriveReceiptOutcome) reads ONLY
+    // `receiptPrinted`; the coordinator's extra fields are harmless context.
+    printReceipt: (orderId: string) => runReceiptPrint(orderId),
+    // CASH checkout entry point. Drawer is NEVER claimed opened on Android —
+    // there is no drawer hardware (printReceiptAndOpenDrawer hard-rails the
+    // drawer half to false regardless of the coordinator outcome).
+    printReceiptAndOpenDrawer: async (orderId: string) => {
+      const base = await runReceiptPrint(orderId, { openDrawer: true });
+      return { ...base, drawerOpened: false };
+    },
+    // Fiscal receipts delegate to the remote fiscal-print coordinator (E-FISCAL)
+    // when the transport provides requestFiscalPrint; else the Wave-1 benign
+    // fiscalPrinted:false (a false fiscal claim is a legal issue, so the
+    // synthetic fallback NEVER claims printed). The coordinator itself returns
+    // fiscalPrinted:false + skipped when no fiscal printer is assigned.
+    printFiscalReceipt: (orderId: string) =>
+      transport.requestFiscalPrint
+        ? transport.requestFiscalPrint(orderId)
+        : Promise.resolve({ success: true, fiscalPrinted: false }),
+    reprintReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
+    // Refund receipt = a fresh print job via the E1a coordinator (isReprint
+    // semantics — each refund receipt is its own job, no idempotency key, like a
+    // reprint). A true refund-document job type is beyond E1a's receipt-COPY
+    // coordinator, so this reuses the receipt-reprint path (documented E1b gap).
+    printRefundReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
+    getPrintAttempts: async () => ({ success: true, attempts: [] }),
+    getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),
+    getReconcilableFiscalAttempt: async () => ({ success: true, attempt: null }),
+    reconcileFiscalAttempt: async () => ({ success: true }),
+    openCashDrawer: async () => ({ success: false, drawerOpened: false, error: 'no-drawer' }),
+    // Electronic tenders are disabled by the CASH-only hard rail (plan §1 #2).
+    cardPayment: async () => ({ success: false, error: 'card-payment-disabled' }),
+    onElavonStatus: () => noopUnsubscribe(),
+  };
+}
+
+/** Orders (S1 §2.F, §2.G). create is local-first (S8); S2 returns synthetic success. */
+export function buildOrdersNamespace({ transport }: StubDeps) {
+  return {
+    create: (order: any, items: any[]) => withTransport(
+      transport.createOrder,
+      [order, items],
+      () => ({ success: true, id: generateId('synthetic-order') }),
+    ),
+    getHistory: (filters: any) => withTransport(
+      transport.getOrderHistory,
+      [filters],
+      () => ({ orders: [] as any[], total: 0, page: filters?.page ?? 1, limit: filters?.limit ?? 50 }),
+    ),
+    getDetail: (orderId: string) => withTransport(
+      transport.getOrderDetail,
+      [orderId],
+      (): any => null,
+    ),
+    getServerList: async () => ({
+      orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
+    }),
+    // Delegate to the transport so a shelved order is actually reset + re-drained
+    // and the renderer's SyncFailurePanel sees a real {result:{status}}; the S2
+    // stub returned bare success and the shelved order stayed stuck forever.
+    retrySync: (orderId: string) => withTransport(
+      transport.retryOrderSync,
+      [orderId],
+      () => ({ success: true as boolean, result: undefined as { status: string; error?: string } | undefined }),
+    ),
+    // Delegate to the transport so a not-yet-synced order is actually removed
+    // (and restocked); the S2 fake-success let the "cancelled" order sync.
+    // Without a transport (synthetic install), refuse rather than lie.
+    cancel: (orderId: string) => withTransport(
+      transport.cancelOrder,
+      [orderId],
+      () => ({ success: false as boolean, restocked: undefined as number | undefined, error: 'cancel-unavailable' as string | undefined }),
+    ),
+    deleteLocal: (orderId: string) => withTransport(
+      transport.deleteLocalOrder,
+      [orderId],
+      () => ({ success: false as boolean, restocked: 0 as number | undefined, error: 'delete-unavailable' as string | undefined }),
+    ),
+    mutate: async () => ({ success: true, localOnly: true }),
+    mirrorFromServer: async () => ({ success: false, error: 'no-server-mirror' }),
+    // Delegate to the transport so a synced order is really refunded server-side
+    // + marked locally + restocked (E1b); the S2 fake-success let a refund look
+    // done without hitting the backend. Without a transport (synthetic install),
+    // refuse rather than lie.
+    refund: (orderId: string, data: any) => withTransport(
+      transport.refundOrder,
+      [orderId, data],
+      () => ({ success: false as boolean, error: 'refund-unavailable' as string | undefined }),
+    ),
+    downloadPdf: async () => ({ success: false, error: 'no-printer' }),
+    // Delegate to the transport so a synced order is really invoiced server-side
+    // + the local customer_nip is persisted (E3a); the S2 fake-success let an
+    // invoice look attached without hitting the backend. Without a transport
+    // (synthetic install), refuse rather than lie. downloadPdf stays a stub —
+    // PDF download needs Android FileProvider/share, which the manifest forbids
+    // (E3a follow-up).
+    addInvoice: (orderId: string, data: any) => withTransport(
+      transport.addInvoice,
+      [orderId, data],
+      () => ({ success: false as boolean, error: 'invoice-unavailable' as string | undefined }),
+    ),
+    generateProforma: (orderId: string) => withTransport(
+      transport.generateProforma,
+      [orderId],
+      () => ({ success: false as boolean, error: 'invoice-unavailable' as string | undefined }),
+    ),
+    getServerHistory: async () => ({ success: true, history: [] }),
+    getDailyStats: async () => ({ order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 }),
+    repairStockFailures: async () => ({ success: true }),
+    getTodayServer: async () => ({ success: true, orders: [], count: 0 }),
+  };
+}
+
+/** Shift (S1 §2.H). open/close are PORT M4 (S9); S2 synthetic. On success the
+ *  namespace dispatches session/open|close into the POS store so the renderer's
+ *  payment gating (RetailTemplate session.isOpen) reflects the shift — the
+ *  Windows main process does this inside the IPC handler, which the renderer
+ *  never does itself. */
+export function buildShiftNamespace({ transport, posStore }: StubDeps) {
+  return {
+    open: async (data: { staffId: string; staffName: string; openingCash: number }) => {
+      const result = await withTransport(
+        transport.openShift,
+        [data],
+        () => ({ success: true, shiftId: generateId('synthetic-shift') }),
+      );
+      if (result?.success && result.shiftId) {
+        posStore?.dispatch({
+          type: 'session/open',
+          payload: { shiftId: result.shiftId, staffId: data.staffId, staffName: data.staffName },
+        });
+      }
+      return result;
+    },
+    close: async (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
+      const result = await withTransport(
+        transport.closeShift,
+        [data],
+        () => ({ success: true, report: null }),
+      );
+      if (result?.success) posStore?.dispatch({ type: 'session/close' });
+      return result;
+    },
+    getActive: () => withTransport(
+      transport.getActiveShift,
+      [],
+      () => ({ success: false as boolean, error: 'no-active-shift' as string | undefined, shift: undefined as any }),
+    ),
+  };
+}
+
+/** Staff picker for shift open (S1 §2.H). PORT M4 — synthetic empty until S5. */
+export function buildStaffNamespace({ transport }: StubDeps) {
+  const empty = () => [] as Array<{ id: string; user_id?: string | null; name: string; commission_rate: number; is_active: number; role?: string | null }>;
+  return {
+    getAll: () => withTransport(transport.getStaff, [], empty),
+    getAllForSettings: () => withTransport(transport.getStaff, [], empty),
+    create: async () => ({ success: false, error: 'staff-write-unavailable' }),
+    update: async () => ({ success: false, error: 'staff-write-unavailable' }),
+    setActive: async () => ({ success: false, error: 'staff-write-unavailable' }),
+  };
+}
+
+/** Sync (S1 §2.E). products/orders PORT (S6/S8); S2 no-op success. Events STUB. */
+export function buildSyncNamespace({ transport }: StubDeps) {
+  return {
+    products: () => withTransport(
+      transport.syncProducts,
+      [],
+      () => ({ success: true, productsCount: 0 }),
+    ),
+    orders: () => withTransport(
+      transport.syncOrders,
+      [],
+      () => undefined,
+    ),
+    // E2a §2.B: staff sync pull (GET /api/v1/staff → staff table + emit). A real
+    // transport refreshes the per-line staff picker; the S2 synthetic no-op keeps
+    // the cashier-seeded row so the picker still works offline.
+    staff: () => withTransport(
+      transport.syncStaff,
+      [],
+      () => ({ success: true, count: 0 }),
+    ),
+    eventStatus: async () => ({ success: true, status: null }),
+    flushEvents: async () => ({ success: true, result: { acked: 0, failed: 0 } }),
+    // S6+S7: a real transport owns the products-synced emitter; delegate when
+    // present, else the S2 no-op unsubscribe that never fires.
+    onProductsSynced: transport.onProductsSynced
+      ? (cb: () => void) => transport.onProductsSynced!(cb)
+      : () => noopUnsubscribe(),
+    // E2a: a real transport owns the staff-updated emitter (fires after a pull);
+    // delegate when present, else the S2 no-op unsubscribe that never fires.
+    onStaffUpdated: transport.onStaffUpdated
+      ? (cb: (data?: { count?: number } | undefined) => void) => transport.onStaffUpdated!(cb)
+      : () => noopUnsubscribe(),
+    onCatalogUpdated: () => noopUnsubscribe(),
+    onStockUpdated: () => noopUnsubscribe(),
+    // S8: a real transport owns the order sync emitters; delegate when present.
+    onOrderSynced: transport.onOrderSynced
+      ? (cb: (payload: { orderId: string; backendId: string }) => void) => transport.onOrderSynced!(cb)
+      : () => noopUnsubscribe(),
+    onOrderSyncFailed: transport.onOrderSyncFailed
+      ? (cb: (payload: { orderId: string; orderNumber: string | null; error: string; code?: string }) => void) => transport.onOrderSyncFailed!(cb)
+      : () => noopUnsubscribe(),
+    onDraftProductsSynced: () => noopUnsubscribe(),
+    getConflicts: async () => [],
+    resolveConflict: async () => ({ success: true }),
+    getSyncMode: async () => 'local',
+    onSyncEntry: () => noopUnsubscribe(),
+  };
+}
+
+/** Restaurant / kitchen / admin / AI surfaces (S1 §6, §2.M) — EXCLUDE, STUB no-op.
+ *  E2a: the salon `schedule` + `nailTurns` namespaces are PORT-optional and
+ *  dark-launch safe (SHIM_CONTRACT_SALON_E2 §2.C/§2.D). They delegate to the
+ *  transport when it provides the route; with no transport (S2 synthetic) OR
+ *  when the backend route is absent they return {success:false, unavailable:true}
+ *  so SalonTemplate hides the schedule/turn panel instead of crashing. All other
+ *  namespaces here stay STUB no-ops. */
+export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = { transport: {} as ShimTransport }) {
+  const { transport } = deps;
+  // Dark-launch fallback shared by every schedule/nailTurn method when the
+  // transport doesn't provide the port (synthetic install) or the route is
+  // unavailable. SalonTemplate reads `result?.success && result.<field>` and
+  // otherwise shows its unavailable banner / hides the panel.
+  const unavailable = <T extends Record<string, unknown>>(extra: T = {} as T) => ({
+    success: false,
+    unavailable: true,
+    ...extra,
+  });
+  return {
+    draftProducts: {
+      getAll: async () => [],
+      getByStatus: async () => [],
+      getByBarcode: async () => null,
+      getById: async () => null,
+      searchByCode: async () => [],
+    },
+    masterCatalog: {
+      lookupByEan: async () => ({ ok: false, draft: null }),
+      lookupExternalByEan: async () => ({ ok: false, product: null }),
+      scanCreate: async () => ({ ok: false }),
+      importDraft: async () => ({ ok: false }),
+      importExternal: async () => ({ ok: false }),
+    },
+    kitchenCategories: {
+      getAll: async () => [],
+      setPrintEnabled: async () => ({ ok: true }),
+      updateOrder: async () => ({ ok: true, data: { categories: [], updated: 0 } }),
+    },
+    localVariantImports: {
+      listFailed: async () => ({ ok: true, count: 0, imports: [] }),
+      listUnresolvedIds: async () => ({ ok: true, ids: [] }),
+      requeue: async () => ({ ok: false, error: 'no-sync-transport' }),
+    },
+    // E-PARITY-3: the owner product/stock/category admin surface. Delegates to
+    // the real transport port (staff-JWT /warehouse/product-admin) when present;
+    // the synthetic install keeps the all-unavailable shape (admin-only surface,
+    // never hit by the cashier flow).
+    productAdmin: transport.productAdmin ?? {
+      getCapabilities: async () => ({ ok: false }),
+      updateVariant: async () => ({ ok: false, code: 'UNAUTHORIZED_PRODUCT_ADMIN' }),
+      createProduct: async () => ({ ok: false }),
+      deactivateVariant: async () => ({ ok: false }),
+      adjustStock: async () => ({ ok: false }),
+      getVariant: async () => ({ ok: false }),
+      listCategories: async () => ({ ok: false }),
+      createCategory: async () => ({ ok: false }),
+      updateCategory: async () => ({ ok: false }),
+      updateCategoryOrder: async () => ({ ok: false }),
+      uploadCategoryImage: async () => ({ ok: false }),
+      deleteCategory: async () => ({ ok: false }),
+      listLots: async () => ({ ok: false }),
+      receiveStock: async () => ({ ok: false }),
+      uploadMainImage: async () => ({ ok: false }),
+    },
+    tables: {
+      getAll: async () => [],
+      getActive: async () => [],
+      updateStatus: async () => undefined,
+      clearTable: async () => undefined,
+      setCovers: async () => undefined,
+    },
+    customers: {
+      getAll: async () => [],
+      search: async () => [],
+      getById: async () => null,
+      increaseDebt: async () => undefined,
+      // E3a: delegate the NIP/GUS lookup to the transport (staff-JWT
+      // GET /b2b/pos/customers/nip/:nip) when one is present; the S2 synthetic
+      // fallback keeps the 'unavailable' shape so the invoicing UI shows its
+      // not-available state instead of crashing.
+      lookupNip: (nip: string) => withTransport(
+        transport.lookupNip,
+        [nip],
+        () => ({ success: false as boolean, error: 'nip-lookup-unavailable' as string | undefined }),
+      ),
+    },
+    pickupOrders: {
+      machineId: async () => null,
+      listOpen: async () => [],
+      claim: async () => ({ ok: false, status: 0, error: 'pickup-unavailable' }),
+      claimByRef: async () => ({ ok: false, status: 0, error: 'pickup-unavailable' }),
+      release: async () => ({ ok: false, status: 0, error: 'pickup-unavailable' }),
+      settle: async () => ({ ok: false, status: 0, error: 'pickup-unavailable' }),
+      cancel: async () => ({ ok: false, status: 0, error: 'pickup-unavailable' }),
+    },
+    quickKeys: {
+      list: async () => [],
+      get: async () => null,
+      create: async () => ({ success: true }),
+      update: async () => ({ success: true }),
+      remove: async () => ({ success: true }),
+      assign: async () => ({ success: true }),
+      getAssigned: async () => null,
+    },
+    recognition: {
+      analyze: async () => ({ ok: false, products: [], error: 'recognition-unavailable' }),
+      scanMatch: async () => ({ ok: false, products: [], error: 'recognition-unavailable' }),
+    },
+    quickAdd: {
+      prepare: async () => ({ ok: false, error: 'quick-add-unavailable' }),
+      finalize: async () => ({ ok: false, error: 'quick-add-unavailable' }),
+    },
+    voice: {
+      transcribe: async () => ({ ok: false, error: 'voice-unavailable' }),
+    },
+    nailTurns: {
+      // E2a §2.D: technician turn board. Dark-launch safe — null/hide-banner when
+      // the route is absent. The transport wrapper already returns the
+      // {success:false, unavailable:true} shape on 403/404/501/network.
+      getToday: () => withTransport(
+        transport.getNailTurnBoard,
+        [],
+        () => unavailable(),
+      ),
+      onUpdated: transport.onNailTurnsUpdated
+        ? (cb: (data: { orderId?: string; checkedOut?: number }) => void) => transport.onNailTurnsUpdated!(cb)
+        : () => noopUnsubscribe(),
+    },
+    schedule: {
+      // E2a §2.C: technician timetable + waiting check-ins. All dark-launch safe
+      // (the schedule view shows scheduleError / hides the panel on unavailable).
+      getToday: (date?: string) => withTransport(
+        transport.getPosScheduleToday,
+        [date],
+        () => unavailable(),
+      ),
+      getWeek: (from?: string, days?: number) => withTransport(
+        transport.getPosScheduleWeek,
+        [from, days],
+        () => unavailable(),
+      ),
+      setStaffStatus: (payload: any) => withTransport(
+        transport.setPosScheduleStaffStatus,
+        [payload],
+        () => unavailable(),
+      ),
+      assignNext: (payload: any) => withTransport(
+        transport.assignPosScheduleNext,
+        [payload],
+        () => unavailable(),
+      ),
+      requestStaff: (payload: any) => withTransport(
+        transport.requestPosScheduleStaff,
+        [payload],
+        () => unavailable(),
+      ),
+    },
+    scale: {
+      readWeight: async () => ({ success: false, weightKg: 0, stable: false, code: 'NO_SCALE', error: 'no-scale' }),
+      getNetworkInfo: async () => ({ ips: [], suggestedHost: '', defaultPort: 0, running: false, port: null }),
+    },
+    hold: {
+      create: async () => ({ success: true }),
+      list: async () => [],
+      get: async () => null,
+      remove: async () => ({ success: true }),
+    },
+    // Boot subscriptions that fire unconditionally (S1 §7.8) — STUB no-op unsubs.
+    onFiscalUnknown: () => noopUnsubscribe(),
+    onPickupOrderEvent: () => noopUnsubscribe(),
+    onCustomerDisplayStatus: () => noopUnsubscribe(),
+    onCustomerRequest: () => noopUnsubscribe(),
+    onCustomerCheckIn: () => noopUnsubscribe(),
+    onDbSaveError: () => noopUnsubscribe(),
+    seedDemo: async () => ({ success: true }),
+  };
+}
+
+/** Window management (S1 §2.L) — single-window on Android. */
+export function buildWindowNamespace() {
+  return {
+    open: async () => ({ success: true }),
+    close: async () => ({ success: true }),
+    list: async () => [],
+    setFullScreen: async () => ({ success: true }),
+    setKiosk: async () => ({ success: true }),
+  };
+}
+
+/** Top-level hardware stubs (S1 §2.J, §2.K) — no device on Android yet. */
+export function buildTopLevelHardwareStubs() {
+  return {
+    onBarcodeScanned: () => noopUnsubscribe(),
+    sendKeyboardInput: () => { /* HID wedge forwarder — Android has its own input stack (S1 §4) */ },
+    printLabel: async () => ({ success: false, error: 'no-label-printer' }),
+    listWindowsPrinters: async () => [],
+    testPrint: async () => ({ success: false, error: 'no-printer' }),
+    testPrinterByType: async () => ({ success: false, error: 'no-printer' }),
+    scale: {
+      readWeight: async () => ({ success: false, weightKg: 0, stable: false, code: 'NO_SCALE', error: 'no-scale' }),
+      getNetworkInfo: async () => ({ ips: [], suggestedHost: '', defaultPort: 0, running: false, port: null }),
+    },
+  };
+}
+
+// ── Billiard (Bi-a) namespace — S1 §2.N ─────────────────────────────────────
+//  P1 is ONLINE-ONLY: no local SQLite cache, no offline write queue (the
+//  Windows counterpart caches in src/main/sync/billiard-sync.ts). Reads degrade
+//  to benign empty/offline defaults when no transport is present so the renderer
+//  boots; writes (mutate / apiCall) REJECT — origin/main's useBilliardApi routes
+//  every online read through `billiard.mutate` (op 'online_api') and every write
+//  through it too, so faking success would silently drop a charge. The server is
+//  the source of truth for all charges (plan money-path rule).
+
+/**
+ * Exact literal the Windows `billiard:print:receipt` handler returns when no
+ * receipt printer is connected — `src/main/modules/sync.module.ts:390`
+ * (`return { success: true, receiptPrinted: false };`). Android has no local
+ * receipt printer, so the stub (and the real transport's no-printer path)
+ * mirror this so payment settle never blocks on printing. Exported because the
+ * real billiard transport (T4) + the payment-vs-print contract test (T5) reuse
+ * the same literal.
+ */
+export const NO_PRINTER_RESULT: { success: boolean; receiptPrinted: boolean } = {
+  success: true,
+  receiptPrinted: false,
+};
+
+/** Billiard namespace (P1 online-only; reads degrade to empty, writes reject). */
+export function buildBilliardNamespace({ transport }: StubDeps) {
+  const EMPTY_OVERVIEW = () => ({
+    tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true,
+  });
+  return {
+    getFloorOverview: () => withTransport(transport.billiardGetOverview, [], () => EMPTY_OVERVIEW()),
+    getSession: (id: string) => withTransport(transport.billiardGetSession, [id], () => null),
+    getCombos: (activeOnly?: boolean) => withTransport(transport.billiardGetCombos, [activeOnly], () => []),
+    getFloorPlans: () => withTransport(transport.billiardGetFloorPlans, [], () => []),
+    getFnbProducts: (search?: string, categoryId?: string) => withTransport(transport.billiardGetFnbProducts, [search, categoryId], () => []),
+    getFnbCategories: () => withTransport(transport.billiardGetFnbCategories, [], () => []),
+    getResourceType: (code: string) => withTransport(transport.billiardGetResourceType, [code], () => null),
+    getRestaurantCombos: () => withTransport(transport.billiardGetRestaurantCombos, [], () => []),
+    // MONEY PATH: never fake success. Reject when no transport so the UI surfaces
+    // a clear network-required error instead of silently swallowing a charge.
+    mutate: (op: string, method: string, path: string, body?: any) => {
+      if (!transport.billiardMutate) return Promise.reject(new Error('Billiard requires a network connection.'));
+      return transport.billiardMutate(op, method, path, body);
+    },
+    getSyncStatus: () => withTransport(transport.billiardSyncStatus, [], () => ({ pending: 0, lastSync: null, online: false })),
+    onDataUpdated: (cb: (d: { type: string }) => void) =>
+      transport.billiardOnDataUpdated ? transport.billiardOnDataUpdated(cb) : noopUnsubscribe(),
+    printReceipt: (sessionId: string, payment: { method: string; amount: number }) =>
+      withTransport(transport.billiardPrintReceipt, [sessionId, payment], () => NO_PRINTER_RESULT),
+    // No drawer hardware on Android (mirrors buildPaymentNamespace's openCashDrawer rail).
+    openCashDrawer: async () => ({ success: false }),
+  };
+}
+
+/**
+ * Generic REST API proxy for billiard (S1 §2.N apiCall). Rejects when no
+ * transport is present — never fakes a network round-trip (money-adjacent paths
+ * call through this surface). A real transport (T4) allowlists the billiard/
+ * resources/restaurant prefixes.
+ */
+export function buildApiCall({ transport }: StubDeps) {
+  return (method: string, path: string, body?: any) => {
+    if (!transport.apiCall) return Promise.reject(new Error('This operation requires a network connection.'));
+    return transport.apiCall(method, path, body);
+  };
+}
+
+/** A shim that never delegates — the S2 default (no network, all synthetic). */
+export const SYNTHETIC_TRANSPORT: ShimTransport = {};
+
+export type { AgentConfig };

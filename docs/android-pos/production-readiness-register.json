@@ -1,0 +1,127 @@
+{
+  "registerVersion": 1,
+  "prepared": "2026-07-18",
+  "description": "Owner-decision register for Android POS production readiness. Every entry defaults to blocked. Approving an entry requires a real owner decision recorded in evidence {approvedBy, date, reference}; the executable gate (scripts/verify-production-readiness.mjs) validates this file and refuses GO while any entry is blocked. Editing this file is not itself an approval: the referenced evidence must exist and survive review.",
+  "items": [
+    {
+      "id": "owner-application-id",
+      "title": "Final production applicationId approved by owner",
+      "decision": "blocked",
+      "blocks": ["production build identity", "Play enrollment", "signing continuity"],
+      "evidence": null,
+      "notes": "Android remains com.ziraai.posdiagnostics.dev. Do not invent a production package ID; it is permanent once shipped."
+    },
+    {
+      "id": "owner-play-distribution",
+      "title": "Play app + distribution model (private/managed/track) approved by owner",
+      "decision": "blocked",
+      "blocks": ["Play flavor", "release channel", "update model"],
+      "evidence": null,
+      "notes": "No Play app or flavor exists. Play Internal Testing first, then Closed/Production or Managed Play."
+    },
+    {
+      "id": "owner-release-signing",
+      "title": "Release signer custody and certificate fingerprint contract approved",
+      "decision": "blocked",
+      "blocks": ["release signing", "AAB upload", "sideload continuity"],
+      "evidence": null,
+      "notes": "Upload key, Play app-signing key, and optional sideload key are three separate identities. No keystore may ever be committed to the repository; production signer comes only from a secret environment."
+    },
+    {
+      "id": "version-code-allocator",
+      "title": "Monotonic production versionCode allocator design reviewed",
+      "decision": "blocked",
+      "blocks": ["Play upload", "update ordering"],
+      "evidence": null,
+      "notes": "Current versionCode binds to a per-run CI number; GitHub run numbers are not Play-safe monotonic allocation across workflow changes, reruns, or tracks."
+    },
+    {
+      "id": "r12-artifact-decision",
+      "title": "Owner decision on hidden Android TV APK installer dependency (R12)",
+      "decision": "blocked",
+      "blocks": ["Windows installer", "repository-wide release safety"],
+      "evidence": null,
+      "notes": "package.json build.extraResources references android-tv-ads/app/build/outputs/apk/release/app-release.apk. Do not remove, build, copy, hash, or sign it in Android packets; the owner must choose removal or a separately signed, provenance-verified TV artifact."
+    },
+    {
+      "id": "legacy-lane-migration",
+      "title": "Legacy tag-triggered R2 publish workflow disabled or redesigned with owner approval",
+      "decision": "blocked",
+      "blocks": ["repository-wide release safety"],
+      "evidence": null,
+      "notes": ".github/workflows/build.yml publishes to R2 with production secrets on v* tags and bypasses the B4 build-only gates. Disabling it may interrupt the current Windows update channel, so it needs a separately approved migration plan."
+    },
+    {
+      "id": "node22-windows-baseline",
+      "title": "Node 22 engines/CI contract accepted after Windows regression re-baseline",
+      "decision": "blocked",
+      "blocks": ["repository engines change", "shared CI toolchain"],
+      "evidence": null,
+      "notes": "package.json still declares node 20.x while the reviewed Android toolchain pins Node 22. Broadening the engine contract requires the recorded Windows Node 22 build/test baseline to be accepted."
+    },
+    {
+      "id": "backend-p0-closure",
+      "title": "All eight backend P0 contract blockers closed and verified in the live artifact",
+      "decision": "blocked",
+      "blocks": ["Android order/shift/print/fiscal writes"],
+      "evidence": null,
+      "notes": "Register of record: docs/android-pos/OPEN_BACKEND_CONTRACT_DECISIONS.md (P0-FISCAL-1/2, P0-PAY-1, P0-GATE-1, P0-AUDIT-1, P0-SHIFT-1/2, P0-ORDER-1). Closure requires canonical commit, guarded deploy, and production artifact verification."
+    },
+    {
+      "id": "server-kill-switch",
+      "title": "Server-side deny-by-default Android device/session/sales gates deployed and verified",
+      "decision": "blocked",
+      "blocks": ["any Android production credential or salon"],
+      "evidence": null,
+      "notes": "Client capability flags are not kill switches. Gates default false: terminal access, catalog, sales, offline sales, remote print/fiscal, minimum app version."
+    },
+    {
+      "id": "production-auth-storage",
+      "title": "Production staff auth/session broker and Keystore-backed storage implemented and tested",
+      "decision": "blocked",
+      "blocks": ["production login", "token persistence"],
+      "evidence": null,
+      "notes": "Refresh tokens must never enter WebView/localStorage/plain SQLite. Staff JWT only; no salon-wide pa_ key on Android."
+    },
+    {
+      "id": "production-write-paths",
+      "title": "Durable order/shift write paths pass the chaos and reconciliation suites",
+      "decision": "blocked",
+      "blocks": ["Android sales"],
+      "evidence": null,
+      "notes": "Contract: docs/android-pos/STATE_OWNERSHIP_AND_LEDGER_SPEC.md. Requires DB-backed idempotency, lost-response replay, and process-death recovery evidence."
+    },
+    {
+      "id": "hardware-evidence",
+      "title": "Named tablet/scanner hardware validation evidence recorded",
+      "decision": "blocked",
+      "blocks": ["pilot rollout"],
+      "evidence": null,
+      "notes": "Two named target tablets plus scanner matrix per GLM-B3; no physical-device evidence exists yet."
+    },
+    {
+      "id": "dependency-advisories",
+      "title": "npm dependency advisories remediated via a reviewed compatibility packet",
+      "decision": "blocked",
+      "blocks": ["production eligibility"],
+      "evidence": null,
+      "notes": "Clean npm ci reports 42 advisories (4 critical). npm audit fix --force is forbidden; remediation needs its own reviewed packet."
+    },
+    {
+      "id": "remote-ci-evidence",
+      "title": "Remote CI runs of the build-only pipeline recorded",
+      "decision": "blocked",
+      "blocks": ["release pipeline trust"],
+      "evidence": null,
+      "notes": "B4 jobs were validated locally only; runner-label drift and remote environment behavior remain unproven until the workflow runs in actual GitHub CI."
+    },
+    {
+      "id": "billiard-online-only",
+      "title": "Owner decision before live salon use of the billiard (Bi-a) online-only mode",
+      "decision": "blocked",
+      "blocks": ["billiard floor-plan live use", "billiard session mutations at a live salon"],
+      "evidence": null,
+      "notes": "Wave B-1 (SHIPPED 2026-07-21, branch codex/android-billiard-port) mounts the billiard floor plan online-only behind the `billiard` entitlement: reads hit the backend through the staff-JWT client with a 10s dashboard poll + in-memory cache, and writes (billiard.mutate) go straight through with the real error surfaced. There is NO offline queue and NO local SQLite cache (the Windows agent has both). P1 has no offline mode: network loss leaves a stale read-only floor view and mutations fail loudly (they reject, never fake success) — acceptable for a fixed always-online terminal, not for a hand-carried tablet. The owner must confirm the target device is always-online, and that the empty F&B add-item list (pending the /billiard/fnb/* backend route — Wave B-2) and the off-money-path printReceipt (Android has no local printer; the backend dispatches receipts) are understood before any live salon relies on it. See docs/android-pos/EXPANSION_PLAN_2026-07-19.md Wave B-1 and SHIM_CONTRACT_S1.md §2.N."
+    }
+  ]
+}

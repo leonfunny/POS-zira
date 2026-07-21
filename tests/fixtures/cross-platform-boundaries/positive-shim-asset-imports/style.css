@@ -1,0 +1,3 @@
+/* Empty fixture stylesheet — the boundary verifier never opens asset files
+ * (they are not TS-resolvable, so the import is flagged as unresolved without
+ * the target being visited). Present only so the import reads naturally. */
