@@ -1277,4 +1277,42 @@ export class PosApiClient {
       body: JSON.stringify(body),
     });
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Generic authenticated JSON request — billiard online-only transport (T4)
+  // ════════════════════════════════════════════════════════════════════════
+  //
+  // The billiard (Bi-a) Android transport (shim/billiard-transport.ts) reads
+  // /billiard/* + /restaurant/* + /resources/* and writes via billiard.mutate.
+  // Rather than duplicate the auth + refresh-on-401 transport for each route,
+  // it is constructed with an injected `request(method, path, body)` bound to
+  // THIS method on the SAME PosApiClient the real transport builds. `path` is an
+  // /api/v1-relative path beginning with '/' (e.g. '/billiard/dashboard'); the
+  // method is any HTTP verb. On a non-2xx it throws an Error carrying `.status`
+  // and the server `message` so the billiard mutate (money path) propagates the
+  // REAL error — never fakes success. An empty 2xx body (some DELETEs) → null.
+
+  /**
+   * Generic authenticated JSON request. Staff JWT + refresh-on-401 via
+   * `fetchWithTimeout` (identical transport to the typed methods above). Returns
+   * the parsed JSON body, or null for an empty 2xx body. Throws an Error with
+   * `.status` on non-2xx.
+   */
+  async request(method: string, path: string, body?: unknown): Promise<any> {
+    const token = await this.requireToken('request');
+    const url = `${this.baseUrl}/api/v1${path}`;
+    const response = await this.fetchWithTimeout(url, {
+      method: method.toUpperCase(),
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData?.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  }
 }

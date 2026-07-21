@@ -56,6 +56,7 @@ import { createSyncMeta } from './db/sync-meta';
 import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
+import { createBilliardTransport } from './billiard-transport';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -529,6 +530,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     salonSlug: configStore.getRawConfig().salonSlug ?? undefined,
   });
 
+  // Billiard (Bi-a) online-only transport (T4). Bound to the SAME client's
+  // generic request() — staff JWT + refresh-on-401, with no duplicated auth.
+  // Its methods are spread into the returned transport below; dispose() runs on
+  // logout and on the auth-expired teardown path so the 10s poll timer + listener
+  // set never leak across a session. Constructed eagerly (just closures — no
+  // fetch and no poll timer until a billiard read actually runs).
+  const billiard = createBilliardTransport({
+    request: (method, path, body) => client.request(method, path, body),
+  });
+
   const expiredListeners = new Set<() => void>();
   const productsSyncedListeners = new Set<() => void>();
   const orderSyncedListeners = new Set<(payload: { orderId: string; backendId: string }) => void>();
@@ -598,6 +609,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // (resolveCurrentUser semantics, auth-get-user.ts:81-108).
       if (lastRefreshOutcome === 'rejected' || lastRefreshOutcome === 'no-refresh-token') {
         clearSessionIdentity();
+        // Stop the billiard poll timer + drop its listeners — the session is
+        // dead, the renderer is dropping to login, so the 10s background refresh
+        // must not keep firing 401s against a dead token. Recoverable: a later
+        // billiard read restarts the timer.
+        billiard.dispose();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -724,6 +740,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
 
   const transport: ShimTransport & RealTransportEvents = {
+    // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
+    //    allowlisted apiCall. Spread in (no key collides with the ports below).
+    ...billiard,
+
     // ── Product/stock/category admin (E-PARITY-3, owner-only) ──────────────
     productAdmin: createProductAdminSurface({ client, configStore }),
 
@@ -851,6 +871,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // E-PARITY-1: tear down the print-agent socket + drop the pa_ key before
       // clearing the session (mirror Windows disconnect-on-logout).
       await agentConnection.disconnect();
+      // Stop the billiard poll timer + drop its listeners on this explicit
+      // teardown path (T4) — the 10s background refresh must not outlive the
+      // session.
+      billiard.dispose();
       // Clear tokens + identity; KEEP the local SQL.js mirror (S1 §2.B note —
       // logout ≠ wipe; a re-login to the same salon stays healthy).
       await tokenStore.clear();

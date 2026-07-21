@@ -469,3 +469,61 @@ describe('requireToken — absent staff JWT is surfaced, not sent as Bearer null
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// ─── generic request passthrough (billiard online-only transport, T4) ──────
+
+describe('request — generic /api/v1-relative authenticated JSON call', () => {
+  it('GET → <base>/api/v1<path> with Bearer, no body, returns parsed JSON', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider({ accessToken: 'staff-jwt' }) });
+    fetchMock.mockResolvedValueOnce(json([{ resource: { id: 't1' } }]));
+
+    const res = await client.request('GET', '/billiard/dashboard');
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE_URL}/api/v1/billiard/dashboard`);
+    expect(init.method).toBe('GET');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer staff-jwt');
+    expect(init.body).toBeUndefined();
+    expect(res).toEqual([{ resource: { id: 't1' } }]);
+  });
+
+  it('POST serializes the body and the URL/method match', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider() });
+    fetchMock.mockResolvedValueOnce(json({ ok: true }));
+
+    const res = await client.request('post', '/billiard/sessions', { resourceId: 'r1' });
+
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE_URL}/api/v1/billiard/sessions`);
+    expect(init.method).toBe('POST'); // method is normalized to uppercase
+    expect(JSON.parse(init.body as string)).toEqual({ resourceId: 'r1' });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('non-2xx throws an Error carrying .status and the server message (money path)', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider() });
+    fetchMock.mockResolvedValueOnce(json({ message: 'already-paid' }, 400));
+
+    let caught: any;
+    try {
+      await client.request('POST', '/billiard/sessions/s1/pay', { method: 'CASH' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.message).toBe('already-paid');
+    expect(caught.status).toBe(400);
+  });
+
+  it('an empty 2xx body resolves to null (no JSON.parse of "")', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider() });
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 200 }));
+    await expect(client.request('DELETE', '/billiard/sessions/s1/items/i9')).resolves.toBeNull();
+  });
+
+  it('protected routes throw NO_AUTH_TOKEN when getAccessToken returns null', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider({ accessToken: null }) });
+    await expect(client.request('GET', '/billiard/dashboard')).rejects.toThrow(/NO_AUTH_TOKEN/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
