@@ -1,3 +1,4 @@
+import { resolveBilliardOutstandingBalance } from '../../../shared/billiard-contract';
 import type { FloorPosition } from './types';
 
 
@@ -54,6 +55,24 @@ export function estimateCharge(session: any): number {
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
+}
+
+export interface UnsettledSummary {
+  count: number;
+  totalOutstanding: number;
+}
+
+export function summarizeUnsettled(sessions: any[] | null | undefined): UnsettledSummary {
+  if (!Array.isArray(sessions) || sessions.length === 0) return { count: 0, totalOutstanding: 0 };
+  const total = sessions.reduce((sum, s) => sum + resolveBilliardOutstandingBalance(s), 0);
+  return { count: sessions.length, totalOutstanding: Math.round(total * 100) / 100 };
+}
+
+export function sortUnsettledNewestFirst<T extends { endedAt?: string | null; startedAt?: string | null }>(
+  sessions: T[],
+): T[] {
+  const ts = (s: T): number => new Date(s.endedAt || s.startedAt || 0).getTime();
+  return [...sessions].sort((a, b) => ts(b) - ts(a));
 }
 
 export function getNextName(currentValue: string, existingNames: string[], direction: 'up' | 'down' = 'up'): string {

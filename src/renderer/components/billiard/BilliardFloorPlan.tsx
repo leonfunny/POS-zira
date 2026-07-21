@@ -25,7 +25,7 @@ import {
 } from '../../hooks/useBilliardData';
 import type { TableOverview, FloorPosition, BilliardFloorPlan as FloorPlanType, Measurement } from './types';
 import { DEFAULT_FLOOR } from './constants';
-import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal } from './utils';
+import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal, summarizeUnsettled } from './utils';
 import { DraggableTable } from './DraggableTable';
 import { AddTableDialog } from './AddTableDialog';
 import { TableActionPopover } from './TableActionPopover';
@@ -38,9 +38,9 @@ import { AssetPickerGrid } from './AssetPickerGrid';
 import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
+import { UnsettledPanel } from './UnsettledPanel';
 import { ReservationPanel } from './ReservationPanel';
 import { ToastProvider, useToast } from './Toast';
-import { resolveBilliardOutstandingBalance } from '../../../shared/billiard-contract';
 import { useAuth } from '../../hooks/useAuth';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
@@ -220,6 +220,7 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [addItemSessionId, setAddItemSessionId] = useState<string | null>(null);
   const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
   const [paymentSession, setPaymentSession] = useState<any>(null);
+  const [unsettledOpen, setUnsettledOpen] = useState(false);
   const [reservationsOpen, setReservationsOpen] = useState(false);
   const [changeImageId, setChangeImageId] = useState<string | null>(null);
   const [changeImageKey, setChangeImageKey] = useState<string | null>(null);
@@ -235,6 +236,7 @@ function FloorPlanInner({ language }: { language: Language }) {
       : [],
     [overview],
   );
+  const unsettledSummary = useMemo(() => summarizeUnsettled(pendingPayments), [pendingPayments]);
   const selectedTable = useMemo(
     () => selectedTableId
       ? tables.find((table) => table.resource.id === selectedTableId) || null
@@ -803,26 +805,17 @@ function FloorPlanInner({ language }: { language: Language }) {
         </section>
       )}
 
-      {!editMode && pendingPayments.length > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          <div className="text-sm font-semibold text-amber-900 shrink-0">
-            {t('billiard.payment') || 'Payment'}: {pendingPayments.length}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {pendingPayments.map((session: any) => (
-              <button
-                key={session.id}
-                type="button"
-                onClick={() => setPaymentSession(session)}
-                className="h-8 px-3 rounded-md border border-amber-300 bg-white text-xs font-medium text-amber-900 hover:bg-amber-100"
-              >
-                {session.resource?.name || session.id.slice(0, 8)} · {' '}
-                {t('billiard.remaining') || 'Remaining'} {' '}
-                {formatCurrency(resolveBilliardOutstandingBalance(session))}
-              </button>
-            ))}
-          </div>
-        </div>
+      {!editMode && unsettledSummary.count > 0 && (
+        <button
+          type="button"
+          onClick={() => setUnsettledOpen(true)}
+          className="flex w-fit items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 transition-colors hover:bg-amber-100"
+        >
+          {t('billiard.unsettled') || 'Unsettled'}
+          <span className="tabular-nums">{unsettledSummary.count}</span>
+          ·
+          <span className="tabular-nums">{formatCurrency(unsettledSummary.totalOutstanding)}</span>
+        </button>
       )}
 
       {/* Sync Status Indicator */}
@@ -1137,6 +1130,15 @@ function FloorPlanInner({ language }: { language: Language }) {
           language={language}
         />
       )}
+
+      <UnsettledPanel
+        open={unsettledOpen}
+        onOpenChange={setUnsettledOpen}
+        sessions={pendingPayments}
+        online={Boolean(syncStatus?.online ?? true)}
+        language={language}
+        onSettle={(session) => setPaymentSession(session)}
+      />
 
       {paymentSession && (
         <PaymentDialog

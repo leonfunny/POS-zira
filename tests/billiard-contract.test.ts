@@ -361,7 +361,10 @@ describe('billiard desktop/backend contract', () => {
     expect(apiClient).toContain('error.status = response.status');
     expect(floorPlan).toContain('(overview as any)?.pendingPayments');
     expect(floorPlan).toContain('setPaymentSession(session)');
-    expect(floorPlan).toContain('resolveBilliardOutstandingBalance(session)');
+    // Pending cash recovery lives in the UnsettledPanel the floor renders.
+    expect(floorPlan).toContain('<UnsettledPanel');
+    const unsettledPanel = readSource('../src/renderer/components/billiard/UnsettledPanel.tsx');
+    expect(unsettledPanel).toContain('resolveBilliardOutstandingBalance(session)');
     expect(floorPlan).toContain("canEditLayout = String(user?.role || '').toUpperCase() === 'OWNER'");
     expect(floorPlan).toContain("useResourceType('POOL_TABLE', canEditLayout)");
     expect(floorPlan).toContain('const [selectedTableId, setSelectedTableId]');
