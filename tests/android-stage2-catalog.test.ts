@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// The bundle assertion needs a prior `npm run build:android:web`. On a fresh
+// checkout (e.g. gm running plain `npm test`) there is no bundle — skip instead
+// of failing so the android suite stays green without a build step. CI's
+// android lane always builds first, so the assertion still runs where it matters.
+const BUNDLE_ASSETS_DIR = resolve(ROOT, 'dist/android-web/assets');
+const hasAndroidBundle = existsSync(BUNDLE_ASSETS_DIR);
 
 async function source(path: string) {
   return readFile(resolve(ROOT, path), 'utf8');
@@ -52,8 +60,8 @@ describe('Android Stage 2 — real POS renderer behind the electronAPI shim', ()
     expect(stubs).toContain("'no-scale'");
   });
 
-  test('the built Android web bundle contains the shim surface', async () => {
-    const assetsDir = resolve(ROOT, 'dist/android-web/assets');
+  test.skipIf(!hasAndroidBundle)('the built Android web bundle contains the shim surface', async () => {
+    const assetsDir = BUNDLE_ASSETS_DIR;
     let entries: string[];
     let jsFile: string | undefined;
     try {

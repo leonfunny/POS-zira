@@ -1,9 +1,13 @@
 name: POS dual-platform build-only evidence
 
+# Trigger narrowed 2026-07-21 (merge-to-main prep): '**' made EVERY main push
+# run 4 jobs (2× windows-latest billed). Android evidence only needs to run on
+# the android workstream branches + PRs + manual dispatch.
 on:
   push:
     branches:
-      - '**'
+      - 'codex/android-pos-**'
+      - 'codex/android-billiard-**'
   pull_request:
   workflow_dispatch:
 
