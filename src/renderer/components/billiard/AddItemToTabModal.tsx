@@ -289,7 +289,7 @@ export function AddItemToTabModal({
           {mode === 'catalog' ? (
             <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
               {/* Search */}
-              <div className="relative">
+              <div className="relative shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   ref={searchRef}
@@ -302,7 +302,7 @@ export function AddItemToTabModal({
 
               {/* Category tabs */}
               {categories.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto">
+                <div className="shrink-0 flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto">
                   <button
                   className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                     selectedCategory === null

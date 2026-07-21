@@ -66,9 +66,13 @@ describe('transfer dialog — stable list, no private polling, drawer follows', 
 });
 
 describe('add-item modal — categories wrap instead of clipping', () => {
-  it('the category chips wrap; no hidden horizontal scroll', () => {
+  it('the category chips wrap, never shrink to a sliver, no hidden scroll', () => {
     const modal = readSource('../src/renderer/components/billiard/AddItemToTabModal.tsx');
-    expect(modal).toContain('flex-wrap');
+    // shrink-0 on the search and chip rows: without it the flex column
+    // squashes them to a few pixels when height is tight (the reported
+    // "category is cut" screenshot).
+    expect(modal).toContain('shrink-0 flex flex-wrap');
+    expect(modal).toContain('relative shrink-0');
     expect(modal).not.toContain('scrollbar-none');
   });
 });
