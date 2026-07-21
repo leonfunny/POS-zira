@@ -4,7 +4,13 @@ import {
   buildBilliardBookingsPath,
   normalizeBilliardAvailability,
   normalizeBilliardBookings,
+  stripIpcErrorPrefix,
 } from '../../shared/billiard-contract';
+
+function rethrowClean(err: any): never {
+  if (err?.message) err.message = stripIpcErrorPrefix(err.message);
+  throw err;
+}
 
 /**
  * Billiard edit-mode API hooks.
@@ -17,12 +23,12 @@ import {
 
 /** Queue-aware mutate (offline-safe, optimistic local update). */
 function mutate(op: string, method: string, path: string, body?: any) {
-  return window.electronAPI.billiard.mutate(op, method, path, body);
+  return window.electronAPI.billiard.mutate(op, method, path, body).catch(rethrowClean);
 }
 
 /** Online-only API call. REST itself is the availability probe. */
 function onlineApi(method: string, path: string, body?: any) {
-  return window.electronAPI.billiard.mutate('online_api', method, path, body);
+  return window.electronAPI.billiard.mutate('online_api', method, path, body).catch(rethrowClean);
 }
 
 export function useBilliardApi() {

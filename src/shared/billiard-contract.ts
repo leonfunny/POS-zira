@@ -166,6 +166,15 @@ export function billiardPaymentPayload(
   return amount === undefined ? { paymentMethod } : { paymentMethod, amount };
 }
 
+/**
+ * Errors thrown in the main process reach the renderer wrapped by Electron as
+ * "Error invoking remote method 'billiard:mutate': Error: <real message>" —
+ * cashiers must never see that wrapper.
+ */
+export function stripIpcErrorPrefix(message: string): string {
+  return String(message ?? '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '');
+}
+
 /** Write-off payloads. The backend requires a non-empty reason (≤500 chars). */
 export function billiardVoidPayload(reason: string): { reason: string } {
   return { reason: String(reason ?? '').trim() };

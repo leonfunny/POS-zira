@@ -1,5 +1,29 @@
-import { resolveBilliardOutstandingBalance } from '../../../shared/billiard-contract';
+import { resolveBilliardOutstandingBalance, stripIpcErrorPrefix } from '../../../shared/billiard-contract';
 import type { FloorPosition } from './types';
+
+/**
+ * Server guard messages arrive IPC-wrapped and in UTC ISO timestamps — turn
+ * the known ones into local-time text a cashier can act on. Unknown messages
+ * pass through with just the wrapper removed.
+ */
+export function humanizeBilliardError(
+  message: string,
+  t: (key: string) => string | undefined,
+  timeZone?: string,
+): string {
+  const cleaned = stripIpcErrorPrefix(message);
+  const window = cleaned.match(/^Check-in window is from (\S+) to (\S+)$/);
+  if (window) {
+    const fmt = (iso: string) => new Date(iso).toLocaleTimeString('pl-PL', {
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
+    });
+    const template = t('billiard.checkinWindow') || 'Check-in opens {from}–{to}';
+    return template.replace('{from}', fmt(window[1])).replace('{to}', fmt(window[2]));
+  }
+  return cleaned;
+}
 
 
 export function formatElapsed(startedAt: string, totalPausedSeconds: number, isPaused: boolean, pausedAt?: string): string {

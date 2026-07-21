@@ -4,6 +4,7 @@ import {
   billiardTransferPayload,
   billiardVoidBatchPayload,
   billiardVoidPayload,
+  stripIpcErrorPrefix,
 } from '../../shared/billiard-contract';
 
 // ─── Query hook (with retry on initial failure) ──────
@@ -94,6 +95,7 @@ function useMutation<TData = any, TArgs extends any[] = any[]>(
       onSuccess?.();
       return result;
     } catch (err: any) {
+      if (err?.message) err.message = stripIpcErrorPrefix(err.message);
       throw err;
     } finally {
       setIsPending(false);

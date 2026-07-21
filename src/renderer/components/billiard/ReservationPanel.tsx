@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { humanizeBilliardError } from './utils';
 import {
   CalendarClock,
   CheckCircle2,
@@ -240,7 +241,7 @@ export function ReservationPanel({
       await bookingsApi.checkIn(booking.id, { guestCount: booking.guestCount });
       await Promise.all([loadBookings(), Promise.resolve(onCheckedIn?.())]);
     } catch (err: any) {
-      setError(err?.message || t('billiard.checkInFailed'));
+      setError(humanizeBilliardError(err?.message ?? '', t) || t('billiard.checkInFailed'));
     } finally {
       setActionId(null);
     }
