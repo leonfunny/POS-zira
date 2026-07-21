@@ -36,7 +36,13 @@ export function estimateCharge(session: any): number {
   }
 
   const start = new Date(session.startedAt).getTime();
-  const paused = (session.totalPausedSeconds || 0) * 1000;
+  let paused = (session.totalPausedSeconds || 0) * 1000;
+  // The server banks the pause interval into totalPausedSeconds only on
+  // resume/end, so a PAUSED session must count its in-progress pause here or
+  // the money keeps ticking while the elapsed clock stands still.
+  if (String(session.status ?? '').toUpperCase() === 'PAUSED' && session.pausedAt) {
+    paused += Math.max(0, Date.now() - new Date(session.pausedAt).getTime());
+  }
   const elapsed = Math.max(0, Date.now() - start - paused);
   const hours = elapsed / 3600000;
   const hourlyRate = session.pricingSnapshot?.basePrice || session.hourlyRate || 0;
