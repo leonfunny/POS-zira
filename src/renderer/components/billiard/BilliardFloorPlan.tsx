@@ -19,6 +19,8 @@ import {
   useStartSession,
   usePauseSession,
   useResumeSession,
+  useVoidSession,
+  useVoidSessions,
   useRemoveItem,
   useUpdateSession,
   useSyncStatus,
@@ -191,6 +193,8 @@ function FloorPlanInner({ language }: { language: Language }) {
   const startSession = useStartSession(refetchOverview);
   const pauseSession = usePauseSession(refetchOverview);
   const resumeSession = useResumeSession(refetchOverview);
+  const voidSession = useVoidSession(refetchOverview);
+  const voidSessions = useVoidSessions(refetchOverview);
   const removeItem = useRemoveItem(refetchOverview);
   const updateSession = useUpdateSession(refetchOverview);
 
@@ -1138,6 +1142,22 @@ function FloorPlanInner({ language }: { language: Language }) {
         online={Boolean(syncStatus?.online ?? true)}
         language={language}
         onSettle={(session) => setPaymentSession(session)}
+        voidPending={voidSession.isPending || voidSessions.isPending}
+        onVoid={async (ids, reason) => {
+          try {
+            const result = ids.length === 1
+              ? await voidSession.mutate({ sessionId: ids[0], reason })
+              : await voidSessions.mutate({ ids, reason });
+            const failed = Array.isArray(result) ? result.filter((r: any) => !r?.ok) : [];
+            if (failed.length > 0) {
+              toast.error(`${failed.length}× ${t('billiard.voidFailed') || 'Write-off failed'}: ${failed[0]?.error || ''}`);
+            } else {
+              toast.success(t('billiard.voided') || 'Written off');
+            }
+          } catch (err: any) {
+            toast.error(err?.message || t('billiard.voidFailed') || 'Write-off failed');
+          }
+        }}
       />
 
       {paymentSession && (

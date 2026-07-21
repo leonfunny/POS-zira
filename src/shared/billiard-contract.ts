@@ -28,6 +28,8 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/transfer$/, operation: 'transfer_table', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/items$/, operation: 'add_item', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/payment$/, operation: 'process_payment', policy: 'online-only' },
+  { method: 'POST', path: /^\/billiard\/sessions\/void-batch$/, operation: 'void_sessions_batch', policy: 'online-only' },
+  { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/void$/, operation: 'void_session', policy: 'online-only' },
   { method: 'DELETE', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'remove_item', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/bookings\?date=\d{4}-\d{2}-\d{2}&limit=200$/, operation: 'online_api', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/availability\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\?date=\d{4}-\d{2}-\d{2}$/, operation: 'online_api', policy: 'online-only' },
@@ -161,6 +163,18 @@ export function billiardPaymentPayload(
   amount?: number,
 ): { paymentMethod: string; amount?: number } {
   return amount === undefined ? { paymentMethod } : { paymentMethod, amount };
+}
+
+/** Write-off payloads. The backend requires a non-empty reason (≤500 chars). */
+export function billiardVoidPayload(reason: string): { reason: string } {
+  return { reason: String(reason ?? '').trim() };
+}
+
+export function billiardVoidBatchPayload(
+  ids: string[],
+  reason: string,
+): { ids: string[]; reason: string } {
+  return { ids: [...ids], reason: String(reason ?? '').trim() };
 }
 
 /** Resolve the amount shown/settled by the POS without losing a finalized zero total. */

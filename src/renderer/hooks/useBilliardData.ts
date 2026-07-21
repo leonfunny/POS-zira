@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   billiardPaymentPayload,
   billiardTransferPayload,
+  billiardVoidBatchPayload,
+  billiardVoidPayload,
 } from '../../shared/billiard-contract';
 
 // ─── Query hook (with retry on initial failure) ──────
@@ -262,6 +264,24 @@ export function useProcessPayment(refetch?: () => Promise<void>) {
       'POST',
       `/billiard/sessions/${args.sessionId}/payment`,
       billiardPaymentPayload(args.data.paymentMethod ?? args.data.method, args.data.amount),
+    ),
+    refetch,
+  );
+}
+
+export function useVoidSession(refetch?: () => Promise<void>) {
+  return useMutation(
+    (args: { sessionId: string; reason: string }) => window.electronAPI.billiard.mutate(
+      'void_session', 'POST', `/billiard/sessions/${args.sessionId}/void`, billiardVoidPayload(args.reason),
+    ),
+    refetch,
+  );
+}
+
+export function useVoidSessions(refetch?: () => Promise<void>) {
+  return useMutation(
+    (args: { ids: string[]; reason: string }) => window.electronAPI.billiard.mutate(
+      'void_sessions_batch', 'POST', '/billiard/sessions/void-batch', billiardVoidBatchPayload(args.ids, args.reason),
     ),
     refetch,
   );

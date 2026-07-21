@@ -243,6 +243,19 @@ export class BilliardSync {
           billiardSessionRepo.upsertOne(result);
           await this.flushPaymentJournal('payment result');
           this.notifyRenderer('payment-updated');
+        } else if (op === 'void_session' && result?.id) {
+          // A written-off session leaves the pending list immediately: the
+          // VOID row upserts over the UNPAID/PARTIAL one and no longer matches
+          // the pending query.
+          billiardSessionRepo.upsertOne(result);
+          await this.flushPaymentJournal('session void');
+          this.notifyRenderer('payment-updated');
+        } else if (op === 'void_sessions_batch') {
+          // Batch returns per-id verdicts, not sessions — re-pull the pending
+          // snapshot so every voided row drops out of the local cache.
+          await this.syncPendingPayments(token, 'void batch');
+          await this.flushPaymentJournal('session void batch');
+          this.notifyRenderer('payment-updated');
         } else if (sessionReconciliationRead && result?.id) {
           const status = canonicalBilliardSessionStatus(result.status);
           if (status === 'COMPLETED') {
@@ -267,6 +280,8 @@ export class BilliardSync {
           && path === '/resources';
         const journalIsAuthoritative = op === 'end_session'
           || op === 'process_payment'
+          || op === 'void_session'
+          || op === 'void_sessions_batch'
           || sessionReconciliationRead
           || SESSION_STATE_OPERATIONS.has(op);
         if (!resourceCreateInProgress && !journalIsAuthoritative) {
