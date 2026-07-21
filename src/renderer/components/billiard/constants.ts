@@ -13,8 +13,15 @@ export const SIZE_STEP_M = 0.2;   // meters per click
 
 export const ROTATION_STEPS = [0, 90, 180, 270] as const;
 
-export const STATUS_STYLES: Record<TableStatus, { bg: string; border: string; felt: string; glow: string }> = {
-  free:     { bg: 'bg-emerald-900/80', border: 'border-emerald-500', felt: 'bg-emerald-700', glow: '' },
-  occupied: { bg: 'bg-red-900/80',     border: 'border-red-400',     felt: 'bg-red-800',     glow: 'shadow-red-500/30 shadow-lg' },
-  paused:   { bg: 'bg-amber-900/80',   border: 'border-amber-400',   felt: 'bg-amber-800',   glow: 'shadow-amber-500/20 shadow-md' },
+// P3 "Light & clean": the room is a light operational surface and every table
+// looks like a real pool table; status is carried ONLY by a ring around the
+// table plus a pill above it. This is the single status palette for every
+// render path (CSS table and asset image alike) — do not add per-file colors.
+export const ROOM_BG = '#f4f2ed';
+
+export const STATUS_THEME: Record<TableStatus, { ring: string; pill: string }> = {
+  // A free table stays calm: bare felt, no ring, no pill.
+  free:     { ring: '', pill: '' },
+  occupied: { ring: 'ring-2 ring-red-500 ring-offset-2 ring-offset-[#f4f2ed]', pill: 'bg-red-600 text-white' },
+  paused:   { ring: 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[#f4f2ed]', pill: 'bg-amber-500 text-white' },
 };

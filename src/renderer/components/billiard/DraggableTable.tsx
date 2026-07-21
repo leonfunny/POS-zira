@@ -3,17 +3,10 @@ import { Clock, Users, UtensilsCrossed, User, Timer } from 'lucide-react';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import type { TableOverview, FloorPosition } from './types';
-import { STATUS_STYLES, DEFAULT_TABLE_WIDTH_PCT, DEFAULT_TABLE_HEIGHT_PCT } from './constants';
+import { STATUS_THEME, DEFAULT_TABLE_WIDTH_PCT, DEFAULT_TABLE_HEIGHT_PCT } from './constants';
 import { formatElapsed, estimateCharge, formatCurrency, formatRemaining } from './utils';
 import { useFreeformDrag } from './hooks/useFreeformDrag';
 import { FLOOR_PLAN_ASSET_MAP } from './floor-plan-assets';
-
-// Status-specific felt + border colors for the pool-table rectangle
-const TABLE_COLORS: Record<string, { felt: string; border: string }> = {
-  free:     { felt: 'bg-emerald-500/20', border: 'border-emerald-500' },
-  occupied: { felt: 'bg-red-500/20',     border: 'border-red-400' },
-  paused:   { felt: 'bg-amber-500/20',   border: 'border-amber-400' },
-};
 
 export const DraggableTable = memo(function DraggableTable({
   table,
@@ -100,8 +93,22 @@ export const DraggableTable = memo(function DraggableTable({
     touchAction: 'none',
   };
 
-  const colors = TABLE_COLORS[table.status] || TABLE_COLORS.free;
-  const s = STATUS_STYLES[table.status];
+  const theme = STATUS_THEME[table.status] || STATUS_THEME.free;
+  // Ink adapts to the surface: dark on asset photos (white glow behind),
+  // ivory on the green felt of the CSS table.
+  const ink = hasImage
+    ? {
+        name: 'text-black', body: 'text-black/80', soft: 'text-black/70',
+        money: 'text-black', warn: 'text-orange-600', pause: 'text-amber-600',
+        chip: 'bg-brand-500/20 text-brand-800', freeLabel: 'text-emerald-700',
+        rename: 'text-black border-black/30',
+      }
+    : {
+        name: 'text-emerald-50', body: 'text-white/85', soft: 'text-white/70',
+        money: 'text-white', warn: 'text-orange-300', pause: 'text-amber-300',
+        chip: 'bg-white/20 text-white', freeLabel: 'text-emerald-100',
+        rename: 'text-white border-white/40',
+      };
   const session = table.session;
   const elapsed = session ? formatElapsed(session.startedAt, session.totalPausedSeconds || 0, table.status === 'paused', session.pausedAt) : null;
   const charge = session ? estimateCharge(session) : 0;
@@ -155,6 +162,13 @@ export const DraggableTable = memo(function DraggableTable({
         </span>
       )}
 
+      {/* Status pill — on outer div so it doesn't rotate; free tables stay bare */}
+      {!editMode && table.status !== 'free' && (
+        <span className={`absolute -top-3 left-1/2 -translate-x-1/2 z-20 rounded-full px-1.5 py-px text-[9px] font-semibold shadow-sm ${theme.pill}`}>
+          {statusLabel}
+        </span>
+      )}
+
       {/* F&B badge — on outer div so it doesn't rotate */}
       {itemsCount > 0 && !editMode && (
         <span className="absolute -top-1.5 -left-1.5 flex items-center gap-0.5 bg-blue-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 z-20">
@@ -166,14 +180,15 @@ export const DraggableTable = memo(function DraggableTable({
       {/* Table visual — fills the padded area, with rotation */}
       <div
         className={`
-          absolute inset-0 rounded-[14px] border-2 transition-all shadow-lg
+          absolute inset-0 rounded-[12px] transition-all shadow-md
           flex flex-col items-center justify-center overflow-hidden
-          ${hasImage ? 'bg-transparent border-transparent' : `${colors.felt} ${colors.border}`} ${hasImage && table.status !== 'free' ? colors.border : ''} ${s.glow}
-          ${isMeasureTarget && !isMeasureHighlighted ? 'cursor-crosshair' : isMeasureHighlighted ? 'cursor-default' : editMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer hover:ring-2 hover:ring-white/50'}
+          ${hasImage ? 'border-2 bg-transparent border-transparent' : 'bg-[#2e7d54] border-[3px] border-[#8a5a33]'}
+          ${!editMode ? theme.ring : ''}
+          ${isMeasureTarget && !isMeasureHighlighted ? 'cursor-crosshair' : isMeasureHighlighted ? 'cursor-default' : editMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer hover:shadow-lg'}
           ${isMeasureHighlighted ? 'ring-2 ring-red-500 ring-offset-2' : ''}
           ${isMeasureTarget && !isMeasureHighlighted ? 'ring-2 ring-red-400/60 ring-offset-1 animate-pulse' : ''}
           ${isDragging ? 'shadow-2xl ring-2 ring-blue-400/50' : ''}
-          ${!editMode ? 'focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 focus:ring-offset-[#17312b]' : ''}
+          ${!editMode ? 'focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 focus:ring-offset-[#f4f2ed]' : ''}
         `}
         style={{
           transform: rotation ? `rotate(${rotation}deg)` : undefined,
@@ -213,24 +228,21 @@ export const DraggableTable = memo(function DraggableTable({
           />
         ) : (
           <>
-            {/* Inner felt border */}
-            <span className="absolute inset-[4px] rounded-[10px] border border-black/10" />
-            {/* Corner pockets */}
-            <span className="absolute left-1.5 top-1.5 w-1.5 h-1.5 rounded-full bg-black/35" />
-            <span className="absolute right-1.5 top-1.5 w-1.5 h-1.5 rounded-full bg-black/35" />
-            <span className="absolute left-1.5 bottom-1.5 w-1.5 h-1.5 rounded-full bg-black/35" />
-            <span className="absolute right-1.5 bottom-1.5 w-1.5 h-1.5 rounded-full bg-black/35" />
+            {/* Chalk line inside the rail */}
+            <span className="absolute inset-[5px] rounded-[8px] border border-white/15" />
+            {/* Six pockets: four corners + two on the long rails */}
+            <span className="absolute left-1 top-1 w-2 h-2 rounded-full bg-[#101c16]/90" />
+            <span className="absolute right-1 top-1 w-2 h-2 rounded-full bg-[#101c16]/90" />
+            <span className="absolute left-1 bottom-1 w-2 h-2 rounded-full bg-[#101c16]/90" />
+            <span className="absolute right-1 bottom-1 w-2 h-2 rounded-full bg-[#101c16]/90" />
+            <span className="absolute left-1/2 -translate-x-1/2 top-0.5 w-2 h-1.5 rounded-full bg-[#101c16]/90" />
+            <span className="absolute left-1/2 -translate-x-1/2 bottom-0.5 w-2 h-1.5 rounded-full bg-[#101c16]/90" />
           </>
-        )}
-
-        {/* Status overlay for image mode */}
-        {hasImage && table.status !== 'free' && (
-          <div className={`absolute inset-0 rounded-[12px] ${table.status === 'occupied' ? 'bg-red-500/15' : 'bg-amber-500/15'}`} />
         )}
 
         {/* Content overlay — counter-rotate so text stays upright */}
         <div
-          className="relative z-[1] flex flex-col items-center justify-center w-full px-1"
+          className={`relative z-[1] flex flex-col items-center justify-center w-full px-1 ${!editMode && table.status !== 'free' ? 'pt-2' : ''}`}
           style={{
             transform: rotation ? `rotate(-${rotation}deg)` : undefined,
             ...(hasImage ? { textShadow: '0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.7)' } : {}),
@@ -239,7 +251,7 @@ export const DraggableTable = memo(function DraggableTable({
           {/* Name */}
           {editMode && editing ? (
             <input
-              className="w-full text-xs text-center bg-transparent text-black border-b border-black/30 outline-none py-0.5"
+              className={`w-full text-xs text-center bg-transparent border-b outline-none py-0.5 ${ink.rename}`}
               value={nameVal}
               onChange={(e) => setNameVal(e.target.value)}
               onBlur={handleNameSubmit}
@@ -250,7 +262,7 @@ export const DraggableTable = memo(function DraggableTable({
             />
           ) : (
             <span
-              className="text-sm font-bold text-black truncate max-w-full"
+              className={`text-sm font-bold truncate max-w-full ${ink.name}`}
               onDoubleClick={() => editMode && setEditing(true)}
             >
               {table.resource.name}
@@ -265,39 +277,39 @@ export const DraggableTable = memo(function DraggableTable({
             return (
               <>
                 {session.customerName && (
-                  <div className="flex items-center gap-0.5 text-[9px] text-black/70 truncate max-w-full">
+                  <div className={`flex items-center gap-0.5 text-[9px] truncate max-w-full ${ink.soft}`}>
                     <User className="w-2.5 h-2.5 shrink-0" />
                     <span className="truncate">{session.customerName}</span>
                   </div>
                 )}
                 {isPackage ? (
-                  <div className={`flex items-center gap-1 text-[10px] font-mono tabular-nums ${lowTime ? 'text-orange-600 font-semibold' : 'text-black/80'}`}>
+                  <div className={`flex items-center gap-1 text-[10px] font-mono tabular-nums ${lowTime ? `${ink.warn} font-semibold` : ink.body}`}>
                     <Timer className="w-3 h-3" />
                     {remaining!.text}
                     {table.status === 'paused' && (
-                      <span className="text-amber-600 text-[8px] ml-0.5">||</span>
+                      <span className={`text-[8px] ml-0.5 ${ink.pause}`}>||</span>
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1 text-[10px] text-black/80 font-mono tabular-nums">
+                  <div className={`flex items-center gap-1 text-[10px] font-mono tabular-nums ${ink.body}`}>
                     <Clock className="w-3 h-3" />
                     {elapsed}
                     {table.status === 'paused' && (
-                      <span className="text-amber-600 text-[8px] ml-0.5">||</span>
+                      <span className={`text-[8px] ml-0.5 ${ink.pause}`}>||</span>
                     )}
                   </div>
                 )}
-                <div className="text-xs font-semibold text-black tabular-nums">
+                <div className={`text-xs font-semibold tabular-nums ${ink.money}`}>
                   {formatCurrency(charge)}
                 </div>
                 {session.guestCount > 1 && (
-                  <div className="flex items-center gap-0.5 text-[9px] text-black/70">
+                  <div className={`flex items-center gap-0.5 text-[9px] ${ink.soft}`}>
                     <Users className="w-2.5 h-2.5" />
                     {session.guestCount}
                   </div>
                 )}
                 {session.combo?.name && (
-                  <span className="text-[8px] bg-brand-500/20 text-brand-800 px-1.5 py-0.5 rounded-full truncate max-w-full">
+                  <span className={`text-[8px] px-1.5 py-0.5 rounded-full truncate max-w-full ${ink.chip}`}>
                     {session.combo.name}
                   </span>
                 )}
@@ -307,10 +319,10 @@ export const DraggableTable = memo(function DraggableTable({
 
           {/* Free indicator + hourly rate */}
           {!session && !editMode && (
-            <div className="text-xs tabular-nums text-black/80">
+            <div className={`text-xs tabular-nums ${ink.body}`}>
               {hourlyRate != null && hourlyRate > 0
                 ? `${hourlyRate} PLN/h`
-                : <span className="text-[10px] text-emerald-700 font-medium uppercase tracking-wide">{t('billiard.free') || 'Free'}</span>}
+                : <span className={`text-[10px] font-medium uppercase tracking-wide ${ink.freeLabel}`}>{t('billiard.free') || 'Free'}</span>}
             </div>
           )}
 

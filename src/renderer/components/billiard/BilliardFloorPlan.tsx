@@ -24,7 +24,7 @@ import {
   useSyncStatus,
 } from '../../hooks/useBilliardData';
 import type { TableOverview, FloorPosition, BilliardFloorPlan as FloorPlanType, Measurement } from './types';
-import { DEFAULT_FLOOR } from './constants';
+import { DEFAULT_FLOOR, ROOM_BG } from './constants';
 import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal, summarizeUnsettled } from './utils';
 import { DraggableTable } from './DraggableTable';
 import { AddTableDialog } from './AddTableDialog';
@@ -648,9 +648,9 @@ function FloorPlanInner({ language }: { language: Language }) {
 
   const gridOpacity = editMode ? '0.12' : '0.05';
 
-  // Operate-mode room background
+  // Operate-mode room background — light operational surface (DESIGN.md)
   const operateRoomBg = useMemo(() => ({
-    backgroundColor: '#17312b',
+    backgroundColor: ROOM_BG,
   }), []);
 
   // Zoom/pan reset key
@@ -872,7 +872,7 @@ function FloorPlanInner({ language }: { language: Language }) {
       <div
         ref={viewportRef}
         data-billiard-canvas-viewport
-        className="relative h-[clamp(440px,62vh,720px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-900"
+        className="relative h-[clamp(440px,62vh,720px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
       >
         <TransformWrapper
           key={zoomKey}
@@ -902,7 +902,7 @@ function FloorPlanInner({ language }: { language: Language }) {
                   ? 'border-2 border-blue-400/40 shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'
                   : floorBackgroundUrl
                     ? ''
-                    : 'border-2 border-[#2a4a40]/60 shadow-[inset_0_0_60px_rgba(0,0,0,0.3),inset_0_0_120px_rgba(0,0,0,0.12)]'
+                    : 'border border-slate-300 shadow-[inset_0_1px_6px_rgba(15,23,42,0.06)]'
                 }
               `}
               style={
@@ -933,14 +933,14 @@ function FloorPlanInner({ language }: { language: Language }) {
                         corner === 'top-right' ? 'top-2.5 right-2.5 border-t-2 border-r-2' :
                         corner === 'bottom-left' ? 'bottom-2.5 left-2.5 border-b-2 border-l-2' :
                         'bottom-2.5 right-2.5 border-b-2 border-r-2'
-                      } border-emerald-400/25 rounded-sm`}
+                      } border-slate-400/50 rounded-sm`}
                     />
                   ))}
-                  <span className="absolute bottom-2 right-3 text-[10px] font-mono tabular-nums text-emerald-400/30 pointer-events-none z-[2] tracking-wider">
+                  <span className="absolute bottom-2 right-3 text-[10px] font-mono tabular-nums text-slate-400/80 pointer-events-none z-[2] tracking-wider">
                     {roomWidth}m × {roomHeight}m
                   </span>
                   {activeFloor && (
-                    <span className="absolute top-2.5 left-8 text-[10px] font-medium text-emerald-400/25 pointer-events-none z-[2] uppercase tracking-widest">
+                    <span className="absolute top-2.5 left-8 text-[10px] font-medium text-slate-400/70 pointer-events-none z-[2] uppercase tracking-widest">
                       {activeFloor.name}
                     </span>
                   )}
@@ -949,13 +949,13 @@ function FloorPlanInner({ language }: { language: Language }) {
 
               {filteredTables.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <Target className={`w-16 h-16 mb-4 ${editMode ? 'text-slate-300' : 'text-emerald-400/15'}`} />
-                  <h3 className={`text-lg font-medium ${editMode ? 'text-slate-500' : 'text-emerald-300/40'}`}>
+                  <Target className="w-16 h-16 mb-4 text-slate-300" />
+                  <h3 className="text-lg font-medium text-slate-500">
                     {hasMultipleFloors
                       ? (t('billiard.noTablesOnFloor') || 'No tables on this floor')
                       : (t('billiard.noTables') || 'No tables yet')}
                   </h3>
-                  <p className={`text-sm mt-1 mb-4 ${editMode ? 'text-slate-400' : 'text-emerald-400/25'}`}>
+                  <p className="text-sm mt-1 mb-4 text-slate-400">
                     {editMode
                       ? (t('billiard.addTableHint') || 'Click "Add Table" to place one here')
                       : (t('billiard.switchToEditHint') || 'Switch to Edit Layout mode and add your first table')}
