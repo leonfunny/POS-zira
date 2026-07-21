@@ -118,6 +118,24 @@ describe('Database.applyMigrations', () => {
     ]);
   });
 
+  it('adds product tombstone columns and forces one authoritative v2 replay', () => {
+    DatabaseClass.applyMigrations(db, migrations.filter((migration) => migration.version <= 56));
+    db.run(`
+      INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES
+        ('products_sync_cursor_v2', 'old-cursor', datetime('now')),
+        ('products_last_full_sync', 'old-full-sync', datetime('now')),
+        ('unrelated', 'keep-me', datetime('now'));
+    `);
+
+    DatabaseClass.applyMigrations(db, migrations);
+
+    expect(columnExists(db, 'product_variants', 'sync_tombstone_reason')).toBe(true);
+    expect(columnExists(db, 'product_variants', 'sync_tombstoned_at')).toBe(true);
+    expect(db.exec(`SELECT key FROM sync_metadata ORDER BY key`)[0].values).toEqual([
+      ['unrelated'],
+    ]);
+  });
+
   it('applies pending migrations on a fresh DB and stamps (version, name)', () => {
     const v2: Migration = {
       version: 2,

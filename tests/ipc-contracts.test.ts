@@ -218,6 +218,7 @@ describe('Type consistency', () => {
 describe('Refund payload passes lines[] end-to-end', () => {
   const orderHistoryModal = readSource('../src/renderer/components/pos/OrderHistoryModal.tsx');
   const posModule = readSource('../src/main/modules/pos.module.ts');
+  const entityApplicators = readSource('../src/main/sync/entity-applicators.ts');
   const apiClientSrc = readSource('../src/main/network/api-client.ts');
 
   it('renderer sends lines (not items) in refund payload', () => {
@@ -295,7 +296,9 @@ describe('Refund payload passes lines[] end-to-end', () => {
   });
 
   it('main IPC handler forwards lines to apiClient', () => {
-    expect(posModule).toContain('toRefundBackendPayload(refundPayload)');
+    expect(posModule).toContain(
+      'toRefundBackendPayload(refundPayload, {\n          shiftId: backendShiftId ?? activeShift.id,\n        })',
+    );
   });
 
   it('main IPC handler maps lines explicitly without orderItemId', () => {
@@ -324,6 +327,15 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(posModule).toContain('printRefundReceipt(orderId, {');
     expect(posModule).toContain('amount: validation.refundAmountGrosze ?? refundedAmount');
     expect(posModule).toContain('lines: deltaRefundLines');
+    expect(posModule).toContain("refundMethods.length > 1\n          ? 'SPLIT'");
+    expect(posModule).toContain('reason: line.reason || refundReason');
+    expect(posModule).toContain('refundMethod: line.refundMethod || refundMethod');
+  });
+
+  it('inbound sync retains locally enriched refund event metadata', () => {
+    expect(entityApplicators).toContain('mergeRefundLineMetadataJson(');
+    expect(entityApplicators).toContain('localRefundRow?.refund_lines');
+    expect(entityApplicators).toContain('incomingRefundLinesJson');
   });
 
   it('renderer sends vatRate for refund lines and surfaces refund receipt print failures', () => {
@@ -375,6 +387,27 @@ describe('Refund payload passes lines[] end-to-end', () => {
       refundRequestId: 'refund-request-3',
       amount: 12.34,
     });
+  });
+
+  it('main payload sends the backend shift id while the local event keeps the local id', () => {
+    const data = {
+      type: 'PARTIAL' as const,
+      refundRequestId: 'refund-request-shift-1',
+      amount: 1234,
+    };
+
+    expect(toRefundBackendPayload(data, { shiftId: 'shift-backend-1' })).toMatchObject({
+      refundRequestId: 'refund-request-shift-1',
+      shiftId: 'shift-backend-1',
+      amount: 12.34,
+    });
+    expect(toRefundBackendPayload(data)).not.toHaveProperty('shiftId');
+    expect(posModule).toContain('database.get<{ id: string; backend_id: string | null; staff_id: string | null }>(');
+    expect(posModule).toContain("'SELECT id, backend_id, staff_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1'");
+    expect(posModule).toContain('let backendShiftId = activeShift.backend_id');
+    expect(posModule).toContain("'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL'");
+    expect(posModule).toContain('shiftId: backendShiftId ?? activeShift.id');
+    expect(posModule).toContain('refundedAt: refundOccurredAt,\n          shiftId: activeShift.id,');
   });
 
   it('main payload includes explicit partial amount converted from grosze to PLN', () => {
@@ -789,12 +822,18 @@ describe('Refund payload passes lines[] end-to-end', () => {
       { variantId: 'variant-1', sku: 'SKU-1', name: 'First item', quantity: 1, unitPrice: 1000, refundAmount: 1000, vatRate: 23 },
     ]);
     const merged = mergeRefundLines(existing, [
-      { variantId: 'variant-2', sku: 'SKU-2', name: 'Second item', quantity: 2, unitPrice: 500, refundAmount: 1000, vatRate: 8 },
+      {
+        variantId: 'variant-2', sku: 'SKU-2', name: 'Second item', quantity: 0.75, unit: 'kg', unitPrice: 500,
+        refundAmount: 1000, vatRate: 8, restock: true, refundedAt: '2026-07-17T10:00:00.000Z', refundRequestId: 'refund-2',
+      },
     ]);
 
     expect(merged).toEqual([
       { variantId: 'variant-1', sku: 'SKU-1', name: 'First item', quantity: 1, unitPrice: 1000, refundAmount: 1000, vatRate: 23 },
-      { variantId: 'variant-2', sku: 'SKU-2', name: 'Second item', quantity: 2, unitPrice: 500, refundAmount: 1000, vatRate: 8 },
+      {
+        variantId: 'variant-2', sku: 'SKU-2', name: 'Second item', quantity: 0.75, unit: 'kg', unitPrice: 500,
+        refundAmount: 1000, vatRate: 8, restock: true, refundedAt: '2026-07-17T10:00:00.000Z', refundRequestId: 'refund-2',
+      },
     ]);
     expect(merged.reduce((sum, line) => sum + line.refundAmount, 0)).toBe(2000);
   });
@@ -806,22 +845,27 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain('detailRefundableResult.items.some');
     expect(orderHistoryModal).toContain('!refundBlockedByMissingLines');
     expect(orderHistoryModal).toContain('(result as any).mutationDetected || (result as any).requiresRefresh');
-    expect(orderHistoryModal).toContain('Review refund (${formatMoney(computedRefundTotal, currency)})');
-    expect(orderHistoryModal).toContain('Confirm refund (${formatMoney(computedRefundTotal, currency)})');
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.refund.review', 'Review refund')");
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.refund.confirm', 'Confirm Refund')");
     expect(electronDts).toContain('mutationDetected?: boolean');
     expect(electronDts).toContain('requiresRefresh?: boolean');
   });
 
   it('renderer shows refund breakdown and keeps the success summary actionable', () => {
     expect(orderHistoryModal).toContain('getItemRefundBreakdowns(order, items)');
-    expect(orderHistoryModal).toContain('getRefundBreakdownLines(order)');
-    expect(orderHistoryModal).toContain('Refund breakdown');
-    expect(orderHistoryModal).toContain('refunded -');
+    expect(orderHistoryModal).toContain('getRefundEvents(order, items)');
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.history.refundHistory', 'Refund history')");
+    expect(orderHistoryModal).toContain('formatRefundLineQuantity(line, t)');
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.history.originalTotal', 'Original total')");
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.history.remainingTotal', 'Remaining')");
     expect(orderHistoryModal).toContain('setSuccessSummary({');
-    expect(orderHistoryModal).toContain('Print refund receipt');
+    expect(orderHistoryModal).toContain("tOr(t, 'pos.refund.printReceipt', 'Print refund receipt')");
     expect(orderHistoryModal).toContain('onComplete({ keepRefundOpen: true })');
     expect(orderHistoryModal).toContain('const refreshLocalOrderDetail = async (orderId: string)');
     expect(orderHistoryModal).toContain('refreshLocalOrderDetail(order.id).finally');
+    expect(orderHistoryModal).not.toContain('translations.pl');
+    expect(orderHistoryModal).not.toContain('remainingUnits');
+    expect(orderHistoryModal).not.toContain('refundedUnits');
     expect(orderHistoryModal).not.toContain('setTimeout(onComplete, 1500)');
   });
 });

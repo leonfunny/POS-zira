@@ -269,7 +269,10 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
     expect(source).toContain('client.getMyPrintAgentKey(accessToken)');
     expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'telegram login'[\s\S]+newSalonId/);
     expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'email login'[\s\S]+newSalonId/);
-    expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+token,[\s\S]+'startup'[\s\S]+config\.salonId/);
+    // Startup reconnect now routes through resolveStartupConnectPlan (branch
+    // behaviour covered by tests/startup-connect-plan.test.ts) but still hands
+    // the same (token, 'startup', salonId) context to the key fetch.
+    expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+token!?,[\s\S]+'startup'[\s\S]+salonId/);
   });
 
   it('print-agent connect does not write plaintext apiKey into renderer config', () => {

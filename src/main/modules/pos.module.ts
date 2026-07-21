@@ -31,7 +31,7 @@ import {
   type RefundBackendValidationResult,
   type RefundIpcPayload,
 } from '../pos/refund-backend-payload';
-import { ShiftController } from '../pos/shift-controller';
+import { canReconcileActiveShift, ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
@@ -3740,13 +3740,42 @@ export class PosModule extends BaseModule {
           }
         }
 
-        const activeShift = database.get<{ id: string }>(
-          'SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+        const activeShift = database.get<{ id: string; backend_id: string | null; staff_id: string | null }>(
+          'SELECT id, backend_id, staff_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
         );
         if (!activeShift) return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
 
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
+
+        // Older app versions consumed open-shift responses as `{ shiftId }`
+        // even though the backend returns `{ id }`, leaving backend_id NULL.
+        // Reconcile that legacy active row once before posting the refund.
+        let backendShiftId = activeShift.backend_id;
+        if (!backendShiftId) {
+          try {
+            const configuredMachineId = String(getConfigValue('machineId') ?? '').trim();
+            const serverShift = await apiClient.getActiveShift(
+              token,
+              configuredMachineId || undefined,
+            );
+            if (serverShift?.id && canReconcileActiveShift(
+              activeShift.id,
+              activeShift.staff_id,
+              serverShift,
+              configuredMachineId,
+            )) {
+              backendShiftId = serverShift.id;
+              database.run(
+                'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',
+                [backendShiftId, activeShift.id],
+              );
+              database.markDirty();
+            }
+          } catch (error: any) {
+            logger.warn(`[PosModule] Active shift reconciliation before refund skipped: ${error?.message ?? error}`);
+          }
+        }
 
         // Convert line amounts from grosze → PLN for backend
         const lines = (data.lines ?? []).map(l => ({
@@ -3776,7 +3805,9 @@ export class PosModule extends BaseModule {
             ? data.tenderAllocations
             : allocateRefundTenders(order.payment_tenders, requestedAmountGrosze, order.payment_method),
         };
-        const backendPayload = toRefundBackendPayload(refundPayload);
+        const backendPayload = toRefundBackendPayload(refundPayload, {
+          shiftId: backendShiftId ?? activeShift.id,
+        });
         const hasLineRefund = (data.lines ?? []).length > 0;
         const hasRestock = (data.lines ?? []).some(l => l.restock);
 
@@ -3825,10 +3856,27 @@ export class PosModule extends BaseModule {
         // Update local DB from backend response
         const refundedAmount = validation.refundedAmountGrosze ?? 0;
         const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
-        const backendRefundLinesJson = normalizeRefundLinesJson(result.refundedLines);
-        const deltaRefundLines = backendRefundLinesJson ? JSON.parse(backendRefundLinesJson) : [];
-        const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
         const refundReason = result.refundReason || data.reason || '';
+        const refundOccurredAt = new Date().toISOString();
+        const refundMethods = Array.from(new Set(
+          (refundPayload.tenderAllocations ?? [])
+            .map((allocation) => allocation.method)
+            .filter((method): method is string => Boolean(method)),
+        ));
+        const refundMethod = refundMethods.length > 1
+          ? 'SPLIT'
+          : refundMethods[0] || order.payment_method || undefined;
+        const backendRefundLinesJson = normalizeRefundLinesJson(result.refundedLines);
+        const deltaRefundLines = backendRefundLinesJson
+          ? JSON.parse(backendRefundLinesJson).map((line: any) => ({
+              ...line,
+              refundedAt: line.refundedAt || refundOccurredAt,
+              refundRequestId: line.refundRequestId || data.refundRequestId,
+              reason: line.reason || refundReason,
+              refundMethod: line.refundMethod || refundMethod,
+            }))
+          : [];
+        const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
         orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, cumulativeRefundLines.length > 0 ? cumulativeRefundLines : undefined);
         database.markDirty();
 
@@ -3838,8 +3886,11 @@ export class PosModule extends BaseModule {
           backendOrderId: order.backend_id,
           amountMinor: validation.refundAmountGrosze ?? requestedAmountGrosze,
           method: order.payment_method,
+          tenderAllocations: refundPayload.tenderAllocations,
           reason: refundReason,
-          refundedAt: new Date().toISOString(),
+          refundRequestId: data.refundRequestId,
+          refundedAt: refundOccurredAt,
+          shiftId: activeShift.id,
           items: deltaRefundLines,
         });
 

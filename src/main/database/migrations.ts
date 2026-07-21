@@ -1673,7 +1673,46 @@ export const migrations: Migration[] = [
           OR LOWER(TRIM(icon)) LIKE 'https://%'
           OR TRIM(icon) LIKE '//%'
           OR LOWER(TRIM(icon)) LIKE '/uploads/%'
-        );
+      );
+    `,
+  },
+  {
+    version: 57,
+    name: 'product_sync_tombstone_state',
+    // Keep backend-deleted catalog rows as local tombstones instead of
+    // physical deletes: historical orders and offline queues still reference
+    // variant ids. Clearing the v2 cursor forces one authoritative replay so
+    // rows tombstoned before this migration are classified on the next sync.
+    up: `
+      ALTER TABLE product_variants ADD COLUMN sync_tombstone_reason TEXT;
+      ALTER TABLE product_variants ADD COLUMN sync_tombstoned_at TEXT;
+      DELETE FROM sync_metadata
+      WHERE key IN ('products_sync_cursor_v2', 'products_last_full_sync');
+    `,
+  },
+  {
+    version: 58,
+    name: 'pos_refund_cashflow_indexes',
+    // RefundIssued rows are retained as the immutable local financial journal.
+    // Keep daily/shift scans and legacy residual lookups bounded as it grows.
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_occurred
+        ON pos_event_outbox(event_type, occurred_at);
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_local_order
+        ON pos_event_outbox(event_type, local_order_id);
+      CREATE INDEX IF NOT EXISTS idx_pos_event_outbox_type_shift
+        ON pos_event_outbox(event_type, shift_id);
+    `,
+  },
+  {
+    version: 59,
+    name: 'billiard_cache_payload_snapshots',
+    // Preserve the canonical backend objects alongside the indexed cache
+    // columns. Billiard timers, package details, resource metadata and final
+    // payment totals must survive refresh/restart without schema drift.
+    up: `
+      ALTER TABLE billiard_resources ADD COLUMN payload_json TEXT;
+      ALTER TABLE billiard_sessions ADD COLUMN payload_json TEXT;
     `,
   },
 ];

@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Target, Plus, Loader2, Move, MousePointer, ZoomIn, ZoomOut, Maximize, Copy,
+  CalendarClock,
 } from 'lucide-react';
 import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
 import { Language } from '../../i18n/translations';
@@ -18,13 +19,16 @@ import {
   useStartSession,
   usePauseSession,
   useResumeSession,
-  useEndSession,
+  useVoidSession,
+  useVoidSessions,
+  useRemoveItem,
+  useUpdateItem,
   useUpdateSession,
   useSyncStatus,
 } from '../../hooks/useBilliardData';
 import type { TableOverview, FloorPosition, BilliardFloorPlan as FloorPlanType, Measurement } from './types';
-import { DEFAULT_FLOOR } from './constants';
-import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal } from './utils';
+import { DEFAULT_FLOOR, ROOM_BG } from './constants';
+import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal, summarizeUnsettled } from './utils';
 import { DraggableTable } from './DraggableTable';
 import { AddTableDialog } from './AddTableDialog';
 import { TableActionPopover } from './TableActionPopover';
@@ -34,21 +38,24 @@ import { MeasurementOverlay } from './MeasurementOverlay';
 import { useFloorState } from './hooks/useFloorState';
 import { FLOOR_PLAN_ASSET_MAP } from './floor-plan-assets';
 import { AssetPickerGrid } from './AssetPickerGrid';
-import { SessionDetailModal } from './SessionDetailModal';
 import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
+import { PaymentDialog } from './PaymentDialog';
+import { UnsettledPanel } from './UnsettledPanel';
+import { ReservationPanel } from './ReservationPanel';
 import { ToastProvider, useToast } from './Toast';
+import { useAuth } from '../../hooks/useAuth';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
 
 function ZoomControls() {
   const { zoomIn, zoomOut, resetTransform } = useControls();
   return (
-    <div className="absolute top-3 right-3 z-30 flex flex-col gap-1">
+    <div className="absolute right-3 top-3 z-30 flex overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => zoomIn(0.3)}
-        className="p-1.5 rounded-lg bg-white/80 backdrop-blur border border-slate-200 hover:bg-slate-100 text-slate-700 shadow-sm"
+        className="flex h-10 w-10 items-center justify-center text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
         aria-label="Zoom in"
       >
         <ZoomIn className="w-4 h-4" />
@@ -56,7 +63,7 @@ function ZoomControls() {
       <button
         type="button"
         onClick={() => zoomOut(0.3)}
-        className="p-1.5 rounded-lg bg-white/80 backdrop-blur border border-slate-200 hover:bg-slate-100 text-slate-700 shadow-sm"
+        className="flex h-10 w-10 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
         aria-label="Zoom out"
       >
         <ZoomOut className="w-4 h-4" />
@@ -64,7 +71,7 @@ function ZoomControls() {
       <button
         type="button"
         onClick={() => resetTransform()}
-        className="p-1.5 rounded-lg bg-white/80 backdrop-blur border border-slate-200 hover:bg-slate-100 text-slate-700 shadow-sm"
+        className="flex h-10 w-10 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
         aria-label="Reset zoom"
       >
         <Maximize className="w-4 h-4" />
@@ -172,25 +179,31 @@ function normalizeFloorPlanList(rawFloorPlans: any, rawOverview: any): FloorPlan
 function FloorPlanInner({ language }: { language: Language }) {
   const { t } = useTranslation(language);
   const toast = useToast();
+  const { user } = useAuth();
+  const canEditLayout = String(user?.role || '').toUpperCase() === 'OWNER';
   const { billiardApi, resourcesApi } = useBilliardApi();
   const canvasRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   // Data
   const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview() as any;
-  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE') as any;
+  const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE', canEditLayout) as any;
   const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans() as any;
   const { data: syncStatus } = useSyncStatus() as any;
 
   const startSession = useStartSession(refetchOverview);
   const pauseSession = usePauseSession(refetchOverview);
   const resumeSession = useResumeSession(refetchOverview);
-  const endSession = useEndSession(refetchOverview);
+  const voidSession = useVoidSession(refetchOverview);
+  const voidSessions = useVoidSessions(refetchOverview);
+  const removeItem = useRemoveItem(refetchOverview);
+  const updateItem = useUpdateItem(refetchOverview);
   const updateSession = useUpdateSession(refetchOverview);
 
   // UI state
   const [editMode, setEditMode] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [popoverTable, setPopoverTable] = useState<TableOverview | null>(null);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
 
   // Edit context menu state
   const [editMenu, setEditMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -210,9 +223,11 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [allSizeH, setAllSizeH] = useState<number>(1.3);
 
   // Dialog states
-  const [detailSession, setDetailSession] = useState<any>(null);
   const [addItemSessionId, setAddItemSessionId] = useState<string | null>(null);
   const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
+  const [paymentSession, setPaymentSession] = useState<any>(null);
+  const [unsettledOpen, setUnsettledOpen] = useState(false);
+  const [reservationsOpen, setReservationsOpen] = useState(false);
   const [changeImageId, setChangeImageId] = useState<string | null>(null);
   const [changeImageKey, setChangeImageKey] = useState<string | null>(null);
 
@@ -221,6 +236,19 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [deletePending, setDeletePending] = useState(false);
 
   const tables = useMemo(() => normalizeTableList(overview), [overview]);
+  const pendingPayments = useMemo(
+    () => Array.isArray((overview as any)?.pendingPayments)
+      ? (overview as any).pendingPayments
+      : [],
+    [overview],
+  );
+  const unsettledSummary = useMemo(() => summarizeUnsettled(pendingPayments), [pendingPayments]);
+  const selectedTable = useMemo(
+    () => selectedTableId
+      ? tables.find((table) => table.resource.id === selectedTableId) || null
+      : null,
+    [selectedTableId, tables],
+  );
   const normalizedFloorPlans = useMemo(
     () => normalizeFloorPlanList(floorPlansData, overview),
     [floorPlansData, overview],
@@ -242,8 +270,16 @@ function FloorPlanInner({ language }: { language: Language }) {
     setEditMenu(null);
     setRenamingTableId(null);
     setPendingMeasureTable(null);
-    setPopoverTable(null);
+    setSelectedTableId(null);
   }, [editMode]);
+
+  useEffect(() => {
+    if (!canEditLayout) {
+      setEditMode(false);
+      setAddDialogOpen(false);
+      setEditMenu(null);
+    }
+  }, [canEditLayout]);
 
   // Sync room dims from active floor plan
   useEffect(() => {
@@ -276,12 +312,36 @@ function FloorPlanInner({ language }: { language: Language }) {
     }
   }, [roomWidth, roomHeight, activeFloor?.id, refetchFloorPlans, billiardApi, toast]);
 
-  const canvasAspectRatio = useMemo(() => {
-    if (Number.isFinite(roomWidth) && Number.isFinite(roomHeight) && roomWidth > 0 && roomHeight > 0) {
-      return `${roomWidth} / ${roomHeight}`;
+  const canvasAspectRatio = useMemo(() => (
+    Number.isFinite(roomWidth) && Number.isFinite(roomHeight) && roomWidth > 0 && roomHeight > 0
+      ? roomWidth / roomHeight
+      : 16 / 10
+  ), [roomWidth, roomHeight]);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateSize = () => {
+      setViewportSize({
+        width: viewport.clientWidth,
+        height: viewport.clientHeight,
+      });
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const fittedCanvasSize = useMemo(() => {
+    const { width, height } = viewportSize;
+    if (width <= 0 || height <= 0) return { width: '100%', height: '100%' };
+    if (width / height > canvasAspectRatio) {
+      return { width: height * canvasAspectRatio, height };
     }
-    return '16 / 10';
-  }, [roomWidth, roomHeight]);
+    return { width, height: width / canvasAspectRatio };
+  }, [canvasAspectRatio, viewportSize]);
 
   // Optimistic position overrides
   const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
@@ -547,22 +607,23 @@ function FloorPlanInner({ language }: { language: Language }) {
   }, [resourcesApi, refetchOverview, toast]);
 
   // Handle table click in operate mode
-  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null);
-  const handleTableClick = useCallback((table: TableOverview, e?: React.MouseEvent) => {
-    setPopoverTable(table);
-    if (e) {
-      setPopoverPos({ x: e.clientX, y: e.clientY });
-    } else {
-      setPopoverPos(null);
-    }
+  const handleTableClick = useCallback((table: TableOverview) => {
+    setSelectedTableId(table.resource.id);
   }, []);
+  const closeSelectedTable = useCallback(() => setSelectedTableId(null), []);
 
   // Quick start
-  const handleQuickStart = useCallback((resourceId: string) => {
-    startSession.mutate({ resourceId, guestCount: 1 }).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.startFailed') || 'Failed to start session'));
+  const handleQuickStart = useCallback((resourceId: string, guestCount: number) => {
+    startSession.mutate({ resourceId, guestCount })
+      .then(() => setSelectedTableId(null))
+      .catch((err: any) => toast.error(err?.message || t('billiard.startFailed') || 'Failed to start session'));
   }, [startSession, toast]);
 
-  const isPending = startSession.isPending || pauseSession.isPending || resumeSession.isPending || endSession.isPending;
+  const isPending = startSession.isPending
+    || pauseSession.isPending
+    || resumeSession.isPending
+    || removeItem.isPending
+    || updateSession.isPending;
 
   // Summary stats
   const stats = useMemo(() => {
@@ -570,12 +631,18 @@ function FloorPlanInner({ language }: { language: Language }) {
     const occupied = filteredTables.filter((tbl) => tbl.status === 'occupied').length;
     const paused = filteredTables.filter((tbl) => tbl.status === 'paused').length;
     const totalGuests = filteredTables.reduce((sum, tbl) => sum + (tbl.session?.guestCount || 0), 0);
-    const totalRevenue = tables.reduce((sum, tbl) => {
+    const totalRevenue = filteredTables.reduce((sum, tbl) => {
       if (!tbl.session) return sum;
-      return sum + estimateCharge(tbl.session) + calculateItemsTotal(tbl.session.items);
+      const authoritativeTimeCharge = Number(
+        tbl.session.currentTimeCharge ?? tbl.session.timeCharge,
+      );
+      const timeCharge = Number.isFinite(authoritativeTimeCharge)
+        ? authoritativeTimeCharge
+        : estimateCharge(tbl.session);
+      return sum + timeCharge + calculateItemsTotal(tbl.session.items);
     }, 0);
     return { total: filteredTables.length, free, occupied, paused, totalRevenue, totalGuests };
-  }, [filteredTables, tables]);
+  }, [filteredTables]);
 
   // Revenue ticker
   const [, setRevTick] = useState(0);
@@ -587,23 +654,19 @@ function FloorPlanInner({ language }: { language: Language }) {
 
   const gridOpacity = editMode ? '0.12' : '0.05';
 
-  // Operate-mode room background
+  // Operate-mode room background — light operational surface (DESIGN.md)
   const operateRoomBg = useMemo(() => ({
-    backgroundImage: [
-      'radial-gradient(circle, rgba(180,220,200,0.08) 1px, transparent 1px)',
-      'radial-gradient(ellipse at 50% 40%, rgba(140,200,175,0.07), transparent 55%)',
-      'radial-gradient(circle at 22% 28%, rgba(255,210,140,0.025), transparent 32%)',
-      'radial-gradient(circle at 78% 72%, rgba(255,210,140,0.025), transparent 32%)',
-      'linear-gradient(155deg, #1c3330 0%, #152622 45%, #1a302c 100%)',
-    ].join(', '),
-    backgroundSize: '28px 28px, 100% 100%, 100% 100%, 100% 100%, 100% 100%',
+    backgroundColor: ROOM_BG,
   }), []);
 
   // Zoom/pan reset key
   const [zoomKey, setZoomKey] = useState(0);
   useEffect(() => { setZoomKey((k) => k + 1); }, [editMode]);
 
-  if (isLoading) {
+  // Keep the live floor and any open dialogs mounted during background polls.
+  // useQuery toggles loading for refetches; replacing the entire tree here
+  // would reset reservation/session forms every ten seconds.
+  if (isLoading && !overview) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
@@ -626,128 +689,139 @@ function FloorPlanInner({ language }: { language: Language }) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Legend */}
-          <div className="flex items-center gap-3 text-xs mr-2">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-sm bg-emerald-500/40 border border-emerald-500" /> {t('billiard.free') || 'Free'}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-sm bg-red-500/40 border border-red-500" /> {t('billiard.occupied') || 'Occupied'}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-sm bg-amber-500/40 border border-amber-500" /> {t('billiard.paused') || 'Paused'}
-            </span>
-          </div>
-
-          {editMode && (
-            <>
-              {/* Room dimensions */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span className="whitespace-nowrap font-medium">{t('billiard.room') || 'Room'}:</span>
-                <input
-                  type="number"
-                  value={roomWidth}
-                  onChange={(e) => { setRoomWidth(+e.target.value); setRoomDimsDirty(true); }}
-                  className="w-[72px] h-8 px-2 text-sm text-center tabular-nums rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 [&::-webkit-inner-spin-button]:opacity-100"
-                  min={1} max={100} step={0.5}
-                />
-                <span>×</span>
-                <input
-                  type="number"
-                  value={roomHeight}
-                  onChange={(e) => { setRoomHeight(+e.target.value); setRoomDimsDirty(true); }}
-                  className="w-[72px] h-8 px-2 text-sm text-center tabular-nums rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 [&::-webkit-inner-spin-button]:opacity-100"
-                  min={1} max={100} step={0.5}
-                />
-                <span>m</span>
-                {roomDimsDirty && (
-                  <button
-                    className="h-8 px-3 text-xs font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors"
-                    onClick={saveRoomDimensions}
-                  >
-                    {t('common.save') || 'Save'}
-                  </button>
-                )}
-              </div>
-              {/* Set all tables to same size */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-500 border-l pl-2 ml-1">
-                <Copy className="w-3.5 h-3.5 shrink-0" />
-                <span className="whitespace-nowrap font-medium">{t('common.all') || 'All'}:</span>
-                <input
-                  type="number"
-                  value={allSizeW}
-                  onChange={(e) => setAllSizeW(+e.target.value)}
-                  className="w-[72px] h-8 px-2 text-sm text-center tabular-nums rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 [&::-webkit-inner-spin-button]:opacity-100"
-                  min={0.5} max={10} step={0.1}
-                />
-                <span>×</span>
-                <input
-                  type="number"
-                  value={allSizeH}
-                  onChange={(e) => setAllSizeH(+e.target.value)}
-                  className="w-[72px] h-8 px-2 text-sm text-center tabular-nums rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 [&::-webkit-inner-spin-button]:opacity-100"
-                  min={0.5} max={10} step={0.1}
-                />
-                <span>m</span>
-                <button
-                  className="h-8 px-3 text-xs font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-100 transition-colors"
-                  onClick={handleSetAllSize}
-                >
-                  {t('common.apply') || 'Apply'}
-                </button>
-              </div>
-              <button
-                className="h-8 px-3 text-xs font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-100 transition-colors flex items-center"
-                onClick={() => setAddDialogOpen(true)}
-              >
-                <Plus className="w-4 h-4 mr-1" /> {t('billiard.addTable') || 'Add Table'}
-              </button>
-            </>
+          {!editMode && (
+            <button
+              type="button"
+              className="flex h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+              onClick={() => setReservationsOpen(true)}
+            >
+              <CalendarClock className="w-4 h-4 mr-1" />
+              {t('billiard.reservations')}
+            </button>
           )}
-          <button
-            className={`h-8 px-3 text-xs font-medium rounded-md transition-colors flex items-center ${
-              editMode
-                ? 'bg-brand-600 text-white hover:bg-brand-700'
-                : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
-            }`}
-            onClick={() => setEditMode(!editMode)}
-          >
-            {editMode
-              ? <><MousePointer className="w-4 h-4 mr-1" /> {t('billiard.done') || 'Done'}</>
-              : <><Move className="w-4 h-4 mr-1" /> {t('billiard.editLayout') || 'Edit Layout'}</>
-            }
-          </button>
+          {canEditLayout && (
+            <button
+              className={editMode
+                ? 'flex h-10 items-center rounded-lg bg-brand-600 px-3 text-sm font-medium text-white transition-colors hover:bg-brand-700'
+                : 'flex h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100'}
+              onClick={() => setEditMode(!editMode)}
+            >
+              {editMode
+                ? <><MousePointer className="w-4 h-4 mr-1" /> {t('billiard.done') || 'Done'}</>
+                : <><Move className="w-4 h-4 mr-1" /> {t('billiard.editLayout') || 'Edit Layout'}</>
+              }
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Summary Stats */}
-      {tables.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums">{stats.total}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.tables') || 'Tables'}</p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums text-emerald-600">{stats.free}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.free') || 'Free'}</p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums text-red-600">{stats.occupied}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.active') || 'Active'}</p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums text-amber-600">{stats.paused}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.paused') || 'Paused'}</p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums">{stats.totalGuests}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.guests') || 'Guests'}</p>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-center">
-            <p className="text-lg font-bold tabular-nums text-blue-600">{formatCurrency(stats.totalRevenue)}</p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{t('billiard.running') || 'Running'}</p>
-          </div>
+      {!editMode && tables.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
+          <span className="flex items-center gap-2 font-medium text-slate-700">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            {t('billiard.free') || 'Free'} <strong className="tabular-nums text-slate-900">{stats.free}</strong>
+          </span>
+          <span className="flex items-center gap-2 font-medium text-slate-700">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+            {t('billiard.active') || 'Active'} <strong className="tabular-nums text-slate-900">{stats.occupied}</strong>
+          </span>
+          <span className="flex items-center gap-2 font-medium text-slate-700">
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+            {t('billiard.paused') || 'Paused'} <strong className="tabular-nums text-slate-900">{stats.paused}</strong>
+          </span>
+          <span className="flex items-center gap-2 text-slate-500">
+            {t('billiard.guests') || 'Guests'} <strong className="tabular-nums text-slate-700">{stats.totalGuests}</strong>
+          </span>
+          <span className="ml-auto text-slate-500">
+            {t('billiard.running') || 'Running'}{' '}
+            <strong className="tabular-nums text-slate-900">{formatCurrency(stats.totalRevenue)}</strong>
+          </span>
         </div>
+      )}
+
+      {editMode && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">{t('billiard.editLayout') || 'Edit Layout'}</h2>
+              <p className="text-xs text-slate-500">{t('billiard.editModeHint') || 'Drag tables to arrange. Right-click for options.'}</p>
+            </div>
+            <button
+              className="flex h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+              onClick={() => setAddDialogOpen(true)}
+            >
+              <Plus className="mr-1.5 h-4 w-4" /> {t('billiard.addTable') || 'Add Table'}
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <span className="whitespace-nowrap font-medium">{t('billiard.room') || 'Room'}</span>
+              <input
+                type="number"
+                value={roomWidth}
+                onChange={(e) => { setRoomWidth(+e.target.value); setRoomDimsDirty(true); }}
+                className="h-10 w-[72px] rounded-lg border border-slate-300 bg-white px-2 text-center text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-400"
+                min={1} max={100} step={0.5}
+              />
+              <span>×</span>
+              <input
+                type="number"
+                value={roomHeight}
+                onChange={(e) => { setRoomHeight(+e.target.value); setRoomDimsDirty(true); }}
+                className="h-10 w-[72px] rounded-lg border border-slate-300 bg-white px-2 text-center text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-400"
+                min={1} max={100} step={0.5}
+              />
+              <span>m</span>
+              {roomDimsDirty && (
+                <button
+                  className="h-10 rounded-lg bg-brand-600 px-3 text-sm font-medium text-white hover:bg-brand-700"
+                  onClick={saveRoomDimensions}
+                >
+                  {t('common.save') || 'Save'}
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 border-slate-200 text-sm text-slate-600 sm:border-l sm:pl-4">
+              <Copy className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap font-medium">{t('common.all') || 'All'}</span>
+              <input
+                type="number"
+                value={allSizeW}
+                onChange={(e) => setAllSizeW(+e.target.value)}
+                className="h-10 w-[72px] rounded-lg border border-slate-300 bg-white px-2 text-center text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-400"
+                min={0.5} max={10} step={0.1}
+              />
+              <span>×</span>
+              <input
+                type="number"
+                value={allSizeH}
+                onChange={(e) => setAllSizeH(+e.target.value)}
+                className="h-10 w-[72px] rounded-lg border border-slate-300 bg-white px-2 text-center text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-400"
+                min={0.5} max={10} step={0.1}
+              />
+              <span>m</span>
+              <button
+                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                onClick={handleSetAllSize}
+              >
+                {t('common.apply') || 'Apply'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!editMode && unsettledSummary.count > 0 && (
+        <button
+          type="button"
+          onClick={() => setUnsettledOpen(true)}
+          className="flex w-fit items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 transition-colors hover:bg-amber-100"
+        >
+          {t('billiard.unsettled') || 'Unsettled'}
+          <span className="tabular-nums">{unsettledSummary.count}</span>
+          ·
+          <span className="tabular-nums">{formatCurrency(unsettledSummary.totalOutstanding)}</span>
+        </button>
       )}
 
       {/* Sync Status Indicator */}
@@ -800,52 +874,57 @@ function FloorPlanInner({ language }: { language: Language }) {
         />
       )}
 
-      {/* Canvas with zoom/pan */}
-      <TransformWrapper
-        key={zoomKey}
-        initialScale={1}
-        minScale={0.5}
-        maxScale={3}
-        centerOnInit
-        limitToBounds
-        doubleClick={{ disabled: true }}
-        wheel={{ step: 0.08 }}
-        pinch={{ step: 5 }}
-        panning={{
-          disabled: editMode,
-          velocityDisabled: true,
-        }}
-        disabled={editMode}
+      {/* Wheel/pan are intentionally scoped to this fixed interaction viewport. */}
+      <div
+        ref={viewportRef}
+        data-billiard-canvas-viewport
+        className="relative h-[clamp(440px,62vh,720px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
       >
-        <div className="relative" style={{ aspectRatio: canvasAspectRatio }}>
-          {!editMode && <ZoomControls />}
+        <TransformWrapper
+          key={zoomKey}
+          initialScale={1}
+          minScale={0.5}
+          maxScale={3}
+          centerOnInit
+          limitToBounds
+          doubleClick={{ disabled: true }}
+          wheel={{ step: 0.08 }}
+          pinch={{ step: 5 }}
+          panning={{
+            disabled: editMode,
+            velocityDisabled: true,
+          }}
+        >
+          <ZoomControls />
           <TransformComponent
             wrapperClass="!w-full !h-full !rounded-xl !overflow-hidden"
-            contentClass="!w-full !h-full"
+            contentClass="!w-full !h-full !flex !items-center !justify-center"
           >
             <div
               ref={canvasRef}
               className={`
-                relative w-full h-full rounded-xl overflow-hidden transition-shadow duration-200
+                relative shrink-0 rounded-xl overflow-hidden transition-shadow duration-200
                 ${editMode
                   ? 'border-2 border-blue-400/40 shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'
                   : floorBackgroundUrl
                     ? ''
-                    : 'border-2 border-[#2a4a40]/60 shadow-[inset_0_0_60px_rgba(0,0,0,0.3),inset_0_0_120px_rgba(0,0,0,0.12)]'
+                    : 'border border-slate-300 shadow-[inset_0_1px_6px_rgba(15,23,42,0.06)]'
                 }
               `}
               style={
                 editMode
                   ? {
+                      ...fittedCanvasSize,
                       backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(100,116,139,${gridOpacity}) 39px, rgba(100,116,139,${gridOpacity}) 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(100,116,139,${gridOpacity}) 39px, rgba(100,116,139,${gridOpacity}) 40px)`,
                     }
                   : floorBackgroundUrl
                     ? {
+                        ...fittedCanvasSize,
                         backgroundImage: `url(${floorBackgroundUrl})`,
                         backgroundSize: 'cover',
                         backgroundPosition: 'center',
                       }
-                    : operateRoomBg
+                    : { ...fittedCanvasSize, ...operateRoomBg }
               }
               onClick={() => setPendingMeasureTable(null)}
             >
@@ -860,14 +939,14 @@ function FloorPlanInner({ language }: { language: Language }) {
                         corner === 'top-right' ? 'top-2.5 right-2.5 border-t-2 border-r-2' :
                         corner === 'bottom-left' ? 'bottom-2.5 left-2.5 border-b-2 border-l-2' :
                         'bottom-2.5 right-2.5 border-b-2 border-r-2'
-                      } border-emerald-400/25 rounded-sm`}
+                      } border-slate-400/50 rounded-sm`}
                     />
                   ))}
-                  <span className="absolute bottom-2 right-3 text-[10px] font-mono tabular-nums text-emerald-400/30 pointer-events-none z-[2] tracking-wider">
+                  <span className="absolute bottom-2 right-3 text-[10px] font-mono tabular-nums text-slate-400/80 pointer-events-none z-[2] tracking-wider">
                     {roomWidth}m × {roomHeight}m
                   </span>
                   {activeFloor && (
-                    <span className="absolute top-2.5 left-8 text-[10px] font-medium text-emerald-400/25 pointer-events-none z-[2] uppercase tracking-widest">
+                    <span className="absolute top-2.5 left-8 text-[10px] font-medium text-slate-400/70 pointer-events-none z-[2] uppercase tracking-widest">
                       {activeFloor.name}
                     </span>
                   )}
@@ -876,18 +955,18 @@ function FloorPlanInner({ language }: { language: Language }) {
 
               {filteredTables.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <Target className={`w-16 h-16 mb-4 ${editMode ? 'text-slate-300' : 'text-emerald-400/15'}`} />
-                  <h3 className={`text-lg font-medium ${editMode ? 'text-slate-500' : 'text-emerald-300/40'}`}>
+                  <Target className="w-16 h-16 mb-4 text-slate-300" />
+                  <h3 className="text-lg font-medium text-slate-500">
                     {hasMultipleFloors
                       ? (t('billiard.noTablesOnFloor') || 'No tables on this floor')
                       : (t('billiard.noTables') || 'No tables yet')}
                   </h3>
-                  <p className={`text-sm mt-1 mb-4 ${editMode ? 'text-slate-400' : 'text-emerald-400/25'}`}>
+                  <p className="text-sm mt-1 mb-4 text-slate-400">
                     {editMode
                       ? (t('billiard.addTableHint') || 'Click "Add Table" to place one here')
                       : (t('billiard.switchToEditHint') || 'Switch to Edit Layout mode and add your first table')}
                   </p>
-                  {!editMode && (
+                  {!editMode && canEditLayout && (
                     <button
                       className="h-8 px-3 text-sm font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors flex items-center"
                       onClick={() => { setEditMode(true); setAddDialogOpen(true); }}
@@ -934,8 +1013,8 @@ function FloorPlanInner({ language }: { language: Language }) {
               )}
             </div>
           </TransformComponent>
-        </div>
-      </TransformWrapper>
+        </TransformWrapper>
+      </div>
 
       {/* Edit context menu (edit mode — right-click) */}
       {editMenu && editMode && (() => {
@@ -965,51 +1044,57 @@ function FloorPlanInner({ language }: { language: Language }) {
         );
       })()}
 
-      {/* Popover actions (operate mode) */}
-      {popoverTable && !editMode && (
+      {/* Unified table/session drawer (operate mode) */}
+      {selectedTable && !editMode && (
         <TableActionPopover
-          table={popoverTable}
+          table={selectedTable}
           open={true}
-          onOpenChange={() => setPopoverTable(null)}
-          clickPosition={popoverPos}
-          onStartSession={() => handleQuickStart(popoverTable.resource.id)}
-          onOpenDetail={() => {
-            setDetailSession(popoverTable.session);
-            setPopoverTable(null);
-          }}
+          suspended={Boolean(addItemSessionId || transferSessionId || paymentSession)}
+          onOpenChange={closeSelectedTable}
+          onStartSession={(guestCount) => handleQuickStart(selectedTable.resource.id, guestCount)}
           onPause={() => {
-            if (popoverTable.session?.id) {
-              pauseSession.mutate(popoverTable.session.id).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.pauseFailed') || 'Failed to pause'));
+            if (selectedTable.session?.id) {
+              pauseSession.mutate(selectedTable.session.id)
+                .catch((err: any) => toast.error(err?.message || t('billiard.pauseFailed') || 'Failed to pause'));
             }
           }}
           onResume={() => {
-            if (popoverTable.session?.id) {
-              resumeSession.mutate(popoverTable.session.id).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.resumeFailed') || 'Failed to resume'));
-            }
-          }}
-          onEnd={() => {
-            if (popoverTable.session?.id) {
-              endSession.mutate(popoverTable.session.id).then(() => setPopoverTable(null)).catch((err: any) => toast.error(err?.message || t('billiard.endFailed') || 'Failed to end session'));
+            if (selectedTable.session?.id) {
+              resumeSession.mutate(selectedTable.session.id)
+                .catch((err: any) => toast.error(err?.message || t('billiard.resumeFailed') || 'Failed to resume'));
             }
           }}
           onAddItem={() => {
-            setAddItemSessionId(popoverTable.session?.id);
-            setPopoverTable(null);
+            if (selectedTable.session?.id) {
+              setAddItemSessionId(selectedTable.session.id);
+            }
           }}
           onPayment={() => {
-            // In desktop app, open detail modal for payment instead of routing
-            if (popoverTable.session) {
-              setDetailSession(popoverTable.session);
+            if (selectedTable.session) {
+              setPaymentSession(selectedTable.session);
             }
-            setPopoverTable(null);
           }}
           onTransfer={() => {
-            setTransferSessionId(popoverTable.session?.id);
-            setPopoverTable(null);
+            if (selectedTable.session?.id) {
+              setTransferSessionId(selectedTable.session.id);
+            }
           }}
           onUpdateGuestCount={(count) => {
-            if (popoverTable.session?.id) {
-              updateSession.mutate({ id: popoverTable.session.id, data: { guestCount: count } });
+            if (selectedTable.session?.id) {
+              updateSession.mutate({ id: selectedTable.session.id, data: { guestCount: count } })
+                .catch((err: any) => toast.error(err?.message || t('billiard.actionFailed') || 'Action failed'));
+            }
+          }}
+          onRemoveItem={(itemId) => {
+            if (selectedTable.session?.id) {
+              removeItem.mutate({ sessionId: selectedTable.session.id, itemId })
+                .catch((err: any) => toast.error(err?.message || t('billiard.removeItemFailed') || 'Failed to remove item'));
+            }
+          }}
+          onUpdateItemQty={(itemId, quantity) => {
+            if (selectedTable.session?.id) {
+              updateItem.mutate({ sessionId: selectedTable.session.id, itemId, data: { quantity } })
+                .catch((err: any) => toast.error(err?.message || t('billiard.actionFailed') || 'Action failed'));
             }
           }}
           isPending={isPending}
@@ -1018,22 +1103,27 @@ function FloorPlanInner({ language }: { language: Language }) {
       )}
 
       {/* Dialogs */}
-      <AddTableDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        onAdd={(name, basePrice, topViewImage) => handleCreateTable(name, basePrice, topViewImage)}
-        isPending={createPending}
-        existingNames={filteredTables.map((tbl) => tbl.resource.name)}
-        currentFloor={activeFloor?.floorNumber ?? 1}
-        language={language}
-      />
+      {reservationsOpen && (
+        <ReservationPanel
+          key="billiard-reservations-panel"
+          language={language}
+          tables={tables.map((table) => ({ id: table.resource.id, name: table.resource.name }))}
+          onClose={() => setReservationsOpen(false)}
+          onCheckedIn={refetchOverview}
+        />
+      )}
 
-      <SessionDetailModal
-        session={detailSession}
-        open={!!detailSession}
-        onOpenChange={(v) => { if (!v) setDetailSession(null); }}
-        language={language}
-      />
+      {canEditLayout && (
+        <AddTableDialog
+          open={addDialogOpen}
+          onOpenChange={setAddDialogOpen}
+          onAdd={(name, basePrice, topViewImage) => handleCreateTable(name, basePrice, topViewImage)}
+          isPending={createPending}
+          existingNames={filteredTables.map((tbl) => tbl.resource.name)}
+          currentFloor={activeFloor?.floorNumber ?? 1}
+          language={language}
+        />
+      )}
 
       {addItemSessionId && (
         <AddItemToTabModal
@@ -1049,7 +1139,48 @@ function FloorPlanInner({ language }: { language: Language }) {
           sessionId={transferSessionId}
           open={true}
           onOpenChange={(v) => { if (!v) setTransferSessionId(null); }}
+          tables={tables}
+          onTransferred={(targetResourceId) => {
+            // The drawer follows the session to its new table.
+            setSelectedTableId(targetResourceId);
+            refetchOverview();
+          }}
           language={language}
+        />
+      )}
+
+      <UnsettledPanel
+        open={unsettledOpen}
+        onOpenChange={setUnsettledOpen}
+        sessions={pendingPayments}
+        online={Boolean(syncStatus?.online ?? true)}
+        language={language}
+        onSettle={(session) => setPaymentSession(session)}
+        voidPending={voidSession.isPending || voidSessions.isPending}
+        onVoid={async (ids, reason) => {
+          try {
+            const result = ids.length === 1
+              ? await voidSession.mutate({ sessionId: ids[0], reason })
+              : await voidSessions.mutate({ ids, reason });
+            const failed = Array.isArray(result) ? result.filter((r: any) => !r?.ok) : [];
+            if (failed.length > 0) {
+              toast.error(`${failed.length}× ${t('billiard.voidFailed') || 'Write-off failed'}: ${failed[0]?.error || ''}`);
+            } else {
+              toast.success(t('billiard.voided') || 'Written off');
+            }
+          } catch (err: any) {
+            toast.error(err?.message || t('billiard.voidFailed') || 'Write-off failed');
+          }
+        }}
+      />
+
+      {paymentSession && (
+        <PaymentDialog
+          session={paymentSession}
+          open={true}
+          onOpenChange={(v) => { if (!v) setPaymentSession(null); }}
+          language={language}
+          onRefetch={refetchOverview}
         />
       )}
 

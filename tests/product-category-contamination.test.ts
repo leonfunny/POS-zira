@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 vi.mock('../src/main/database/database', () => ({
   database: {
     all: vi.fn(() => []),
+    run: vi.fn(),
   },
 }));
 
@@ -62,6 +63,40 @@ describe('POS product category contamination guards', () => {
     expect(sql).toMatch(/FROM categories/);
     expect(sql).not.toMatch(/WHERE EXISTS/);
     expect(sql).toMatch(/ORDER BY/);
+  });
+
+  it('hides backend tombstones from Products while retaining inactive variants', () => {
+    productRepo.getAllIncludingInactive();
+
+    const sql = vi.mocked(database.all).mock.calls[0][0] as string;
+    expect(sql).toContain('sync_tombstone_reason IS NULL');
+    expect(sql).toMatch(/WHERE sync_tombstone_reason IS NULL\s+AND id NOT IN/);
+  });
+
+  it('keeps variant-inactive rows reactivatable but hides deleted product rows', () => {
+    productRepo.applySyncTombstones([
+      {
+        id: 'inactive-variant',
+        reason: 'VARIANT_INACTIVE',
+        canonicalUpdatedAt: '2026-07-17T08:00:00.000Z',
+      },
+      {
+        id: 'deleted-product',
+        reason: 'PRODUCT_DELETED',
+        canonicalUpdatedAt: '2026-07-17T08:01:00.000Z',
+      },
+    ]);
+
+    const calls = vi.mocked(database.run).mock.calls;
+    expect(calls[0][0]).toContain('sync_tombstone_reason = NULL');
+    expect(calls[0][1]).toEqual(['2026-07-17T08:00:00.000Z', 'inactive-variant']);
+    expect(calls[1][0]).toContain('sync_tombstone_reason = ?');
+    expect(calls[1][1]).toEqual([
+      '2026-07-17T08:01:00.000Z',
+      'PRODUCT_DELETED',
+      '2026-07-17T08:01:00.000Z',
+      'deleted-product',
+    ]);
   });
 
   it('does not seed demo catalog when the app is paired or authenticated', () => {

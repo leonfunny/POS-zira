@@ -258,6 +258,10 @@ export class ProductSync {
         productRepo.upsertMany(data.products);
       }
 
+      if (data.tombstones && data.tombstones.length > 0) {
+        productRepo.applySyncTombstones(data.tombstones);
+      }
+
       // Mark products not in the sync response as inactive (handles deletions on backend)
       if (data.products.length > 0) {
         const syncedIds = new Set(data.products.map((p: any) => p.id));
@@ -391,8 +395,12 @@ export class ProductSync {
           logger.info(`[ProductSync] Pruned ${pruned.removed} categories deleted on backend: ${names}`);
         }
       }
-      if (data.deletedIds && data.deletedIds.length > 0) {
-        productRepo.deactivateByIds(data.deletedIds);
+      if (data.tombstones && data.tombstones.length > 0) {
+        productRepo.applySyncTombstones(data.tombstones);
+      } else if (data.deletedIds && data.deletedIds.length > 0) {
+        productRepo.applySyncTombstones(
+          data.deletedIds.map((id) => ({ id, reason: 'LEGACY_DELETED' })),
+        );
       }
       this.cleanupSyncedLocalAliases();
       // Cursor-v2 always supplies a snapshot watermark on the final page.

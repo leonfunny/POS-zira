@@ -7,6 +7,10 @@ const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
 const TOUCH_KEYBOARD = fs.readFileSync(path.join(ROOT, 'src/renderer/components/shared/TouchKeyboard.tsx'), 'utf8');
 const KEYBOARD_MANAGER = fs.readFileSync(path.join(ROOT, 'src/renderer/hooks/useKeyboardManager.ts'), 'utf8');
 const POS_LAYOUT = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/POSLayout.tsx'), 'utf8');
+const SCAN_IMPORT_MODAL = fs.readFileSync(
+  path.join(ROOT, 'src/renderer/components/pos/ScanImportModal.tsx'),
+  'utf8',
+);
 
 describe('POS touch keyboard inset', () => {
   it('measures the shared touch keyboard height and reports it to App', () => {
@@ -35,6 +39,16 @@ describe('POS touch keyboard inset', () => {
     expect(POS_LAYOUT).toContain("paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)'");
     expect(POS_LAYOUT).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
     expect(POS_LAYOUT).toContain('overflow-y-auto');
+  });
+
+  it('keeps the scan-import modal and focused fields above the measured keyboard inset', () => {
+    expect(SCAN_IMPORT_MODAL).toContain('useKeyboardAwareFocus');
+    expect(SCAN_IMPORT_MODAL).toContain('const panelRef = useRef<HTMLDivElement | null>(null)');
+    expect(SCAN_IMPORT_MODAL).toContain("bottom: 'var(--touch-keyboard-inset, 0px)'");
+    expect(SCAN_IMPORT_MODAL).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
+    expect(SCAN_IMPORT_MODAL).toContain('onFocusCapture={handleKeyboardAwareFocus}');
+    expect(SCAN_IMPORT_MODAL).toContain('className="min-h-0 overflow-y-auto"');
+    expect(SCAN_IMPORT_MODAL).toContain('className="flex shrink-0 gap-3 border-t');
   });
 
   it('does not offer a decimal key for integer inputMode fields', () => {

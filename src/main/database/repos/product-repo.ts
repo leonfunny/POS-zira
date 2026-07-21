@@ -171,6 +171,16 @@ export interface ProductVariantRow {
   // Item kind + tracking (migration v53). NULL item_type = stockable (old rows).
   item_type?: string | null;
   track_inventory?: number | null;
+  // Backend sync-v2 tombstone state (migration v57). Deleted/non-sellable
+  // rows stay in SQLite for history integrity but are hidden from catalog UI.
+  sync_tombstone_reason?: string | null;
+  sync_tombstoned_at?: string | null;
+}
+
+export interface ProductSyncTombstone {
+  id: string;
+  reason: string;
+  canonicalUpdatedAt?: string;
 }
 
 export interface CategoryRow {
@@ -318,19 +328,19 @@ function scoreSearchMatch(product: ProductVariantRow, query: string, normalizedQ
 export const productRepo = {
   getAll(): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
-      `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+      `SELECT * FROM product_variants WHERE is_active = 1 AND sync_tombstone_reason IS NULL ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
   },
 
   getAllIncludingInactive(): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
-      `SELECT * FROM product_variants WHERE 1 = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+      `SELECT * FROM product_variants WHERE sync_tombstone_reason IS NULL ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
     );
   },
 
   getByCategory(categoryId: string): ProductVariantRow[] {
     return database.all<ProductVariantRow>(
-      `SELECT * FROM product_variants WHERE category_id = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+      `SELECT * FROM product_variants WHERE category_id = ? AND is_active = 1 AND sync_tombstone_reason IS NULL ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
       [categoryId],
     );
   },
@@ -446,7 +456,7 @@ export const productRepo = {
           price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, sell_by,
           name_translations, customer_display_enabled, customer_display_sort_order,
           kiosk_media_json, kiosk_modifier_groups_json, kiosk_note_enabled,
-          item_type, track_inventory
+          item_type, track_inventory, sync_tombstone_reason, sync_tombstoned_at
         )
          VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -454,7 +464,8 @@ export const productRepo = {
           COALESCE(?, (SELECT kiosk_modifier_groups_json FROM product_variants WHERE id = ?)),
           COALESCE(?, (SELECT kiosk_note_enabled FROM product_variants WHERE id = ?), 0),
           COALESCE(?, (SELECT item_type FROM product_variants WHERE id = ?)),
-          COALESCE(?, (SELECT track_inventory FROM product_variants WHERE id = ?), 1)
+          COALESCE(?, (SELECT track_inventory FROM product_variants WHERE id = ?), 1),
+          NULL, NULL
         )`,
         [
           p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0,
@@ -583,6 +594,42 @@ export const productRepo = {
   deactivateByIds(ids: string[]): void {
     for (const id of ids) {
       database.run('UPDATE product_variants SET is_active = 0 WHERE id = ?', [id]);
+    }
+  },
+
+  /**
+   * Apply typed sync-v2 tombstones without physically deleting catalog rows.
+   * Only a variant-level inactive state is reactivatable through the current
+   * Product Admin PATCH contract. Deleted, template-inactive, not-for-sale,
+   * and unknown states are hidden from local catalog surfaces.
+   */
+  applySyncTombstones(tombstones: ProductSyncTombstone[]): void {
+    for (const tombstone of tombstones) {
+      const id = String(tombstone?.id ?? '').trim();
+      if (!id) continue;
+      const reason = String(tombstone?.reason ?? '').trim().toUpperCase() || 'UNKNOWN';
+      const canonicalUpdatedAt = String(tombstone?.canonicalUpdatedAt ?? '').trim() || null;
+      if (reason === 'VARIANT_INACTIVE') {
+        database.run(
+          `UPDATE product_variants
+           SET is_active = 0,
+               updated_at = COALESCE(?, updated_at),
+               sync_tombstone_reason = NULL,
+               sync_tombstoned_at = NULL
+           WHERE id = ?`,
+          [canonicalUpdatedAt, id],
+        );
+        continue;
+      }
+      database.run(
+        `UPDATE product_variants
+         SET is_active = 0,
+             updated_at = COALESCE(?, updated_at),
+             sync_tombstone_reason = ?,
+             sync_tombstoned_at = COALESCE(?, datetime('now'))
+         WHERE id = ?`,
+        [canonicalUpdatedAt, reason, canonicalUpdatedAt, id],
+      );
     }
   },
 

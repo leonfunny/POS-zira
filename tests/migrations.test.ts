@@ -89,4 +89,25 @@ describe('database migrations', () => {
     expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE 'https://%'");
     expect(migration!.up).toContain("LOWER(TRIM(icon)) LIKE '/uploads/%'");
   });
+
+  it('adds durable product tombstone state and invalidates the old product cursor', () => {
+    const migration = migrations.find((m) => m.name === 'product_sync_tombstone_state');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(57);
+    expect(migration!.up).toContain('ADD COLUMN sync_tombstone_reason TEXT');
+    expect(migration!.up).toContain('ADD COLUMN sync_tombstoned_at TEXT');
+    expect(migration!.up).toContain("'products_sync_cursor_v2'");
+    expect(migration!.up).toContain("'products_last_full_sync'");
+  });
+
+  it('indexes the retained refund journal by event time and local order', () => {
+    const migration = migrations.find((m) => m.name === 'pos_refund_cashflow_indexes');
+
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(58);
+    expect(migration!.up).toContain('ON pos_event_outbox(event_type, occurred_at)');
+    expect(migration!.up).toContain('ON pos_event_outbox(event_type, local_order_id)');
+    expect(migration!.up).toContain('ON pos_event_outbox(event_type, shift_id)');
+  });
 });

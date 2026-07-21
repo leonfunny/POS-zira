@@ -8,6 +8,7 @@ const {
   upsertManyMock,
   deactivateExceptMock,
   deactivateByIdsMock,
+  applySyncTombstonesMock,
   deleteCategoriesExceptMock,
   getByIdMock,
   getPendingVariantIdsMock,
@@ -30,6 +31,7 @@ const {
   upsertManyMock: vi.fn(),
   deactivateExceptMock: vi.fn(),
   deactivateByIdsMock: vi.fn(),
+  applySyncTombstonesMock: vi.fn(),
   deleteCategoriesExceptMock: vi.fn(),
   getByIdMock: vi.fn(),
   getPendingVariantIdsMock: vi.fn(() => []),
@@ -60,6 +62,7 @@ vi.mock('../src/main/database/repos/product-repo', () => ({
     upsertMany: upsertManyMock,
     deactivateExcept: deactivateExceptMock,
     deactivateByIds: deactivateByIdsMock,
+    applySyncTombstones: applySyncTombstonesMock,
     deleteCategoriesExcept: deleteCategoriesExceptMock,
     getById: getByIdMock,
   },
@@ -377,6 +380,37 @@ describe('ProductSync category pruning', () => {
       expect.stringContaining('INSERT OR REPLACE INTO sync_metadata'),
       ['products_sync_cursor_v2', 'cursor-v2-2'],
     );
+  });
+
+  it('preserves typed cursor-v2 tombstone reasons for local catalog state', async () => {
+    getProductAdminCapabilitiesMock.mockResolvedValueOnce({
+      supportsProductSyncV2: true,
+      productSyncVersion: 2,
+    });
+    const tombstones = [
+      {
+        id: 'deleted-product',
+        reason: 'PRODUCT_DELETED',
+        canonicalUpdatedAt: '2026-07-17T08:04:57.669000Z',
+      },
+      {
+        id: 'inactive-variant',
+        reason: 'VARIANT_INACTIVE',
+        canonicalUpdatedAt: '2026-07-17T08:05:00.000000Z',
+      },
+    ];
+    getPosProductsMock.mockResolvedValueOnce({
+      products: [],
+      categories: [],
+      deletedIds: tombstones.map((row) => row.id),
+      tombstones,
+      nextSyncCursor: 'cursor-v2-2',
+    });
+
+    await expect(new ProductSync().deltaSync()).resolves.toBe(0);
+
+    expect(applySyncTombstonesMock).toHaveBeenCalledWith(tombstones);
+    expect(deactivateByIdsMock).not.toHaveBeenCalledWith(tombstones.map((row) => row.id));
   });
 
   it('resets an unsafe cursor-v2 once and performs one full v2 sync without legacy fallback', async () => {

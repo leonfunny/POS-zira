@@ -52,11 +52,16 @@ describe('product admin inactive catalog', () => {
         id TEXT PRIMARY KEY,
         template_id TEXT,
         name TEXT NOT NULL,
-        is_active INTEGER NOT NULL
+        is_active INTEGER NOT NULL,
+        sync_tombstone_reason TEXT,
+        sync_tombstoned_at TEXT
       );
-      INSERT INTO product_variants (id, template_id, name, is_active) VALUES
-        ('active', NULL, 'Active product', 1),
-        ('inactive', NULL, 'Inactive product', 0);
+      INSERT INTO product_variants (
+        id, template_id, name, is_active, sync_tombstone_reason, sync_tombstoned_at
+      ) VALUES
+        ('active', NULL, 'Active product', 1, NULL, NULL),
+        ('inactive', NULL, 'Inactive product', 0, NULL, NULL),
+        ('deleted', NULL, 'Deleted product', 0, 'VARIANT_DELETED', '2026-07-17T00:00:00.000Z');
     `);
   });
 

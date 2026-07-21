@@ -2,6 +2,7 @@ import { database } from '../database';
 import logger from '../../logger';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../../pos/order-line-contract';
 import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
+import { allocateRefundTenders } from '../../pos/refund-backend-payload';
 import { posEventEmitter } from '../../events/pos-event-emitter';
 import { STOCK_TRACKED_GUARD_SQL } from './product-repo';
 
@@ -94,11 +95,22 @@ export interface OrderMutationInput {
   items?: OrderMutationItemInput[];
 }
 
+export interface RefundCashflowStats {
+  refund_count: number;
+  refund_total: number;
+  cash_refund_total: number;
+  card_refund_total: number;
+  blik_refund_total: number;
+  transfer_refund_total: number;
+}
+
 export interface DailyStats {
   order_count: number;
   total_sales: number;
   cash_total: number;
   card_total: number;
+  refund_count: number;
+  refund_total: number;
 }
 
 export interface OrderHistoryOptions {
@@ -138,6 +150,200 @@ const HAS_FISCAL_EXPR = `
       AND fa.status = 'SUCCESS_CONFIRMED'
   )
 `;
+
+type RefundEventCashflowRow = {
+  event_id: string;
+  local_order_id: string | null;
+  payload_json: string;
+};
+
+type LegacyRefundCashflowRow = {
+  id: string;
+  refund_amount: number | null;
+  payment_method: string | null;
+  payment_tenders: string | null;
+};
+
+type DailyGrossCashflowRow = {
+  total: number;
+  payment_method: string | null;
+  payment_tenders: string | null;
+};
+
+function emptyRefundCashflowStats(): RefundCashflowStats {
+  return {
+    refund_count: 0,
+    refund_total: 0,
+    cash_refund_total: 0,
+    card_refund_total: 0,
+    blik_refund_total: 0,
+    transfer_refund_total: 0,
+  };
+}
+
+function addRefundTender(stats: RefundCashflowStats, method: string, amount: number): void {
+  switch (String(method || '').toUpperCase()) {
+    case 'CASH':
+      stats.cash_refund_total += amount;
+      break;
+    case 'CARD':
+      stats.card_refund_total += amount;
+      break;
+    case 'BLIK':
+      stats.blik_refund_total += amount;
+      break;
+    case 'TRANSFER':
+    case 'BANK_TRANSFER':
+    case 'INVOICE':
+      stats.transfer_refund_total += amount;
+      break;
+  }
+}
+
+function addRefundCashflow(
+  stats: RefundCashflowStats,
+  amountValue: unknown,
+  fallbackMethod: string | null | undefined,
+  tenderAllocations?: unknown,
+): number {
+  const amount = Math.round(Number(amountValue));
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+
+  const rawTenders = Array.isArray(tenderAllocations)
+    ? tenderAllocations.map((tender: any) => ({
+        method: tender?.method,
+        amount: tender?.amountMinor ?? tender?.amount,
+      }))
+    : [];
+  const tenders = allocateRefundTenders(
+    rawTenders.length > 0 ? JSON.stringify(rawTenders) : null,
+    amount,
+    fallbackMethod,
+  );
+
+  stats.refund_count += 1;
+  stats.refund_total += amount;
+  for (const tender of tenders) addRefundTender(stats, tender.method, tender.amount);
+  return amount;
+}
+
+function parseRefundEventPayload(row: RefundEventCashflowRow): Record<string, any> | null {
+  try {
+    const payload = JSON.parse(row.payload_json);
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function refundEventFactKey(
+  row: RefundEventCashflowRow,
+  payload: Record<string, any>,
+): string {
+  const itemRequestId = Array.isArray(payload.items)
+    ? payload.items.find((item: any) => item?.refundRequestId)?.refundRequestId
+    : null;
+  const refundId = payload.refundRequestId
+    || itemRequestId
+    || payload.refundId
+    || row.event_id;
+  return `${row.local_order_id || 'unknown-order'}:${String(refundId)}`;
+}
+
+function queryRefundCashflow(
+  eventTimeSql: string,
+  eventTimeParams: unknown[],
+  orderTimeSql: string,
+  orderTimeParams: unknown[],
+  fiscalOnly: boolean,
+): RefundCashflowStats {
+  const stats = emptyRefundCashflowStats();
+  const fiscalEventSql = fiscalOnly
+    ? `AND EXISTS (
+         SELECT 1 FROM fiscal_attempts fa
+         WHERE fa.order_id = e.local_order_id
+           AND fa.status = 'SUCCESS_CONFIRMED'
+       )`
+    : '';
+  const events = database.all<RefundEventCashflowRow>(
+    `SELECT e.event_id, e.local_order_id, e.payload_json
+     FROM pos_event_outbox e
+     WHERE e.event_type = 'RefundIssued'
+       AND ${eventTimeSql}
+       ${fiscalEventSql}`,
+    eventTimeParams,
+  ) ?? [];
+
+  const seenFacts = new Set<string>();
+  for (const event of events) {
+    const payload = parseRefundEventPayload(event);
+    if (!payload) continue;
+    const factKey = refundEventFactKey(event, payload);
+    if (seenFacts.has(factKey)) continue;
+    seenFacts.add(factKey);
+    addRefundCashflow(
+      stats,
+      payload.amountMinor,
+      payload.method,
+      payload.tenderAllocations,
+    );
+  }
+
+  // Compatibility fallback for app versions that predate RefundIssued, or for
+  // a partially journaled cumulative refund. Only the residual is synthesized,
+  // so a real immutable event is never counted twice.
+  const legacy = database.all<LegacyRefundCashflowRow>(
+    `SELECT orders.id, orders.refund_amount, orders.payment_method, orders.payment_tenders
+     FROM orders
+     WHERE COALESCE(orders.refund_amount, 0) > 0
+       AND ${orderTimeSql}
+       ${fiscalOnly ? `AND ${HAS_FISCAL_EXPR}` : ''}`,
+    orderTimeParams,
+  ) ?? [];
+  const legacyOrderIds = Array.from(new Set(legacy.map((refund) => refund.id)));
+  const allJournalRows = legacyOrderIds.length > 0
+    ? database.all<RefundEventCashflowRow>(
+        `SELECT e.event_id, e.local_order_id, e.payload_json
+         FROM pos_event_outbox e
+         WHERE e.event_type = 'RefundIssued'
+           AND e.local_order_id IN (${legacyOrderIds.map(() => '?').join(', ')})`,
+        legacyOrderIds,
+      ) ?? []
+    : [];
+  const journaledByOrder = new Map<string, number>();
+  const allSeenFacts = new Set<string>();
+  for (const event of allJournalRows) {
+    if (!event.local_order_id) continue;
+    const payload = parseRefundEventPayload(event);
+    if (!payload) continue;
+    const factKey = refundEventFactKey(event, payload);
+    if (allSeenFacts.has(factKey)) continue;
+    allSeenFacts.add(factKey);
+    const amount = Math.round(Number(payload?.amountMinor));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    journaledByOrder.set(
+      event.local_order_id,
+      (journaledByOrder.get(event.local_order_id) ?? 0) + amount,
+    );
+  }
+
+  for (const refund of legacy) {
+    const cumulative = Math.max(0, Math.round(Number(refund.refund_amount) || 0));
+    const residual = Math.max(0, cumulative - (journaledByOrder.get(refund.id) ?? 0));
+    if (residual <= 0) continue;
+    let tenderAllocations: unknown = undefined;
+    try {
+      tenderAllocations = refund.payment_tenders
+        ? JSON.parse(refund.payment_tenders)
+        : undefined;
+    } catch {
+      tenderAllocations = undefined;
+    }
+    addRefundCashflow(stats, residual, refund.payment_method, tenderAllocations);
+  }
+
+  return stats;
+}
 
 const HISTORY_SPLIT_PAYMENT_EXPR = `(
   orders.payment_method = 'SPLIT'
@@ -515,7 +721,24 @@ export const orderRepo = {
   /**
    * Mark an order as refunded (full or partial).
    */
-  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{name: string; quantity: number; unitPrice: number; refundAmount: number; vatRate?: number; sku?: string; unit?: string}>): void {
+  markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{
+    orderItemId?: string;
+    variantId?: string;
+    name?: string;
+    quantity: number;
+    unit?: string;
+    saleUnit?: string;
+    sellBy?: string;
+    unitPrice: number;
+    refundAmount: number;
+    vatRate?: number;
+    sku?: string;
+    restock?: boolean;
+    refundedAt?: string;
+    refundRequestId?: string;
+    reason?: string;
+    refundMethod?: string;
+  }>): void {
     const status = type === 'FULL' ? 'REFUNDED' : 'PARTIAL_REFUND';
     database.run(
       "UPDATE orders SET status = ?, refund_amount = ?, refund_reason = ?, refunded_at = datetime('now'), refund_lines = ? WHERE id = ?",
@@ -540,19 +763,71 @@ export const orderRepo = {
     return row?.cnt ?? 0;
   },
 
+  getRefundCashflowForDate(date: string, fiscalOnly = false): RefundCashflowStats {
+    return queryRefundCashflow(
+      "date(e.occurred_at, 'localtime') = date(?)",
+      [date],
+      "date(orders.refunded_at, 'localtime') = date(?)",
+      [date],
+      fiscalOnly,
+    );
+  },
+
+  getRefundCashflowBetween(
+    from: string,
+    to: string,
+    fiscalOnly = false,
+    localShiftId?: string,
+  ): RefundCashflowStats {
+    const eventTimeSql = localShiftId
+      ? `(e.shift_id = ? OR (
+           e.shift_id IS NULL
+           AND julianday(e.occurred_at) >= julianday(?)
+           AND julianday(e.occurred_at) < julianday(?)
+         ))`
+      : 'julianday(e.occurred_at) >= julianday(?) AND julianday(e.occurred_at) < julianday(?)';
+    const eventTimeParams = localShiftId ? [localShiftId, from, to] : [from, to];
+    return queryRefundCashflow(
+      eventTimeSql,
+      eventTimeParams,
+      'julianday(orders.refunded_at) >= julianday(?) AND julianday(orders.refunded_at) < julianday(?)',
+      [from, to],
+      fiscalOnly,
+    );
+  },
+
   getDailyStats(date: string, fiscalOnly = false): DailyStats {
-    const result = database.get<DailyStats>(
-      `SELECT
-         COUNT(*) as order_count,
-         COALESCE(SUM(total), 0) as total_sales,
-         COALESCE(SUM(CASE WHEN payment_method = 'CASH' THEN total ELSE 0 END), 0) as cash_total,
-         COALESCE(SUM(CASE WHEN payment_method = 'CARD' THEN total ELSE 0 END), 0) as card_total
+    const grossOrders = database.all<DailyGrossCashflowRow>(
+      `SELECT orders.total, orders.payment_method, orders.payment_tenders
        FROM orders
-       WHERE date(created_at) = ?
+       WHERE date(orders.created_at, 'localtime') = date(?)
        ${fiscalOnly ? `AND ${HAS_FISCAL_EXPR}` : ''}`,
       [date],
-    );
-    return result ?? { order_count: 0, total_sales: 0, cash_total: 0, card_total: 0 };
+    ) ?? [];
+    const gross = {
+      order_count: grossOrders.length,
+      total_sales: 0,
+      cash_total: 0,
+      card_total: 0,
+    };
+    for (const order of grossOrders) {
+      const total = Math.max(0, Math.round(Number(order.total) || 0));
+      gross.total_sales += total;
+      const tenders = allocateRefundTenders(order.payment_tenders, total, order.payment_method);
+      for (const tender of tenders) {
+        if (tender.method === 'CASH') gross.cash_total += tender.amount;
+        else if (tender.method === 'CARD') gross.card_total += tender.amount;
+      }
+    }
+    const refunds = orderRepo.getRefundCashflowForDate(date, fiscalOnly);
+    return {
+      ...gross,
+      total_sales: gross.total_sales - refunds.refund_total,
+      cash_total: gross.cash_total - refunds.cash_refund_total,
+      card_total: gross.card_total - refunds.card_refund_total,
+      refund_count: refunds.refund_count,
+      refund_total: refunds.refund_total,
+    };
   },
 
   getByDateRange(from: string, to: string, limit = 20, offset = 0, options: OrderHistoryOptions = {}): { orders: OrderRow[]; total: number } {

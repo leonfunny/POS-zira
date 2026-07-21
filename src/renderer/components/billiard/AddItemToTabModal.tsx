@@ -11,6 +11,7 @@ import {
   useRestaurantCombos,
 } from '../../hooks/useBilliardData';
 import TextInput from '../shared/TextInput';
+import { normalizeBilliardCatalogProduct } from '../../../shared/billiard-contract';
 
 interface AddItemToTabModalProps {
   sessionId: string;
@@ -21,6 +22,30 @@ interface AddItemToTabModalProps {
 }
 
 type Mode = 'catalog' | 'combos' | 'custom';
+
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab' || !dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ));
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function formatPrice(value: number): string {
   return new Intl.NumberFormat('pl-PL', {
@@ -40,6 +65,7 @@ export function AddItemToTabModal({
   const toast = useToast();
   const addItem = useAddItem(onRefetch);
   const searchRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<Mode>('catalog');
   const [search, setSearch] = useState('');
@@ -106,28 +132,17 @@ export function AddItemToTabModal({
   };
 
   const handleProductSelect = async (product: any) => {
-    const variant = product.variants?.[0] || product;
-    const variantId = variant.id || product.variantId || product.id;
-    const productName = product.name || variant.name || 'Item';
-    const price = Number(
-      variant.retailPrice ??
-        product.retailPrice ??
-        variant.listPrice ??
-        product.listPrice ??
-        variant.posPrice ??
-        product.posPrice ??
-        product.price ??
-        0,
-    );
+    const normalized = normalizeBilliardCatalogProduct(product);
+    if (!normalized.hasStock) return;
 
     try {
       await addItem.mutate({
         sessionId,
         data: {
-          name: productName,
+          name: normalized.name,
           quantity: 1,
-          unitPrice: price,
-          variantId,
+          unitPrice: normalized.price,
+          variantId: normalized.variantId,
         },
       });
       // Stay open for quick successive adds
@@ -144,7 +159,7 @@ export function AddItemToTabModal({
         data: {
           name: combo.name || 'Combo',
           quantity: 1,
-          unitPrice: Number(combo.comboPrice || 0),
+          unitPrice: Number(combo.comboPrice ?? combo.combo_price ?? 0),
         },
       });
       setSearch('');
@@ -178,15 +193,42 @@ export function AddItemToTabModal({
     quantity >= 1 &&
     (typeof unitPrice === 'number' ? unitPrice > 0 : parseFloat(String(unitPrice)) > 0);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !addItem.isPending) {
+        event.preventDefault();
+        event.stopPropagation();
+        setMode('catalog');
+        setSearch('');
+        setSelectedCategory(null);
+        setName('');
+        setQuantity(1);
+        setUnitPrice('');
+        onOpenChange(false);
+        return;
+      }
+      trapDialogFocus(event, dialogRef.current);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [addItem.isPending, onOpenChange, open]);
+
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onClick={() => handleOpenChange(false)}
     >
       <div
-        className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] flex flex-col"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('billiard.addItem') || 'Add Item'}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[calc(100%-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -247,7 +289,7 @@ export function AddItemToTabModal({
           {mode === 'catalog' ? (
             <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
               {/* Search */}
-              <div className="relative">
+              <div className="relative shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   ref={searchRef}
@@ -260,7 +302,7 @@ export function AddItemToTabModal({
 
               {/* Category tabs */}
               {categories.length > 0 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <div className="shrink-0 flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto">
                   <button
                   className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                     selectedCategory === null
@@ -301,24 +343,8 @@ export function AddItemToTabModal({
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {products.map((product: any) => {
-                      const variant = product.variants?.[0] || product;
-                      const price = Number(
-                        variant.retailPrice ??
-                          product.retailPrice ??
-                          variant.listPrice ??
-                          product.listPrice ??
-                          variant.posPrice ??
-                          product.posPrice ??
-                          product.price ??
-                          0,
-                      );
-                      const stock =
-                        variant.stockQuantity ??
-                        product.stockQuantity ??
-                        product.totalAvailableStock ??
-                        product.stock ??
-                        null;
-                      const hasStock = stock === null || stock > 0;
+                      const normalized = normalizeBilliardCatalogProduct(product);
+                      const { price, stock, hasStock } = normalized;
 
                       return (
                         <button

@@ -1,33 +1,67 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, Loader2, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
-import { useFloorOverview, useTransferTable } from '../../hooks/useBilliardData';
+import { useTransferTable } from '../../hooks/useBilliardData';
 import { useToast } from './Toast';
+import { sortTablesByName } from './utils';
 
 interface TransferTableDialogProps {
   sessionId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The parent floor's table list — the dialog runs NO query of its own, so
+   *  the grid only changes when the tables actually change (no 3s reshuffle). */
+  tables?: any[];
+  /** Fired after a successful transfer so the drawer can follow the session. */
+  onTransferred?: (targetResourceId: string) => void;
   language: Language;
+}
+
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab' || !dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ));
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 export function TransferTableDialog({
   sessionId,
   open,
   onOpenChange,
+  tables,
+  onTransferred,
   language,
 }: TransferTableDialogProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
-  const { data: floorOverview, loading, refetch } = useFloorOverview();
-  const transferTable = useTransferTable(refetch);
+  const transferTable = useTransferTable();
 
   const [selectedTableId, setSelectedTableId] = useState('');
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  const freeTables = ((floorOverview as any)?.resources || []).filter(
-    (r: any) => r.status === 'FREE' || r.status === 'free'
-  );
+  const freeTables = useMemo(() => sortTablesByName(
+    (tables ?? [])
+      .map((row: any) => row?.resource ? { ...row.resource, status: row.status } : row)
+      .filter((row: any) => String(row?.status || 'free').toLowerCase() === 'free'),
+  ), [tables]);
 
   const resetForm = () => {
     setSelectedTableId('');
@@ -42,6 +76,7 @@ export function TransferTableDialog({
         resourceId: selectedTableId,
       });
       toast.success(t('billiard.transferSuccess') || 'Table transferred successfully');
+      onTransferred?.(selectedTableId);
       resetForm();
       onOpenChange(false);
     } catch (err: any) {
@@ -56,15 +91,37 @@ export function TransferTableDialog({
     onOpenChange(nextOpen);
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !transferTable.isPending) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedTableId('');
+        onOpenChange(false);
+        return;
+      }
+      trapDialogFocus(event, dialogRef.current);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onOpenChange, open, transferTable.isPending]);
+
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onClick={() => handleOpenChange(false)}
     >
       <div
-        className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 max-h-[85vh] flex flex-col"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('billiard.transferTable') || 'Transfer Table'}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 max-h-[calc(100%-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -83,11 +140,7 @@ export function TransferTableDialog({
                 'Select a free table to transfer this session to.'}
             </p>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-              </div>
-            ) : freeTables.length === 0 ? (
+            {freeTables.length === 0 ? (
               <div className="text-center py-8 text-slate-500">
                 <p className="text-sm">
                   {t('billiard.noFreeTables') || 'No free tables available'}
@@ -133,6 +186,7 @@ export function TransferTableDialog({
         {/* Footer */}
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button
+            autoFocus
             className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50"
             onClick={() => handleOpenChange(false)}
             disabled={transferTable.isPending}

@@ -1,4 +1,29 @@
+import { resolveBilliardOutstandingBalance, stripIpcErrorPrefix } from '../../../shared/billiard-contract';
 import type { FloorPosition } from './types';
+
+/**
+ * Server guard messages arrive IPC-wrapped and in UTC ISO timestamps — turn
+ * the known ones into local-time text a cashier can act on. Unknown messages
+ * pass through with just the wrapper removed.
+ */
+export function humanizeBilliardError(
+  message: string,
+  t: (key: string) => string | undefined,
+  timeZone?: string,
+): string {
+  const cleaned = stripIpcErrorPrefix(message);
+  const window = cleaned.match(/^Check-in window is from (\S+) to (\S+)$/);
+  if (window) {
+    const fmt = (iso: string) => new Date(iso).toLocaleTimeString('pl-PL', {
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
+    });
+    const template = t('billiard.checkinWindow') || 'Check-in opens {from}–{to}';
+    return template.replace('{from}', fmt(window[1])).replace('{to}', fmt(window[2]));
+  }
+  return cleaned;
+}
 
 
 export function formatElapsed(startedAt: string, totalPausedSeconds: number, isPaused: boolean, pausedAt?: string): string {
@@ -36,7 +61,13 @@ export function estimateCharge(session: any): number {
   }
 
   const start = new Date(session.startedAt).getTime();
-  const paused = (session.totalPausedSeconds || 0) * 1000;
+  let paused = (session.totalPausedSeconds || 0) * 1000;
+  // The server banks the pause interval into totalPausedSeconds only on
+  // resume/end, so a PAUSED session must count its in-progress pause here or
+  // the money keeps ticking while the elapsed clock stands still.
+  if (String(session.status ?? '').toUpperCase() === 'PAUSED' && session.pausedAt) {
+    paused += Math.max(0, Date.now() - new Date(session.pausedAt).getTime());
+  }
   const elapsed = Math.max(0, Date.now() - start - paused);
   const hours = elapsed / 3600000;
   const hourlyRate = session.pricingSnapshot?.basePrice || session.hourlyRate || 0;
@@ -46,13 +77,101 @@ export function estimateCharge(session: any): number {
   return +(hours * hourlyRate).toFixed(2);
 }
 
+/**
+ * The time charge shown for a session in drawers/dialogs. The local cache
+ * hydrates timeCharge to 0 while a session runs (the server only computes it
+ * at end), so an authoritative value is trusted only once the session has
+ * ended; live sessions always use the ticking, pause-aware estimate.
+ */
+export function resolveLiveTimeCharge(session: any): number {
+  const status = String(session?.status ?? '').toUpperCase();
+  const live = status === 'ACTIVE' || status === 'PAUSED';
+  if (!live) {
+    const authoritative = Number(session?.currentTimeCharge ?? session?.timeCharge);
+    if (Number.isFinite(authoritative)) return authoritative;
+  }
+  return estimateCharge(session);
+}
+
+/** Natural order for table lists: "Bàn #2" before "Bàn #10". */
+export function sortTablesByName<T extends { name?: string | null }>(tables: T[]): T[] {
+  return [...tables].sort((a, b) => String(a?.name ?? '').localeCompare(
+    String(b?.name ?? ''), undefined, { numeric: true, sensitivity: 'base' },
+  ));
+}
+
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
 }
 
+export interface UnsettledSummary {
+  count: number;
+  totalOutstanding: number;
+}
+
+export function summarizeUnsettled(sessions: any[] | null | undefined): UnsettledSummary {
+  if (!Array.isArray(sessions) || sessions.length === 0) return { count: 0, totalOutstanding: 0 };
+  const total = sessions.reduce((sum, s) => sum + resolveBilliardOutstandingBalance(s), 0);
+  return { count: sessions.length, totalOutstanding: Math.round(total * 100) / 100 };
+}
+
+export function sortUnsettledNewestFirst<T extends { endedAt?: string | null; startedAt?: string | null }>(
+  sessions: T[],
+): T[] {
+  const ts = (s: T): number => new Date(s.endedAt || s.startedAt || 0).getTime();
+  return [...sessions].sort((a, b) => ts(b) - ts(a));
+}
+
+/**
+ * The seed for a new object's default name. One stray differently-named object
+ * added last (e.g. "Ghế massage #1" among 14 "Bàn #n") must not hijack every
+ * future default, so the LARGEST numbered family wins; ties go to the family
+ * of the most recently added name (the old seed-from-last behavior).
+ */
+function dominantNumberedName(names: string[]): string | null {
+  const families = new Map<string, { count: number; maxNum: number }>();
+  let lastPrefix: string | null = null;
+  for (const name of names) {
+    const match = name.match(/^(.*?)(\d+)\s*$/);
+    if (!match) continue;
+    const prefix = match[1];
+    const num = parseInt(match[2], 10);
+    const family = families.get(prefix) ?? { count: 0, maxNum: 0 };
+    family.count += 1;
+    family.maxNum = Math.max(family.maxNum, num);
+    families.set(prefix, family);
+    lastPrefix = prefix;
+  }
+  let best: string | null = null;
+  for (const [prefix, family] of families) {
+    if (best === null) { best = prefix; continue; }
+    const current = families.get(best)!;
+    if (family.count > current.count || (family.count === current.count && prefix === lastPrefix)) {
+      best = prefix;
+    }
+  }
+  return best === null ? null : `${best}${families.get(best)!.maxNum}`;
+}
+
+/**
+ * Default name for a freshly picked floor asset. Billiard assets continue the
+ * venue's dominant table family; any other asset type names within its own
+ * family (seeded from the asset's display name) so a massage bed never
+ * becomes the next "Bàn #n".
+ */
+export function defaultNameForAsset(
+  asset: { category: string; name: string } | undefined | null,
+  existingNames: string[],
+): string {
+  if (!asset || asset.category === 'billiard') return getNextName('', existingNames);
+  const base = asset.name.trim();
+  const family = existingNames.filter((n) => n.toLowerCase().startsWith(base.toLowerCase()));
+  return family.length > 0 ? getNextName('', family) : `${base} 1`;
+}
+
 export function getNextName(currentValue: string, existingNames: string[], direction: 'up' | 'down' = 'up'): string {
   const val = currentValue.trim();
-  const source = val || existingNames[existingNames.length - 1] || '';
+  const source = val || dominantNumberedName(existingNames) || existingNames[existingNames.length - 1] || '';
   const match = source.match(/^(.*?)(\d+)\s*$/);
   if (match) {
     const prefix = match[1];

@@ -63,6 +63,15 @@ import {
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
 
+export function normalizeOpenShiftResponse(value: unknown): { shiftId: string } {
+  const response = value as { id?: unknown; shiftId?: unknown } | null;
+  const candidate = response?.shiftId ?? response?.id;
+  if (typeof candidate !== 'string' || candidate.trim().length === 0) {
+    throw new Error('Invalid open shift response: missing shift id');
+  }
+  return { shiftId: candidate.trim() };
+}
+
 export interface ServerOrderListParams {
   period?: string;
   from?: string;
@@ -77,6 +86,12 @@ export interface ServerOrderListParams {
   requiresInvoice?: boolean;
   page?: number;
   limit?: number;
+}
+
+export interface PosProductTombstone {
+  id: string;
+  reason: string;
+  canonicalUpdatedAt?: string;
 }
 
 export interface NailTurnStaffSummary {
@@ -583,8 +598,14 @@ export class ApiClient {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${response.status}`);
+      const responseBody = await response.json().catch(() => ({}));
+      const error = new Error(responseBody.message || `HTTP ${response.status}`) as Error & {
+        status: number;
+        data?: any;
+      };
+      error.status = response.status;
+      error.data = responseBody;
+      throw error;
     }
     const text = await response.text();
     if (!text) return {};
@@ -2082,6 +2103,7 @@ export class ApiClient {
     nextSyncCursor?: string;
     serverTime?: string;
     deletedIds?: string[];
+    tombstones?: PosProductTombstone[];
   }> {
     const baseParams = new URLSearchParams({ limit: '100' });
     if (options.cursorV2) {
@@ -2109,6 +2131,7 @@ export class ApiClient {
     let finalNextSyncCursor: string | undefined;
     let lastServerTime: string | undefined;
     let deletedIds: string[] = [];
+    const tombstonesById = new Map<string, PosProductTombstone>();
     let pageCursor: string | undefined;
 
     while (true) {
@@ -2170,6 +2193,22 @@ export class ApiClient {
       if (raw.nextSyncCursor) finalNextSyncCursor = raw.nextSyncCursor;
       if (raw.serverTime) lastServerTime = raw.serverTime;
       if (Array.isArray(raw.deletedIds)) deletedIds = deletedIds.concat(raw.deletedIds);
+      if (options.cursorV2 && Array.isArray(raw.events)) {
+        for (const event of raw.events) {
+          if (event?.operation !== 'TOMBSTONE' || typeof event?.id !== 'string' || !event.id.trim()) {
+            continue;
+          }
+          tombstonesById.set(event.id, {
+            id: event.id,
+            reason: typeof event.tombstoneReason === 'string' && event.tombstoneReason.trim()
+              ? event.tombstoneReason.trim().toUpperCase()
+              : 'UNKNOWN',
+            canonicalUpdatedAt: typeof event.canonicalUpdatedAt === 'string'
+              ? event.canonicalUpdatedAt
+              : undefined,
+          });
+        }
+      }
 
       if (options.cursorV2) {
         const hasMore = raw.hasMore === true;
@@ -2461,6 +2500,16 @@ export class ApiClient {
       );
     }
 
+    // Legacy product sync exposes only deletedIds. Cursor-v2 additionally
+    // exposes typed TOMBSTONE events; retain a conservative fallback for
+    // older or partially upgraded backends without confusing it with a
+    // normal VARIANT_INACTIVE event.
+    for (const id of deletedIds) {
+      if (!tombstonesById.has(id)) {
+        tombstonesById.set(id, { id, reason: 'LEGACY_DELETED' });
+      }
+    }
+
     return {
       products,
       categories: Array.from(categoryMap.values()),
@@ -2469,6 +2518,7 @@ export class ApiClient {
       nextSyncCursor: finalNextSyncCursor,
       serverTime: lastServerTime,
       deletedIds: deletedIds.length > 0 ? Array.from(new Set(deletedIds)) : undefined,
+      tombstones: tombstonesById.size > 0 ? Array.from(tombstonesById.values()) : undefined,
     };
   }
 
@@ -3000,7 +3050,7 @@ export class ApiClient {
    */
   async openPosShift(
     token: string,
-    data: { staffId: string; openingCash: number; machineId?: string | null },
+    data: { shiftId?: string; staffId: string; openingCash: number; machineId?: string | null },
   ): Promise<{ shiftId: string }> {
     const url = `${this.baseUrl}/api/v1/pos/shifts/open`;
     const machineId = String(data.machineId ?? getConfigValue('machineId') ?? '').trim();
@@ -3020,7 +3070,7 @@ export class ApiClient {
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    return normalizeOpenShiftResponse(await response.json());
   }
 
   /**

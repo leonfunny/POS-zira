@@ -100,19 +100,125 @@ export function toVatRate(value: unknown, fallback: number): number {
 export function normalizeRefundLinesJson(refundedLines: unknown): string | null {
   if (!Array.isArray(refundedLines) || refundedLines.length === 0) return null;
   const out = refundedLines.map((l: any) => ({
+    orderItemId: l.orderItemId ?? l.order_item_id ?? undefined,
     variantId: l.variantId ?? l.variant_id ?? undefined,
-    name: l.name ?? '',
+    name: l.name ?? l.productName ?? l.product_name ?? '',
     quantity:
       typeof l.quantity === 'number'
         ? l.quantity
         : parseFloat(String(l.quantity)) || 1,
     unit: l.unit ?? l.saleUnit ?? l.sale_unit ?? undefined,
+    saleUnit: l.saleUnit ?? l.sale_unit ?? l.unit ?? undefined,
+    sellBy: l.sellBy ?? l.sell_by ?? undefined,
     unitPrice: toGrosze(l.unitPrice),
     refundAmount: toGrosze(l.refundAmount),
     vatRate: toVatRate(l.taxRate, 23),
     sku: l.sku ?? undefined,
+    restock: typeof l.restock === 'boolean' ? l.restock : undefined,
+    refundedAt: l.refundedAt ?? l.refunded_at ?? undefined,
+    refundRequestId: l.refundRequestId ?? l.refund_request_id ?? undefined,
+    reason: l.reason ?? l.refundReason ?? l.refund_reason ?? undefined,
+    refundMethod: l.refundMethod ?? l.refund_method ?? undefined,
   }));
   return JSON.stringify(out);
+}
+
+function parseRefundLinesJson(raw: string | null | undefined): any[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sameRefundLine(left: any, right: any): boolean {
+  const leftRequestId = String(left?.refundRequestId ?? '').trim();
+  const rightRequestId = String(right?.refundRequestId ?? '').trim();
+  // A newly identified inbound event must only merge with that exact local
+  // request. Older server snapshots may omit the ID, so they still need the
+  // structural fallback below to recover locally enriched event metadata.
+  if (rightRequestId && leftRequestId !== rightRequestId) return false;
+
+  const sameQuantity = Math.abs(Number(left?.quantity ?? 0) - Number(right?.quantity ?? 0)) <= 0.000001;
+  const sameAmount = Math.round(Number(left?.refundAmount ?? 0)) === Math.round(Number(right?.refundAmount ?? 0));
+  if (!sameQuantity || !sameAmount) return false;
+
+  const identityPairs = [
+    [left?.orderItemId, right?.orderItemId],
+    [left?.variantId, right?.variantId],
+    [left?.sku, right?.sku],
+    [left?.name, right?.name],
+  ].filter(([a, b]) => String(a ?? '').trim() && String(b ?? '').trim());
+
+  if (identityPairs.length === 0) return true;
+  return identityPairs.some(([a, b]) => String(a).trim() === String(b).trim());
+}
+
+function mergeRefundLineMetadata(localLine: any, serverLine: any): any {
+  return {
+    ...localLine,
+    ...serverLine,
+    orderItemId: serverLine.orderItemId || localLine.orderItemId,
+    variantId: serverLine.variantId || localLine.variantId,
+    sku: serverLine.sku || localLine.sku,
+    name: serverLine.name || localLine.name || '',
+    unit: serverLine.unit || serverLine.saleUnit || localLine.unit || localLine.saleUnit,
+    saleUnit: serverLine.saleUnit || serverLine.unit || localLine.saleUnit || localLine.unit,
+    sellBy: serverLine.sellBy || localLine.sellBy,
+    restock: serverLine.restock ?? localLine.restock,
+    refundedAt: serverLine.refundedAt || localLine.refundedAt,
+    refundRequestId: serverLine.refundRequestId || localLine.refundRequestId,
+    reason: serverLine.reason || localLine.reason,
+    refundMethod: serverLine.refundMethod || localLine.refundMethod,
+  };
+}
+
+/**
+ * Inbound sync snapshots are authoritative for refund quantities and money,
+ * but older backend payloads do not carry the local event reason/method. Keep
+ * that event metadata while merging the server snapshot, and retain unmatched
+ * local events in case the inbound payload contains only the newest delta.
+ */
+export function mergeRefundLineMetadataJson(
+  existingJson: string | null | undefined,
+  incomingJson: string | null | undefined,
+): string | null {
+  if (!incomingJson) return existingJson ?? null;
+
+  const existingLines = parseRefundLinesJson(existingJson);
+  const incomingLines = parseRefundLinesJson(incomingJson);
+  if (incomingLines.length === 0) return existingJson ?? incomingJson;
+
+  const usedExisting = new Set<number>();
+  const mergedIncoming = incomingLines.map((serverLine) => {
+    const existingIndex = existingLines.findIndex((localLine, index) => (
+      !usedExisting.has(index) && sameRefundLine(localLine, serverLine)
+    ));
+    if (existingIndex < 0) return serverLine;
+    usedExisting.add(existingIndex);
+    return mergeRefundLineMetadata(existingLines[existingIndex], serverLine);
+  });
+  const unmatchedExisting = existingLines.filter((_, index) => !usedExisting.has(index));
+
+  return JSON.stringify([...unmatchedExisting, ...mergedIncoming]);
+}
+
+function getLatestRefundedAt(refundedLines: unknown): string | null {
+  if (!Array.isArray(refundedLines)) return null;
+  let latest: string | null = null;
+  let latestTime = -Infinity;
+  for (const line of refundedLines) {
+    const value = line?.refundedAt ?? line?.refunded_at;
+    if (!value) continue;
+    const time = Date.parse(String(value));
+    if (Number.isFinite(time) && time > latestTime) {
+      latest = String(value);
+      latestTime = time;
+    }
+  }
+  return latest;
 }
 
 export function normalizePaymentTendersJson(tenders: unknown): string | null {
@@ -190,7 +296,7 @@ export function adaptServerOrder(s: any): any {
     synced: 1,
     refund_amount: toGrosze(s.refundAmount),
     refund_reason: s.refundReason ?? null,
-    refunded_at: s.refundedLines?.[0]?.refundedAt ?? null,
+    refunded_at: getLatestRefundedAt(s.refundedLines),
     refund_lines: normalizeRefundLinesJson(s.refundedLines),
     customer_id: s.customerId ?? null,
     customer_nip: s.customerNip ?? null,

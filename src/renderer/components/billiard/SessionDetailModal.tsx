@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Pause,
   Play,
-  Square,
   Plus,
   CreditCard,
   ArrowRightLeft,
@@ -18,7 +17,6 @@ import { useToast } from './Toast';
 import {
   usePauseSession,
   useResumeSession,
-  useEndSession,
   useRemoveItem,
 } from '../../hooks/useBilliardData';
 import { AddItemToTabModal } from './AddItemToTabModal';
@@ -72,7 +70,6 @@ export function SessionDetailModal({
   const toast = useToast();
   const pauseSession = usePauseSession(onRefetch);
   const resumeSession = useResumeSession(onRefetch);
-  const endSession = useEndSession(onRefetch);
   const removeItem = useRemoveItem(onRefetch);
 
   const [elapsed, setElapsed] = useState(0);
@@ -148,15 +145,6 @@ export function SessionDetailModal({
       }
     } catch (err: any) {
       toast.error(err.message || t('billiard.actionFailed') || 'Action failed');
-    }
-  };
-
-  const handleEnd = async () => {
-    try {
-      await endSession.mutate(session.id);
-      onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err.message || t('billiard.endFailed') || 'Failed to end session');
     }
   };
 
@@ -369,18 +357,6 @@ export function SessionDetailModal({
                     {t('billiard.payment') || 'Payment'}
                   </button>
 
-                  <button
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center"
-                    onClick={handleEnd}
-                    disabled={endSession.isPending}
-                  >
-                    {endSession.isPending ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Square className="w-4 h-4 mr-2" />
-                    )}
-                    {t('billiard.endSession') || 'End'}
-                  </button>
                 </div>
               )}
             </div>

@@ -9,10 +9,135 @@ vi.mock('../src/main/logger', () => ({
 import {
   adaptServerOrder,
   adaptServerOrderItem,
+  mergeRefundLineMetadataJson,
+  normalizeRefundLinesJson,
   normalizePaymentTendersJson,
 } from '../src/main/sync/pos-order-adapter';
 
 describe('pos order adapter', () => {
+  it('preserves weighted refund identity and event metadata while converting money to grosze', () => {
+    const refundedLines = [
+      {
+        orderItemId: 'item-kg',
+        variantId: 'variant-kg',
+        sku: 'GINGER',
+        name: 'Gừng tươi',
+        quantity: 0.75,
+        unit: 'kg',
+        saleUnit: 'kg',
+        unitPrice: '20.00',
+        refundAmount: '15.00',
+        taxRate: 5,
+        restock: true,
+        refundedAt: '2026-07-17T10:00:00.000Z',
+        refundRequestId: 'refund-a',
+      },
+      {
+        orderItemId: 'item-kg',
+        variantId: 'variant-kg',
+        sku: 'GINGER',
+        name: 'Gừng tươi',
+        quantity: 0.25,
+        unit: 'kg',
+        unitPrice: '20.00',
+        refundAmount: '5.00',
+        taxRate: 5,
+        restock: false,
+        refundedAt: '2026-07-17T11:00:00.000Z',
+        refundRequestId: 'refund-b',
+      },
+    ];
+
+    const lines = JSON.parse(normalizeRefundLinesJson(refundedLines)!);
+    expect(lines[0]).toMatchObject({
+      orderItemId: 'item-kg',
+      unit: 'kg',
+      saleUnit: 'kg',
+      unitPrice: 2000,
+      refundAmount: 1500,
+      restock: true,
+      refundedAt: '2026-07-17T10:00:00.000Z',
+      refundRequestId: 'refund-a',
+    });
+
+    const adapted = adaptServerOrder({
+      id: 'server-refund-1',
+      status: 'REFUNDED',
+      subtotal: '20.00',
+      discountAmount: '0.00',
+      taxAmount: '0.00',
+      total: '20.00',
+      paidAmount: '20.00',
+      paymentMethod: 'CASH',
+      posMode: 'retail',
+      refundAmount: '20.00',
+      refundedLines,
+      createdAt: '2026-07-17T09:00:00.000Z',
+    });
+    expect(adapted.refunded_at).toBe('2026-07-17T11:00:00.000Z');
+  });
+
+  it('keeps local refund event metadata when an inbound server snapshot omits it', () => {
+    const existing = JSON.stringify([
+      {
+        variantId: 'variant-1', sku: 'SKU-1', name: 'First', quantity: 1, refundAmount: 500,
+        refundedAt: '2026-07-17T10:00:00.000Z', refundRequestId: 'request-1', reason: 'damaged', refundMethod: 'CASH',
+      },
+      {
+        variantId: 'variant-2', sku: 'SKU-2', name: 'Second', quantity: 0.75, refundAmount: 1500,
+        refundedAt: '2026-07-17T11:00:00.000Z', refundRequestId: 'request-2', reason: 'customerRequest', refundMethod: 'SPLIT',
+      },
+    ]);
+    const incomingDelta = JSON.stringify([
+      {
+        orderItemId: 'server-item-2', variantId: 'variant-2', sku: 'SKU-2', name: 'Second',
+        quantity: 0.75, refundAmount: 1500, unit: 'kg', saleUnit: 'kg',
+      },
+    ]);
+
+    const merged = JSON.parse(mergeRefundLineMetadataJson(existing, incomingDelta)!);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({ refundRequestId: 'request-1', reason: 'damaged', refundMethod: 'CASH' });
+    expect(merged[1]).toMatchObject({
+      orderItemId: 'server-item-2',
+      unit: 'kg',
+      refundedAt: '2026-07-17T11:00:00.000Z',
+      refundRequestId: 'request-2',
+      reason: 'customerRequest',
+      refundMethod: 'SPLIT',
+    });
+  });
+
+  it('keeps a legacy refund event separate from an identical new request delta', () => {
+    const existing = JSON.stringify([
+      {
+        variantId: 'variant-1', sku: 'SKU-1', name: 'Same item', quantity: 1, refundAmount: 500,
+        refundedAt: '2026-07-17T10:00:00.000Z', reason: 'damaged', refundMethod: 'CASH',
+      },
+    ]);
+    const incomingDelta = JSON.stringify([
+      {
+        variantId: 'variant-1', sku: 'SKU-1', name: 'Same item', quantity: 1, refundAmount: 500,
+        refundedAt: '2026-07-17T11:00:00.000Z', refundRequestId: 'request-new',
+      },
+    ]);
+
+    const merged = JSON.parse(mergeRefundLineMetadataJson(existing, incomingDelta)!);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({
+      refundedAt: '2026-07-17T10:00:00.000Z',
+      reason: 'damaged',
+      refundMethod: 'CASH',
+    });
+    expect(merged[0].refundRequestId).toBeUndefined();
+    expect(merged[1]).toMatchObject({
+      refundedAt: '2026-07-17T11:00:00.000Z',
+      refundRequestId: 'request-new',
+    });
+    expect(merged[1].reason).toBeUndefined();
+    expect(merged[1].refundMethod).toBeUndefined();
+  });
+
   it('normalises backend tender amounts from PLN to local grosze JSON', () => {
     const json = normalizePaymentTendersJson([
       { method: 'CASH', amount: 20, reference: null },

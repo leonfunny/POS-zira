@@ -1,15 +1,21 @@
 /**
  * PaymentDialog — payment processing for billiard sessions.
- * Supports Cash, Card (Elavon terminal), and BLIK.
- * After payment: prints receipt + opens cash drawer (cash only).
+ * Supports cash settlement. Card and BLIK stay hidden until the terminal
+ * transport can provide an idempotent, reconcilable authorization result.
+ * Payment first freezes the session total on the server, then settles it.
+ * The backend owns receipt dispatch; the client only opens the cash drawer.
  */
 
-import { useState, useEffect } from 'react';
-import { CreditCard, Loader2, X, Banknote, Smartphone, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { CreditCard, Loader2, X, Banknote, AlertTriangle } from 'lucide-react';
 import { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useToast } from './Toast';
-import { useProcessPayment } from '../../hooks/useBilliardData';
+import { useEndSession, useProcessPayment } from '../../hooks/useBilliardData';
+import {
+  resolveBilliardOutstandingBalance,
+  resolveBilliardSessionTotal,
+} from '../../../shared/billiard-contract';
 
 interface PaymentDialogProps {
   session: any;
@@ -19,199 +25,246 @@ interface PaymentDialogProps {
   onRefetch?: () => Promise<void>;
 }
 
-type PaymentStep = 'select' | 'elavon_waiting' | 'processing' | 'done';
+type PaymentStep = 'select' | 'review' | 'processing' | 'done';
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
 }
 
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab' || !dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ));
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function PaymentDialog({ session, open, onOpenChange, language, onRefetch }: PaymentDialogProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
+  const endSession = useEndSession(onRefetch);
   const processPayment = useProcessPayment(onRefetch);
-  const [method, setMethod] = useState<'CASH' | 'CARD' | 'BLIK'>('CASH');
   const [step, setStep] = useState<PaymentStep>('select');
-  const [elavonError, setElavonError] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [endedSnapshot, setEndedSnapshot] = useState<any | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
     if (open) {
-      setStep('select');
-      setElavonError(null);
-      setMethod('CASH');
+      const status = String(session?.status || '').toUpperCase();
+      const alreadyEnded = status !== 'ACTIVE' && status !== 'PAUSED';
+      setStep(alreadyEnded ? 'review' : 'select');
+      setPaymentError(null);
+      setEndedSnapshot(alreadyEnded ? session : null);
     }
-  }, [open]);
+  }, [open, session?.id]);
 
-  // Listen for Elavon terminal status updates
+  const isProcessing = step === 'processing';
+  const handleCancel = useCallback(() => {
+    if (isProcessing) return;
+    if (endedSnapshot && step !== 'done') {
+      toast.error(
+        t('billiard.paymentFailed') || 'Payment is still pending and remains visible on the billiard screen.',
+      );
+    }
+    onOpenChange(false);
+  }, [endedSnapshot, isProcessing, onOpenChange, step, t, toast]);
+
   useEffect(() => {
-    if (!open || step !== 'elavon_waiting') return;
-    const unsub = window.electronAPI?.pos?.payment?.onElavonStatus?.((data: any) => {
-      if (data.status === 'approved' || data.approved) {
-        // Card approved — proceed with payment processing
-        handlePostElavon();
-      } else if (data.status === 'declined' || data.status === 'error' || data.error) {
-        setElavonError(data.message || data.error || t('billiard.cardDeclined') || 'Card declined');
-        setStep('select');
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isProcessing) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleCancel();
+        return;
       }
-    });
-    return () => { unsub?.(); };
-  }, [open, step]);
+      trapDialogFocus(event, dialogRef.current);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleCancel, isProcessing, open]);
 
   if (!open || !session) return null;
 
-  const items = session.items || [];
-  const timeCharge = session.currentTimeCharge ?? session.timeCharge ?? 0;
-  const itemsTotal = items.reduce((sum: number, item: any) => sum + (item.unitPrice || 0) * (item.quantity || 1), 0);
-  const isPackage = session.billingMode === 'PACKAGE_COUNTDOWN';
-  const total = isPackage ? Number(session.packagePrice ?? 0) + itemsTotal : timeCharge + itemsTotal;
+  const displayedSession = endedSnapshot ?? session;
+  const grandTotal = resolveBilliardSessionTotal(displayedSession);
+  const paidAmount = Math.max(0, Number(displayedSession?.paidAmount ?? 0));
+  const outstanding = resolveBilliardOutstandingBalance(displayedSession);
 
-  const handlePostElavon = async () => {
-    setStep('processing');
-    try {
-      await processPayment.mutate({ sessionId: session.id, data: { method: 'CARD', amount: total } });
-
-      // Print receipt (don't block on failure)
-      try {
-        const result = await window.electronAPI.billiard.printReceipt(session.id, { method: 'CARD', amount: total });
-        if (!result.receiptPrinted) {
-          toast.error(t('billiard.receiptNotPrinted') || 'Receipt could not be printed');
-        }
-      } catch { /* printer offline — don't block */ }
-
-      toast.success(t('billiard.paymentSuccess') || 'Payment processed');
-      setStep('done');
-      onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err?.message || t('billiard.paymentFailed') || 'Payment failed');
-      setStep('select');
+  const ensureEnded = async () => {
+    if (endedSnapshot) return endedSnapshot;
+    const status = String(session.status || '').toUpperCase();
+    if (status !== 'ACTIVE' && status !== 'PAUSED') {
+      setEndedSnapshot(session);
+      return session;
     }
+
+    const result = await endSession.mutate(session.id);
+    if (!result || result.queued) {
+      throw new Error('Could not freeze the final billiard total on the server.');
+    }
+    setEndedSnapshot(result);
+    return result;
   };
 
-  const handlePay = async () => {
-    // Card payment via Elavon terminal
-    if (method === 'CARD') {
-      // Check if online (Elavon requires network)
-      try {
-        const syncStatus = await window.electronAPI.billiard.getSyncStatus();
-        if (!syncStatus.online) {
-          setElavonError(t('billiard.cardRequiresNetwork') || 'Card payment requires network connection');
-          return;
-        }
-      } catch { /* proceed anyway */ }
-
-      setElavonError(null);
-      setStep('elavon_waiting');
-
-      try {
-        await window.electronAPI.pos.payment.cardPayment({ amount: total, orderId: session.id });
-        // Elavon response comes asynchronously via onElavonStatus listener
-      } catch (err: any) {
-        setElavonError(err?.message || t('billiard.cardTerminalError') || 'Card terminal error');
-        setStep('select');
-      }
-      return;
+  const settleCashPayment = async (snapshot: any) => {
+    const amountDue = resolveBilliardOutstandingBalance(snapshot);
+    const alreadySettledZero = amountDue <= 0
+      && String(snapshot.paymentStatus || '').toUpperCase() === 'PAID';
+    const result = alreadySettledZero
+      ? snapshot
+      : await processPayment.mutate({
+          sessionId: session.id,
+          data: {
+            paymentMethod: 'CASH',
+            ...(amountDue > 0 ? { amount: amountDue } : {}),
+          },
+        });
+    if (!result || String(result.paymentStatus || '').toUpperCase() !== 'PAID') {
+      throw new Error(t('billiard.paymentFailed') || 'The server did not confirm this payment.');
     }
 
-    // Cash / BLIK — process immediately
-    setStep('processing');
-    try {
-      await processPayment.mutate({ sessionId: session.id, data: { method, amount: total } });
-
-      // Print receipt (don't block on failure)
-      try {
-        const result = await window.electronAPI.billiard.printReceipt(session.id, { method, amount: total });
-        if (!result.receiptPrinted) {
-          toast.error(t('billiard.receiptNotPrinted') || 'Receipt could not be printed');
-        }
-      } catch { /* printer offline — don't block */ }
-
-      // Open cash drawer for cash payments
-      if (method === 'CASH') {
-        try { await window.electronAPI.billiard.openCashDrawer(); } catch { /* ignore */ }
-      }
-
-      toast.success(t('billiard.paymentSuccess') || 'Payment processed');
-      setStep('done');
-      onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err?.message || t('billiard.paymentFailed') || 'Payment failed');
-      setStep('select');
+    if (amountDue > 0) {
+      try { await window.electronAPI.billiard.openCashDrawer(); } catch { /* best effort */ }
     }
-  };
 
-  const handleCancel = () => {
-    if (step === 'elavon_waiting') {
-      // Can't really cancel Elavon mid-transaction, but reset UI
-      setStep('select');
-      setElavonError(null);
-      return;
-    }
+    // BilliardPaymentService dispatches the canonical receipt print job.
+    // Do not print a second local copy here.
+    toast.success(t('billiard.paymentSuccess') || 'Payment processed');
+    setStep('done');
     onOpenChange(false);
   };
 
-  const methods = [
-    { key: 'CASH' as const, icon: <Banknote className="w-5 h-5" />, label: t('billiard.cash') || 'Cash' },
-    { key: 'CARD' as const, icon: <CreditCard className="w-5 h-5" />, label: t('billiard.card') || 'Card' },
-    { key: 'BLIK' as const, icon: <Smartphone className="w-5 h-5" />, label: 'BLIK' },
-  ];
+  const recoverSessionState = async (): Promise<'paid' | 'pending' | null> => {
+    try {
+      const latest = await window.electronAPI.billiard.mutate(
+        'online_api',
+        'GET',
+        `/billiard/sessions/${session.id}`,
+      );
+      if (!latest?.id) return null;
+      if (String(latest.paymentStatus || '').toUpperCase() === 'PAID') {
+        toast.success(t('billiard.paymentSuccess') || 'Payment processed');
+        setStep('done');
+        onOpenChange(false);
+        return 'paid';
+      }
+      const status = String(latest.status || '').toUpperCase();
+      if (status === 'COMPLETED') {
+        setEndedSnapshot(latest);
+        setStep('review');
+        setPaymentError(
+          t('billiard.paymentFailed') || 'Session ended. Review the final total and complete payment.',
+        );
+        return 'pending';
+      }
+    } catch {
+      // The original error is more useful when reconciliation is unavailable.
+    }
+    return null;
+  };
 
-  const isProcessing = step === 'processing' || step === 'elavon_waiting';
+  const handlePrimaryAction = async () => {
+    setPaymentError(null);
+    try {
+      if (step === 'select') {
+        await ensureEnded();
+        setStep('review');
+        return;
+      }
+
+      const snapshot = endedSnapshot ?? await ensureEnded();
+      setStep('processing');
+      await settleCashPayment(snapshot);
+    } catch (err: any) {
+      const message = err?.message || t('billiard.paymentFailed') || 'Payment failed';
+      const recovery = await recoverSessionState();
+      if (recovery === 'paid') return;
+      if (recovery === 'pending') {
+        toast.error(message);
+        return;
+      }
+      setPaymentError(message);
+      toast.error(message);
+      setStep(endedSnapshot ? 'review' : 'select');
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center" onClick={() => !isProcessing && onOpenChange(false)}>
-      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
+      onClick={handleCancel}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('billiard.payment') || 'Payment'}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <CreditCard className="w-5 h-5" />
             {t('billiard.payment') || 'Payment'}
           </h3>
-          <button onClick={handleCancel} className="p-1 rounded hover:bg-slate-100" disabled={step === 'processing'}>
+          <button
+            autoFocus
+            onClick={handleCancel}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            disabled={isProcessing}
+            aria-label={t('common.close') || 'Close'}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="p-4 space-y-4">
           <div className="text-center py-4 bg-slate-50 rounded-lg">
-            <p className="text-3xl font-bold tabular-nums">{formatCurrency(total)}</p>
-            <p className="text-sm text-slate-500 mt-1">{t('billiard.total') || 'Total'}</p>
+            <p className="text-3xl font-bold tabular-nums">{formatCurrency(outstanding)}</p>
+            <p className="text-sm text-slate-500 mt-1">
+              {step === 'select'
+                ? `${t('billiard.remaining') || 'Remaining'} · ${t('billiard.running') || 'Running'}`
+                : (t('billiard.remaining') || 'Remaining')}
+            </p>
+            {paidAmount > 0 && (
+              <div className="mt-3 flex items-center justify-center gap-4 text-xs text-slate-600">
+                <span>{t('billiard.total') || 'Total'}: {formatCurrency(grandTotal)}</span>
+                <span>{t('pos.history.paidAmount') || 'Paid'}: {formatCurrency(paidAmount)}</span>
+              </div>
+            )}
           </div>
 
-          {/* Elavon waiting state */}
-          {step === 'elavon_waiting' && (
-            <div className="flex flex-col items-center gap-3 py-4 bg-blue-50 rounded-lg">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-              <p className="text-sm font-medium text-blue-800">
-                {t('billiard.waitingForCard') || 'Waiting for card...'}
-              </p>
-              <p className="text-xs text-blue-600">
-                {t('billiard.presentCard') || 'Present card on the terminal'}
-              </p>
-            </div>
-          )}
-
-          {/* Elavon error */}
-          {elavonError && (
+          {paymentError && (
             <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg text-sm text-red-700">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{elavonError}</span>
+              <span>{paymentError}</span>
             </div>
           )}
 
-          {/* Payment method selector */}
-          {step === 'select' && (
-            <div className="grid grid-cols-3 gap-2">
-              {methods.map((m) => (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => { setMethod(m.key); setElavonError(null); }}
-                  className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border-2 transition-colors ${
-                    method === m.key ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-slate-200 hover:border-blue-300'
-                  }`}
-                >
-                  {m.icon}
-                  <span className="text-xs font-medium">{m.label}</span>
-                </button>
-              ))}
+          {(step === 'select' || step === 'review') && (
+            <div className="flex items-center justify-center gap-2 p-3 rounded-lg border-2 border-blue-600 bg-blue-50 text-blue-700">
+              <Banknote className="w-5 h-5" />
+              <span className="text-sm font-medium">{t('billiard.cash') || 'Cash'}</span>
             </div>
           )}
         </div>
@@ -219,18 +272,20 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
           <button
             className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
             onClick={handleCancel}
-            disabled={step === 'processing'}
+            disabled={isProcessing}
           >
-            {step === 'elavon_waiting' ? (t('common.back') || 'Back') : (t('common.cancel') || 'Cancel')}
+            {t('common.cancel') || 'Cancel'}
           </button>
-          {step === 'select' && (
+          {(step === 'select' || step === 'review') && (
             <button
               className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center"
-              onClick={handlePay}
-              disabled={processPayment.isPending}
+              onClick={handlePrimaryAction}
+              disabled={processPayment.isPending || endSession.isPending}
             >
-              {processPayment.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              {t('billiard.processPayment') || 'Process Payment'}
+              {processPayment.isPending || endSession.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              {step === 'select'
+                ? `${t('billiard.endSession') || 'End session'} · ${t('billiard.total') || 'Total'}`
+                : (t('billiard.processPayment') || 'Process Payment')}
             </button>
           )}
         </div>

@@ -1,55 +1,145 @@
-import { useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Play, Pause, Square, Users, Clock, Timer, Minus, Plus,
-  CreditCard, ArrowRightLeft, ShoppingBag, Eye, UtensilsCrossed,
+  Play, Pause, Users, Clock, Timer, Minus, Plus,
+  CreditCard, ArrowRightLeft, ShoppingBag, UtensilsCrossed, X, Trash2,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
 import type { TableOverview } from './types';
-import { formatElapsed, estimateCharge, formatCurrency, formatRemaining, calculateItemsTotal } from './utils';
+import { estimateCharge, formatCurrency, calculateItemsTotal, resolveLiveTimeCharge } from './utils';
 
-// Labels resolved inside component via t()
+function formatClock(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
+}
+
+function formatElapsedClock(session: any, isPaused: boolean): string {
+  const startedAt = new Date(session.startedAt).getTime();
+  let pausedMs = Number(session.totalPausedSeconds || 0) * 1000;
+  if (isPaused && session.pausedAt) {
+    pausedMs += Math.max(0, Date.now() - new Date(session.pausedAt).getTime());
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt - pausedMs) / 1000));
+  return formatClock(elapsedSeconds);
+}
+
+function formatRemainingClock(autoEndAt: string): { text: string; totalSeconds: number } {
+  const totalSeconds = Math.max(0, Math.ceil((new Date(autoEndAt).getTime() - Date.now()) / 1000));
+  return { text: formatClock(totalSeconds), totalSeconds };
+}
 
 export function TableActionPopover({
   table,
   open,
+  suspended = false,
   onOpenChange,
   onStartSession,
-  onOpenDetail,
   onPause,
   onResume,
-  onEnd,
   onAddItem,
   onPayment,
   onTransfer,
   onUpdateGuestCount,
+  onRemoveItem,
+  onUpdateItemQty,
   isPending,
-  clickPosition,
   language,
 }: {
   table: TableOverview;
   open: boolean;
+  suspended?: boolean;
   onOpenChange: (v: boolean) => void;
-  onStartSession: () => void;
-  onOpenDetail: () => void;
+  onStartSession: (guestCount: number) => void;
   onPause: () => void;
   onResume: () => void;
-  onEnd: () => void;
   onAddItem: () => void;
   onPayment: () => void;
   onTransfer: () => void;
   onUpdateGuestCount?: (count: number) => void;
+  onRemoveItem?: (itemId: string) => void;
+  onUpdateItemQty?: (itemId: string, quantity: number) => void;
   isPending: boolean;
-  clickPosition?: { x: number; y: number } | null;
   language: Language;
 }) {
   const { t } = useTranslation(language);
+  const drawerRef = useRef<HTMLElement>(null);
+  const [startGuests, setStartGuests] = useState(1);
+  const [, setClockTick] = useState(0);
   const session = table.session;
 
+  useEffect(() => {
+    if (!open || !session || table.status === 'paused') return;
+    const interval = window.setInterval(() => setClockTick((tick) => tick + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [open, session?.id, table.status]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+
+    return () => {
+      window.requestAnimationFrame(() => {
+        if (previousFocus?.isConnected) previousFocus.focus();
+      });
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || suspended) return;
+    const frame = window.requestAnimationFrame(() => drawerRef.current?.focus());
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onOpenChange(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !drawerRef.current) return;
+      const focusable = Array.from(drawerRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, suspended, onOpenChange]);
+
+  if (!open) return null;
+
   const isPackage = session?.billingMode === 'PACKAGE_COUNTDOWN' && session?.autoEndAt;
-  const remaining = isPackage ? formatRemaining(session.autoEndAt) : null;
-  const lowTime = remaining && remaining.totalMinutes < 15;
-  const fnbTotal = session ? calculateItemsTotal(session.items) : 0;
+  const remaining = isPackage ? formatRemainingClock(session.autoEndAt) : null;
+  const lowTime = Boolean(remaining && remaining.totalSeconds < 15 * 60);
+  const items = session?.items || [];
+  const fnbTotal = session ? calculateItemsTotal(items) : 0;
+  const timeCharge = session
+    ? isPackage
+      ? Number(session.packagePrice ?? estimateCharge(session))
+      : resolveLiveTimeCharge(session)
+    : 0;
+  const runningTotal = timeCharge + fnbTotal;
+  const hourlyRate = Number(
+    session?.pricingSnapshot?.basePrice
+      ?? session?.hourlyRate
+      ?? table.resource.pricingRules?.basePrice,
+  );
+  const isActive = table.status === 'occupied' || table.status === 'paused';
 
   const billingModeLabel = session?.billingMode === 'PER_MINUTE'
     ? (t('billiard.perMinuteShort') || '/min')
@@ -59,176 +149,308 @@ export function TableActionPopover({
         ? (t('billiard.packageCountdown') || 'Package')
         : '';
 
-  // Clamp popover to viewport
-  const popoverRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = popoverRef.current;
-    if (!el || !clickPosition) return;
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let x = clickPosition.x - 120; // center the 240px popover on click
-    let y = clickPosition.y + 12;  // offset below click point
-    if (x + rect.width > vw - 8) x = vw - rect.width - 8;
-    if (y + rect.height > vh - 8) y = clickPosition.y - rect.height - 12; // flip above
-    if (x < 8) x = 8;
-    if (y < 8) y = 8;
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-  });
-
-  const fallbackCenter = !clickPosition;
+  const statusLabel = table.status === 'free'
+    ? (t('billiard.free') || 'Free')
+    : table.status === 'paused'
+      ? (t('billiard.paused') || 'Paused')
+      : (t('billiard.active') || 'Active');
+  const statusClass = table.status === 'free'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : table.status === 'paused'
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : 'border-red-200 bg-red-50 text-red-700';
+  const inertProps = suspended ? { inert: '' } : {};
 
   return (
     <div
-      className="fixed inset-0 z-40"
-      onClick={() => onOpenChange(false)}
+      {...inertProps}
+      aria-hidden={suspended || undefined}
+      className={`fixed inset-0 z-40 flex items-end justify-end bg-slate-900/30 sm:items-stretch ${
+        suspended ? 'pointer-events-none' : ''
+      }`}
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
+      onMouseDown={(event) => {
+        if (!suspended && event.target === event.currentTarget) onOpenChange(false);
+      }}
     >
-      <div
-        ref={popoverRef}
-        className="absolute z-50 w-60 bg-popover border rounded-xl shadow-xl p-3 space-y-2"
-        style={fallbackCenter
-          ? { left: 'calc(50% - 120px)', top: '50%', transform: 'translateY(-50%)' }
-          : { left: clickPosition.x - 120, top: clickPosition.y + 12 }
-        }
-        onClick={(e) => e.stopPropagation()}
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal={suspended ? undefined : true}
+        aria-label={table.resource.name}
+        tabIndex={-1}
+        className="flex max-h-full w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl outline-none sm:h-full sm:max-h-none sm:w-[400px] sm:rounded-none sm:border-y-0 sm:border-r-0"
+        onMouseDown={(event) => event.stopPropagation()}
       >
-        {/* Header: table name + billing mode badge */}
-        <div className="flex items-center justify-center gap-2 pb-1 border-b">
-          <span className="text-sm font-semibold">{table.resource.name}</span>
-          {session && billingModeLabel && (
-            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-              {billingModeLabel}
-            </span>
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-lg font-semibold text-slate-900">{table.resource.name}</h2>
+              <span className={'rounded-full border px-2 py-0.5 text-xs font-medium ' + statusClass}>
+                {statusLabel}
+              </span>
+            </div>
+            {session?.customerName && (
+              <p className="mt-1 truncate text-sm text-slate-500">{session.customerName}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="ml-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-400"
+            aria-label={t('common.close') || 'Close'}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          {table.status === 'free' && (
+            <>
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-center">
+                <p className="text-sm text-slate-500">{t('billiard.hourlyRate') || 'Hourly rate'}</p>
+                <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">
+                  {table.resource.pricingRules?.basePrice != null
+                    ? table.resource.pricingRules.basePrice + ' PLN/h'
+                    : '—'}
+                </p>
+              </section>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Users className="h-4 w-4" />
+                    {t('billiard.guests') || 'Guests'}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      onClick={() => setStartGuests((count) => Math.max(1, count - 1))}
+                      disabled={startGuests <= 1}
+                      aria-label={t('billiard.decreaseGuests') || 'Decrease guests'}
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="w-8 text-center text-lg font-semibold tabular-nums">{startGuests}</span>
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                      onClick={() => setStartGuests((count) => count + 1)}
+                      aria-label={t('billiard.increaseGuests') || 'Increase guests'}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {isActive && session && (
+            <>
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-center">
+                <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                  {isPackage ? <Timer className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+                  <span>{isPackage ? (t('billiard.remaining') || 'Remaining') : (t('billiard.running') || 'Running')}</span>
+                  {billingModeLabel && <span>· {billingModeLabel}</span>}
+                </div>
+                <p
+                  className={lowTime
+                    ? 'mt-2 font-mono text-4xl font-semibold tabular-nums text-orange-600'
+                    : 'mt-2 font-mono text-4xl font-semibold tabular-nums text-slate-900'}
+                >
+                  {isPackage
+                    ? remaining?.text
+                    : formatElapsedClock(session, table.status === 'paused')}
+                </p>
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{t('billiard.total') || 'Total'}</p>
+                  <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">{formatCurrency(runningTotal)}</p>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-left">
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <p className="text-xs text-slate-500">{t('billiard.timeCharge') || 'Time charge'}</p>
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(timeCharge)}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <p className="text-xs text-slate-500">{t('billiard.foodAndBeverage') || 'Food & Beverage'}</p>
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(fnbTotal)}</p>
+                  </div>
+                </div>
+                {Number.isFinite(hourlyRate) && hourlyRate > 0 && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    {t('billiard.hourlyRate') || 'Hourly rate'}: {formatCurrency(hourlyRate)}/h
+                  </p>
+                )}
+                {lowTime && (
+                  <p className="mt-2 text-sm font-medium text-orange-600">
+                    {t('billiard.lowTimeWarning') || '< 15 min left'}
+                  </p>
+                )}
+              </section>
+
+              {(session.combo?.name || session.customerName) && (
+                <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
+                  {session.customerName && <p className="font-medium text-slate-900">{session.customerName}</p>}
+                  {session.combo?.name && <p className="mt-1 text-slate-500">{session.combo.name}</p>}
+                </section>
+              )}
+
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Users className="h-4 w-4" />
+                    {t('billiard.guests') || 'Guests'}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      onClick={() => onUpdateGuestCount?.(Math.max(1, (session.guestCount || 1) - 1))}
+                      disabled={!onUpdateGuestCount || isPending || (session.guestCount || 1) <= 1}
+                      aria-label={t('billiard.decreaseGuests') || 'Decrease guests'}
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="w-8 text-center text-lg font-semibold tabular-nums">{session.guestCount || 1}</span>
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      onClick={() => onUpdateGuestCount?.((session.guestCount || 1) + 1)}
+                      disabled={!onUpdateGuestCount || isPending}
+                      aria-label={t('billiard.increaseGuests') || 'Increase guests'}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              {items.length > 0 && (
+                <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <UtensilsCrossed className="h-4 w-4" />
+                      {t('billiard.runningTab') || 'Running tab'}
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(fnbTotal)}</span>
+                  </div>
+                  <div className="divide-y divide-slate-200">
+                    {items.map((item: any) => (
+                      <div key={item.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-900">{item.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {item.quantity || 1} × {formatCurrency(item.unitPrice || 0)}
+                          </p>
+                        </div>
+                        {onUpdateItemQty && (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => {
+                                const next = (item.quantity || 1) - 1;
+                                if (next <= 0) onRemoveItem?.(item.id);
+                                else onUpdateItemQty(item.id, next);
+                              }}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              aria-label={`${item.name} −`}
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <span className="w-6 text-center text-sm font-semibold tabular-nums text-slate-900">
+                              {item.quantity || 1}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => onUpdateItemQty(item.id, (item.quantity || 1) + 1)}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              aria-label={`${item.name} +`}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                        <span className="w-16 shrink-0 text-right text-sm font-medium tabular-nums text-slate-700">
+                          {formatCurrency((item.unitPrice || 0) * (item.quantity || 1))}
+                        </span>
+                        {onRemoveItem && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveItem(item.id)}
+                            disabled={isPending}
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            aria-label={t('common.remove') || 'Remove'}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
           )}
         </div>
 
-        {table.status === 'free' && (
-          <>
-            {table.resource.pricingRules?.basePrice != null && (
-              <p className="text-xs text-center text-muted-foreground py-0.5">
-                {table.resource.pricingRules.basePrice} PLN/h
-              </p>
-            )}
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onStartSession} disabled={isPending}>
-              <Play className="w-3.5 h-3.5 mr-2" /> {t('billiard.startSession') || 'Start Session'}
+        <footer className="shrink-0 border-t border-slate-200 bg-white p-4">
+          {table.status === 'free' ? (
+            <button
+              type="button"
+              className="flex h-12 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              onClick={() => onStartSession(startGuests)}
+              disabled={isPending}
+            >
+              <Play className="mr-2 h-4 w-4" />
+              {t('billiard.startSession') || 'Start Session'}
             </button>
-          </>
-        )}
-
-        {(table.status === 'occupied' || table.status === 'paused') && session && (
-          <>
-            <div className="py-1.5 space-y-1.5 bg-muted/50 rounded-lg px-2">
-              {/* Customer name + combo */}
-              {(session.customerName || session.combo?.name) && (
-                <div className="text-center space-y-0.5">
-                  {session.customerName && (
-                    <p className="text-xs font-medium truncate">{session.customerName}</p>
-                  )}
-                  {session.combo?.name && (
-                    <span className="inline-block text-[9px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">
-                      {session.combo.name}
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Time + charge row */}
-              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                {isPackage ? (
-                  <span className={`flex items-center gap-0.5 tabular-nums ${lowTime ? 'text-orange-600 font-semibold' : ''}`}>
-                    <Timer className="w-3 h-3" />
-                    {remaining!.text}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-0.5 tabular-nums">
-                    <Clock className="w-3 h-3" />
-                    {formatElapsed(session.startedAt, session.totalPausedSeconds || 0, table.status === 'paused', session.pausedAt)}
-                  </span>
-                )}
-                <span className="font-semibold text-foreground tabular-nums">
-                  {formatCurrency(estimateCharge(session))}
-                </span>
+          ) : isActive && session ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  onClick={table.status === 'paused' ? onResume : onPause}
+                  disabled={isPending}
+                >
+                  {table.status === 'paused' ? <Play className="mr-1.5 h-4 w-4" /> : <Pause className="mr-1.5 h-4 w-4" />}
+                  {table.status === 'paused'
+                    ? (t('billiard.resume') || 'Resume')
+                    : (t('billiard.pause') || 'Pause')}
+                </button>
+                <button
+                  type="button"
+                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  onClick={onAddItem}
+                >
+                  <ShoppingBag className="mr-1.5 h-4 w-4" />
+                  {t('billiard.addItem') || 'Add Item'}
+                </button>
+                <button
+                  type="button"
+                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  onClick={onTransfer}
+                >
+                  <ArrowRightLeft className="mr-1.5 h-4 w-4" />
+                  {t('billiard.transfer') || 'Transfer'}
+                </button>
               </div>
-
-              {/* Low time warning */}
-              {lowTime && (
-                <p className="text-[10px] text-center text-orange-600 font-medium">
-                  {t('billiard.lowTimeWarning') || '< 15 min left'}
-                </p>
-              )}
-
-              {/* Guest count (inline +/-) + F&B total + paused */}
-              <div className="flex items-center justify-center gap-3 text-[10px] text-muted-foreground">
-                {/* Inline guest count with +/- */}
-                <span className="flex items-center gap-0.5">
-                  <Users className="w-2.5 h-2.5" />
-                  {onUpdateGuestCount ? (
-                    <>
-                      <button
-                        type="button"
-                        className="w-4 h-4 rounded-sm bg-muted hover:bg-accent flex items-center justify-center"
-                        onClick={() => onUpdateGuestCount(Math.max(1, (session.guestCount || 1) - 1))}
-                        aria-label={t('billiard.decreaseGuests') || 'Decrease guests'}
-                      >
-                        <Minus className="w-2.5 h-2.5" />
-                      </button>
-                      <span className="w-4 text-center tabular-nums font-medium">{session.guestCount || 1}</span>
-                      <button
-                        type="button"
-                        className="w-4 h-4 rounded-sm bg-muted hover:bg-accent flex items-center justify-center"
-                        onClick={() => onUpdateGuestCount((session.guestCount || 1) + 1)}
-                        aria-label={t('billiard.increaseGuests') || 'Increase guests'}
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                      </button>
-                    </>
-                  ) : (
-                    <span>{session.guestCount || 1}</span>
-                  )}
-                </span>
-
-                {/* F&B total */}
-                {fnbTotal > 0 && (
-                  <span className="flex items-center gap-0.5">
-                    <UtensilsCrossed className="w-2.5 h-2.5" />
-                    {formatCurrency(fnbTotal)}
-                  </span>
-                )}
-
-                {table.status === 'paused' && (
-                  <span className="text-amber-600 font-medium">{t('billiard.paused') || 'Paused'}</span>
-                )}
-              </div>
+              <button
+                type="button"
+                className="flex h-12 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                onClick={onPayment}
+                disabled={isPending}
+              >
+                <CreditCard className="mr-2 h-4 w-4" />
+                {t('billiard.payment') || 'Payment'} · {formatCurrency(runningTotal)}
+              </button>
             </div>
-
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onOpenDetail}>
-              <Eye className="w-3.5 h-3.5 mr-2" /> {t('billiard.sessionDetail') || 'Details'}
-            </button>
-            {table.status === 'occupied' ? (
-              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onPause} disabled={isPending}>
-                <Pause className="w-3.5 h-3.5 mr-2" /> {t('billiard.pauseSession') || 'Pause'}
-              </button>
-            ) : (
-              <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onResume} disabled={isPending}>
-                <Play className="w-3.5 h-3.5 mr-2" /> {t('billiard.resumeSession') || 'Resume'}
-              </button>
-            )}
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onAddItem}>
-              <ShoppingBag className="w-3.5 h-3.5 mr-2" /> {t('billiard.addItem') || 'Add Item'}
-            </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center" onClick={onTransfer}>
-              <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> {t('billiard.transferTable') || 'Transfer'}
-            </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center" onClick={onPayment}>
-              <CreditCard className="w-3.5 h-3.5 mr-2" /> {t('billiard.payment') || 'Payment'}
-            </button>
-            <button className="w-full px-3 py-1.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center" onClick={onEnd} disabled={isPending}>
-              <Square className="w-3.5 h-3.5 mr-2" /> {t('billiard.endSession') || 'End'}
-            </button>
-          </>
-        )}
-      </div>
+          ) : null}
+        </footer>
+      </aside>
     </div>
   );
 }

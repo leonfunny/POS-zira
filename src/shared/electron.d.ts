@@ -185,6 +185,8 @@ interface PosDailyStats {
   total_sales: number;
   cash_total: number;
   card_total: number;
+  refund_count: number;
+  refund_total: number;
 }
 
 interface IpcResult<T = void> {

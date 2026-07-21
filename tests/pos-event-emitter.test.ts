@@ -139,12 +139,26 @@ describe('posEventEmitter.emitRefundIssued', () => {
       amountMinor: 250,
       method: 'CASH',
       reason: 'return',
+      refundRequestId: 'refund-request-1',
+      shiftId: 'shift-refund',
+      tenderAllocations: [
+        { method: 'CASH', amount: 150 },
+        { method: 'CARD', amount: 100 },
+      ],
       refundedAt: '2026-06-21T11:00:00.000Z',
     });
     const refunds = calls('RefundIssued');
     expect(refunds).toHaveLength(1);
+    expect(refunds[0].dedupeKey).toBe('RefundIssued:order-1:refund-request-1');
+    expect(refunds[0].shiftId).toBe('shift-refund');
     expect(refunds[0].payload.amountMinor).toBe(250);
     expect(refunds[0].payload.method).toBe('cash');
+    expect(refunds[0].payload.refundId).toBe('order-1:refund:refund-request-1');
+    expect(refunds[0].payload.refundRequestId).toBe('refund-request-1');
+    expect(refunds[0].payload.tenderAllocations).toEqual([
+      { method: 'cash', amountMinor: 150 },
+      { method: 'card', amountMinor: 100 },
+    ]);
     expect(refunds[0].reliabilityClass).toBe('critical_financial');
   });
 
@@ -156,5 +170,25 @@ describe('posEventEmitter.emitRefundIssued', () => {
       refundedAt: '2026-06-21T11:00:00.000Z',
     });
     expect(calls('RefundIssued')).toHaveLength(0);
+  });
+
+  it('keeps the same dedupe key when the backend refund request is replayed', () => {
+    for (const refundedAt of [
+      '2026-06-21T11:00:00.000Z',
+      '2026-06-21T11:00:05.000Z',
+    ]) {
+      posEventEmitter.emitRefundIssued({
+        localOrderId: 'order-1',
+        amountMinor: 250,
+        method: 'CASH',
+        refundRequestId: 'stable-request-id',
+        refundedAt,
+      });
+    }
+
+    expect(calls('RefundIssued').map((refund) => refund.dedupeKey)).toEqual([
+      'RefundIssued:order-1:stable-request-id',
+      'RefundIssued:order-1:stable-request-id',
+    ]);
   });
 });

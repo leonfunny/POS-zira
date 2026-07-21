@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
-import { resolveName } from '../../../shared/catalog-names';
+import { parseTranslations, resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminReceiveStockResponse, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
@@ -20,6 +20,7 @@ import ProductThumbnail from './ProductThumbnail';
 import ProductStatusBadge from './ProductStatusBadge';
 import StockAdjustmentDialog from './StockAdjustmentDialog';
 import { formatStockQuantity, productStockDisplay } from './product-stock-display';
+import { receiptNamePreview } from './receipt-name-preview';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface ProductEditViewProps {
@@ -199,6 +200,10 @@ export default function ProductEditView({
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const displayName = resolveName(product, language) || product.name;
+  const receiptPreview = receiptNamePreview(
+    product.name,
+    parseTranslations(product.name_translations),
+  );
   const labelLanguage = coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage);
   const labelDisplayName = resolveName(product, labelLanguage) || product.name;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
@@ -493,7 +498,30 @@ export default function ProductEditView({
           />
         ) : (
           <div className="mt-4 rounded-md border border-slate-200 px-4">
-            <DetailRow label={tOr(t, 'products.drawer.displayName', 'Display name')} value={displayName} />
+            <DetailRow
+              label={tOr(t, 'products.edit.displayNamePl', 'Receipt / fiscal name (Polish)')}
+              value={(
+                <div className="space-y-1">
+                  <div className="font-medium text-slate-950">{receiptPreview.value || '-'}</div>
+                  {receiptPreview.fiscalSafe !== receiptPreview.value ? (
+                    <div className="text-xs text-slate-500">
+                      <span className="font-semibold">
+                        {tOr(t, 'products.edit.receiptFiscalFold', 'Fiscal-safe text')}:
+                      </span>{' '}
+                      <span className="font-mono text-slate-700">{receiptPreview.fiscalSafe || '-'}</span>
+                    </div>
+                  ) : null}
+                  {receiptPreview.source === 'canonical' ? (
+                    <div className="flex items-start gap-1.5 text-xs font-medium text-amber-700">
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {tOr(t, 'products.edit.receiptFallbackWarning', 'Polish receipt name is blank, so receipts will print the internal name.')}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            />
             <DetailRow label={tOr(t, 'products.drawer.canonicalName', 'Internal name (backend sync)')} value={product.name} />
             <DetailRow label={tOr(t, 'products.drawer.priceGross', 'Gross price')} value={formatMoney(product.retail_price, currency)} />
             {canShowPurchasePrice ? (

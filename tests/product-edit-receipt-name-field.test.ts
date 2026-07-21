@@ -7,6 +7,7 @@ const source = (path: string): string =>
   readFileSync(resolve(root, path), 'utf8').replace(/\r\n/g, '\n');
 
 const FORM = source('src/renderer/components/products/ProductEditForm.tsx');
+const EDIT_VIEW = source('src/renderer/components/products/ProductEditView.tsx');
 const CREATE_DIALOG = source('src/renderer/components/products/ProductCreateDialog.tsx');
 const ADVANCED_GUARD = '{advancedOpen && canEditDisplayName ?';
 const PL_INPUT = 'current, pl: event.target.value';
@@ -42,6 +43,26 @@ describe('the field that prints is always visible', () => {
     const warningIndex = FORM.indexOf("'products.edit.displayNameAllVariants'");
     expect(warningIndex).toBeGreaterThanOrEqual(0);
     expect(warningIndex).toBeLessThan(advancedIndex);
+  });
+});
+
+describe('the product detail view surfaces the receipt name before editing', () => {
+  it('replaces the duplicated display-name row with the shared receipt preview', () => {
+    expect(EDIT_VIEW).toContain("import { parseTranslations, resolveName } from '../../../shared/catalog-names'");
+    expect(EDIT_VIEW).toContain("import { receiptNamePreview } from './receipt-name-preview'");
+    expect(EDIT_VIEW).toContain('receiptNamePreview(\n    product.name,\n    parseTranslations(product.name_translations),\n  )');
+    expect(EDIT_VIEW).toContain("'products.edit.displayNamePl'");
+    expect(EDIT_VIEW).not.toContain("'products.drawer.displayName'");
+    expect(EDIT_VIEW).toContain("'products.drawer.canonicalName'");
+  });
+
+  it('shows printer-safe text only when it differs and warns on canonical fallback', () => {
+    expect(EDIT_VIEW).toContain('{receiptPreview.fiscalSafe !== receiptPreview.value ? (');
+    expect(EDIT_VIEW).not.toContain('receiptPreview.fiscalSafe && receiptPreview.fiscalSafe !== receiptPreview.value');
+    expect(EDIT_VIEW).toContain("{receiptPreview.fiscalSafe || '-'}");
+    expect(EDIT_VIEW).toContain("'products.edit.receiptFiscalFold'");
+    expect(EDIT_VIEW).toContain("receiptPreview.source === 'canonical'");
+    expect(EDIT_VIEW).toContain("'products.edit.receiptFallbackWarning'");
   });
 });
 

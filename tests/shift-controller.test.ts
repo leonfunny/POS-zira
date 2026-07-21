@@ -14,6 +14,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
   orderRepo: {
     getByShift: vi.fn(),
     getUnsyncedCountByShift: vi.fn(),
+    getRefundCashflowBetween: vi.fn(),
   },
 }));
 
@@ -42,7 +43,7 @@ import { database } from '../src/main/database/database';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 import { apiClient } from '../src/main/network/api-client';
 import { getConfigValue, getSecureAuthToken } from '../src/main/config/store';
-import { ShiftController } from '../src/main/pos/shift-controller';
+import { canReconcileActiveShift, ShiftController } from '../src/main/pos/shift-controller';
 
 function order(overrides: Record<string, unknown>) {
   return {
@@ -75,8 +76,37 @@ describe('ShiftController transfer totals', () => {
       backend_id: null,
     } as any);
     vi.mocked(orderRepo.getUnsyncedCountByShift).mockReturnValue(0);
+    vi.mocked(orderRepo.getRefundCashflowBetween).mockReturnValue({
+      refund_count: 0,
+      refund_total: 0,
+      cash_refund_total: 0,
+      card_refund_total: 0,
+      blik_refund_total: 0,
+      transfer_refund_total: 0,
+    });
     vi.mocked(getConfigValue).mockReturnValue(undefined);
     vi.mocked(getSecureAuthToken).mockReturnValue(null);
+  });
+
+  it('does not reconcile by staff when the active-shift lookup is not machine-scoped', () => {
+    expect(canReconcileActiveShift(
+      'local-shift-1',
+      'staff-1',
+      { id: 'server-shift-other-pos', staffId: 'staff-1' },
+      undefined,
+    )).toBe(false);
+    expect(canReconcileActiveShift(
+      'local-shift-1',
+      'staff-1',
+      { id: 'server-shift-this-pos', staffId: 'staff-1' },
+      'POS-2',
+    )).toBe(true);
+    expect(canReconcileActiveShift(
+      'local-shift-1',
+      'staff-2',
+      { id: 'local-shift-1', staffId: 'different-staff' },
+      undefined,
+    )).toBe(true);
   });
 
   it('counts BANK_TRANSFER as transfer for single payment orders', () => {
@@ -107,13 +137,8 @@ describe('ShiftController transfer totals', () => {
     expect(report.cashTotal).toBe(4000);
   });
 
-  it('subtracts BANK_TRANSFER refunds from transfer totals', () => {
+  it('subtracts refunds issued during this shift even when the sale belongs to an older shift', () => {
     vi.mocked(orderRepo.getByShift).mockReturnValue([
-      order({
-        total: 10000,
-        payment_method: 'BANK_TRANSFER',
-        refund_amount: 2500,
-      }),
       order({
         total: 10000,
         payment_method: 'SPLIT',
@@ -121,14 +146,47 @@ describe('ShiftController transfer totals', () => {
           { method: 'BANK_TRANSFER', amount: 6000 },
           { method: 'CARD', amount: 4000 },
         ]),
-        refund_amount: 5000,
       }),
     ]);
+    vi.mocked(orderRepo.getRefundCashflowBetween).mockReturnValue({
+      refund_count: 1,
+      refund_total: 5000,
+      cash_refund_total: 0,
+      card_refund_total: 2000,
+      blik_refund_total: 0,
+      transfer_refund_total: 3000,
+    });
 
     const report = new ShiftController(() => null, () => false).closeShift('shift-1', 10000);
 
-    expect(report.transferTotal).toBe(10500);
+    expect(report.totalRefunds).toBe(5000);
+    expect(report.totalSales).toBe(5000);
+    expect(report.transferTotal).toBe(3000);
     expect(report.cardTotal).toBe(2000);
+    expect(orderRepo.getRefundCashflowBetween).toHaveBeenCalledWith(
+      '2026-04-27T08:00:00.000Z',
+      expect.any(String),
+      false,
+      'shift-1',
+    );
+  });
+
+  it('can report a negative cash flow when an old order is refunded on a quiet shift', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([]);
+    vi.mocked(orderRepo.getRefundCashflowBetween).mockReturnValue({
+      refund_count: 1,
+      refund_total: 1461,
+      cash_refund_total: 1461,
+      card_refund_total: 0,
+      blik_refund_total: 0,
+      transfer_refund_total: 0,
+    });
+
+    const report = new ShiftController(() => null, () => false).closeShift('shift-1', 8539);
+
+    expect(report.totalSales).toBe(-1461);
+    expect(report.cashTotal).toBe(-1461);
+    expect(report.difference).toBe(0);
   });
 
   it('can limit sales and payment totals to fiscal orders', () => {
@@ -169,8 +227,28 @@ describe('ShiftController transfer totals', () => {
     await new ShiftController(() => null, () => true).retryUnsyncedShifts();
 
     expect(apiClient.openPosShift).toHaveBeenCalledWith('token-1', {
+      shiftId: 'shift-2',
       staffId: 'staff-2',
       openingCash: 25000,
+      machineId: 'POS-2',
+    });
+  });
+
+  it('sends the local shift UUID when initially syncing a new shift open', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(getConfigValue).mockImplementation((key: string) => key === 'machineId' ? 'POS-2' : undefined);
+    vi.mocked(apiClient.openPosShift).mockResolvedValueOnce({ shiftId: 'shift-local-1' });
+
+    await (new ShiftController(() => null, () => true) as any).syncShiftOpen(
+      'shift-local-1',
+      'staff-1',
+      10000,
+    );
+
+    expect(apiClient.openPosShift).toHaveBeenCalledWith('token-1', {
+      shiftId: 'shift-local-1',
+      staffId: 'staff-1',
+      openingCash: 10000,
       machineId: 'POS-2',
     });
   });

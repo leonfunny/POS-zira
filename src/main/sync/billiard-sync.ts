@@ -8,13 +8,48 @@ import { billiardMutationRepo } from '../database/repos/billiard-mutation-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
+import {
+  canonicalBilliardBillingMode,
+  canonicalBilliardSessionStatus,
+  getBilliardMutationPolicy,
+  isBilliardNetworkError,
+  isAllowedBilliardOperation,
+  normalizeBilliardDashboard,
+  normalizeBilliardPendingPayments,
+} from '../../shared/billiard-contract';
 
 const MAX_QUEUE_RETRIES = 3;
+const SESSION_STATE_OPERATIONS = new Set([
+  'start_session',
+  'pause_session',
+  'resume_session',
+  'update_session',
+  'add_item',
+  'remove_item',
+  'update_item',
+  'transfer_table',
+]);
+
+function parseJsonObject(value: string | null | undefined): Record<string, any> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 export class BilliardSync {
   private dashboardTimer: ReturnType<typeof setInterval> | null = null;
   private isOnline = false;
   private restaurantCombosCache: any[] = [];
+  private pendingPaymentsSignature: string | null = null;
+  private dashboardRefreshCount = 0;
+  private replayInFlight: Promise<{ ok: number; failed: number }> | null = null;
+  private stateEpoch = 0;
+  private dashboardRequestId = 0;
+  private pendingPaymentsEndpointMissingWarned = false;
 
   // ── Reference data sync (login/reconnect) ────────────
 
@@ -23,63 +58,44 @@ export class BilliardSync {
     if (!token) throw new Error('Not authenticated');
 
     logger.info('[BilliardSync] Starting full sync...');
+    this.pendingPaymentsSignature = null;
 
     let resources = 0;
     let floors = 0;
     let combos = 0;
+    let dashboardSynced = false;
 
     try {
-      // 1. Dashboard data (resources + sessions + layouts)
+      // 1. Floor-plan parents must exist before dashboard layouts. On a fresh
+      // DB the layout table has FKs to both floor plans and resources.
+      floors = await this.syncFloorPlans(token);
+    } catch (err) {
+      logger.warn(`[BilliardSync] Floor plans sync failed: ${err}`);
+    }
+
+    try {
+      // 2. Dashboard data (resource parents + sessions + layouts)
       const dashboard = await apiClient.request('GET', '/billiard/dashboard', token);
-      if (dashboard) {
-        const dashResources = dashboard.resources || dashboard.tables || [];
-        if (dashResources.length > 0) {
-          database.transaction(() => {
-            billiardResourceRepo.upsertMany(dashResources);
-          });
-          resources = dashResources.length;
+      const normalized = normalizeBilliardDashboard(dashboard);
+      database.transaction(() => {
+        billiardResourceRepo.replaceAll(normalized.resources);
+        billiardSessionRepo.replaceActive(normalized.sessions);
+        if (normalized.layouts.length > 0) {
+          billiardFloorPlanRepo.upsertLayouts(normalized.layouts);
         }
-
-        // Sessions from dashboard
-        const sessions = dashboard.sessions || dashboard.activeSessions || [];
-        database.transaction(() => {
-          billiardSessionRepo.clearCompleted();
-          if (sessions.length > 0) {
-            billiardSessionRepo.upsertMany(sessions);
-          }
-        });
-
-        // Layouts from dashboard (if embedded)
-        const layouts = dashboard.layouts || [];
-        if (layouts.length > 0) {
-          database.transaction(() => {
-            billiardFloorPlanRepo.upsertLayouts(layouts);
-          });
-        }
-      }
+      });
+      resources = normalized.resources.length;
+      dashboardSynced = true;
     } catch (err) {
       logger.warn(`[BilliardSync] Dashboard sync failed: ${err}`);
     }
 
     try {
-      // 2. Floor plans
-      const plansData = await apiClient.request('GET', '/billiard/floor-plans', token);
-      const plans = Array.isArray(plansData) ? plansData : (plansData?.data || []);
-      if (plans.length > 0) {
-        database.transaction(() => {
-          billiardFloorPlanRepo.upsertMany(plans);
-          // Extract layouts from floor plan responses
-          for (const plan of plans) {
-            const planLayouts = plan.layouts || plan.tableLayouts || [];
-            if (planLayouts.length > 0) {
-              billiardFloorPlanRepo.upsertLayouts(planLayouts);
-            }
-          }
-        });
-        floors = plans.length;
-      }
+      // Cashier-safe full snapshot: recover even when the end response was
+      // lost before this device could journal it, including after a restart.
+      await this.syncPendingPayments(token, 'pending payment recovery');
     } catch (err) {
-      logger.warn(`[BilliardSync] Floor plans sync failed: ${err}`);
+      logger.debug(`[BilliardSync] Pending payment recovery skipped: ${err}`);
     }
 
     try {
@@ -106,12 +122,13 @@ export class BilliardSync {
       logger.warn(`[BilliardSync] Restaurant combos sync failed: ${err}`);
     }
 
-    // Record sync timestamp
-    database.run(
-      "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('billiard_last_sync', ?, datetime('now'))",
-      [new Date().toISOString()],
-    );
-    database.markDirty();
+    if (dashboardSynced) {
+      database.run(
+        "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('billiard_last_sync', ?, datetime('now'))",
+        [new Date().toISOString()],
+      );
+      database.markDirty();
+    }
 
     logger.info(`[BilliardSync] Full sync done: ${resources} resources, ${floors} floors, ${combos} combos`);
     return { resources, floors, combos };
@@ -123,37 +140,60 @@ export class BilliardSync {
     const token = getSecureAuthToken();
     if (!token) return;
 
+    this.dashboardRefreshCount++;
+    if (
+      billiardFloorPlanRepo.getAll().length === 0
+      || this.dashboardRefreshCount % 6 === 0
+    ) {
+      try {
+        await this.syncFloorPlans(token);
+      } catch (err) {
+        logger.debug(`[BilliardSync] Periodic floor-plan refresh failed: ${err}`);
+      }
+    }
+
+    let restReachable = false;
+    const requestId = ++this.dashboardRequestId;
+    const requestEpoch = this.stateEpoch;
     try {
       const dashboard = await apiClient.request('GET', '/billiard/dashboard', token);
       if (!dashboard) return;
-
-      // Update sessions
-      const sessions = dashboard.sessions || dashboard.activeSessions || [];
-      database.transaction(() => {
-        billiardSessionRepo.clearCompleted();
-        billiardSessionRepo.upsertMany(sessions);
-      });
-
-      // Update resource statuses if present
-      const resources = dashboard.resources || dashboard.tables || [];
-      if (resources.length > 0) {
+      restReachable = true;
+      if (requestId !== this.dashboardRequestId || requestEpoch !== this.stateEpoch) {
+        logger.debug('[BilliardSync] Discarding stale dashboard response');
+      } else {
+        const normalized = normalizeBilliardDashboard(dashboard);
         database.transaction(() => {
-          billiardResourceRepo.upsertMany(resources);
+          billiardResourceRepo.replaceAll(normalized.resources);
+          billiardSessionRepo.replaceActive(normalized.sessions);
+          if (normalized.layouts.length > 0) {
+            billiardFloorPlanRepo.upsertLayouts(normalized.layouts);
+          }
         });
-      }
 
-      // Update layouts if present
-      const layouts = dashboard.layouts || [];
-      if (layouts.length > 0) {
-        database.transaction(() => {
-          billiardFloorPlanRepo.upsertLayouts(layouts);
-        });
+        database.markDirty();
+        this.notifyRenderer('dashboard');
       }
-
-      database.markDirty();
-      this.notifyRenderer('dashboard');
     } catch (err) {
       logger.debug(`[BilliardSync] Dashboard refresh failed: ${err}`);
+    }
+
+    try {
+      if (await this.syncPendingPayments(token, 'periodic pending payment reconciliation')) {
+        this.notifyRenderer('payment-reconciled');
+      }
+    } catch (err) {
+      logger.debug(`[BilliardSync] Pending payment refresh failed: ${err}`);
+    }
+
+    // WebSocket health is independent from HTTPS health. If REST has
+    // recovered, replay queue-safe offline edits even while realtime remains
+    // disconnected. The single-flight guard prevents the post-replay refresh
+    // from recursively starting another replay.
+    if (restReachable && billiardMutationRepo.countPending() > 0) {
+      this.replayQueue().catch((err) => {
+        logger.debug(`[BilliardSync] REST-recovery queue replay failed: ${err}`);
+      });
     }
   }
 
@@ -174,33 +214,99 @@ export class BilliardSync {
   // ── Mutation execution ────────────────────────────────
 
   async executeMutation(op: string, method: string, path: string, body?: any): Promise<any> {
-    if (this.isOnline) {
-      // Online: call API directly, update local cache from response
-      const token = getSecureAuthToken();
-      if (!token) throw new Error('Not authenticated');
+    const routePolicy = getBilliardMutationPolicy(method, path);
+    if (!routePolicy || !isAllowedBilliardOperation(op, method, path)) {
+      throw new Error(`Billiard operation not allowed: ${String(method).toUpperCase()} ${path}`);
+    }
 
-      try {
-        const result = await apiClient.request(method, path, token, body);
+    const normalizedMethod = String(method).toUpperCase();
+    const sessionReconciliationRead = op === 'online_api'
+      && normalizedMethod === 'GET'
+      && /^\/billiard\/sessions\/[^/]+$/.test(path);
+    const onlineOnly = routePolicy === 'online-only';
+    // Every mutation probes REST first. WebSocket state only describes the
+    // realtime channel and must never delay pause/resume or other HTTPS calls.
+    const token = getSecureAuthToken();
+    if (!token) throw new Error('Not authenticated');
 
-        // Trigger a quick dashboard refresh to update local cache
-        // Run in background — don't block the mutation response
-        this.refreshDashboard().catch((e) => { logger.debug('[BilliardSync] post-mutation refresh failed:', e?.message); });
+    try {
+      const result = await apiClient.request(method, path, token, body);
+      if (normalizedMethod !== 'GET') this.stateEpoch++;
 
-        return result;
-      } catch (err: any) {
-        // Network error while isOnline was true (socket disconnect lags behind)
-        // Fall through to offline queue instead of losing the mutation
-        const msg = (err.message || '').toLowerCase();
-        const isNetworkError = msg.includes('fetch') || msg.includes('network')
-          || msg.includes('econnrefused') || msg.includes('timeout')
-          || msg.includes('abort') || msg.includes('socket');
-        if (!isNetworkError) {
-          // Server-side error (400, 422, 500) — don't queue, propagate to UI
-          throw err;
+        if (op === 'end_session' && result?.id) {
+          billiardSessionRepo.upsertOne(result);
+          await this.flushPaymentJournal('session end');
+          this.notifyRenderer('payment-pending');
+        } else if (op === 'process_payment' && result?.id) {
+          // Keep a PAID completed row as a short-lived tombstone. It is hidden
+          // from the pending list but prevents a stale ACTIVE dashboard entry
+          // from resurrecting the table. History sync later removes it.
+          billiardSessionRepo.upsertOne(result);
+          await this.flushPaymentJournal('payment result');
+          this.notifyRenderer('payment-updated');
+        } else if (op === 'void_session' && result?.id) {
+          // A written-off session leaves the pending list immediately: the
+          // VOID row upserts over the UNPAID/PARTIAL one and no longer matches
+          // the pending query.
+          billiardSessionRepo.upsertOne(result);
+          await this.flushPaymentJournal('session void');
+          this.notifyRenderer('payment-updated');
+        } else if (op === 'void_sessions_batch') {
+          // Batch returns per-id verdicts, not sessions — re-pull the pending
+          // snapshot so every voided row drops out of the local cache.
+          await this.syncPendingPayments(token, 'void batch');
+          await this.flushPaymentJournal('session void batch');
+          this.notifyRenderer('payment-updated');
+        } else if (sessionReconciliationRead && result?.id) {
+          const status = canonicalBilliardSessionStatus(result.status);
+          if (status === 'COMPLETED') {
+            billiardSessionRepo.upsertOne(result);
+            await this.flushPaymentJournal('session reconciliation');
+            this.notifyRenderer(
+              String(result.paymentStatus || '').toUpperCase() === 'PAID'
+                ? 'payment-updated'
+                : 'payment-pending',
+            );
+          }
+        } else if (SESSION_STATE_OPERATIONS.has(op)) {
+          await this.syncSessionAfterMutation(op, path, result, token);
         }
-        logger.warn(`[BilliardSync] Online mutation failed (network), falling back to queue: ${err.message}`);
-        this.isOnline = false;
+
+        // Creating a resource is immediately followed by a layout upsert in
+        // the UI. Refreshing between those two calls races the backend's
+        // dashboard auto-layout creation with that explicit upsert. The
+        // layout mutation performs the refresh once the pair is complete.
+        const resourceCreateInProgress = op === 'online_api'
+          && normalizedMethod === 'POST'
+          && path === '/resources';
+        const journalIsAuthoritative = op === 'end_session'
+          || op === 'process_payment'
+          || op === 'void_session'
+          || op === 'void_sessions_batch'
+          || sessionReconciliationRead
+          || SESSION_STATE_OPERATIONS.has(op);
+        if (!resourceCreateInProgress && !journalIsAuthoritative) {
+          // Run in background — don't block the mutation response.
+          this.refreshDashboard().catch((e) => {
+            logger.debug('[BilliardSync] post-mutation refresh failed:', e?.message);
+          });
+        }
+
+      return result;
+    } catch (err: any) {
+      // Only transport failures may enter the offline queue. HTTP 4xx/5xx
+      // responses are authoritative and must be surfaced to the cashier.
+      if (!isBilliardNetworkError(err)) {
+        throw err;
       }
+      if (onlineOnly) {
+        throw new Error('Network connection was lost. Reconnect before trying this billiard operation again.');
+      }
+      logger.warn(`[BilliardSync] REST mutation failed (network), falling back to queue: ${err.message}`);
+    }
+
+    if (onlineOnly) {
+      throw new Error('This billiard operation requires a network connection. Please reconnect and try again.');
     }
 
     // Offline (or network-failed fallback): queue the mutation
@@ -210,6 +316,12 @@ export class BilliardSync {
     this.applyOptimisticUpdate(op, path, body);
 
     database.markDirty();
+    const persisted = await database.saveCoalesced();
+    if (!persisted.success) {
+      throw new Error(
+        `Could not durably queue the billiard operation: ${persisted.error || 'unknown database error'}`,
+      );
+    }
 
     const pending = billiardMutationRepo.countPending();
     logger.info(`[BilliardSync] Mutation queued (offline): ${op} → queue #${queueId}, ${pending} pending`);
@@ -234,8 +346,8 @@ export class BilliardSync {
           billiardSessionRepo.upsertOne({
             id: tempId,
             resourceId: body.resourceId,
-            status: 'active',
-            billingMode: body.billingMode || 'per_minute',
+            status: 'ACTIVE',
+            billingMode: body.billingMode || 'PER_MINUTE',
             guestCount: body.guestCount || 1,
             startedAt: new Date().toISOString(),
             totalMinutes: 0,
@@ -249,7 +361,7 @@ export class BilliardSync {
         case 'pause_session': {
           if (!sessionId) break;
           database.run(
-            "UPDATE billiard_sessions SET status = 'paused', paused_at = ? WHERE id = ?",
+            "UPDATE billiard_sessions SET status = 'PAUSED', paused_at = ? WHERE id = ?",
             [new Date().toISOString(), sessionId],
           );
           break;
@@ -257,7 +369,7 @@ export class BilliardSync {
         case 'resume_session': {
           if (!sessionId) break;
           database.run(
-            "UPDATE billiard_sessions SET status = 'active', paused_at = NULL WHERE id = ?",
+            "UPDATE billiard_sessions SET status = 'ACTIVE', paused_at = NULL WHERE id = ?",
             [sessionId],
           );
           break;
@@ -265,7 +377,7 @@ export class BilliardSync {
         case 'end_session': {
           if (!sessionId) break;
           database.run(
-            "UPDATE billiard_sessions SET status = 'ended', ended_at = ? WHERE id = ?",
+            "UPDATE billiard_sessions SET status = 'COMPLETED', ended_at = ? WHERE id = ?",
             [new Date().toISOString(), sessionId],
           );
           break;
@@ -311,17 +423,17 @@ export class BilliardSync {
           break;
         }
         case 'transfer_table': {
-          if (!sessionId || !body?.resourceId) break;
+          if (!sessionId || !body?.targetResourceId) break;
           database.run(
             'UPDATE billiard_sessions SET resource_id = ? WHERE id = ?',
-            [body.resourceId, sessionId],
+            [body.targetResourceId, sessionId],
           );
           break;
         }
         case 'process_payment': {
           if (!sessionId) break;
           database.run(
-            "UPDATE billiard_sessions SET status = 'ended', ended_at = ? WHERE id = ?",
+            "UPDATE billiard_sessions SET status = 'COMPLETED', ended_at = ? WHERE id = ?",
             [new Date().toISOString(), sessionId],
           );
           break;
@@ -344,11 +456,12 @@ export class BilliardSync {
           break;
         }
         case 'upsert_layout': {
-          // body has resourceId + layout fields
-          if (body?.resourceId) {
+          const layoutMatch = path.match(/\/billiard\/table-layouts\/([^/]+)$/);
+          const resourceId = layoutMatch?.[1];
+          if (body && resourceId) {
             const existing = database.get<{ id: string }>(
               'SELECT id FROM billiard_table_layouts WHERE resource_id = ?',
-              [body.resourceId],
+              [resourceId],
             );
             if (existing) {
               const sets: string[] = [];
@@ -410,6 +523,28 @@ export class BilliardSync {
   // ── Queue replay (on reconnect) ───────────────────────
 
   async replayQueue(): Promise<{ ok: number; failed: number }> {
+    if (this.replayInFlight) return this.replayInFlight;
+    this.replayInFlight = this.replayQueueInternal();
+    try {
+      return await this.replayInFlight;
+    } finally {
+      this.replayInFlight = null;
+    }
+  }
+
+  private async replayQueueInternal(): Promise<{ ok: number; failed: number }> {
+    const interrupted = billiardMutationRepo.recoverInterrupted();
+    if (interrupted.recovered > 0 || interrupted.quarantined > 0) {
+      logger.warn(
+        `[BilliardSync] Queue recovery: ${interrupted.recovered} safe retry, ${interrupted.quarantined} unsafe quarantined`,
+      );
+      database.markDirty();
+      const saved = await database.saveCoalesced();
+      if (!saved.success) {
+        throw new Error(`Could not durably quarantine legacy billiard queue rows: ${saved.error || 'unknown database error'}`);
+      }
+    }
+
     const token = getSecureAuthToken();
     if (!token) return { ok: 0, failed: 0 };
 
@@ -422,6 +557,20 @@ export class BilliardSync {
     let failed = 0;
 
     for (const entry of pending) {
+      const routePolicy = getBilliardMutationPolicy(entry.method, entry.path);
+      if (
+        routePolicy !== 'queue-safe'
+        || !isAllowedBilliardOperation(entry.operation, entry.method, entry.path)
+      ) {
+        billiardMutationRepo.markQuarantined(
+          entry.id,
+          'Quarantined queue row whose operation does not match a queue-safe route',
+        );
+        failed++;
+        logger.warn(`[BilliardSync] Quarantined mutation #${entry.id}: unsafe or mismatched route`);
+        continue;
+      }
+
       if (entry.attempts >= MAX_QUEUE_RETRIES) {
         // Exceeded retries — discard
         billiardMutationRepo.markCompleted(entry.id);
@@ -435,6 +584,7 @@ export class BilliardSync {
       try {
         const payload = entry.payload ? JSON.parse(entry.payload) : undefined;
         await apiClient.request(entry.method, entry.path, token, payload);
+        this.stateEpoch++;
         billiardMutationRepo.markCompleted(entry.id);
         ok++;
       } catch (err: any) {
@@ -485,6 +635,56 @@ export class BilliardSync {
     const floorPlans = billiardFloorPlanRepo.getAll();
     const layouts = billiardFloorPlanRepo.getLayouts();
     const sessions = billiardSessionRepo.getActive();
+    const pendingPaymentRows = billiardSessionRepo.getPendingPayments();
+
+    const comboById = new Map(billiardComboRepo.getAll(false).map((combo) => [combo.id, combo]));
+
+    const hydrateSession = (session: any, pricingRules: Record<string, any> = {}) => {
+      const payload = parseJsonObject(session.payload_json);
+      const combo = session.combo_id ? comboById.get(session.combo_id) : null;
+      const totalCharge = Number(
+        payload.totalCharge ?? payload.totalCharges ?? session.total_charges ?? 0,
+      );
+      return {
+        ...payload,
+        id: session.id,
+        resourceId: session.resource_id,
+        status: canonicalBilliardSessionStatus(session.status),
+        billingMode: canonicalBilliardBillingMode(session.billing_mode),
+        guestCount: session.guest_count,
+        startedAt: session.started_at,
+        pausedAt: session.paused_at,
+        endedAt: session.ended_at,
+        paymentStatus: payload.paymentStatus ?? 'UNPAID',
+        paymentMethod: payload.paymentMethod ?? null,
+        paidAmount: Number(payload.paidAmount ?? 0),
+        totalPausedSeconds: Number(payload.totalPausedSeconds ?? 0),
+        totalMinutes: Number(session.total_minutes ?? payload.durationMinutes ?? 0),
+        durationMinutes: Number(payload.durationMinutes ?? session.total_minutes ?? 0),
+        // total_charges is the grand total in the legacy cache. Reusing it as
+        // timeCharge would add cached items a second time in the renderer.
+        timeCharge: Number(payload.timeCharge ?? 0),
+        totalCharge,
+        totalCharges: totalCharge,
+        comboId: session.combo_id,
+        combo: payload.combo ?? (combo ? {
+          id: combo.id,
+          name: combo.name,
+          comboPrice: combo.combo_price,
+          playMinutes: combo.play_minutes,
+        } : null),
+        packagePrice: Number(payload.packagePrice ?? combo?.combo_price ?? 0),
+        pricingSnapshot: payload.pricingSnapshot ?? { basePrice: Number(pricingRules.basePrice ?? 0) },
+        notes: session.notes,
+        items: (session.items || []).map((item: any) => ({
+          id: item.id,
+          variantId: item.variant_id,
+          name: item.name,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+        })),
+      };
+    };
 
     // Build a session map by resource_id for quick lookup
     const sessionByResource = new Map<string, any>();
@@ -498,15 +698,26 @@ export class BilliardSync {
     const tables = resources.map((r) => {
       const layout = layouts.find((l) => l.resource_id === r.id);
       const session = sessionByResource.get(r.id);
+      const payload = parseJsonObject(r.payload_json);
+      const pricingRules = parseJsonObject(r.pricing_rules);
+      const hydratedSession = session ? hydrateSession(session, pricingRules) : null;
 
       return {
-        id: r.id,
-        name: r.name,
-        code: r.code,
-        typeId: r.type_id,
-        typeName: r.type_name,
-        pricingRules: JSON.parse(r.pricing_rules || '[]'),
-        isActive: r.is_active === 1,
+        resource: {
+          ...payload,
+          id: r.id,
+          name: r.name,
+          code: r.code,
+          resourceTypeId: r.type_id,
+          typeId: r.type_id,
+          typeName: r.type_name,
+          pricingRules,
+          metadata: payload.metadata ?? {},
+          isActive: r.is_active === 1,
+        },
+        status: !hydratedSession
+          ? 'free'
+          : hydratedSession.status === 'PAUSED' ? 'paused' : 'occupied',
         // Layout
         layout: layout ? {
           id: layout.id,
@@ -519,26 +730,24 @@ export class BilliardSync {
           assetKey: layout.asset_key,
           floorPlanId: layout.floor_plan_id,
         } : null,
-        // Session
-        session: session ? {
-          id: session.id,
-          status: session.status,
-          billingMode: session.billing_mode,
-          guestCount: session.guest_count,
-          startedAt: session.started_at,
-          pausedAt: session.paused_at,
-          endedAt: session.ended_at,
-          totalMinutes: session.total_minutes,
-          totalCharges: session.total_charges,
-          comboId: session.combo_id,
-          notes: session.notes,
-          items: (session.items || []).map((i: any) => ({
-            id: i.id,
-            variantId: i.variant_id,
-            name: i.name,
-            quantity: i.quantity,
-            unitPrice: i.unit_price,
-          })),
+        session: hydratedSession,
+      };
+    });
+
+    const hydratedSessions = sessions.map((session) => {
+      const resource = resources.find((row) => row.id === session.resource_id);
+      return hydrateSession(session, parseJsonObject(resource?.pricing_rules));
+    });
+
+    const pendingPayments = pendingPaymentRows.map((session) => {
+      const resource = resources.find((row) => row.id === session.resource_id);
+      const resourcePayload = parseJsonObject(resource?.payload_json);
+      return {
+        ...hydrateSession(session, parseJsonObject(resource?.pricing_rules)),
+        resource: resource ? {
+          ...resourcePayload,
+          id: resource.id,
+          name: resource.name,
         } : null,
       };
     });
@@ -565,25 +774,8 @@ export class BilliardSync {
         shape: l.shape,
         assetKey: l.asset_key,
       })),
-      sessions: sessions.map((s) => ({
-        id: s.id,
-        resourceId: s.resource_id,
-        status: s.status,
-        billingMode: s.billing_mode,
-        guestCount: s.guest_count,
-        startedAt: s.started_at,
-        pausedAt: s.paused_at,
-        totalMinutes: s.total_minutes,
-        totalCharges: s.total_charges,
-        comboId: s.combo_id,
-        items: (s.items || []).map((i: any) => ({
-          id: i.id,
-          variantId: i.variant_id,
-          name: i.name,
-          quantity: i.quantity,
-          unitPrice: i.unit_price,
-        })),
-      })),
+      sessions: hydratedSessions,
+      pendingPayments,
       _fromCache: true,
     };
   }
@@ -616,6 +808,126 @@ export class BilliardSync {
   }
 
   // ── Helpers ───────────────────────────────────────────
+
+  private async flushPaymentJournal(reason: string): Promise<void> {
+    database.markDirty();
+    const result = await database.saveCoalesced();
+    if (!result.success) {
+      throw new Error(
+        `Could not durably save the billiard ${reason}: ${result.error || 'unknown database error'}`,
+      );
+    }
+  }
+
+  private async syncPendingPayments(token: string, reason: string): Promise<boolean> {
+    const requestEpoch = this.stateEpoch;
+    let pendingData: any;
+    try {
+      pendingData = await apiClient.request(
+        'GET',
+        '/billiard/sessions/pending-payments',
+        token,
+      );
+      this.pendingPaymentsEndpointMissingWarned = false;
+    } catch (err: any) {
+      if (Number(err?.status) === 404) {
+        if (!this.pendingPaymentsEndpointMissingWarned) {
+          logger.warn('[BilliardSync] Pending-payment endpoint is not deployed; preserving the local payment journal');
+          this.pendingPaymentsEndpointMissingWarned = true;
+        }
+        return false;
+      }
+      throw err;
+    }
+    if (requestEpoch !== this.stateEpoch) {
+      logger.debug('[BilliardSync] Discarding stale pending-payment response');
+      return false;
+    }
+    const pendingPayments = normalizeBilliardPendingPayments(pendingData);
+    const signature = JSON.stringify(
+      pendingPayments
+        .map((session: any) => ({
+          id: session?.id,
+          paymentStatus: session?.paymentStatus,
+          paidAmount: session?.paidAmount,
+          totalCharge: session?.totalCharge,
+          updatedAt: session?.updatedAt,
+        }))
+        .sort((a: any, b: any) => String(a.id).localeCompare(String(b.id))),
+    );
+    if (signature === this.pendingPaymentsSignature) {
+      let pruned = 0;
+      database.transaction(() => {
+        pruned = billiardSessionRepo.pruneExpiredPaidTombstones();
+      });
+      if (pruned === 0) return false;
+      await this.flushPaymentJournal(`${reason} tombstone cleanup`);
+      return true;
+    }
+
+    database.transaction(() => {
+      billiardSessionRepo.reconcilePendingSnapshot(pendingPayments);
+    });
+    await this.flushPaymentJournal(reason);
+    this.pendingPaymentsSignature = signature;
+    return true;
+  }
+
+  private async syncFloorPlans(token: string): Promise<number> {
+    const plansData = await apiClient.request('GET', '/billiard/floor-plans', token);
+    const plans = Array.isArray(plansData)
+      ? plansData
+      : (Array.isArray(plansData?.data) ? plansData.data : []);
+    if (plans.length === 0) return 0;
+
+    database.transaction(() => {
+      billiardFloorPlanRepo.upsertMany(plans);
+      for (const plan of plans) {
+        const planLayouts = plan.layouts || plan.tableLayouts || [];
+        if (planLayouts.length > 0) {
+          billiardFloorPlanRepo.upsertLayouts(planLayouts);
+        }
+      }
+    });
+    database.markDirty();
+    return plans.length;
+  }
+
+  private async syncSessionAfterMutation(
+    op: string,
+    path: string,
+    result: any,
+    token: string,
+  ): Promise<void> {
+    const pathSessionId = path.match(/\/billiard\/sessions\/([^/]+)/)?.[1];
+    let snapshot = op === 'start_session' && result?.id ? result : null;
+    const sessionId = snapshot?.id || pathSessionId;
+    if (!sessionId) return;
+
+    if (!snapshot) {
+      try {
+        snapshot = await apiClient.request(
+          'GET',
+          `/billiard/sessions/${sessionId}`,
+          token,
+        );
+      } catch (err) {
+        // The mutation already committed. Never surface this read-after-write
+        // failure as a failed add/pause/transfer that the cashier may repeat.
+        logger.warn(`[BilliardSync] Session reload after ${op} failed: ${err}`);
+        return;
+      }
+    }
+    if (!snapshot?.id) return;
+
+    billiardSessionRepo.upsertOne(snapshot);
+    if (canonicalBilliardSessionStatus(snapshot.status) === 'COMPLETED') {
+      await this.flushPaymentJournal(`post-${op} session reconciliation`);
+    } else {
+      database.markDirty();
+    }
+    this.notifyRenderer('session-updated');
+  }
 
   private notifyRenderer(type: string): void {
     try {
