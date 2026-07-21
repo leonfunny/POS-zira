@@ -26,6 +26,7 @@ const SESSION_STATE_OPERATIONS = new Set([
   'update_session',
   'add_item',
   'remove_item',
+  'update_item',
   'transfer_table',
 ]);
 

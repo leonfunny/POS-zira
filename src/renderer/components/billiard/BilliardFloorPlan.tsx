@@ -22,6 +22,7 @@ import {
   useVoidSession,
   useVoidSessions,
   useRemoveItem,
+  useUpdateItem,
   useUpdateSession,
   useSyncStatus,
 } from '../../hooks/useBilliardData';
@@ -196,6 +197,7 @@ function FloorPlanInner({ language }: { language: Language }) {
   const voidSession = useVoidSession(refetchOverview);
   const voidSessions = useVoidSessions(refetchOverview);
   const removeItem = useRemoveItem(refetchOverview);
+  const updateItem = useUpdateItem(refetchOverview);
   const updateSession = useUpdateSession(refetchOverview);
 
   // UI state
@@ -1089,6 +1091,12 @@ function FloorPlanInner({ language }: { language: Language }) {
                 .catch((err: any) => toast.error(err?.message || t('billiard.removeItemFailed') || 'Failed to remove item'));
             }
           }}
+          onUpdateItemQty={(itemId, quantity) => {
+            if (selectedTable.session?.id) {
+              updateItem.mutate({ sessionId: selectedTable.session.id, itemId, data: { quantity } })
+                .catch((err: any) => toast.error(err?.message || t('billiard.actionFailed') || 'Action failed'));
+            }
+          }}
           isPending={isPending}
           language={language}
         />
@@ -1131,6 +1139,12 @@ function FloorPlanInner({ language }: { language: Language }) {
           sessionId={transferSessionId}
           open={true}
           onOpenChange={(v) => { if (!v) setTransferSessionId(null); }}
+          tables={tables}
+          onTransferred={(targetResourceId) => {
+            // The drawer follows the session to its new table.
+            setSelectedTableId(targetResourceId);
+            refetchOverview();
+          }}
           language={language}
         />
       )}

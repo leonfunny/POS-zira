@@ -1,14 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, Loader2, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
-import { useFloorOverview, useTransferTable } from '../../hooks/useBilliardData';
+import { useTransferTable } from '../../hooks/useBilliardData';
 import { useToast } from './Toast';
+import { sortTablesByName } from './utils';
 
 interface TransferTableDialogProps {
   sessionId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The parent floor's table list — the dialog runs NO query of its own, so
+   *  the grid only changes when the tables actually change (no 3s reshuffle). */
+  tables?: any[];
+  /** Fired after a successful transfer so the drawer can follow the session. */
+  onTransferred?: (targetResourceId: string) => void;
   language: Language;
 }
 
@@ -40,24 +46,22 @@ export function TransferTableDialog({
   sessionId,
   open,
   onOpenChange,
+  tables,
+  onTransferred,
   language,
 }: TransferTableDialogProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
-  const { data: floorOverview, loading, refetch } = useFloorOverview();
-  const transferTable = useTransferTable(refetch);
+  const transferTable = useTransferTable();
 
   const [selectedTableId, setSelectedTableId] = useState('');
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  const overviewRows = Array.isArray(floorOverview)
-    ? floorOverview
-    : ((floorOverview as any)?.tables || (floorOverview as any)?.resources || []);
-  const freeTables = overviewRows
-    .map((row: any) => row?.resource
-      ? { ...row.resource, status: row.status }
-      : row)
-    .filter((row: any) => String(row?.status || 'free').toLowerCase() === 'free');
+  const freeTables = useMemo(() => sortTablesByName(
+    (tables ?? [])
+      .map((row: any) => row?.resource ? { ...row.resource, status: row.status } : row)
+      .filter((row: any) => String(row?.status || 'free').toLowerCase() === 'free'),
+  ), [tables]);
 
   const resetForm = () => {
     setSelectedTableId('');
@@ -72,6 +76,7 @@ export function TransferTableDialog({
         resourceId: selectedTableId,
       });
       toast.success(t('billiard.transferSuccess') || 'Table transferred successfully');
+      onTransferred?.(selectedTableId);
       resetForm();
       onOpenChange(false);
     } catch (err: any) {
@@ -135,11 +140,7 @@ export function TransferTableDialog({
                 'Select a free table to transfer this session to.'}
             </p>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-              </div>
-            ) : freeTables.length === 0 ? (
+            {freeTables.length === 0 ? (
               <div className="text-center py-8 text-slate-500">
                 <p className="text-sm">
                   {t('billiard.noFreeTables') || 'No free tables available'}

@@ -31,6 +31,7 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/sessions\/void-batch$/, operation: 'void_sessions_batch', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/void$/, operation: 'void_session', policy: 'online-only' },
   { method: 'DELETE', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'remove_item', policy: 'online-only' },
+  { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'update_item', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/bookings\?date=\d{4}-\d{2}-\d{2}&limit=200$/, operation: 'online_api', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/availability\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\?date=\d{4}-\d{2}-\d{2}$/, operation: 'online_api', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/bookings$/, operation: 'online_api', policy: 'online-only' },

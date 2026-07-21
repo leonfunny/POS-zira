@@ -45,6 +45,7 @@ export function TableActionPopover({
   onTransfer,
   onUpdateGuestCount,
   onRemoveItem,
+  onUpdateItemQty,
   isPending,
   language,
 }: {
@@ -60,6 +61,7 @@ export function TableActionPopover({
   onTransfer: () => void;
   onUpdateGuestCount?: (count: number) => void;
   onRemoveItem?: (itemId: string) => void;
+  onUpdateItemQty?: (itemId: string, quantity: number) => void;
   isPending: boolean;
   language: Language;
 }) {
@@ -342,7 +344,36 @@ export function TableActionPopover({
                             {item.quantity || 1} × {formatCurrency(item.unitPrice || 0)}
                           </p>
                         </div>
-                        <span className="text-sm font-medium tabular-nums text-slate-700">
+                        {onUpdateItemQty && (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => {
+                                const next = (item.quantity || 1) - 1;
+                                if (next <= 0) onRemoveItem?.(item.id);
+                                else onUpdateItemQty(item.id, next);
+                              }}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              aria-label={`${item.name} −`}
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <span className="w-6 text-center text-sm font-semibold tabular-nums text-slate-900">
+                              {item.quantity || 1}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => onUpdateItemQty(item.id, (item.quantity || 1) + 1)}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              aria-label={`${item.name} +`}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                        <span className="w-16 shrink-0 text-right text-sm font-medium tabular-nums text-slate-700">
                           {formatCurrency((item.unitPrice || 0) * (item.quantity || 1))}
                         </span>
                         {onRemoveItem && (

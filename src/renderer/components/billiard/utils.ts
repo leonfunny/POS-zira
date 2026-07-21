@@ -69,6 +69,13 @@ export function resolveLiveTimeCharge(session: any): number {
   return estimateCharge(session);
 }
 
+/** Natural order for table lists: "Bàn #2" before "Bàn #10". */
+export function sortTablesByName<T extends { name?: string | null }>(tables: T[]): T[] {
+  return [...tables].sort((a, b) => String(a?.name ?? '').localeCompare(
+    String(b?.name ?? ''), undefined, { numeric: true, sensitivity: 'base' },
+  ));
+}
+
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
 }

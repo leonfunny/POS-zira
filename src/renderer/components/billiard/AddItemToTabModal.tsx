@@ -302,7 +302,7 @@ export function AddItemToTabModal({
 
               {/* Category tabs */}
               {categories.length > 0 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <div className="flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto">
                   <button
                   className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                     selectedCategory === null

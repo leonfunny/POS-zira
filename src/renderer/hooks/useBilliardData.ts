@@ -239,6 +239,15 @@ export function useAddItem(refetch?: () => Promise<void>) {
   );
 }
 
+export function useUpdateItem(refetch?: () => Promise<void>) {
+  return useMutation(
+    (args: { sessionId: string; itemId: string; data: any }) => window.electronAPI.billiard.mutate(
+      'update_item', 'PATCH', `/billiard/sessions/${args.sessionId}/items/${args.itemId}`, args.data,
+    ),
+    refetch,
+  );
+}
+
 export function useRemoveItem(refetch?: () => Promise<void>) {
   return useMutation(
     (args: { sessionId: string; itemId: string }) => window.electronAPI.billiard.mutate(

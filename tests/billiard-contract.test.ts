@@ -295,7 +295,10 @@ describe('billiard desktop/backend contract', () => {
     expect(payment).not.toContain('cardPayment(');
     expect(payment).not.toContain("paymentMethod: 'BLIK'");
     expect(payment).not.toContain('billiard.printReceipt');
-    expect(transfer).toContain('(floorOverview as any)?.tables');
+    // The transfer grid is fed by the parent floor's table list (no private
+    // query) and sorted naturally so it cannot reshuffle between refreshes.
+    expect(transfer).not.toContain('useFloorOverview');
+    expect(transfer).toContain('sortTablesByName(');
   });
 
   it('replaces authoritative resource cache rows and never queues session end', () => {
