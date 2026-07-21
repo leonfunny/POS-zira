@@ -75,9 +75,40 @@ export function sortUnsettledNewestFirst<T extends { endedAt?: string | null; st
   return [...sessions].sort((a, b) => ts(b) - ts(a));
 }
 
+/**
+ * The seed for a new object's default name. One stray differently-named object
+ * added last (e.g. "Ghế massage #1" among 14 "Bàn #n") must not hijack every
+ * future default, so the LARGEST numbered family wins; ties go to the family
+ * of the most recently added name (the old seed-from-last behavior).
+ */
+function dominantNumberedName(names: string[]): string | null {
+  const families = new Map<string, { count: number; maxNum: number }>();
+  let lastPrefix: string | null = null;
+  for (const name of names) {
+    const match = name.match(/^(.*?)(\d+)\s*$/);
+    if (!match) continue;
+    const prefix = match[1];
+    const num = parseInt(match[2], 10);
+    const family = families.get(prefix) ?? { count: 0, maxNum: 0 };
+    family.count += 1;
+    family.maxNum = Math.max(family.maxNum, num);
+    families.set(prefix, family);
+    lastPrefix = prefix;
+  }
+  let best: string | null = null;
+  for (const [prefix, family] of families) {
+    if (best === null) { best = prefix; continue; }
+    const current = families.get(best)!;
+    if (family.count > current.count || (family.count === current.count && prefix === lastPrefix)) {
+      best = prefix;
+    }
+  }
+  return best === null ? null : `${best}${families.get(best)!.maxNum}`;
+}
+
 export function getNextName(currentValue: string, existingNames: string[], direction: 'up' | 'down' = 'up'): string {
   const val = currentValue.trim();
-  const source = val || existingNames[existingNames.length - 1] || '';
+  const source = val || dominantNumberedName(existingNames) || existingNames[existingNames.length - 1] || '';
   const match = source.match(/^(.*?)(\d+)\s*$/);
   if (match) {
     const prefix = match[1];
