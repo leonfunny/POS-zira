@@ -245,6 +245,31 @@ The `PrintReceiptResponse` contract consumed by `receipt-outcome.ts` is `{ succe
 | `pos.onFiscalUnknown(cb)` | `POSLayout.tsx:1231` (boot sub, shared) | **STUB** no-op unsub (no fiscal printer) |
 | `pos.loyalty.lookupCustomer(phone)` | `PaymentModal.tsx:160,176` (optional; tolerates `undefined`) | **STUB** — leaving the bridge `undefined` is acceptable (PaymentModal guards with `?.`) |
 
+### 2.N — Billiard (Bi-a) — online-only floor-plan/tab surface
+
+Entitlement-gated (the `billiard` feature; the Android shell only mounts `BilliardFloorPlan` when `entitlements.get()` returns `features.billiard.enabled`). P1 is **online-only**: no local SQLite cache, no offline write queue (the Windows counterpart caches in `src/main/sync/billiard-sync.ts`). Reads hit the backend through the transport and **degrade to benign empty/offline defaults** when no transport is present so the renderer boots; **writes reject** — see the rule below. The aux namespaces the UI reaches via optional chaining (`reservation`/`happyHour`/`kds`/`stock`/`sessionHistory`/`billiardGuest`/`dailyReport`) are deliberately left `undefined` (P1 decision — safe via `?.`).
+
+| Method | Call sites | Request | Response / S2 STUB default | Windows main impl | Disposition |
+|---|---|---|---|---|---|
+| `billiard.getFloorOverview()` | `useBilliardData.ts` | — | `{ tables:[], floorPlans:[], layouts:[], sessions:[], _fromCache:true }` | `billiard:get-floor-overview` → `getLocalFloorOverview()` (`billiard-sync.ts:633`) | **PORT** (T4 online) |
+| `billiard.getSession(id)` | `useBilliardData.ts` | `(id: string)` | `null` | `billiard:get-session` | **PORT** |
+| `billiard.getCombos(activeOnly?)` | `useBilliardData.ts` | `(activeOnly?: boolean)` | `[]` | `billiard:get-combos` (`GET /billiard/combos`) | **PORT** |
+| `billiard.getFloorPlans()` | `useBilliardData.ts` | — | `[]` | `billiard:get-floor-plans` (`GET /billiard/floor-plans`) | **PORT** |
+| `billiard.getFnbProducts(search?, categoryId?)` | `useBilliardData.ts` | `(search?, categoryId?)` | `[]` | `billiard:get-fnb-products` | **PORT** (may 404 → `[]`, P2 follow-up) |
+| `billiard.getFnbCategories()` | `useBilliardData.ts` | — | `[]` | `billiard:get-fnb-categories` | **PORT** |
+| `billiard.getResourceType(code)` | `useBilliardData.ts` | `(code: string)` | `null` | `billiard:get-resource-type` | **PORT** |
+| `billiard.getRestaurantCombos()` | `useBilliardData.ts` | — | `[]` | `billiard:get-restaurant-combos` (`GET /restaurant/combos`) | **PORT** |
+| `billiard.mutate(op, method, path, body?)` | `useBilliardApi.ts`; `useBilliardData.ts`; `PaymentDialog.tsx` | `(op, method, path, body?)` | **REJECT** `Error('Billiard requires a network connection.')` | `billiard:mutate` → `executeMutation` (`billiard-sync.ts:176`) | **PORT** — see reject rule |
+| `billiard.getSyncStatus()` | `useBilliardData.ts` | — | `{ pending:0, lastSync:null, online:false }` | `billiard:get-sync-status` (`billiard-sync.ts:606`) | **PORT** |
+| `billiard.onDataUpdated(cb)` | `useBilliardData.ts` | cb `(data:{ type:string })=>void` | no-op unsubscribe (never emits) | preload (`billiard:data-updated`) | **PORT** (emit on poll/refresh) |
+| `billiard.printReceipt(sessionId, payment)` | `PaymentDialog.tsx` | `(sessionId, { method, amount })` | `{ success:true, receiptPrinted:false }` (NO_PRINTER_RESULT) | `billiard:print:receipt` (`sync.module.ts:307`, no-printer return `:390`) | **STUB** → NO_PRINTER_RESULT (T5 may wire remote print) |
+| `billiard.openCashDrawer()` | `PaymentDialog.tsx` | — | `{ success:false }` | `billiard:print:open-drawer` | **STUB** (no drawer hardware on Android) |
+| `apiCall(method, path, body?)` | (typed surface; origin/main routes online reads through `billiard.mutate` op `'online_api'` instead) | `(method, path, body?)` | **REJECT** `Error('This operation requires a network connection.')` | n/a (renderer proxy) | **PORT** — T4 allowlists `/billiard/` `/resources/` `/restaurant/` prefixes |
+
+> **MONEY-PATH REJECT RULE (do not fake success):** `billiard.mutate` and `apiCall` MUST reject when no transport is present. origin/main's `useBilliardApi` routes **every** online read through `billiard.mutate('online_api', …)` and every write (layout update, resource create/rename/delete, booking create/cancel/check-in, session payment) through `billiard.mutate` too — so a synthetic success would silently drop a charge/mutation (incident history: the billiard `estimateCharge` pause bug; the server is the source of truth for charges). The S2 stub therefore rejects with a clear network-required error; the real transport (T4) forwards to the backend and surfaces the real error, never catching it into an optimistic "paid".
+>
+> **printReceipt contract:** the stub mirrors the exact literal Windows returns when no receipt printer is connected (`{ success:true, receiptPrinted:false }`, `sync.module.ts:390`). `PaymentDialog` treats `receiptPrinted:false` as "payment done, receipt skipped" (toast/warning), NOT payment failure — so settlement on a device with no local printer is never blocked. Pinned by `tests/android-billiard-shim.test.ts` and the `NO_PRINTER_RESULT` constant in `stubs.ts`.
+
 ---
 
 ## 3. Events / subscriptions (all `electronAPI.on*` / callbacks in scope)

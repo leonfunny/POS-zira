@@ -656,6 +656,72 @@ export function buildTopLevelHardwareStubs() {
   };
 }
 
+// ── Billiard (Bi-a) namespace — S1 §2.N ─────────────────────────────────────
+//  P1 is ONLINE-ONLY: no local SQLite cache, no offline write queue (the
+//  Windows counterpart caches in src/main/sync/billiard-sync.ts). Reads degrade
+//  to benign empty/offline defaults when no transport is present so the renderer
+//  boots; writes (mutate / apiCall) REJECT — origin/main's useBilliardApi routes
+//  every online read through `billiard.mutate` (op 'online_api') and every write
+//  through it too, so faking success would silently drop a charge. The server is
+//  the source of truth for all charges (plan money-path rule).
+
+/**
+ * Exact literal the Windows `billiard:print:receipt` handler returns when no
+ * receipt printer is connected — `src/main/modules/sync.module.ts:390`
+ * (`return { success: true, receiptPrinted: false };`). Android has no local
+ * receipt printer, so the stub (and the real transport's no-printer path)
+ * mirror this so payment settle never blocks on printing. Exported because the
+ * real billiard transport (T4) + the payment-vs-print contract test (T5) reuse
+ * the same literal.
+ */
+export const NO_PRINTER_RESULT: { success: boolean; receiptPrinted: boolean } = {
+  success: true,
+  receiptPrinted: false,
+};
+
+/** Billiard namespace (P1 online-only; reads degrade to empty, writes reject). */
+export function buildBilliardNamespace({ transport }: StubDeps) {
+  const EMPTY_OVERVIEW = () => ({
+    tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true,
+  });
+  return {
+    getFloorOverview: () => withTransport(transport.billiardGetOverview, [], () => EMPTY_OVERVIEW()),
+    getSession: (id: string) => withTransport(transport.billiardGetSession, [id], () => null),
+    getCombos: (activeOnly?: boolean) => withTransport(transport.billiardGetCombos, [activeOnly], () => []),
+    getFloorPlans: () => withTransport(transport.billiardGetFloorPlans, [], () => []),
+    getFnbProducts: (search?: string, categoryId?: string) => withTransport(transport.billiardGetFnbProducts, [search, categoryId], () => []),
+    getFnbCategories: () => withTransport(transport.billiardGetFnbCategories, [], () => []),
+    getResourceType: (code: string) => withTransport(transport.billiardGetResourceType, [code], () => null),
+    getRestaurantCombos: () => withTransport(transport.billiardGetRestaurantCombos, [], () => []),
+    // MONEY PATH: never fake success. Reject when no transport so the UI surfaces
+    // a clear network-required error instead of silently swallowing a charge.
+    mutate: (op: string, method: string, path: string, body?: any) => {
+      if (!transport.billiardMutate) return Promise.reject(new Error('Billiard requires a network connection.'));
+      return transport.billiardMutate(op, method, path, body);
+    },
+    getSyncStatus: () => withTransport(transport.billiardSyncStatus, [], () => ({ pending: 0, lastSync: null, online: false })),
+    onDataUpdated: (cb: (d: { type: string }) => void) =>
+      transport.billiardOnDataUpdated ? transport.billiardOnDataUpdated(cb) : noopUnsubscribe(),
+    printReceipt: (sessionId: string, payment: { method: string; amount: number }) =>
+      withTransport(transport.billiardPrintReceipt, [sessionId, payment], () => NO_PRINTER_RESULT),
+    // No drawer hardware on Android (mirrors buildPaymentNamespace's openCashDrawer rail).
+    openCashDrawer: async () => ({ success: false }),
+  };
+}
+
+/**
+ * Generic REST API proxy for billiard (S1 §2.N apiCall). Rejects when no
+ * transport is present — never fakes a network round-trip (money-adjacent paths
+ * call through this surface). A real transport (T4) allowlists the billiard/
+ * resources/restaurant prefixes.
+ */
+export function buildApiCall({ transport }: StubDeps) {
+  return (method: string, path: string, body?: any) => {
+    if (!transport.apiCall) return Promise.reject(new Error('This operation requires a network connection.'));
+    return transport.apiCall(method, path, body);
+  };
+}
+
 /** A shim that never delegates — the S2 default (no network, all synthetic). */
 export const SYNTHETIC_TRANSPORT: ShimTransport = {};
 

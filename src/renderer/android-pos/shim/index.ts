@@ -28,7 +28,9 @@ import type { TokenStoreStorage } from './token-store';
 import type { ShimTransport } from './transport';
 import { SYNTHETIC_TRANSPORT } from './stubs';
 import {
+  buildApiCall,
   buildAuthNamespace,
+  buildBilliardNamespace,
   buildCategoriesNamespace,
   buildConnectionStubs,
   buildEntitlementsNamespace,
@@ -122,6 +124,8 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     // Namespaces
     auth: buildAuthNamespace(stubDeps),
     entitlements: buildEntitlementsNamespace(stubDeps),
+    billiard: buildBilliardNamespace(stubDeps),
+    apiCall: buildApiCall(stubDeps),
     window: buildWindowNamespace(),
     pos: posNamespace,
   };

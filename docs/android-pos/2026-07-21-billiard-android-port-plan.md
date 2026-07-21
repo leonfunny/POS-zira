@@ -345,11 +345,16 @@ describe('billiard online-only transport', () => {
     const t = createBilliardTransport({ request });
     const overview = await t.billiardGetOverview();
     expect(Array.isArray(overview.tables)).toBe(true);
-    // shape contract with BilliardFloorPlan (billiard-sync.ts:483):
+    // shape contract with BilliardFloorPlan — DECIDED BY TASK-2 FIXTURES:
+    // server dashboard = bare array of { resource, status, layout, session },
+    // identical per-table shape to getLocalFloorOverview().tables[] (now at
+    // billiard-sync.ts:633 post-merge). Fields nest under table.resource.*
     for (const table of overview.tables) {
-      expect(table).toHaveProperty('id');
-      expect(table).toHaveProperty('name');
-      expect(table).toHaveProperty('pricingRules');
+      expect(table).toHaveProperty('resource.id');
+      expect(table).toHaveProperty('resource.name');
+      expect(table).toHaveProperty('resource.pricingRules');
+      expect(table).toHaveProperty('status');
+      expect(table).toHaveProperty('layout');
     }
     t.dispose();
   });
@@ -437,11 +442,14 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       request('GET', '/billiard/dashboard'),
       request('GET', '/billiard/floor-plans').catch(() => []),
     ]);
-    // Strategy decided by the Task-2 fixture inspection:
-    // (a) if dash.tables[] already embeds layout+session (server shape == UI shape), pass through;
-    // (b) else assemble exactly like getLocalFloorOverview (billiard-sync.ts:483-540)
-    //     from dash.resources/dash.sessions/dash.layouts.
-    const overview = assembleOverview(dash, plans); // implement per the fixture — keep output keys IDENTICAL to billiard-sync.ts:483
+    // Strategy DECIDED by Task-2 fixtures (tests/fixtures/billiard/):
+    // GET /billiard/dashboard returns a BARE ARRAY of { resource, status,
+    // layout, session } — per-table shape already identical to
+    // getLocalFloorOverview().tables[] (billiard-sync.ts:633 post-merge).
+    // assembleOverview therefore: tables = dash (pass-through),
+    // floorPlans = plans (each embeds its layouts[]), sessions/pendingPayments
+    // derived from tables where session != null, _fromCache omitted/false.
+    const overview = assembleOverview(dash, plans); // keep output keys IDENTICAL to billiard-sync.ts:633
     cache = { overview, fetchedAt: Date.now() };
     lastSync = new Date().toISOString();
     online = true;

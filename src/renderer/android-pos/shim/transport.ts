@@ -344,6 +344,47 @@ export interface ShimTransport {
   assignPosScheduleNext?(payload: PosScheduleAssignNextPayload): Promise<PosScheduleDayIpcResult>;
   /** Assign a specific technician → POST .../checkins/:id/request-staff (E2a §2.C). */
   requestPosScheduleStaff?(payload: PosScheduleRequestStaffPayload): Promise<PosScheduleDayIpcResult>;
+
+  // ── Billiard (Bi-a) online-only surface — SHIM_CONTRACT_S1 §2.N ──────────────
+  //  P1 reads hit the backend (no local SQLite cache / offline queue — the
+  //  Windows counterpart caches in src/main/sync/billiard-sync.ts) and writes
+  //  go straight through with the real error surfaced. The server is the source
+  //  of truth for every charge, so `billiardMutate` MUST reject when no transport
+  //  is injected rather than fake success (money path). All optional: S2 leaves
+  //  them absent so the shim degrades to benign empty/offline defaults.
+
+  /** Floor overview (tables + floorPlans + layouts + sessions). */
+  billiardGetOverview?(): Promise<any>;
+  /** Single session by id. */
+  billiardGetSession?(id: string): Promise<any>;
+  /** Active/visible combos. */
+  billiardGetCombos?(activeOnly?: boolean): Promise<any[]>;
+  /** Floor-plan list. */
+  billiardGetFloorPlans?(): Promise<any[]>;
+  /** F&B product list (filtered). */
+  billiardGetFnbProducts?(search?: string, categoryId?: string): Promise<any[]>;
+  /** F&B category list. */
+  billiardGetFnbCategories?(): Promise<any[]>;
+  /** Resource-type descriptor by code. */
+  billiardGetResourceType?(code: string): Promise<any>;
+  /** Restaurant combos. */
+  billiardGetRestaurantCombos?(): Promise<any[]>;
+  /** Generic billiard write — the queue-aware `billiard.mutate` IPC. Rejects
+   *  when no transport is present (money path: never fake success). */
+  billiardMutate?(op: string, method: string, path: string, body?: any): Promise<any>;
+  /** Sync/cache status. */
+  billiardSyncStatus?(): Promise<{ pending: number; lastSync: string | null; online: boolean }>;
+  /** Event: cached data refreshed (poll / post-mutation). Returns unsubscribe. */
+  billiardOnDataUpdated?(cb: (d: { type: string }) => void): () => void;
+  /** Receipt print for a billiard session payment. Mirrors the Windows
+   *  no-receipt-printer return literal when no transport is present. */
+  billiardPrintReceipt?(sessionId: string, payment: { method: string; amount: number }): Promise<{ success: boolean; receiptPrinted: boolean }>;
+
+  /** Generic REST API proxy used by the billiard UI (origin/main's
+   *  useBilliardApi routes ALL online reads through `billiard.mutate` with
+   *  op 'online_api', but the typed surface still declares this). Rejects when
+   *  no transport is present. */
+  apiCall?(method: string, path: string, body?: any): Promise<any>;
 }
 
 /** Shape persisted by the config store — a subset of AgentConfig (S1 §2.A). */
