@@ -224,6 +224,7 @@ export function AddTableDialog({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onClick={() => onOpenChange(false)}
     >
       <div

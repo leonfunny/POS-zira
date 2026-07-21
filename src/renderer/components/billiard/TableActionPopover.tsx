@@ -6,7 +6,7 @@ import {
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
 import type { TableOverview } from './types';
-import { estimateCharge, formatCurrency, calculateItemsTotal } from './utils';
+import { estimateCharge, formatCurrency, calculateItemsTotal, resolveLiveTimeCharge } from './utils';
 
 function formatClock(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -126,13 +126,10 @@ export function TableActionPopover({
   const lowTime = Boolean(remaining && remaining.totalSeconds < 15 * 60);
   const items = session?.items || [];
   const fnbTotal = session ? calculateItemsTotal(items) : 0;
-  const authoritativeTimeCharge = Number(session?.currentTimeCharge ?? session?.timeCharge);
   const timeCharge = session
     ? isPackage
       ? Number(session.packagePrice ?? estimateCharge(session))
-      : Number.isFinite(authoritativeTimeCharge)
-        ? authoritativeTimeCharge
-        : estimateCharge(session)
+      : resolveLiveTimeCharge(session)
     : 0;
   const runningTotal = timeCharge + fnbTotal;
   const hourlyRate = Number(
@@ -169,6 +166,7 @@ export function TableActionPopover({
       className={`fixed inset-0 z-40 flex items-end justify-end bg-slate-900/30 sm:items-stretch ${
         suspended ? 'pointer-events-none' : ''
       }`}
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onMouseDown={(event) => {
         if (!suspended && event.target === event.currentTarget) onOpenChange(false);
       }}

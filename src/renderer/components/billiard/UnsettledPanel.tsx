@@ -78,6 +78,7 @@ export function UnsettledPanel({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
       onClick={() => onOpenChange(false)}
     >
       <div
@@ -186,6 +187,7 @@ export function UnsettledPanel({
         {voidTarget && (
           <div
             className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+            style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
             onClick={() => setVoidTarget(null)}
           >
             <div

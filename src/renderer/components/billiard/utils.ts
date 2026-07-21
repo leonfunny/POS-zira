@@ -53,6 +53,22 @@ export function estimateCharge(session: any): number {
   return +(hours * hourlyRate).toFixed(2);
 }
 
+/**
+ * The time charge shown for a session in drawers/dialogs. The local cache
+ * hydrates timeCharge to 0 while a session runs (the server only computes it
+ * at end), so an authoritative value is trusted only once the session has
+ * ended; live sessions always use the ticking, pause-aware estimate.
+ */
+export function resolveLiveTimeCharge(session: any): number {
+  const status = String(session?.status ?? '').toUpperCase();
+  const live = status === 'ACTIVE' || status === 'PAUSED';
+  if (!live) {
+    const authoritative = Number(session?.currentTimeCharge ?? session?.timeCharge);
+    if (Number.isFinite(authoritative)) return authoritative;
+  }
+  return estimateCharge(session);
+}
+
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
 }

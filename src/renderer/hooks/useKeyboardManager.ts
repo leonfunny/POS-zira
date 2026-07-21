@@ -20,6 +20,7 @@ export function useKeyboardManager(): KeyboardManager {
   const [mode, setMode] = useState<KeyboardMode>('full');
   const activeElRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handleFocusIn = (e: FocusEvent) => {
@@ -46,6 +47,15 @@ export function useKeyboardManager(): KeyboardManager {
       const inputMode = el.getAttribute('inputmode');
       setMode(keyboardModeForInput(type, inputMode));
       setVisible(true);
+
+      // Once the keyboard's slide-up (300ms) settles and the layout inset
+      // applies, make sure the field being typed is not hidden behind it.
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = setTimeout(() => {
+        if (activeElRef.current === el && document.activeElement === el) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }, 350);
     };
 
     const handleFocusOut = (e: FocusEvent) => {
@@ -96,6 +106,7 @@ export function useKeyboardManager(): KeyboardManager {
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('pos:keyboard:request-toggle', handleManualToggle);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     };
   }, []);
 

@@ -69,7 +69,8 @@ export const billiardSessionRepo = {
       .filter((session) => {
         try {
           const payload = session.payload_json ? JSON.parse(session.payload_json) : {};
-          return String(payload.paymentStatus || 'UNPAID').toUpperCase() !== 'PAID';
+          // PAID is settled and VOID is written off — neither is pending.
+          return !['PAID', 'VOID'].includes(String(payload.paymentStatus || 'UNPAID').toUpperCase());
         } catch {
           return true;
         }

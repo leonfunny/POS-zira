@@ -417,7 +417,11 @@ describe('billiard desktop/backend contract', () => {
     expect(tableDrawer).not.toContain('text-muted-foreground');
     expect(tableDrawer).not.toContain('clickPosition');
     expect(tableDrawer).not.toContain('onOpenDetail');
-    expect(tableDrawer).toContain('session?.currentTimeCharge ?? session?.timeCharge');
+    // The authoritative-charge preference moved into resolveLiveTimeCharge,
+    // which only trusts it once the session has ended (live sessions tick).
+    expect(tableDrawer).toContain('resolveLiveTimeCharge(session)');
+    const chargeUtils = readSource('../src/renderer/components/billiard/utils.ts');
+    expect(chargeUtils).toContain('session?.currentTimeCharge ?? session?.timeCharge');
     expect(tableDrawer).toContain('if (!open || suspended) return;');
     expect(tableDrawer).toContain("const inertProps = suspended ? { inert: '' } : {};");
     expect(tableDrawer).toContain('{...inertProps}');

@@ -247,7 +247,10 @@ export function ReservationPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-950/50 p-4 flex items-center justify-center">
+    <div
+      className="fixed inset-0 z-[70] bg-slate-950/50 p-4 flex items-center justify-center"
+      style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
+    >
       <section className="w-full max-w-5xl max-h-[92vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
         <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
