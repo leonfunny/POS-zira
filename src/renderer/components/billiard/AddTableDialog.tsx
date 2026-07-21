@@ -228,7 +228,7 @@ export function AddTableDialog({
       onClick={() => onOpenChange(false)}
     >
       <div
-        className={`bg-white rounded-xl shadow-xl ${step === 'asset' ? 'max-w-lg' : 'max-w-sm'} w-full mx-4 max-h-[85vh] flex flex-col`}
+        className={`bg-white rounded-xl shadow-xl ${step === 'asset' ? 'max-w-lg' : 'max-w-sm'} w-full mx-4 max-h-[calc(100%-2rem)] flex flex-col`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

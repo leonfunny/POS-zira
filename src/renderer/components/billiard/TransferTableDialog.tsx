@@ -121,7 +121,7 @@ export function TransferTableDialog({
         aria-modal="true"
         aria-label={t('billiard.transferTable') || 'Transfer Table'}
         tabIndex={-1}
-        className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 max-h-[85vh] flex flex-col"
+        className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 max-h-[calc(100%-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

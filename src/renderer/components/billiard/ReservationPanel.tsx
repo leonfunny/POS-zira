@@ -252,7 +252,7 @@ export function ReservationPanel({
       className="fixed inset-0 z-[70] bg-slate-950/50 p-4 flex items-center justify-center"
       style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
     >
-      <section className="w-full max-w-5xl max-h-[92vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+      <section className="w-full max-w-5xl max-h-full bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
         <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <CalendarClock className="w-5 h-5 text-brand-600 shrink-0" />
@@ -360,7 +360,7 @@ export function ReservationPanel({
 
         {formOpen && (
           <div className="absolute inset-0 z-10 bg-slate-950/40 p-4 grid place-items-center">
-            <div className="w-full max-w-2xl max-h-[86vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200">
+            <div className="w-full max-w-2xl max-h-full overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200">
               <div className="px-4 py-3 border-b flex items-center justify-between">
                 <h3 className="font-semibold text-slate-900">{t('billiard.newReservation')}</h3>
                 <button type="button" onClick={closeForm} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>

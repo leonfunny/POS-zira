@@ -228,7 +228,7 @@ export function AddItemToTabModal({
         aria-modal="true"
         aria-label={t('billiard.addItem') || 'Add Item'}
         tabIndex={-1}
-        className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] flex flex-col"
+        className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[calc(100%-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

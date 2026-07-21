@@ -82,7 +82,7 @@ export function UnsettledPanel({
       onClick={() => onOpenChange(false)}
     >
       <div
-        className="m-4 flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl"
+        className="m-4 flex max-h-[calc(100%-2rem)] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -191,7 +191,7 @@ export function UnsettledPanel({
             onClick={() => setVoidTarget(null)}
           >
             <div
-              className="m-4 w-full max-w-sm rounded-xl bg-white p-4 shadow-xl"
+              className="m-4 w-full max-w-sm max-h-[calc(100%-2rem)] overflow-y-auto rounded-xl bg-white p-4 shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-sm font-semibold text-slate-900">
