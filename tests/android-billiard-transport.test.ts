@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createBilliardTransport } from '../src/renderer/android-pos/shim/billiard-transport';
+import { NO_PRINTER_RESULT } from '../src/renderer/android-pos/shim/stubs';
 import dashboard from './fixtures/billiard/dashboard.json';
 import floorPlans from './fixtures/billiard/floor-plans.json';
 
@@ -103,6 +104,31 @@ describe('billiard online-only transport', () => {
     await expect(t.apiCall('GET', '/billiard/combos')).resolves.toEqual([]);
     await expect(t.apiCall('GET', '/admin/users')).rejects.toThrow(/not allowed/);
     await expect(t.apiCall('GET', '/billiard/../auth')).rejects.toThrow(/Invalid/);
+    t.dispose();
+  });
+
+  // Task 5 — payment-vs-print contract. On Android there is no local receipt
+  // printer, so billiardPrintReceipt must resolve to the SAME literal the
+  // Windows no-printer path returns (sync.module.ts:388-390:
+  // `{ success: true, receiptPrinted: false }`), NOT reject. This pins the
+  // contract so a cash settle on the billiard floor never blocks on printing.
+  //
+  // Call-site evidence (Task 5 Step 1): the billiard PaymentDialog
+  // (src/renderer/components/billiard/PaymentDialog.tsx) does NOT call
+  // billiard.printReceipt at all — payment success is decided solely by
+  // `result.paymentStatus === 'PAID'` (PaymentDialog.tsx:141); the receipt is
+  // dispatched server-side by BilliardPaymentService and the client only opens
+  // the cash drawer in a best-effort try/catch (PaymentDialog.tsx:146). So
+  // printReceipt is off the money path today; this test guards the day it is
+  // wired in.
+  it('billiardPrintReceipt resolves to the exact Windows no-printer literal (payment never blocks on print)', async () => {
+    const request = makeRequest({}); // no network needed — print is purely local
+    const t = createBilliardTransport({ request });
+    await expect(t.billiardPrintReceipt('s1', { method: 'CASH', amount: 100 }))
+      .resolves.toEqual(NO_PRINTER_RESULT);
+    // And the literal itself is the benign "done, receipt skipped" shape:
+    expect(NO_PRINTER_RESULT).toEqual({ success: true, receiptPrinted: false });
+    expect(request).not.toHaveBeenCalled();
     t.dispose();
   });
 });
