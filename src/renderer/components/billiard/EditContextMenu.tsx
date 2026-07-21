@@ -15,6 +15,7 @@ interface EditContextMenuProps {
   hasImage: boolean;
   onClose: () => void;
   onStartRename: () => void;
+  onEditPrice: (id: string) => void;
   onRotate: (id: string, rotation: number) => void;
   onResize: (id: string, wPct: number, hPct: number) => void;
   onChangeImage: (id: string) => void;
@@ -32,6 +33,7 @@ export function EditContextMenu({
   hasImage,
   onClose,
   onStartRename,
+  onEditPrice,
   onRotate,
   onResize,
   onChangeImage,
@@ -97,6 +99,7 @@ export function EditContextMenu({
           tableId={table.resource.id}
           rotation={rotation}
           onRename={onStartRename}
+          onEditPrice={onEditPrice}
           onRotate={onRotate}
           onChangeImage={onChangeImage}
           onMeasureStart={onMeasureStart}

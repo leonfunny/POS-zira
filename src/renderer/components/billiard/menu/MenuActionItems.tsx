@@ -1,4 +1,4 @@
-import { Pencil, RotateCw, ImageIcon, Ruler, Trash2 } from 'lucide-react';
+import { Banknote, Pencil, RotateCw, ImageIcon, Ruler, Trash2 } from 'lucide-react';
 import { ROTATION_STEPS } from '../constants';
 import type { Language } from '../../../i18n/translations';
 import { useTranslation } from '../../../i18n/useTranslation';
@@ -7,6 +7,7 @@ interface MenuActionItemsProps {
   tableId: string;
   rotation: number;
   onRename: () => void;
+  onEditPrice: (id: string) => void;
   onRotate: (id: string, rotation: number) => void;
   onChangeImage: (id: string) => void;
   onMeasureStart: (id: string) => void;
@@ -45,6 +46,7 @@ export function MenuActionItems({
   tableId,
   rotation,
   onRename,
+  onEditPrice,
   onRotate,
   onChangeImage,
   onMeasureStart,
@@ -59,6 +61,11 @@ export function MenuActionItems({
         icon={Pencil}
         label={t('billiard.rename') || 'Rename'}
         onClick={() => { onRename(); onClose(); }}
+      />
+      <MenuItem
+        icon={Banknote}
+        label={t('billiard.editPrice') || 'Edit price'}
+        onClick={() => { onEditPrice(tableId); onClose(); }}
       />
       <MenuItem
         icon={RotateCw}

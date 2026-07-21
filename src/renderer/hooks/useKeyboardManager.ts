@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { KeyboardMode } from '../components/shared/TouchKeyboard';
+import { nextNumberAppend, nextNumberBackspace } from './keyboard-value';
 
 interface KeyboardManager {
   visible: boolean;
@@ -21,6 +22,9 @@ export function useKeyboardManager(): KeyboardManager {
   const activeElRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True until the first numpad key after a focus: that key REPLACES the
+  // whole value (number inputs expose no selection API to do it natively).
+  const freshFocusRef = useRef(false);
 
   useEffect(() => {
     const handleFocusIn = (e: FocusEvent) => {
@@ -42,6 +46,10 @@ export function useKeyboardManager(): KeyboardManager {
       }
 
       activeElRef.current = el;
+      freshFocusRef.current = true;
+      // Text inputs: selecting the old value makes any typing (hardware or
+      // touch) replace it — the same type-over behavior as the numpad flag.
+      try { el.select(); } catch { /* some input types refuse selection */ }
 
       // Mode detection
       const inputMode = el.getAttribute('inputmode');
@@ -93,6 +101,7 @@ export function useKeyboardManager(): KeyboardManager {
           return false;
         }
         activeElRef.current = el;
+        freshFocusRef.current = true;
         setMode(nextMode);
         return true;
       });
@@ -130,11 +139,12 @@ export function useKeyboardManager(): KeyboardManager {
         try { el.setSelectionRange(start + key.length, start + key.length); } catch {}
       });
     } else {
-      // Number input — append
+      // Number input — first key after focus types over, then append
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      nativeSetter?.call(el, el.value + key);
+      nativeSetter?.call(el, nextNumberAppend(el.value, key, freshFocusRef.current));
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    freshFocusRef.current = false;
   };
 
   const onBackspace = () => {
@@ -168,9 +178,10 @@ export function useKeyboardManager(): KeyboardManager {
     } else {
       // Number input — remove last char
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      nativeSetter?.call(el, el.value.slice(0, -1));
+      nativeSetter?.call(el, nextNumberBackspace(el.value));
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    freshFocusRef.current = false;
   };
 
   const onDone = () => {

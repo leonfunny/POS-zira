@@ -42,6 +42,7 @@ import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
 import { UnsettledPanel } from './UnsettledPanel';
+import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
 import { ToastProvider, useToast } from './Toast';
 import { useAuth } from '../../hooks/useAuth';
@@ -227,6 +228,8 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
   const [paymentSession, setPaymentSession] = useState<any>(null);
   const [unsettledOpen, setUnsettledOpen] = useState(false);
+  const [priceTable, setPriceTable] = useState<TableOverview | null>(null);
+  const [priceSaving, setPriceSaving] = useState(false);
   const [reservationsOpen, setReservationsOpen] = useState(false);
   const [changeImageId, setChangeImageId] = useState<string | null>(null);
   const [changeImageKey, setChangeImageKey] = useState<string | null>(null);
@@ -1034,6 +1037,7 @@ function FloorPlanInner({ language }: { language: Language }) {
             hasImage={menuHasImage}
             onClose={() => setEditMenu(null)}
             onStartRename={() => { setRenamingTableId(editMenu.id); setEditMenu(null); }}
+            onEditPrice={() => { setPriceTable(menuTable); setEditMenu(null); }}
             onRotate={(id, r) => { handleRotate(id, r); setEditMenu(null); }}
             onResize={handleResize}
             onChangeImage={(id) => { handleChangeImage(id); setEditMenu(null); }}
@@ -1146,6 +1150,32 @@ function FloorPlanInner({ language }: { language: Language }) {
             refetchOverview();
           }}
           language={language}
+        />
+      )}
+
+      {priceTable && (
+        <EditPriceDialog
+          open
+          tableName={priceTable.resource.name}
+          initialPrice={Number(priceTable.resource.pricingRules?.basePrice ?? 60)}
+          isPending={priceSaving}
+          language={language}
+          onOpenChange={(v) => { if (!v) setPriceTable(null); }}
+          onSave={async (price) => {
+            setPriceSaving(true);
+            try {
+              await resourcesApi.updateResource(priceTable.resource.id, {
+                pricing_rules: { ...(priceTable.resource.pricingRules || {}), basePrice: price },
+              });
+              toast.success(t('billiard.priceUpdated') || 'Price updated');
+              setPriceTable(null);
+              refetchOverview();
+            } catch (err: any) {
+              toast.error(err?.message || t('billiard.actionFailed') || 'Action failed');
+            } finally {
+              setPriceSaving(false);
+            }
+          }}
         />
       )}
 

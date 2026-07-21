@@ -19,6 +19,7 @@ describe('billiard dialogs fit their container, not the viewport', () => {
     'PaymentDialog.tsx',
     'AddItemToTabModal.tsx',
     'TransferTableDialog.tsx',
+    'EditPriceDialog.tsx',
   ];
 
   it('no billiard dialog card uses a viewport-height cap', () => {
