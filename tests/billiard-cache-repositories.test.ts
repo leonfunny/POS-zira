@@ -154,6 +154,35 @@ describe('billiard cache repositories', () => {
     db.close();
   });
 
+  it('prunes deleted floor plans and detaches stale local layouts', async () => {
+    const db = await createCacheDb();
+    db.run("INSERT INTO billiard_resources (id, name) VALUES ('table-1', 'Table 1')");
+    db.run(`
+      INSERT INTO billiard_floor_plans (id, name, floor_number) VALUES
+        ('floor-1', 'Floor 1', 1),
+        ('floor-2-stale', 'Floor 2', 2)
+    `);
+    db.run(`
+      INSERT INTO billiard_table_layouts (id, resource_id, floor_plan_id)
+      VALUES ('layout-1', 'table-1', 'floor-2-stale')
+    `);
+    vi.spyOn(database as any, 'run').mockImplementation(
+      (sql: string, params?: any[]) => db.run(sql, params),
+    );
+
+    billiardFloorPlanRepo.syncSnapshot([
+      { id: 'floor-1', name: 'Floor 1', floorNumber: 1 },
+    ]);
+
+    expect(db.exec('SELECT id FROM billiard_floor_plans ORDER BY id')[0].values).toEqual([
+      ['floor-1'],
+    ]);
+    expect(db.exec('SELECT floor_plan_id FROM billiard_table_layouts')[0].values).toEqual([
+      [null],
+    ]);
+    db.close();
+  });
+
   it('does not resurrect a completed payment-journal row from a stale dashboard', () => {
     vi.spyOn(database as any, 'all')
       .mockReturnValueOnce([{ id: 'session-ended' }])

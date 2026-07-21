@@ -17,6 +17,7 @@ interface BilliardMutationRule {
 const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/floor-plans$/, operation: 'online_api', policy: 'online-only' },
   { method: 'PATCH', path: /^\/billiard\/floor-plans\/[^/?#]+$/, operation: 'update_floor_plan', policy: 'queue-safe' },
+  { method: 'DELETE', path: /^\/billiard\/floor-plans\/[^/?#]+$/, operation: 'online_api', policy: 'online-only' },
   { method: 'PUT', path: /^\/billiard\/table-layouts\/batch$/, operation: 'batch_update_layouts', policy: 'queue-safe' },
   { method: 'PUT', path: /^\/billiard\/table-layouts\/[^/?#]+$/, operation: 'upsert_layout', policy: 'queue-safe' },
   { method: 'POST', path: /^\/billiard\/sessions$/, operation: 'start_session', policy: 'online-only' },

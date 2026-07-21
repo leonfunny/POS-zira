@@ -69,6 +69,36 @@ export const billiardFloorPlanRepo = {
     }
   },
 
+  syncSnapshot(plans: any[]): void {
+    this.upsertMany(plans);
+
+    const ids = Array.from(
+      new Set(
+        plans
+          .map((plan) => plan.id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    );
+    if (ids.length === 0) {
+      database.run('UPDATE billiard_table_layouts SET floor_plan_id = NULL');
+      database.run('DELETE FROM billiard_floor_plans');
+      return;
+    }
+
+    const placeholders = ids.map(() => '?').join(', ');
+    database.run(
+      `UPDATE billiard_table_layouts
+       SET floor_plan_id = NULL
+       WHERE floor_plan_id NOT IN (${placeholders})`,
+      ids,
+    );
+    database.run(
+      `DELETE FROM billiard_floor_plans
+       WHERE id NOT IN (${placeholders})`,
+      ids,
+    );
+  },
+
   upsertLayouts(layouts: any[]): void {
     for (const l of layouts) {
       const resourceId = l.resourceId || l.resource_id;

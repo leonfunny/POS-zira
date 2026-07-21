@@ -161,6 +161,7 @@ describe('billiard desktop/backend contract', () => {
 
   it('allows only the explicit billiard/resource mutation surface', () => {
     expect(isAllowedBilliardMutation('PUT', '/billiard/table-layouts/table-1')).toBe(true);
+    expect(isAllowedBilliardMutation('DELETE', '/billiard/floor-plans/floor-2')).toBe(true);
     expect(isAllowedBilliardMutation('POST', '/billiard/sessions/session-1/payment')).toBe(true);
     expect(isAllowedBilliardMutation('POST', '/resources')).toBe(true);
     expect(isAllowedBilliardMutation('GET', '/billiard/sessions/session-1')).toBe(true);
@@ -184,6 +185,26 @@ describe('billiard desktop/backend contract', () => {
     expect(isAllowedBilliardOperation('update_session', 'POST', paymentPath)).toBe(false);
     expect(isAllowedBilliardOperation('end_session', 'PATCH', `${sessionPath}/end`)).toBe(true);
     expect(isAllowedBilliardOperation('online_api', 'PATCH', `${sessionPath}/end`)).toBe(false);
+    expect(isAllowedBilliardOperation('online_api', 'DELETE', '/billiard/floor-plans/floor-2')).toBe(true);
+  });
+
+  it('guards floor creation and reconciles floor CRUD with the local cache', () => {
+    const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
+    const floorTabs = readSource('../src/renderer/components/billiard/FloorTabs.tsx');
+    const apiHook = readSource('../src/renderer/hooks/useBilliardApi.ts');
+    const floorRepo = readSource('../src/main/database/repos/billiard-floor-plan-repo.ts');
+    const sync = readSource('../src/main/sync/billiard-sync.ts');
+
+    expect(floorPlan).toContain('addFloorPendingRef.current');
+    expect(floorPlan).not.toContain('addFloor();');
+    expect(floorPlan).toContain('onRenameFloor={handleRenameFloor}');
+    expect(floorPlan).toContain('onDeleteFloor={handleDeleteFloor}');
+    expect(floorPlan).toContain('<ConfirmActionDialog');
+    expect(floorPlan).not.toContain('window.confirm');
+    expect(floorTabs).toContain('disabled={isAddingFloor}');
+    expect(apiHook).toContain("onlineApi('DELETE', `/billiard/floor-plans/${id}`)");
+    expect(floorRepo).toContain('syncSnapshot(plans: any[])');
+    expect(sync).toContain('billiardFloorPlanRepo.syncSnapshot(plans)');
   });
 
   it('normalizes reservation responses and builds timezone-safe guarded routes', () => {

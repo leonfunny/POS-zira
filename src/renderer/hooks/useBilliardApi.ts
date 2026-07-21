@@ -36,6 +36,8 @@ export function useBilliardApi() {
     // Online-only: creating a floor plan returns server-generated ID
     createFloorPlan: (data: any) => onlineApi('POST', '/billiard/floor-plans', data),
 
+    deleteFloorPlan: (id: string) => onlineApi('DELETE', `/billiard/floor-plans/${id}`),
+
     // Queue-aware: layout updates work offline with optimistic local cache
     updateFloorPlan: (id: string, data: any) =>
       mutate('update_floor_plan', 'PATCH', `/billiard/floor-plans/${id}`, data),

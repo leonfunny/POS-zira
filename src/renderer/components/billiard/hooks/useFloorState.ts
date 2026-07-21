@@ -108,21 +108,12 @@ export function useFloorState(tables: TableOverview[], floorPlans?: BilliardFloo
     return counts;
   }, [tables, floors]);
 
-  const addFloor = () => {
-    // This is handled by creating a new floor plan via API now
-    // Keep as a no-op trigger for the UI
-    const maxNum = floors.length > 0 ? Math.max(...floors.map((f) => f.floorNumber)) : 0;
-    setActiveFloorNum(maxNum + 1);
-    setActiveFloorId(null);
-  };
-
   return {
     activeFloor,
     setActiveFloor,
     floors,
     filteredTables,
     tableCounts,
-    addFloor,
     hasMultipleFloors: floors.length > 1,
   };
 }

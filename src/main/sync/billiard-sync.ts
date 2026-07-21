@@ -272,6 +272,14 @@ export class BilliardSync {
           await this.syncSessionAfterMutation(op, path, result, token);
         }
 
+        const floorPlanMutation = normalizedMethod !== 'GET'
+          && /^\/billiard\/floor-plans(?:\/[^/?#]+)?$/.test(path);
+        if (floorPlanMutation) {
+          await this.syncFloorPlans(token).catch((e) => {
+            logger.debug('[BilliardSync] post-mutation floor refresh failed:', e?.message);
+          });
+        }
+
         // Creating a resource is immediately followed by a layout upsert in
         // the UI. Refreshing between those two calls races the backend's
         // dashboard auto-layout creation with that explicit upsert. The
@@ -285,7 +293,7 @@ export class BilliardSync {
           || op === 'void_sessions_batch'
           || sessionReconciliationRead
           || SESSION_STATE_OPERATIONS.has(op);
-        if (!resourceCreateInProgress && !journalIsAuthoritative) {
+        if (!resourceCreateInProgress && !journalIsAuthoritative && !floorPlanMutation) {
           // Run in background — don't block the mutation response.
           this.refreshDashboard().catch((e) => {
             logger.debug('[BilliardSync] post-mutation refresh failed:', e?.message);
@@ -448,6 +456,7 @@ export class BilliardSync {
             if (body.roomWidthM !== undefined) { sets.push('room_width_m = ?'); vals.push(body.roomWidthM); }
             if (body.roomHeightM !== undefined) { sets.push('room_height_m = ?'); vals.push(body.roomHeightM); }
             if (body.name !== undefined) { sets.push('name = ?'); vals.push(body.name); }
+            if (body.floorNumber !== undefined) { sets.push('floor_number = ?'); vals.push(body.floorNumber); }
             if (sets.length > 0) {
               vals.push(fpMatch[1]);
               database.run(`UPDATE billiard_floor_plans SET ${sets.join(', ')} WHERE id = ?`, vals);
@@ -618,6 +627,10 @@ export class BilliardSync {
     }
 
     database.markDirty();
+
+    await this.syncFloorPlans(token).catch((e) => {
+      logger.debug('[BilliardSync] post-replay floor refresh failed:', e?.message);
+    });
 
     // Force dashboard refresh after replay
     await this.refreshDashboard().catch((e) => { logger.debug('[BilliardSync] post-replay refresh failed:', e?.message); });
@@ -877,11 +890,16 @@ export class BilliardSync {
     const plansData = await apiClient.request('GET', '/billiard/floor-plans', token);
     const plans = Array.isArray(plansData)
       ? plansData
-      : (Array.isArray(plansData?.data) ? plansData.data : []);
-    if (plans.length === 0) return 0;
+      : (Array.isArray(plansData?.data) ? plansData.data : null);
+    if (!plans) {
+      throw new Error('Invalid floor plan response: expected an array');
+    }
+    if (plans.some((plan: any) => typeof plan?.id !== 'string' || !plan.id)) {
+      throw new Error('Invalid floor plan response: row has no id');
+    }
 
     database.transaction(() => {
-      billiardFloorPlanRepo.upsertMany(plans);
+      billiardFloorPlanRepo.syncSnapshot(plans);
       for (const plan of plans) {
         const planLayouts = plan.layouts || plan.tableLayouts || [];
         if (planLayouts.length > 0) {
@@ -890,6 +908,7 @@ export class BilliardSync {
       }
     });
     database.markDirty();
+    this.notifyRenderer('floor-plans');
     return plans.length;
   }
 

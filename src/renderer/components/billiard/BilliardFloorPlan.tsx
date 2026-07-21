@@ -46,6 +46,7 @@ import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
 import { ToastProvider, useToast } from './Toast';
 import { useAuth } from '../../hooks/useAuth';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
 
@@ -237,6 +238,10 @@ function FloorPlanInner({ language }: { language: Language }) {
   // Create mutation state
   const [createPending, setCreatePending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
+  const [isAddingFloor, setIsAddingFloor] = useState(false);
+  const [pendingFloorId, setPendingFloorId] = useState<string | null>(null);
+  const [floorToDelete, setFloorToDelete] = useState<FloorPlanType | null>(null);
+  const addFloorPendingRef = useRef(false);
 
   const tables = useMemo(() => normalizeTableList(overview), [overview]);
   const pendingPayments = useMemo(
@@ -264,9 +269,92 @@ function FloorPlanInner({ language }: { language: Language }) {
     floors,
     filteredTables,
     tableCounts,
-    addFloor,
     hasMultipleFloors,
   } = useFloorState(tables, normalizedFloorPlans);
+
+  const handleAddFloor = async () => {
+    if (addFloorPendingRef.current) return;
+
+    addFloorPendingRef.current = true;
+    setIsAddingFloor(true);
+    const maxNum = floors.length > 0
+      ? Math.max(...floors.map((floor) => floor.floorNumber))
+      : 0;
+    const newNum = maxNum + 1;
+
+    try {
+      const created = await billiardApi.createFloorPlan({
+        name: `Floor ${newNum}`,
+        floorNumber: newNum,
+        roomWidthM: roomWidth,
+        roomHeightM: roomHeight,
+      });
+      await refetchFloorPlans();
+      if (created?.id) setActiveFloor(created as FloorPlanType);
+      toast.success(t('billiard.floorAdded'));
+    } catch (err: any) {
+      await refetchFloorPlans();
+      toast.error(err?.message || t('billiard.floorAddFailed'));
+    } finally {
+      addFloorPendingRef.current = false;
+      setIsAddingFloor(false);
+    }
+  };
+
+  const handleRenameFloor = async (floor: FloorPlanType) => {
+    if (floor.id.startsWith('legacy-') || pendingFloorId) return;
+    const requestedName = window.prompt(t('billiard.rename'), floor.name);
+    if (requestedName === null) return;
+    const name = requestedName.trim();
+    if (!name || name === floor.name) return;
+
+    setPendingFloorId(floor.id);
+    try {
+      await billiardApi.updateFloorPlan(floor.id, { name });
+      await refetchFloorPlans();
+      toast.success(t('billiard.rename'));
+    } catch (err: any) {
+      toast.error(err?.message || t('billiard.renameFailed'));
+    } finally {
+      setPendingFloorId(null);
+    }
+  };
+
+  const handleDeleteFloor = (floor: FloorPlanType) => {
+    if (floor.id.startsWith('legacy-') || pendingFloorId) return;
+    const counts = tableCounts[floor.id] || { total: 0 };
+    if (counts.total > 0) {
+      toast.error('Move or delete tables on this floor first');
+      return;
+    }
+    if (floors.length <= 1) {
+      toast.error('Cannot delete the only floor');
+      return;
+    }
+
+    setFloorToDelete(floor);
+  };
+
+  const confirmDeleteFloor = async () => {
+    if (!floorToDelete || pendingFloorId) return;
+    const floor = floorToDelete;
+
+    setPendingFloorId(floor.id);
+    try {
+      await billiardApi.deleteFloorPlan(floor.id);
+      const remainingFloors = floors.filter((item) => item.id !== floor.id);
+      if (activeFloor?.id === floor.id && remainingFloors[0]) {
+        setActiveFloor(remainingFloors[0]);
+      }
+      await refetchFloorPlans();
+      toast.success(t('billiard.delete'));
+    } catch (err: any) {
+      toast.error(err?.message || t('billiard.deleteFailed'));
+    } finally {
+      setPendingFloorId(null);
+      setFloorToDelete(null);
+    }
+  };
 
   // Clean up conflicting states on mode toggle
   useEffect(() => {
@@ -853,26 +941,11 @@ function FloorPlanInner({ language }: { language: Language }) {
           onFloorChange={(fp) => setActiveFloor(fp)}
           tableCounts={tableCounts}
           editMode={editMode}
-          onAddFloor={async () => {
-            const maxNum = floors.length > 0 ? Math.max(...floors.map((f) => f.floorNumber)) : 0;
-            const newNum = maxNum + 1;
-            try {
-              const res = await billiardApi.createFloorPlan({
-                name: `Floor ${newNum}`,
-                floorNumber: newNum,
-                roomWidthM: roomWidth,
-                roomHeightM: roomHeight,
-              });
-              await refetchFloorPlans();
-              if (res?.id) {
-                setActiveFloor(res as FloorPlanType);
-              }
-              toast.success(t('billiard.floorAdded') || 'Floor added');
-            } catch {
-              toast.error(t('billiard.floorAddFailed') || 'Failed to add floor');
-              addFloor();
-            }
-          }}
+          onAddFloor={handleAddFloor}
+          onRenameFloor={handleRenameFloor}
+          onDeleteFloor={handleDeleteFloor}
+          isAddingFloor={isAddingFloor}
+          pendingFloorId={pendingFloorId}
           language={language}
         />
       )}
@@ -1107,6 +1180,22 @@ function FloorPlanInner({ language }: { language: Language }) {
       )}
 
       {/* Dialogs */}
+      <ConfirmActionDialog
+        open={Boolean(floorToDelete)}
+        tier="light"
+        title={t('billiard.delete')}
+        body={`${t('billiard.delete')} ${floorToDelete?.name || ''}?`}
+        itemName={floorToDelete?.name}
+        confirmLabel={t('billiard.delete')}
+        cancelLabel={t('common.cancel') || 'Cancel'}
+        danger
+        busy={Boolean(floorToDelete && pendingFloorId === floorToDelete.id)}
+        onConfirm={confirmDeleteFloor}
+        onCancel={() => {
+          if (!pendingFloorId) setFloorToDelete(null);
+        }}
+      />
+
       {reservationsOpen && (
         <ReservationPanel
           key="billiard-reservations-panel"
