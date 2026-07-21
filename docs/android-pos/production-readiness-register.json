@@ -114,6 +114,14 @@
       "blocks": ["release pipeline trust"],
       "evidence": null,
       "notes": "B4 jobs were validated locally only; runner-label drift and remote environment behavior remain unproven until the workflow runs in actual GitHub CI."
+    },
+    {
+      "id": "billiard-online-only",
+      "title": "Owner decision before live salon use of the billiard (Bi-a) online-only mode",
+      "decision": "blocked",
+      "blocks": ["billiard floor-plan live use", "billiard session mutations at a live salon"],
+      "evidence": null,
+      "notes": "Wave B-1 (SHIPPED 2026-07-21, branch codex/android-billiard-port) mounts the billiard floor plan online-only behind the `billiard` entitlement: reads hit the backend through the staff-JWT client with a 10s dashboard poll + in-memory cache, and writes (billiard.mutate) go straight through with the real error surfaced. There is NO offline queue and NO local SQLite cache (the Windows agent has both). P1 has no offline mode: network loss leaves a stale read-only floor view and mutations fail loudly (they reject, never fake success) — acceptable for a fixed always-online terminal, not for a hand-carried tablet. The owner must confirm the target device is always-online, and that the empty F&B add-item list (pending the /billiard/fnb/* backend route — Wave B-2) and the off-money-path printReceipt (Android has no local printer; the backend dispatches receipts) are understood before any live salon relies on it. See docs/android-pos/EXPANSION_PLAN_2026-07-19.md Wave B-1 and SHIM_CONTRACT_S1.md §2.N."
     }
   ]
 }

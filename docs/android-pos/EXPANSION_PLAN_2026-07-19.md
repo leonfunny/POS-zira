@@ -134,10 +134,56 @@ they stay dark until the backend is deployed and verified.
   then Play flavor (owner decisions: applicationId/Play/signer), then the
   M6 on-device smoke and a shadow pilot on the test salon.
 
+### Wave B-1 — billiard (Bi-a), online-only — SHIPPED 2026-07-21
+Billiard was originally in the "Explicitly NOT planned" list below (nail-salon
+profile, 2026-07-19). It shipped as a self-contained online-only wave on branch
+`codex/android-billiard-port` (plan: `2026-07-21-billiard-android-port-plan.md`).
+It is gated by the `billiard` entitlement and is **online-only** — it is NOT the
+offline-capable, locally-cached billiard the Windows agent runs.
+
+**What shipped (P1):**
+- **Shim namespace + synthetic defaults** (`src/renderer/android-pos/shim/stubs.ts`):
+  `buildBilliardNamespace` + `buildApiCall`, wired in `index.ts`. Reads degrade to
+  benign empty/offline defaults so the renderer boots with no network; **writes
+  reject** — `billiard.mutate` and `apiCall` throw a network-required error when no
+  transport is present (money path: never fake a charge — the server is the source
+  of truth).
+- **Online-only transport** (`billiard-transport.ts`, spread into the real transport):
+  reads hit the backend through the staff-JWT `PosApiClient` with a 10s dashboard
+  poll (matches Windows `billiard-sync.ts:163`) + in-memory cache; writes
+  (`billiard.mutate`) go **straight through** with the real error surfaced (no local
+  SQLite cache, no offline mutation queue — that is the Windows agent's job).
+  `apiCall` is allowlisted to `/billiard/`, `/resources/`, `/restaurant/` prefixes
+  and rejects path traversal / other routes.
+- **Entitlement-gated POS ⟷ Bi-a mode tabs** (`AndroidBootApp.tsx`): when
+  `entitlements.get().features.billiard.enabled`, a POS/Bi-a tab nav mounts the
+  unmodified `BilliardFloorPlan` (mode persists in `localStorage`); without the
+  entitlement it renders plain `POSApp` exactly as before.
+- **`printReceipt` is off the money path.** Android has no local receipt printer, so
+  the billiard `printReceipt` mirrors the Windows no-printer literal
+  (`{ success:true, receiptPrinted:false }`); the backend dispatches the real
+  receipt. `PaymentDialog` treats `receiptPrinted:false` as "payment done, receipt
+  skipped", so settlement never blocks on printing.
+
+**Explicitly out — Wave B-2 candidates (not shipped):**
+- **Offline queue** — P1 has no offline mode; network loss = stale read-only floor
+  view + mutations fail loudly. Owner-decision-gated before live salon use (see
+  `production-readiness-register.json` `billiard-online-only`).
+- **Local printer / cash-drawer hardware** — no Android ESC/POS or drawer driver.
+- **Aux namespaces** (`reservation`, `happyHour`, `kds`, `stock`, `sessionHistory`,
+  `billiardGuest`, `dailyReport`) — deliberately left `undefined`; the UI calls them
+  via `?.` optional chaining, so they are dark-launch-safe.
+- **F&B product route** — `/billiard/fnb/*` is not deployed (verified 404 in the
+  contract spike), so the add-item product list renders empty until a real backend
+  route ships.
+
+See `SHIM_CONTRACT_S1.md §2.N` for the per-method contract.
+
 ## Explicitly NOT planned (out of scope for a nail salon)
-Restaurant/kitchen/tables/pickup, billiard, B2B wholesale, self-checkout kiosk,
-customer second-screen, direct hardware drivers. If the business later needs
-one, it becomes its own wave — none is on this roadmap.
+Restaurant/kitchen/tables/pickup, B2B wholesale, self-checkout kiosk, customer
+second-screen, direct hardware drivers. (Billiard was on this list until Wave B-1
+shipped it online-only on 2026-07-21 — see above.) If the business later needs
+one of the rest, it becomes its own wave — none is on this roadmap.
 
 ## Decision (owner, 2026-07-19)
 - **E1 and E2 run in parallel.** Packets are sequenced to avoid file collision
