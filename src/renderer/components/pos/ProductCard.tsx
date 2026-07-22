@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Product } from '../../hooks/usePosDb';
 import { resolveName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
-import { isStockTracked } from '../../../shared/product-stock-tracking';
+import { isSaleBlockedByStock, isStockTracked } from '../../../shared/product-stock-tracking';
 
 export interface ProductLongPressResult {
   success: boolean;
@@ -61,7 +61,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
   const stockQty = product.available_qty ?? product.in_stock;
   // Drafts are click-to-import — stock is informational at best, so don't
   // gate the click or surface "Sold out" / "Low stock" chrome on them.
-  const soldOut = !allowOversell && !isDraft && !isService && stockQty <= 0;
+  const soldOut = !isDraft && isSaleBlockedByStock(product, stockQty, allowOversell);
   const lowStock = !isDraft && !isService && stockQty > 0 && stockQty <= 5;
   const currency = t?.('pos.currency') ?? 'zl';
   const pieces = t?.('pos.pieces') ?? 'pcs';

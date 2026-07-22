@@ -7,6 +7,7 @@ import { useConfig } from '../../../../hooks/useConfig';
 import { formatProductLabelPriceText } from '../../../../utils/product-label';
 import { resolveName } from '../../../../../shared/catalog-names';
 import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
+import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../../../shared/pos-price-guard';
 import type {
@@ -665,7 +666,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       return;
     }
     if ((Number(product.retail_price) || 0) <= 0) return;
-    if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+    if (isSaleBlockedByStock(product, product.available_qty ?? product.in_stock, allowOversell)) return;
     const saleClass = classifyProductSale(product);
     if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
     const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;

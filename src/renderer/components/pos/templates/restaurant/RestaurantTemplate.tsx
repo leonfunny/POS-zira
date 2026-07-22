@@ -10,6 +10,7 @@ import TableMap from './TableMap';
 import CourseSelector from './CourseSelector';
 import DiningOptions from './DiningOptions';
 import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
+import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 
 interface TableState {
   id: string;
@@ -131,7 +132,7 @@ export default function RestaurantTemplate({ state, dispatch, t, language, sessi
   }, [dispatch, tables, refreshTables]);
 
   const handleAddProduct = useCallback((product: Product) => {
-    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+    if (isSaleBlockedByStock(product, product.available_qty ?? product.in_stock)) return;
     if (!activeTableId) return;
     dispatch({
       type: 'cart/addItem',

@@ -8,6 +8,7 @@ import Cart from '../../Cart';
 import PaymentModal from '../../PaymentModal';
 import CustomerPanel from './CustomerPanel';
 import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
+import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 
 interface B2BCustomer {
   id: string;
@@ -120,7 +121,7 @@ export default function B2BTemplate({ state, dispatch, t, language, session, onR
   }, [dispatch]);
 
   const handleAddProduct = useCallback((product: Product) => {
-    if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+    if (isSaleBlockedByStock(product, product.available_qty ?? product.in_stock)) return;
     if (!selectedCustomer) {
       setShowCustomerPrompt(true);
       return;

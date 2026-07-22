@@ -13,6 +13,7 @@ import type {
 import PaymentModal from '../../PaymentModal';
 import SearchBar from '../../SearchBar';
 import { resolveName } from '../../../../../shared/catalog-names';
+import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
 
 interface StaffMember {
@@ -390,7 +391,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
 
   const handleAddProduct = useCallback(
     (product: Product) => {
-      if (product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) return;
+      if (isSaleBlockedByStock(product, product.available_qty ?? product.in_stock)) return;
       dispatch({
         type: 'cart/addItem',
         payload: {

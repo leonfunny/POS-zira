@@ -9,6 +9,7 @@ import { getTranslation, Language, languageNames } from '../../i18n/translations
 import { resolveName } from '../../../shared/catalog-names';
 import { isValidManualWeightQuantity, normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
+import { isSaleBlockedByStock } from '../../../shared/product-stock-tracking';
 import {
   decodeKitchenSelfOrderQr,
   decodeKitchenSelfOrderRefQr,
@@ -136,7 +137,7 @@ function canSellImportedVariant(variant: any, allowOversell = false): string | n
   const price = Number(variant?.retail_price) || 0;
   const stock = Number(variant?.available_qty ?? variant?.in_stock) || 0;
   if (price <= 0) return 'Product has no selling price. Fix the product before selling.';
-  if (!allowOversell && variant?.category_id !== 'cat-5' && stock <= 0) return 'Product has no stock. Fix the product before selling.';
+  if (isSaleBlockedByStock(variant, stock, allowOversell)) return 'Product has no stock. Fix the product before selling.';
   return null;
 }
 
@@ -1279,28 +1280,24 @@ export default function POSLayout({
               showScanToast(`${displayName} - ${sellError}`, 'err');
               return;
             }
-            if (!allowOversell && product.category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0) {
-              showScanToast(`${displayName} — ${t('pos.product.soldOut') || 'Sold out'}`, 'err');
-            } else {
-              const result = await resolveRetailCartItem(product, {
-                scaleEnabled: config?.scale?.enabled === true,
-                scalePort: config?.scale?.port,
-                readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
-              });
-              if (!result.ok) {
-                const message = formatRetailSaleError(result.error, tOr);
-                if (result.saleClass.requiresScale) {
-                  openManualWeightPrompt(product, result.saleClass, message);
-                } else {
-                  showScanToast(message, 'err');
-                }
-                return;
+            const result = await resolveRetailCartItem(product, {
+              scaleEnabled: config?.scale?.enabled === true,
+              scalePort: config?.scale?.port,
+              readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
+            });
+            if (!result.ok) {
+              const message = formatRetailSaleError(result.error, tOr);
+              if (result.saleClass.requiresScale) {
+                openManualWeightPrompt(product, result.saleClass, message);
+              } else {
+                showScanToast(message, 'err');
               }
-              if (!validateCartLinePrice(product, result.item)) return;
-              dispatch({ type: 'cart/addItem', payload: result.item });
-              rememberLastLabelVariant(result.item.variantId);
-              showScanToast(`+ ${displayName}`, 'ok');
+              return;
             }
+            if (!validateCartLinePrice(product, result.item)) return;
+            dispatch({ type: 'cart/addItem', payload: result.item });
+            rememberLastLabelVariant(result.item.variantId);
+            showScanToast(`+ ${displayName}`, 'ok');
           } else {
             // Unknown EAN — try the master catalog. openScanImport opens the
             // preview modal if a draft exists locally or remotely; otherwise

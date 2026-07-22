@@ -46,7 +46,7 @@ describe('POS product card interaction', () => {
   it('sold-out products are disabled and show overlay', () => {
     const cardSource = productCardSource();
 
-    expect(cardSource).toContain('const soldOut = !allowOversell && !isDraft && !isService && stockQty <= 0');
+    expect(cardSource).toContain('const soldOut = !isDraft && isSaleBlockedByStock(product, stockQty, allowOversell)');
     expect(cardSource).toContain('aria-disabled={soldOut || undefined}');
     expect(cardSource).toContain("tabIndex={soldOut ? -1 : 0}");
     expect(cardSource).toContain("cursor-not-allowed");
@@ -54,13 +54,10 @@ describe('POS product card interaction', () => {
     expect(cardSource).toContain('grayscale');
   });
 
-  it('computes the sold-out guard inline (no named export needed by templates yet)', () => {
-    // Earlier draft expected an exported `isProductSoldOut(product)` helper for
-    // templates to reuse. The current shape inlines the rule as a local const
-    // — templates that need the same check should import the rule from here
-    // once a real call site appears. Pin the inline shape so it doesn't drift.
+  it('derives the card state from the same stock policy as click and barcode paths', () => {
     const cardSource = productCardSource();
-    expect(cardSource).toContain('const soldOut = !allowOversell && !isDraft && !isService && stockQty <= 0');
-    expect(cardSource).not.toContain('export function isProductSoldOut');
+    expect(cardSource).toContain("import { isSaleBlockedByStock, isStockTracked } from '../../../shared/product-stock-tracking'");
+    expect(cardSource).toContain('isSaleBlockedByStock(product, stockQty, allowOversell)');
+    expect(cardSource).not.toContain("category_id !== 'cat-5'");
   });
 });

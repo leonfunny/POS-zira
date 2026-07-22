@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getProductItemTypePolicy, isStockTracked, productItemType } from '../src/shared/product-stock-tracking';
+import {
+  getProductItemTypePolicy,
+  isSaleBlockedByStock,
+  isStockTracked,
+  productItemType,
+} from '../src/shared/product-stock-tracking';
 import { canChangeExistingProductItemType } from '../src/renderer/components/products/ProductEditForm';
 
 const root = resolve(__dirname, '..');
@@ -25,6 +30,16 @@ describe('product stock tracking helper', () => {
     expect(isStockTracked({ item_type: 'stockable', track_inventory: 1 })).toBe(true);
     expect(isStockTracked({ itemType: 'stockable', trackInventory: false })).toBe(false);
     expect(isStockTracked({ itemType: 'stockable', trackInventory: true })).toBe(true);
+  });
+
+  it('blocks zero-stock sales only for tracked goods', () => {
+    expect(isSaleBlockedByStock({ item_type: 'stockable', track_inventory: 1 }, 0)).toBe(true);
+    expect(isSaleBlockedByStock({ item_type: 'stockable', track_inventory: 1 }, -2)).toBe(true);
+    expect(isSaleBlockedByStock({ item_type: 'stockable', track_inventory: 1 }, 3)).toBe(false);
+    expect(isSaleBlockedByStock({ item_type: 'stockable', track_inventory: 0 }, 0)).toBe(false);
+    expect(isSaleBlockedByStock({ item_type: 'service' }, 0)).toBe(false);
+    expect(isSaleBlockedByStock({ category_id: 'cat-5' }, 0)).toBe(false);
+    expect(isSaleBlockedByStock({ item_type: 'stockable', track_inventory: 1 }, 0, true)).toBe(false);
   });
 
   it('keeps sale mode for goods but forces services to piece-based sales', () => {
@@ -129,6 +144,22 @@ describe('itemType/trackInventory wiring contract', () => {
     // itemType contract must feed it, not just the legacy 'cat-5' hack.
     expect(saleCard).toContain("product.category_id === 'cat-5' || !isStockTracked(product)");
     expect(saleCard).toContain("from '../../../shared/product-stock-tracking'");
+  });
+
+  it('uses the shared sale guard for every standard POS click and barcode path', () => {
+    const paths = [
+      'src/renderer/components/pos/POSLayout.tsx',
+      'src/renderer/components/pos/templates/retail/RetailTemplate.tsx',
+      'src/renderer/components/pos/templates/salon/SalonTemplate.tsx',
+      'src/renderer/components/pos/templates/restaurant/RestaurantTemplate.tsx',
+      'src/renderer/components/pos/templates/b2b/B2BTemplate.tsx',
+    ];
+
+    for (const path of paths) {
+      const posSource = source(path);
+      expect(posSource, path).toContain('isSaleBlockedByStock');
+      expect(posSource, path).not.toContain("category_id !== 'cat-5' && (product.available_qty ?? product.in_stock) <= 0");
+    }
   });
 
   it('sends itemType through create and update payloads only when supported', () => {

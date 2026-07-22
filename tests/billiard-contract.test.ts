@@ -176,6 +176,40 @@ describe('billiard desktop/backend contract', () => {
     }).hasStock).toBe(false);
   });
 
+  it('never reports non-tracked billiard catalog items as out of stock', () => {
+    expect(normalizeBilliardCatalogProduct({
+      id: 'service-local',
+      name: 'Table service',
+      retail_price: 500,
+      available_qty: 0,
+      in_stock: 0,
+      track_inventory: 0,
+    })).toMatchObject({
+      variantId: 'service-local',
+      stock: null,
+      hasStock: true,
+    });
+
+    expect(normalizeBilliardCatalogProduct({
+      id: 'template-product',
+      name: 'Timed service',
+      trackInventory: false,
+      variants: [{ id: 'service-variant', stockQuantity: 0 }],
+    })).toMatchObject({
+      variantId: 'service-variant',
+      stock: null,
+      hasStock: true,
+    });
+
+    expect(normalizeBilliardCatalogProduct({
+      id: 'tracked-service-shaped-row',
+      name: 'Tracked goods',
+      itemType: 'stockable',
+      trackInventory: true,
+      variants: [{ id: 'tracked-variant', stockQuantity: 0 }],
+    }).hasStock).toBe(false);
+  });
+
   it('allows only the explicit billiard/resource mutation surface', () => {
     expect(isAllowedBilliardMutation('PUT', '/billiard/table-layouts/table-1')).toBe(true);
     expect(isAllowedBilliardMutation('DELETE', '/billiard/floor-plans/floor-2')).toBe(true);

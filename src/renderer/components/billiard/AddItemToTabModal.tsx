@@ -12,6 +12,11 @@ import {
 } from '../../hooks/useBilliardData';
 import TextInput from '../shared/TextInput';
 import { normalizeBilliardCatalogProduct } from '../../../shared/billiard-contract';
+import {
+  HOME_KEY,
+  filterProductsByFacility,
+  groupCategoriesByFacility,
+} from './fnb-facilities';
 
 interface AddItemToTabModalProps {
   sessionId: string;
@@ -70,6 +75,7 @@ export function AddItemToTabModal({
   const [mode, setMode] = useState<Mode>('catalog');
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedFacility, setSelectedFacility] = useState(HOME_KEY);
 
   // Custom item form
   const [name, setName] = useState('');
@@ -99,6 +105,26 @@ export function AddItemToTabModal({
     return list;
   }, [productsData]);
 
+  const facilityGrouping = useMemo(
+    () => groupCategoriesByFacility(categories),
+    [categories],
+  );
+  const activeFacility =
+    facilityGrouping.facilities.find((facility) => facility.key === selectedFacility)
+    ?? facilityGrouping.facilities[0];
+  const visibleCategories = facilityGrouping.hasTags
+    ? activeFacility.categories
+    : categories;
+  const visibleProducts = useMemo(
+    () => filterProductsByFacility(products, activeFacility.key, facilityGrouping),
+    [activeFacility.key, facilityGrouping, products],
+  );
+
+  const handleFacilitySelect = (facilityKey: string) => {
+    setSelectedFacility(facilityKey);
+    setSelectedCategory(null);
+  };
+
   const combos = useMemo(() => {
     const billiard = (Array.isArray(combosData) ? combosData : []).map((c: any) => ({
       ...c,
@@ -121,6 +147,7 @@ export function AddItemToTabModal({
     setMode('catalog');
     setSearch('');
     setSelectedCategory(null);
+    setSelectedFacility(HOME_KEY);
     setName('');
     setQuantity(1);
     setUnitPrice('');
@@ -202,6 +229,7 @@ export function AddItemToTabModal({
         setMode('catalog');
         setSearch('');
         setSelectedCategory(null);
+        setSelectedFacility(HOME_KEY);
         setName('');
         setQuantity(1);
         setUnitPrice('');
@@ -288,6 +316,32 @@ export function AddItemToTabModal({
 
           {mode === 'catalog' ? (
             <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
+              {/* Facility tier: shown only when category names use "TAG · Name". */}
+              {facilityGrouping.hasTags && (
+                <div
+                  role="group"
+                  aria-label="F&B facilities"
+                  className="shrink-0 flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto"
+                >
+                  {facilityGrouping.facilities.map((facility) => (
+                    <button
+                      key={facility.key}
+                      type="button"
+                      aria-pressed={activeFacility.key === facility.key}
+                      className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border inline-flex items-center justify-center gap-1.5 ${
+                        activeFacility.key === facility.key
+                          ? 'bg-brand-600 text-white border-brand-600'
+                          : 'border-slate-300 hover:bg-slate-50'
+                      }`}
+                      onClick={() => handleFacilitySelect(facility.key)}
+                    >
+                      <span aria-hidden="true">{facility.icon}</span>
+                      <span>{facility.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Search */}
               <div className="relative shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -301,21 +355,29 @@ export function AddItemToTabModal({
               </div>
 
               {/* Category tabs */}
-              {categories.length > 0 && (
-                <div className="shrink-0 flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto">
+              {visibleCategories.length > 0 && (
+                <div
+                  role="group"
+                  aria-label="F&B categories"
+                  className="shrink-0 flex flex-wrap gap-1.5 pb-1 max-h-24 overflow-y-auto"
+                >
                   <button
-                  className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
-                    selectedCategory === null
-                      ? 'bg-brand-600 text-white border-brand-600'
-                      : 'border-slate-300 hover:bg-slate-50'
-                  }`}
+                    type="button"
+                    aria-pressed={selectedCategory === null}
+                    className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
+                      selectedCategory === null
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'border-slate-300 hover:bg-slate-50'
+                    }`}
                     onClick={() => setSelectedCategory(null)}
                   >
                     {t('common.all') || 'All'}
                   </button>
-                  {categories.map((cat: any) => (
+                  {visibleCategories.map((cat: any) => (
                     <button
                       key={cat.id}
+                      type="button"
+                      aria-pressed={selectedCategory === cat.id}
                       className={`shrink-0 h-7 px-2 py-1 text-xs rounded-full border flex items-center justify-center ${
                         selectedCategory === cat.id
                           ? 'bg-brand-600 text-white border-brand-600'
@@ -335,14 +397,14 @@ export function AddItemToTabModal({
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
                   </div>
-                ) : products.length === 0 ? (
+                ) : visibleProducts.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-slate-400 text-sm">
                     <Package className="w-8 h-8 mb-2 opacity-40" />
                     {t('billiard.noProducts') || 'No products found'}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
-                    {products.map((product: any) => {
+                    {visibleProducts.map((product: any) => {
                       const normalized = normalizeBilliardCatalogProduct(product);
                       const { price, stock, hasStock } = normalized;
 

@@ -1,3 +1,5 @@
+import { isSaleBlockedByStock, isStockTracked } from './product-stock-tracking';
+
 export interface NormalizedBilliardDashboard {
   resources: any[];
   sessions: any[];
@@ -358,6 +360,7 @@ export function normalizeBilliardCatalogProduct(
   product: any,
 ): NormalizedBilliardCatalogProduct {
   const variant = product?.variants?.[0] || product || {};
+  const template = product?.template || {};
   const localMinorPrice = variant.retail_price
     ?? product?.retail_price
     ?? variant.price_gross
@@ -384,13 +387,40 @@ export function normalizeBilliardCatalogProduct(
   const parsedStock = stockRaw === undefined || stockRaw === null
     ? null
     : Number(stockRaw);
-  const stock = parsedStock !== null && Number.isFinite(parsedStock)
+  const parsedStockQuantity = parsedStock !== null && Number.isFinite(parsedStock)
     ? parsedStock
     : null;
   const inStockFlag = variant.in_stock ?? product?.in_stock;
-  const hasStock = stock !== null
-    ? stock > 0
-    : (inStockFlag === undefined || inStockFlag === null || Number(inStockFlag) > 0);
+  const stockPolicy = {
+    item_type: variant.item_type
+      ?? variant.itemType
+      ?? product?.item_type
+      ?? product?.itemType
+      ?? product?.product_type
+      ?? product?.productType
+      ?? template.item_type
+      ?? template.itemType
+      ?? template.product_type
+      ?? template.productType,
+    track_inventory: variant.track_inventory
+      ?? variant.trackInventory
+      ?? product?.track_inventory
+      ?? product?.trackInventory
+      ?? template.track_inventory
+      ?? template.trackInventory,
+    category_id: variant.category_id
+      ?? variant.categoryId
+      ?? product?.category_id
+      ?? product?.categoryId,
+  };
+  const stockTracked = stockPolicy.category_id !== 'cat-5' && isStockTracked(stockPolicy);
+  // Stock has no meaning for services/non-tracked products, so omit the badge
+  // instead of rendering a misleading neutral "0".
+  const stock = stockTracked ? parsedStockQuantity : null;
+  const effectiveStock = parsedStockQuantity ?? inStockFlag;
+  const hasStock = effectiveStock === undefined || effectiveStock === null
+    ? true
+    : !isSaleBlockedByStock(stockPolicy, effectiveStock);
 
   return {
     variantId: variant.id || product?.variantId || product?.id,
